@@ -1,0 +1,482 @@
+{
+  "generator": "Built-in image_gen.imagegen tool; backend model not independently identified",
+  "selected": "candidate-a.png; new-tab-original.png replaces the ambiguous folder-shaped new-tab cell; more-original.png is the separately generated note-actions glyph",
+  "rationale": "A has the lightest, simplest line treatment and distinct reading/split silhouettes. B is boxier; C is heavier.",
+  "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+  "options": {
+    "colours": 2,
+    "removeBackground": false,
+    "alphaCutoff": 128
+  },
+  "preprocessing": "Equal atlas cells; trim transparent margins with 4px edge allowance; proportional fit in a 216px square plus 20px transparent padding; no drawn or edited paths.",
+  "nativeColour": "Only explicit fill colours normalized to white for native tinting. Geometry is the SVG Studio output.",
+  "icons": [
+    {
+      "name": "search",
+      "source": "artwork/source-search.png",
+      "traced": "artwork/traced-search.svg",
+      "native": "search.svg",
+      "paths": 1,
+      "bytes": 885
+    },
+    {
+      "name": "new-note",
+      "source": "artwork/source-new-note.png",
+      "traced": "artwork/traced-new-note.svg",
+      "native": "new-note.svg",
+      "paths": 1,
+      "bytes": 1691
+    },
+    {
+      "name": "new-tab",
+      "source": "artwork/source-new-tab.png",
+      "traced": "artwork/traced-new-tab.svg",
+      "native": "new-tab.svg",
+      "paths": 1,
+      "bytes": 1717
+    },
+    {
+      "name": "sidebar-left",
+      "source": "artwork/source-sidebar-left.png",
+      "traced": "artwork/traced-sidebar-left.svg",
+      "native": "sidebar-left.svg",
+      "paths": 1,
+      "bytes": 1835
+    },
+    {
+      "name": "sidebar-right",
+      "source": "artwork/source-sidebar-right.png",
+      "traced": "artwork/traced-sidebar-right.svg",
+      "native": "sidebar-right.svg",
+      "paths": 1,
+      "bytes": 1826
+    },
+    {
+      "name": "back",
+      "source": "artwork/source-back.png",
+      "traced": "artwork/traced-back.svg",
+      "native": "back.svg",
+      "paths": 1,
+      "bytes": 656
+    },
+    {
+      "name": "forward",
+      "source": "artwork/source-forward.png",
+      "traced": "artwork/traced-forward.svg",
+      "native": "forward.svg",
+      "paths": 1,
+      "bytes": 676
+    },
+    {
+      "name": "reading",
+      "source": "artwork/source-reading.png",
+      "traced": "artwork/traced-reading.svg",
+      "native": "reading.svg",
+      "paths": 1,
+      "bytes": 1649
+    },
+    {
+      "name": "edit",
+      "source": "artwork/source-edit.png",
+      "traced": "artwork/traced-edit.svg",
+      "native": "edit.svg",
+      "paths": 1,
+      "bytes": 1333
+    },
+    {
+      "name": "split",
+      "source": "artwork/source-split.png",
+      "traced": "artwork/traced-split.svg",
+      "native": "split.svg",
+      "paths": 1,
+      "bytes": 1418
+    },
+    {
+      "name": "save",
+      "source": "artwork/source-save.png",
+      "traced": "artwork/traced-save.svg",
+      "native": "save.svg",
+      "paths": 1,
+      "bytes": 2032
+    },
+    {
+      "name": "commands",
+      "source": "artwork/source-commands.png",
+      "traced": "artwork/traced-commands.svg",
+      "native": "commands.svg",
+      "paths": 1,
+      "bytes": 841
+    },
+    {
+      "name": "vault",
+      "source": "artwork/source-vault.png",
+      "traced": "artwork/traced-vault.svg",
+      "native": "vault.svg",
+      "paths": 1,
+      "bytes": 3960
+    },
+    {
+      "name": "appearance",
+      "source": "artwork/source-appearance.png",
+      "traced": "artwork/traced-appearance.svg",
+      "native": "appearance.svg",
+      "paths": 1,
+      "bytes": 2161
+    },
+    {
+      "name": "outline",
+      "source": "artwork/source-outline.png",
+      "traced": "artwork/traced-outline.svg",
+      "native": "outline.svg",
+      "paths": 1,
+      "bytes": 1987
+    },
+    {
+      "name": "more",
+      "source": "artwork/source-more.png",
+      "traced": "artwork/traced-more.svg",
+      "native": "more.svg",
+      "paths": 1,
+      "bytes": 683
+    },
+    {
+      "name": "property-text",
+      "source": "artwork/source-property-text.png",
+      "traced": "artwork/traced-property-text.svg",
+      "native": "property-text.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 873
+    },
+    {
+      "name": "property-list",
+      "source": "artwork/source-property-list.png",
+      "traced": "artwork/traced-property-list.svg",
+      "native": "property-list.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1380
+    },
+    {
+      "name": "property-number",
+      "source": "artwork/source-property-number.png",
+      "traced": "artwork/traced-property-number.svg",
+      "native": "property-number.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2638
+    },
+    {
+      "name": "property-checkbox",
+      "source": "artwork/source-property-checkbox.png",
+      "traced": "artwork/traced-property-checkbox.svg",
+      "native": "property-checkbox.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1411
+    },
+    {
+      "name": "property-aliases",
+      "source": "artwork/source-property-aliases.png",
+      "traced": "artwork/traced-property-aliases.svg",
+      "native": "property-aliases.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 886
+    },
+    {
+      "name": "property-tags",
+      "source": "artwork/source-property-tags.png",
+      "traced": "artwork/traced-property-tags.svg",
+      "native": "property-tags.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2113
+    },
+    {
+      "name": "property-date",
+      "source": "artwork/source-property-date.png",
+      "traced": "artwork/traced-property-date.svg",
+      "native": "property-date.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2781
+    },
+    {
+      "name": "property-date-time",
+      "source": "artwork/source-property-date-time.png",
+      "traced": "artwork/traced-property-date-time.svg",
+      "native": "property-date-time.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 3031
+    },
+    {
+      "name": "new-folder",
+      "source": "artwork/source-new-folder.png",
+      "traced": "artwork/traced-new-folder.svg",
+      "native": "new-folder.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1685
+    },
+    {
+      "name": "sort",
+      "source": "artwork/source-sort.png",
+      "traced": "artwork/traced-sort.svg",
+      "native": "sort.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1504
+    },
+    {
+      "name": "collapse-all",
+      "source": "artwork/source-collapse-all.png",
+      "traced": "artwork/traced-collapse-all.svg",
+      "native": "collapse-all.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1149
+    },
+    {
+      "name": "files",
+      "source": "artwork/source-files.png",
+      "traced": "artwork/traced-files.svg",
+      "native": "files.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1037
+    },
+    {
+      "name": "disclosure",
+      "source": "artwork/source-disclosure.png",
+      "traced": "artwork/traced-disclosure.svg",
+      "native": "disclosure.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 763
+    },
+    {
+      "name": "close",
+      "source": "artwork/source-close.png",
+      "traced": "artwork/traced-close.svg",
+      "native": "close.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 3423
+    },
+    {
+      "name": "copy",
+      "source": "artwork/source-copy.png",
+      "traced": "artwork/traced-copy.svg",
+      "native": "copy.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2482
+    },
+    {
+      "name": "graph",
+      "source": "artwork/source-graph.png",
+      "traced": "artwork/traced-graph.svg",
+      "native": "graph.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 5685
+    },
+    {
+      "name": "canvas",
+      "source": "artwork/source-canvas.png",
+      "traced": "artwork/traced-canvas.svg",
+      "native": "canvas.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 3636
+    },
+    {
+      "name": "bookmark",
+      "source": "artwork/source-bookmark.png",
+      "traced": "artwork/traced-bookmark.svg",
+      "native": "bookmark.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2225
+    },
+    {
+      "name": "daily-note",
+      "source": "artwork/source-daily-note.png",
+      "traced": "artwork/traced-daily-note.svg",
+      "native": "daily-note.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 6238
+    },
+    {
+      "name": "templates",
+      "source": "artwork/source-templates.png",
+      "traced": "artwork/traced-templates.svg",
+      "native": "templates.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 3636
+    },
+    {
+      "name": "recovery",
+      "source": "artwork/source-recovery.png",
+      "traced": "artwork/traced-recovery.svg",
+      "native": "recovery.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 4171
+    }
+  ],
+  "additionalArtwork": {
+    "properties": {
+      "original": "artwork/property-sheet-original.png",
+      "prompt": "artwork/property-sheet-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "Crisp unambiguous property glyphs; first transparent sheet rejected for visible noise.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 216,
+        "margin": 20
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "colours": 2,
+        "removeBackground": false
+      },
+      "replaces": []
+    },
+    "fileToolbar": {
+      "original": "artwork/file-toolbar-sheet-original.png",
+      "prompt": "artwork/file-toolbar-sheet-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "Continues the selected monoline toolbar direction. Folder, ascending sort and inward chevrons are distinct, high contrast and visually clean.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 216,
+        "margin": 20
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "colours": 2,
+        "removeBackground": false
+      },
+      "replaces": []
+    },
+    "filesTab": {
+      "original": "artwork/files-tab-original.png",
+      "prompt": "artwork/files-tab-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "A plain folder matches the reference Files tab and remains distinct from the New Folder plus icon.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 216,
+        "margin": 20
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "colours": 2,
+        "removeBackground": false
+      },
+      "replaces": [
+        "files"
+      ]
+    },
+    "disclosure": {
+      "original": "artwork/disclosure-original.png",
+      "prompt": "artwork/disclosure-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "A single right chevron gives folders and headings the same compact disclosure shape as the reference; rotation shows expanded state.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 216,
+        "margin": 20
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "colours": 2,
+        "removeBackground": false
+      },
+      "replaces": []
+    },
+    "codeControls": {
+      "original": "artwork/code-controls-sheet-original.png",
+      "prompt": "artwork/code-controls-sheet-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "Conventional X and overlapping-square silhouettes give Close and Copy separate actions and remain legible at 12px and 18px. Match the existing generated monoline controls.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    },
+    "knowledge": {
+      "original": "artwork/knowledge-sheet-original.png",
+      "prompt": "artwork/knowledge-sheet-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "Distinct network, board, ribbon, sun-calendar, page template and recovery-clock silhouettes; rounded monochrome contours match the approved existing family. Source inspected at full sheet size; native-size and source/SVG proof remain required.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    }
+  }
+}

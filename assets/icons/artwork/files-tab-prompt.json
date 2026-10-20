@@ -1,0 +1,7 @@
+{
+  "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+  "prompt": "Create ONE square icon image from the LEFT folder icon in the supplied sheet. Keep the same crisp minimal outline style, rounded caps, rounded corners, line thickness and simple folder silhouette, but REMOVE the plus sign entirely. This is the plain Files tab folder icon. Include ONLY that single empty folder outline, large and centered on a pure white square background with generous blank margins. Do not include the sorting arrow or chevrons. No other symbols, no lettering, no labels, no shadow, no texture, no gray fill, no decorations. The interior of the folder must be completely empty white. Precision clean black lines for a native 18px toolbar icon, matching the established folder-plus icon family.",
+  "selectedRationale": "A plain folder matches the reference Files tab and remains distinct from the New Folder plus icon.",
+  "referencedImage": "file-toolbar-sheet-original.png",
+  "originalGeneratedPath": "/home/masih/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-c7ff1688-397a-4558-8237-0754900b20c1.png"
+}

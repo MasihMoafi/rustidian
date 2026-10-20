@@ -1,0 +1,20 @@
+--- a/src/text/text_layout_types.rs
++++ b/src/text/text_layout_types.rs
+@@ -974,6 +974,17 @@
+ // ----------------------------------------------------------------------------
+ 
+ impl Row {
++    /// Clone logical text and metrics without copying its rendered mesh.
++    /// Used by source-preserving folds, whose hidden rows still own cursors.
++    pub fn clone_without_visuals(&self) -> Self {
++        Self {
++            section_index_at_start: self.section_index_at_start,
++            glyphs: self.glyphs.clone(),
++            size: self.size,
++            visuals: RowVisuals::default(),
++        }
++    }
++
+     /// The text on this row, excluding the implicit `\n` if any.
+     pub fn text(&self) -> String {
+         self.glyphs.iter().map(|g| g.chr).collect()

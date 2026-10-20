@@ -1,0 +1,37 @@
+[package]
+name = "rust-notes"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "A native Rust notebook for ordinary Markdown vaults"
+license = "MIT"
+
+[dependencies]
+eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "clipboard", "links"] }
+egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark"] }
+egui_extras = { version = "0.37", default-features = false, features = ["svg", "file", "image", "gif", "webp", "http"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+walkdir = "2.5"
+pulldown-cmark = { version = "0.13.4", default-features = false }
+notify = "8.2"
+nucleo-matcher = "0.3"
+rustix = { version = "1.1", features = ["fs"] }
+trash = "5.2"
+percent-encoding = "2.3"
+serde_yaml_ng = "0.10"
+serde-saphyr = { version = "2.0", default-features = false, features = ["deserialize"] }
+regex = "1.12"
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "regex-fancy"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3.27"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+[patch.crates-io]
+epaint = { path = "vendor/epaint" }
+egui = { path = "vendor/egui" }
+

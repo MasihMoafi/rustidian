@@ -1,0 +1,13 @@
+pub mod assets;
+pub mod editor;
+pub mod folding;
+pub mod metadata;
+pub mod navigation;
+pub mod operations;
+pub mod paths;
+pub mod query;
+pub mod search;
+pub mod structure;
+pub mod tab;
+pub mod tables;
+pub mod vault;

@@ -1,0 +1,71 @@
+name: Native Rust
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md']
+  pull_request:
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.95.0'
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check runner storage
+        run: |
+          mkdir -p reports
+          df -h .
+          /usr/bin/python3 - <<'PY'
+          import shutil
+          if shutil.disk_usage('.').free < 8 * 1024**3:
+              raise SystemExit('At least 8 GiB of free runner storage is required.')
+          PY
+      - name: Install native GUI test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool python3-pil
+      - name: Install the declared Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
+      - name: Rust behavior checks
+        run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
+      - name: Build the release application
+        run: |
+          cargo build --locked --release --bin rust-notes 2>&1 | tee reports/release-build.log
+          sha256sum target/release/rust-notes > reports/rust-notes.sha256
+      - name: Native GUI and portable bundle checks
+        run: /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
+      - name: Package the verified Linux application
+        run: |
+          tar -czf reports/rust-notes-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+          sha256sum reports/rust-notes-linux-x86_64.tar.gz > reports/bundle.sha256
+          df -h .
+      - name: Keep the application and evidence for one day
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-notes-linux-${{ github.sha }}
+          path: reports/
+          retention-days: 1
+          compression-level: 6
+          if-no-files-found: warn
