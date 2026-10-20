@@ -1,6 +1,10 @@
 //! CPU editor experiment; run release with no GUI/build/reference in parallel.
 #[cfg(not(test))]
 #[allow(dead_code)]
+#[path = "../src/callout_ui.rs"]
+mod callout_ui;
+#[cfg(not(test))]
+#[allow(dead_code)]
 #[path = "../src/code_ui.rs"]
 mod code_ui;
 #[cfg(not(test))]

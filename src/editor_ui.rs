@@ -8,7 +8,11 @@ use rust_notes::{
     search::FileMatcher,
     tab::Tab,
 };
-use std::{collections::HashSet, ops::Range, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    sync::Arc,
+};
 
 #[derive(Default)]
 pub struct Find {
@@ -377,6 +381,7 @@ impl Editor {
         }
         let live = tab.view == rust_notes::tab::View::Live;
         self.tables.begin(ui, tab, id, live);
+        let mut callout_change = None;
         let mut follow = None;
         let header_end = if live {
             rust_notes::metadata::frontmatter(&tab.document.text)
@@ -594,6 +599,33 @@ impl Editor {
             self.source.clone_from(&tab.document.text);
         }
         let folds_id = id.with("editing-folds");
+        let callouts_id = id.with("callout-folds");
+        let mut callout_folds = ui
+            .ctx()
+            .data(|data| data.get_temp::<HashMap<String, bool>>(callouts_id))
+            .unwrap_or_default();
+        let reveal = jump
+            .or_else(|| find.restore.as_ref().map(|range| range.start))
+            .or_else(|| {
+                ui.memory(|memory| memory.has_focus(id))
+                    .then(|| {
+                        TextEditState::load(ui.ctx(), id)
+                            .and_then(|state| state.cursor.char_range())
+                            .map(|range| range.primary.index.0)
+                    })
+                    .flatten()
+            });
+        if let Some(character) = reveal {
+            for (callout, key) in self.parsed.callouts.iter().zip(callout_keys(&self.parsed)) {
+                let start = tab.document.text[..callout.body.start].chars().count();
+                let end = start + tab.document.text[callout.body.clone()].chars().count();
+                if (start..end).contains(&character)
+                    || start < end && character == end && end == tab.document.text.chars().count()
+                {
+                    callout_folds.insert(key, false);
+                }
+            }
+        }
         let mut collapsed = ui.ctx().data(|data| {
             data.get_temp::<HashSet<String>>(folds_id)
                 .unwrap_or_default()
@@ -689,7 +721,37 @@ impl Editor {
                         .iter()
                         .any(|table| table.range.contains(&image.range.start))
                 });
-                let hidden = current_sections.hidden(&collapsed);
+                let mut hidden = current_sections.hidden(&collapsed);
+                if live {
+                    for (callout, key) in parsed.callouts.iter().zip(callout_keys(parsed)) {
+                        if callout_folds
+                            .get(&key)
+                            .copied()
+                            .unwrap_or(callout.folded.unwrap_or(false))
+                            && !callout.body.is_empty()
+                        {
+                            let start = text[..callout.body.start].chars().count();
+                            hidden.push(start..start + text[callout.body.clone()].chars().count());
+                        }
+                    }
+                    hidden.sort_by_key(|range| range.start);
+                    let mut merged: Vec<Range<usize>> = Vec::new();
+                    for range in hidden {
+                        if let Some(previous) = merged
+                            .last_mut()
+                            .filter(|previous| previous.end >= range.start)
+                        {
+                            previous.end = previous.end.max(range.end);
+                        } else {
+                            merged.push(range);
+                        }
+                    }
+                    hidden = merged;
+                    images.retain(|image| {
+                        let character = text[..image.range.start].chars().count();
+                        !hidden.iter().any(|range| range.contains(&character))
+                    });
+                }
                 table_placements = if live {
                     tables.prepare(ui, text, &parsed.tables, active_line.as_ref(), &hidden)
                 } else {
@@ -771,6 +833,7 @@ impl Editor {
         let selection = ui.visuals().selection.bg_fill;
         let cursor_style = ui.visuals().text_cursor.clone();
         let code_background = ui.painter().add(egui::Shape::Noop);
+        let callout_background = ui.painter().add(egui::Shape::Noop);
         let selection_shape = ui.painter().add(egui::Shape::Noop);
         let bulk_edit = ui.memory(|memory| memory.has_focus(id))
             && ui.input(|input| {
@@ -846,6 +909,27 @@ impl Editor {
         }
         let positioned = PositionedText::new(&output);
         paint_heading_folds(ui, &positioned, &self.sections, &mut collapsed);
+        if live {
+            if let Some(action) = paint_callouts(
+                ui,
+                &positioned,
+                &self.source,
+                &self.parsed,
+                active_line.as_ref(),
+                &mut callout_folds,
+                callout_background,
+            ) {
+                match action {
+                    CalloutAction::Follow(link) => follow = Some(link),
+                    CalloutAction::Kind(ordinal, kind) => {
+                        callout_change = Some((self.parsed.callouts[ordinal].clone(), kind));
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(callouts_id, callout_folds));
+        }
         ui.ctx()
             .data_mut(|data| data.insert_temp(folds_id, collapsed));
         paint_code_blocks(
@@ -1033,6 +1117,16 @@ impl Editor {
                 tab.edited();
             }
         }
+        // Finish source-indexed overlays before changing a marker's byte length.
+        if let Some((callout, kind)) = callout_change {
+            crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
+            if callout.change_kind(&mut tab.document.text, kind) {
+                crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
+                tab.edited();
+                self.focus = true;
+                ui.ctx().request_repaint();
+            }
+        }
         follow
     }
 }
@@ -1060,6 +1154,148 @@ fn retain_visible_images(
             collapsed.contains(&section.key) && section.body.contains(&image.range.start)
         })
     });
+}
+
+fn callout_keys(parsed: &Markdown) -> Vec<String> {
+    let mut occurrences = HashMap::new();
+    parsed
+        .callouts
+        .iter()
+        .map(|callout| {
+            let identity = format!("{}\u{1f}{}", callout.identifier, callout.title);
+            let count = occurrences.entry(identity.clone()).or_insert(0);
+            let key = format!("{identity}\u{1f}{count}");
+            *count += 1;
+            key
+        })
+        .collect()
+}
+
+enum CalloutAction {
+    Follow(String),
+    Kind(usize, rust_notes::callouts::Kind),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_callouts(
+    ui: &mut egui::Ui,
+    positioned: &PositionedText<'_>,
+    source: &str,
+    parsed: &Markdown,
+    active_line: Option<&Range<usize>>,
+    folded: &mut HashMap<String, bool>,
+    background: egui::layers::ShapeIdx,
+) -> Option<CalloutAction> {
+    let output = positioned.output;
+    let mut shapes = Vec::new();
+    let mut action = None;
+    for (ordinal, (callout, key)) in parsed.callouts.iter().zip(callout_keys(parsed)).enumerate() {
+        let start = source[..callout.header.start].chars().count();
+        let first = positioned.at(start).translate(output.galley_pos.to_vec2());
+        if first.height() <= 0.0 {
+            continue;
+        }
+        let last_byte = callout.range.start
+            + source[callout.range.clone()]
+                .trim_end_matches(['\r', '\n'])
+                .len();
+        let end = source[..last_byte].chars().count();
+        let last = positioned.at(end).translate(output.galley_pos.to_vec2());
+        let depth = parsed
+            .callouts
+            .iter()
+            .filter(|parent| {
+                parent.range.start < callout.range.start
+                    && parent.range.contains(&callout.range.start)
+            })
+            .count();
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(
+                output.response.rect.left() + depth as f32 * 24.0,
+                first.top(),
+            ),
+            egui::pos2(
+                output.response.rect.right(),
+                last.bottom().max(first.bottom()),
+            ),
+        );
+        if !rect.intersects(ui.clip_rect()) {
+            continue;
+        }
+        shapes.push(egui::Shape::rect_filled(
+            rect,
+            7,
+            crate::callout_ui::background(ui, callout.kind),
+        ));
+        let collapsed = folded
+            .get(&key)
+            .copied()
+            .unwrap_or(callout.folded.unwrap_or(false));
+        if !collapsed && !callout.body.is_empty() {
+            let body = positioned
+                .at(source[..callout.body.start].chars().count())
+                .translate(output.galley_pos.to_vec2());
+            crate::ui_probe::record(
+                ui.ctx(),
+                format!("callout-body:{ordinal}"),
+                egui::Rect::from_min_max(egui::pos2(rect.left(), body.top()), rect.max),
+            );
+        }
+        let active = active_line.is_some_and(|line| {
+            line.start < callout.header.end && line.end >= callout.header.start
+        });
+        if active {
+            continue;
+        }
+        let header_rect = egui::Rect::from_min_max(
+            rect.min + egui::vec2(24.0, 12.0),
+            egui::pos2(rect.right() - 12.0, first.bottom() - 12.0),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .id_salt(("live-callout", ordinal))
+                .max_rect(header_rect),
+            |ui| {
+                let (header, link) = crate::callout_ui::header(ui, callout, ordinal, collapsed);
+                if let Some(link) = link {
+                    action = Some(CalloutAction::Follow(link));
+                } else if header.clicked() && callout.folded.is_some() {
+                    folded.insert(key, !collapsed);
+                    set_cursor(ui.ctx(), output.response.id, start);
+                    ui.memory_mut(|memory| memory.surrender_focus(output.response.id));
+                    ui.ctx().request_repaint();
+                }
+                if header.double_clicked() {
+                    set_cursor(
+                        ui.ctx(),
+                        output.response.id,
+                        source[..callout.marker.end].chars().count(),
+                    );
+                    ui.memory_mut(|memory| memory.request_focus(output.response.id));
+                    ui.ctx().request_repaint();
+                }
+                if header.secondary_clicked() {
+                    ui.memory_mut(|memory| memory.surrender_focus(output.response.id));
+                }
+                header.context_menu(|ui| {
+                    for kind in rust_notes::callouts::Kind::ALL {
+                        let response = ui.selectable_label(kind == callout.kind, kind.identifier());
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("callout-type:{}", kind.identifier()),
+                            response.rect,
+                        );
+                        if response.clicked() {
+                            action = Some(CalloutAction::Kind(ordinal, kind));
+                            ui.close();
+                        }
+                    }
+                });
+            },
+        );
+    }
+    ui.painter().set(background, egui::Shape::Vec(shapes));
+    action
 }
 
 fn reserve_table_rows(galley: &mut Arc<egui::Galley>, tables: &[crate::table_ui::Placement]) {
@@ -1426,6 +1662,13 @@ fn paint_markers(
         return;
     }
     for (ordinal, quote) in parsed.quotes.iter().enumerate() {
+        if parsed
+            .callouts
+            .iter()
+            .any(|callout| callout.range.contains(&quote.range.end))
+        {
+            continue;
+        }
         let start = position(quote.range.start);
         let end_byte = source[quote.range.end..]
             .find('\n')
@@ -1521,6 +1764,19 @@ fn layout(
     let mut job = LayoutJob::default();
     job.wrap.max_width = width;
     let colors = crate::syntax::highlights(ui, text, parsed);
+    let callout_heights: Vec<_> = if live {
+        parsed
+            .callouts
+            .iter()
+            .map(|callout| {
+                let title = crate::preview::TableCell::new(&callout.title);
+                let height = title.layout(ui, true, (width - 80.0).max(1.0)).size().y + 24.0;
+                (callout.header.clone(), height)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut character = 0;
     for span in &parsed.spans {
         // Split at line boundaries so a multiline emphasis doesn't reveal all its markers.
@@ -1550,6 +1806,7 @@ fn layout(
                     || style.hidden && !active && !style.image
                     || style.quote_marker && !active
                     || style.fence && !code_active
+                    || style.callout_header && !active
                     || image.is_some() && !active);
             let size = if hidden {
                 0.01
@@ -1603,7 +1860,16 @@ fn layout(
                 parsed
                     .quotes
                     .binary_search_by_key(&start, |quote| quote.range.start)
-                    .map_or(0.0, |index| 17.0 * parsed.quotes[index].depth as f32)
+                    .map_or(0.0, |index| {
+                        let callout_depth = parsed
+                            .callouts
+                            .iter()
+                            .filter(|callout| {
+                                callout.range.contains(&start) || callout.range.contains(&end)
+                            })
+                            .count();
+                        17.0 * parsed.quotes[index].depth as f32 + 7.0 * callout_depth as f32
+                    })
             } else {
                 0.0
             };
@@ -1623,7 +1889,12 @@ fn layout(
             let format = egui::TextFormat {
                 font_id: FontId::new(size, family),
                 color,
-                line_height: Some(if live && style.property {
+                line_height: Some(if live && style.callout_header && !active {
+                    callout_heights
+                        .iter()
+                        .find(|(range, _)| range.contains(&start))
+                        .map_or(29.16, |(_, height)| *height)
+                } else if live && style.property {
                     0.01
                 } else if style.block_code {
                     crate::code_ui::LINE_HEIGHT

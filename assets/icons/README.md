@@ -57,3 +57,9 @@ Node and SVG Studio prepare artwork; the application itself remains native Rust.
 ## Knowledge-action artwork — 21 October
 
 Six additional icons (Graph, Canvas, Bookmark, Daily note, Templates, Recovery) were generated with the built-in image tool and traced through the existing SVG Studio monochrome engine. The exact sheet/prompt, prepared 768px rasters, traces, options and paths are retained. Source/SVG pairs were inspected at24/48/128/512px and native tints at12/18/24/48px on both themes; counters, silhouettes and margins are preserved. The six pipeline regressions pass. Reports knowledge-icons-native-proof.png and knowledge-proof-a/b.png contain inspection crops. There are37 selected artworks;31 are currently integrated into the executable and these six are prepared for their explicit feature actions. Do not claim their features are implemented from the artwork alone.
+
+## Callout artwork — 21 October
+
+Thirteen callout symbols were generated with the built-in image tool using the knowledge sheet as a style reference, then traced through SVG Studio's existing monochrome engine. The new sheet/prompt, prepared rasters, unchanged traces and native tint variants are retained. All thirteen source/vector pairs were inspected at24/48/128/512px and native12/18/24/48px in both themes; the six pipeline checks pass. The candidate uses these for the thirteen callout types. Native-window verification remains pending. There are50 selected artworks, with44 referenced by candidate source and six knowledge-action assets still prepared only.
+
+The complete proof is now paginated at30 marks per sheet to stay below the renderer's32767px canvas limit. `proof/source-vs-vector.html` indexes every sheet, and `source-vs-vector.json` retains all measurements. Per-size render crops are intermediate output; the indexed proof sheets are the retained inspection artifact.

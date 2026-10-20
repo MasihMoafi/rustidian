@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod callouts;
 pub mod editor;
 pub mod folding;
 pub mod metadata;

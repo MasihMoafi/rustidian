@@ -10,10 +10,21 @@ if (!modulePath) throw new Error('Set SVG_STUDIO_MODULE to the existing SVG Stud
 const sharp = createRequire(modulePath)('sharp');
 const iconsDir = resolve(root, 'assets/icons');
 const manifest = JSON.parse(await readFile(resolve(iconsDir, 'manifest.json'), 'utf8'));
-const pairs = manifest.icons.flatMap(icon => [resolve(iconsDir, icon.source), resolve(iconsDir, icon.traced)]);
-const proof = spawnSync(process.execPath, [resolve(root, '../skills/logo/scripts/proof.mjs'), resolve(iconsDir, 'proof/source-vs-vector.png'), ...pairs], { env: process.env, encoding: 'utf8' });
-await writeFile(resolve(iconsDir, 'proof/trace-proof.log'), proof.stdout + proof.stderr);
-if (proof.status !== 0) throw new Error(proof.stderr || 'Logo proof failed');
+// The proof renderer uses 780px per mark; keep each SVG canvas below 32767px.
+const sheets = [], measurements = [], logs = [];
+for (let start = 0; start < manifest.icons.length; start += 30) {
+  const icons = manifest.icons.slice(start, start + 30);
+  const name = `source-vs-vector-${sheets.length + 1}`;
+  const pairs = icons.flatMap(icon => [resolve(iconsDir, icon.source), resolve(iconsDir, icon.traced)]);
+  const proof = spawnSync(process.execPath, [resolve(root, '../skills/logo/scripts/proof.mjs'), resolve(iconsDir, `proof/${name}.png`), ...pairs], { env: process.env, encoding: 'utf8' });
+  logs.push(proof.stdout + proof.stderr);
+  await writeFile(resolve(iconsDir, 'proof/trace-proof.log'), logs.join('\n'));
+  if (proof.status !== 0) throw new Error(proof.stderr || 'Logo proof failed');
+  sheets.push(name);
+  measurements.push(...JSON.parse(await readFile(resolve(iconsDir, `proof/${name}.json`), 'utf8')));
+}
+await writeFile(resolve(iconsDir, 'proof/source-vs-vector.json'), JSON.stringify(measurements, null, 2) + '\n');
+await writeFile(resolve(iconsDir, 'proof/source-vs-vector.html'), `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Source and SVG proofs</title><style>body{margin:16px;background:#e6e8eb;font:16px sans-serif}img{display:block;max-width:100%;height:auto}</style><h1>Source and SVG proofs</h1><p>All ${manifest.icons.length} selected artworks, source left and SVG right at 24, 48, 128 and 512 pixels on both themes.</p>${sheets.map((name, index) => `<p><a href="${name}.html">Open proof sheet ${index + 1}</a></p><img src="${name}.png" alt="Source and vector comparison sheet ${index + 1}">`).join('')}</html>\n`);
 
 const tileWidth = 360, tileHeight = 210;
 const layers = [];

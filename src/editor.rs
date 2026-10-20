@@ -43,6 +43,7 @@ pub struct Style {
     pub quote_marker: bool,
     pub block_code: bool,
     pub fence: bool,
+    pub callout_header: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -60,6 +61,7 @@ pub struct Markdown {
     pub setext_markers: Vec<Range<usize>>,
     pub code_blocks: Vec<CodeBlock>,
     pub tables: Vec<crate::tables::Table>,
+    pub callouts: Vec<crate::callouts::Callout>,
 }
 
 #[derive(Clone, Debug)]
@@ -200,6 +202,7 @@ impl Markdown {
         let mut setext_markers = Vec::new();
         let mut code_blocks = Vec::new();
         let mut tables = Vec::new();
+        let mut callouts = Vec::new();
         let mut table = None;
         for (event, range) in Parser::new_ext(
             text,
@@ -303,7 +306,13 @@ impl Markdown {
                         code_blocks.push(block);
                     }
                 }
-                Event::Start(Tag::BlockQuote(_)) => patch(&mut styles, range, |s| s.quote = true),
+                Event::Start(Tag::BlockQuote(_)) => {
+                    if let Some(callout) = crate::callouts::Callout::from_range(text, range.clone())
+                    {
+                        callouts.push(callout);
+                    }
+                    patch(&mut styles, range, |s| s.quote = true);
+                }
                 Event::Start(Tag::Item) => {
                     item_starts.push(text[..range.start].rfind('\n').map_or(0, |i| i + 1));
                     let item = &text[range.clone()];
@@ -323,11 +332,17 @@ impl Markdown {
             setext_markers.retain(|range| !properties.range.contains(&range.start));
             code_blocks.retain(|block| !properties.range.contains(&block.range.start));
             tables.retain(|table| !properties.range.contains(&table.range.start));
+            callouts.retain(|callout| !properties.range.contains(&callout.range.start));
             patch(&mut styles, properties.range, |style| {
                 *style = Style {
                     property: true,
                     ..Default::default()
                 }
+            });
+        }
+        for callout in &callouts {
+            patch(&mut styles, callout.header.clone(), |style| {
+                style.callout_header = true;
             });
         }
         for (range, _) in crate::vault::wiki_spans(text) {
@@ -424,6 +439,7 @@ impl Markdown {
             setext_markers,
             code_blocks,
             tables,
+            callouts,
         }
     }
 }

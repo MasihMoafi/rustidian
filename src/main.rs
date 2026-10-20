@@ -1,4 +1,5 @@
 mod app;
+mod callout_ui;
 mod code_ui;
 mod editor_ui;
 mod file_tree;

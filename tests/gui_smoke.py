@@ -16,11 +16,17 @@ from PIL import Image, ImageGrab
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def pixel_data(picture):
+    """Support the Pillow version supplied by the declared Ubuntu runner."""
+    modern = getattr(picture, "get_flattened_data", None)
+    return modern() if modern else picture.getdata()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "persian", "attachments"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -180,6 +186,126 @@ def main():
                     xdo("mousemove", "650", "300", "click", "1")
                 key("ctrl+End")
 
+            def callout_checks():
+                source = (ROOT / "tests/fixtures/callouts.md").read_text()
+                note = fixture / "Notes/Callout checks.md"
+                note.write_text(source)
+                time.sleep(.6)
+                open_note("Callout checks")
+                command("Source editing")
+                assert not control_bounds("callout:0", required=False)
+                editor_end()
+                type_text("PROSE_CONTROL")
+                key("ctrl+s")
+                assert note.read_text() == source + "PROSE_CONTROL"
+                key("ctrl+z")
+                key("ctrl+s")
+                assert note.read_text() == source
+                results.append("Callout Source mode stays literal and ordinary prose editing/undo preserves the file")
+                command("Live preview")
+                editor_end()
+                key("Escape")
+                control_bounds("callout:0")
+                assert not control_bounds("callout-body:0", required=False)
+                click_control("callout:0")
+                control_bounds("callout-body:0")
+                control_bounds("callout:1")
+                control_bounds("callout-body:1")
+                click_control("callout:1")
+                assert not control_bounds("callout-body:1", required=False)
+                click_control("callout:0")
+                assert not control_bounds("callout:1", required=False)
+                click_control("callout:0")
+                assert not control_bounds("callout-body:1", required=False)
+                control_bounds("callout:2")
+                assert not control_bounds("callout:3", required=False)
+                capture("native-callouts-dark.png")
+                assert note.read_text() == source
+                results.append("Native Live callouts honor fold defaults, retain nested state, preserve title-only callouts and ignore fenced markers")
+                left, top, right, bottom = control_bounds("callout-body:0")
+                xdo("mousemove", str(round(left + 120)), str(round(top + 12)), "click", "1")
+                key("End")
+                type_text(" LIVE_BODY")
+                key("ctrl+s")
+                assert note.read_text() == source.replace("Hidden body", "Hidden body LIVE_BODY", 1)
+                key("ctrl+z")
+                key("ctrl+s")
+                assert note.read_text() == source
+                key("Escape")
+                results.append("Live callout body editing and undo preserve exact surrounding Markdown and nested content")
+                click_control("callout:0", button="3")
+                click_control("callout-type:success")
+                key("ctrl+s")
+                assert note.read_text() == source.replace("[!warning]", "[!success]", 1)
+                key("ctrl+z")
+                key("ctrl+s")
+                assert note.read_text() == source
+                key("Escape")
+                results.append("The native callout type menu changes only its marker and shares document undo/save")
+                command("Reading view")
+                control_bounds("callout:0")
+                assert not control_bounds("callout-body:0", required=False)
+                click_control("callout:0")
+                control_bounds("callout-body:0")
+                control_bounds("callout-body:1")
+                assert not control_bounds("callout:3", required=False)
+                key("ctrl+s")
+                assert note.read_text() == source
+                capture("native-callouts-reading.png")
+                results.append("Reading callouts render and fold nested content without altering note bytes")
+                command("Switch appearance")
+                capture("native-callouts-light.png")
+                command("Switch appearance")
+                rich = ("# Rich callout\n\n> [!tip]+ Rich content\n> - [ ] Callout task\n>\n"
+                        "> | Name | Count |\n> | --- | --- |\n> | [[Home]] | 2 |\n>\n"
+                        "> ```rust\n> let value = 7;\n> ```\n>\n> π\n> ![[Assets/Attachment.png|160]]\n\nFollowing prose.\n")
+                rich_note = fixture / "Notes/Rich callout.md"
+                rich_note.write_text(rich)
+                time.sleep(.6)
+                open_note("Rich callout")
+                command("Reading view")
+                control_bounds("callout:0")
+                control_bounds("task:0")
+                control_bounds("table:0")
+                control_bounds("copy-code:0")
+                click_control("task:0")
+                key("ctrl+s")
+                assert rich_note.read_text() == rich.replace("[ ] Callout task", "[x] Callout task")
+                capture("native-callouts-rich.png")
+                results.append("Reading callouts retain native tasks, tables, code controls and embedded images")
+                command("Live preview")
+                key("Escape")
+                control_bounds("embed:0")
+                click_control("callout:0", button="3")
+                click_control("callout-type:warning")
+                key("ctrl+s")
+                checked = rich.replace("[ ] Callout task", "[x] Callout task")
+                assert rich_note.read_text() == checked.replace("[!tip]", "[!warning]", 1)
+                control_bounds("embed:0")
+                key("ctrl+z")
+                key("ctrl+s")
+                assert rich_note.read_text() == checked
+                command("Reading view")
+                click_control("table-link:0:1:0:0")
+                title_contains("Home")
+                results.append("Type changes before a Unicode/image offset preserve rendering and undo; a table link still opens its note")
+                end_source = "# End fold\n\n> [!note]- End\n> Last body."
+                end_note = fixture / "Notes/End fold.md"
+                end_note.write_text(end_source)
+                time.sleep(.6)
+                open_note("End fold")
+                command("Live preview")
+                assert not control_bounds("callout-body:0", required=False)
+                editor_end()
+                control_bounds("callout-body:0")
+                type_text(" EOF_EDIT")
+                key("ctrl+s")
+                assert end_note.read_text() == end_source + " EOF_EDIT"
+                key("ctrl+z")
+                key("ctrl+s")
+                assert end_note.read_text() == end_source
+                results.append("Ctrl+End reveals a collapsed callout at EOF and immediate typing/undo preserves every byte")
+
             def properties_checks():
                 key("ctrl+n")
                 key("ctrl+a")
@@ -288,7 +414,7 @@ def main():
                 command("Reading view")
                 time.sleep(1)
                 frame = ImageGrab.grab(xdisplay=display).convert("RGB")
-                pixels = list(frame.get_flattened_data())
+                pixels = list(pixel_data(frame))
                 assert sum(pixel == image_color for pixel in pixels) > 140000
                 row_counts = [sum(frame.getpixel((x, y)) == image_color for x in range(frame.width)) for y in range(170, 850)]
                 assert 180 in row_counts and 600 in row_counts, sorted(set(row_counts))
@@ -297,14 +423,14 @@ def main():
                 Image.new("RGB", (600, 240), updated_color).save(attachment)
                 time.sleep(1.3)
                 frame = ImageGrab.grab(xdisplay=display).convert("RGB")
-                assert sum(pixel == updated_color for pixel in frame.get_flattened_data()) > 140000
+                assert sum(pixel == updated_color for pixel in pixel_data(frame)) > 140000
                 assert image_note.read_text() == source
                 results.append("Native wiki and relative Markdown images rendered at requested width; external image edits refreshed without changing the note")
                 command("Live preview")
                 editor_end()
                 time.sleep(.6)
                 frame = ImageGrab.grab(xdisplay=display).convert("RGB")
-                assert sum(pixel == updated_color for pixel in frame.get_flattened_data()) > 140000
+                assert sum(pixel == updated_color for pixel in pixel_data(frame)) > 140000
                 capture("native-live-images.png")
                 type_text("\nWRITING_AROUND_IMAGES")
                 key("ctrl+s")
@@ -477,7 +603,7 @@ def main():
 
             def colored_pixels(palette, required=True, control="code-block:0"):
                 bounds = tuple(round(value) for value in control_bounds(control))
-                pixels = list(ImageGrab.grab(xdisplay=display).crop(bounds).get_flattened_data())
+                pixels = list(pixel_data(ImageGrab.grab(xdisplay=display).crop(bounds)))
                 for color in palette:
                     count = sum(max(abs(pixel[channel]-color[channel]) for channel in range(3)) <= 18 for pixel in pixels)
                     assert count >= 2 if required else count == 0, (color, count)
@@ -926,7 +1052,7 @@ def main():
                 capture("native-code-live.png")
                 bounds = tuple(round(value) for value in control_bounds("editor"))
                 picture = ImageGrab.grab(xdisplay=display).crop(bounds)
-                panel = sum(pixel[:3] == (27, 32, 35) for pixel in picture.get_flattened_data())
+                panel = sum(pixel[:3] == (27, 32, 35) for pixel in pixel_data(picture))
                 assert panel >= 60000, f"Missing full-width code panel: {panel} pixels"
                 block = control_bounds("code-block:0")
                 assert 100 <= block[3] - block[1] <= 104, block
@@ -994,13 +1120,13 @@ def main():
                 capture("native-typography-live.png")
                 bounds = tuple(round(value) for value in control_bounds("editor"))
                 picture = ImageGrab.grab(xdisplay=display).crop(bounds)
-                bars = sum(pixel[:3] == (23, 127, 131) for pixel in picture.get_flattened_data())
+                bars = sum(pixel[:3] == (23, 127, 131) for pixel in pixel_data(picture))
                 assert bars >= 100, f"Missing live quote bars: {bars} pixels"
                 assert control_bounds("quote:1")
                 assert control_bounds("quote:2", required=False) is None
                 marker = control_bounds("setext:0")
                 assert 28 <= marker[3] - marker[1] <= 31, marker
-                marker_pixels = ImageGrab.grab(xdisplay=display).crop(tuple(round(v) for v in marker)).get_flattened_data()
+                marker_pixels = pixel_data(ImageGrab.grab(xdisplay=display).crop(tuple(round(v) for v in marker)))
                 assert sum(pixel[:3] == (104, 115, 117) for pixel in marker_pixels) > 2, "Setext marker disappeared"
                 assert note.read_text() == source
                 results.append("Live quotes painted nested teal bars, code stayed literal, and Setext underline remained visible at body size without changing source")
@@ -1011,7 +1137,7 @@ def main():
                 capture("native-typography-source.png")
                 bounds = tuple(round(value) for value in control_bounds("editor"))
                 picture = ImageGrab.grab(xdisplay=display).crop(bounds)
-                assert not any(pixel[:3] == (23, 127, 131) for pixel in picture.get_flattened_data())
+                assert not any(pixel[:3] == (23, 127, 131) for pixel in pixel_data(picture))
                 assert note.read_text() == source
                 results.append("Activating a quote exposed its source; Source editing removed live quote bars and retained all Markdown bytes")
                 command("Live preview")
@@ -1570,6 +1696,11 @@ def main():
                 click_control("search:Bulk/Note0549.md")
                 title_contains("Note0549")
                 results.append("All 550 search matches remained reachable; scrolling opened the last note beyond the previous 200-result cap")
+            if args.section == "callouts":
+                callout_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "callouts"}))
+                return
             if args.section == "persian":
                 persian_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -1924,6 +2055,7 @@ def main():
             table_edit_checks()
             table_link_checks()
             table_input_checks()
+            callout_checks()
             persian_checks()
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))

@@ -1,0 +1,27 @@
+{
+  "prompt": "Create a NEW square 1024 by 1024 monochrome icon atlas, using the attached image ONLY as the visual style reference: simple rounded black outline symbols, consistent medium stroke thickness, large clean counters, flat white background. These are native note editor callout symbols intended to remain legible at 18–24 px. Use EXACTLY a 4-column, 4-row evenly spaced grid of equal square cells, generous whitespace in every cell, one symbol centered inside each of the first 13 cells. Do not draw grid lines, labels, lettering, captions, shadows, gradients, textures or the reference image's symbols. Reading order left to right then top to bottom: Row 1: a diagonal pencil (note); a clipboard with three short list lines (abstract); a circle containing a lowercase information i; a simple flame with one open inner counter (tip). Row 2: a circle containing a check (todo); a freestanding check mark (success); a circle containing a question mark; an upright warning triangle containing a short exclamation mark. Row 3: a freestanding X (failure); a bold simple lightning bolt (danger); a tiny symmetrical beetle with six legs and a divided oval body (bug); a list with three bullets and three short horizontal lines (example). Row 4: two large paired quotation marks (quote) in the FIRST cell only; leave the final THREE cells completely empty white. Match all symbols' apparent weight and optical size; keep tiny internal details sparse so no counters close at 18px. This is an icon source image for faithful tracing into genuine SVG paths.",
+  "generator": "Built-in image_gen.imagegen; backend model not independently identified.",
+  "reference": "knowledge-sheet-original.png (style reference only)",
+  "selectedRationale": "Rounded monochrome symbols are distinct, legible at the intended native size, arranged in the requested grid, and suitable for faithful tracing; no paths are hand drawn.",
+  "layout": {
+    "columns": 4,
+    "rows": 4,
+    "names": [
+      "callout-note",
+      "callout-abstract",
+      "callout-info",
+      "callout-tip",
+      "callout-todo",
+      "callout-success",
+      "callout-question",
+      "callout-warning",
+      "callout-failure",
+      "callout-danger",
+      "callout-bug",
+      "callout-example",
+      "callout-quote"
+    ],
+    "lastThreeCells": "empty"
+  },
+  "verification": "Original and source/SVG proofs inspected at 24/48/128/512px; native tint proofs inspected at 12/18/24/48px on both themes. Six pipeline checks pass. Candidate integration awaits built native-window verification."
+}

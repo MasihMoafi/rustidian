@@ -53,15 +53,32 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
       - name: Rust behavior checks
         run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
+      - name: Build a focused GUI candidate
+        run: |
+          cargo build --locked --bin rust-notes 2>&1 | tee reports/candidate-build.log
+          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+          sha256sum target/debug/rust-notes > reports/candidate.sha256
+      - name: Focused callout behavior
+        run: /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
       - name: Build the release application
         run: |
-          cargo build --locked --release --bin rust-notes 2>&1 | tee reports/release-build.log
+          cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/release-build.log
           sha256sum target/release/rust-notes > reports/rust-notes.sha256
+          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
       - name: Native GUI and portable bundle checks
         run: /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
+      - name: Serial editor CPU measurements
+        run: |
+          git rev-parse HEAD > reports/measured-commit.txt
+          rustc -Vv > reports/measured-toolchain.txt
+          lscpu > reports/measured-cpu.txt
+          sha256sum src/*.rs Cargo.lock examples/editor_benchmark.rs > reports/measured-source.sha256
+          target/release/examples/editor_benchmark --diverse > reports/editor-ci-unfolded.json
+          target/release/examples/editor_benchmark --diverse --folded > reports/editor-ci-folded.json
+          /usr/bin/python3 scripts/check-editor-timings.py reports/editor-ci-unfolded.json reports/editor-ci-folded.json | tee reports/editor-ci-gates.log
       - name: Package the verified Linux application
         run: |
-          tar -czf reports/rust-notes-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+          mv reports/rust-notes-candidate-linux-x86_64.tar.gz reports/rust-notes-linux-x86_64.tar.gz
           sha256sum reports/rust-notes-linux-x86_64.tar.gz > reports/bundle.sha256
           df -h .
       - name: Keep the application and evidence for one day

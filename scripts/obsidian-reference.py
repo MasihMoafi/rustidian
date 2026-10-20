@@ -1,4 +1,5 @@
 """Capture the installed Obsidian using a disposable profile and sample vault."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,9 @@ from PIL import Image, ImageGrab
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
+parser = argparse.ArgumentParser()
+parser.add_argument("--section", choices=["all", "callouts"], default="all")
+arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     base = Path(temporary)
     vault = base / "Reference Vault"
@@ -72,12 +76,39 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         time.sleep(0.3)
         xdo("key", "Return")
         time.sleep(1)
-        ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-reference.png")
+        if arguments.section != "callouts":
+            ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-reference.png")
         with urllib.request.urlopen(f"http://127.0.0.1:{debug_port}/json/list") as response:
             targets = json.load(response)
         target = next(target for target in targets if target["type"] == "page")
         query = "JSON.stringify(['.markdown-preview-view','.inline-title','h1','h2','.markdown-preview-view p','.markdown-preview-view li','.markdown-preview-view strong','.markdown-preview-view ul','.markdown-preview-view blockquote','.markdown-preview-sizer','.view-header','.workspace-tab-header-container','.nav-header','.nav-files-container','.status-bar','.nav-file-title','.workspace-tab-header'].map(selector => {const e=document.querySelector(selector);if(!e)return {selector};const s=getComputedStyle(e);return {selector,font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,marginTop:s.marginTop,marginBottom:s.marginBottom,rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height},padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderBottomWidth};}))"
         code = "const ws=new WebSocket(process.argv[1]);ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:process.argv[2],returnByValue:true}}));ws.onmessage=(e)=>{const r=JSON.parse(e.data);if(r.id===1){console.log(r.result.result.value);ws.close();}};setTimeout(()=>process.exit(1),5000).unref();"
+        if arguments.section == "callouts":
+            kinds = ["note", "abstract", "info", "todo", "tip", "success", "question", "warning", "failure", "danger", "bug", "example", "quote"]
+            sample = (ROOT / "tests/fixtures/callouts.md").read_text()
+            sample += "\n" + "\n\n".join(f"> [!{kind}] {kind.title()}" for kind in kinds) + "\n"
+            (vault / "Callout checks.md").write_text(sample)
+            time.sleep(.7)
+            measure = """JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active .callout')].map(e=>{
+              const s=getComputedStyle(e),title=e.querySelector('.callout-title')||e,t=getComputedStyle(title),icon=e.querySelector('.callout-icon'),i=icon?getComputedStyle(icon):{},content=e.querySelector('.callout-content'),c=content?getComputedStyle(content):{};
+              const rect=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+              return {type:e.dataset.callout,fold:e.dataset.calloutFold,title:title.textContent,rect:rect(e),padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],radius:s.borderRadius,background:s.backgroundColor,calloutColor:s.getPropertyValue('--callout-color'),titleStyle:{font:t.fontFamily,size:t.fontSize,weight:t.fontWeight,lineHeight:t.lineHeight,gap:t.gap,color:t.color,rect:rect(title)},icon:{width:i.width,height:i.height},body:{display:c.display,padding:[c.paddingTop,c.paddingRight,c.paddingBottom,c.paddingLeft],rect:rect(content)}}
+            }))"""
+            for appearance in ("dark", "light"):
+                theme = "obsidian" if appearance == "dark" else "moonstone"
+                switch = f"(app.vault.setConfig('theme','{theme}'),document.body.classList.remove('theme-dark','theme-light'),document.body.classList.add('theme-{appearance}'),'changed')"
+                subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], switch], text=True)
+                for mode in ("preview", "source"):
+                    state = f"(app.workspace.activeLeaf.setViewState({{type:'markdown',state:{{file:'Callout checks.md',mode:'{mode}',source:false}}}}),'opening')"
+                    subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], state], text=True)
+                    time.sleep(.8)
+                    measured = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], measure], text=True)
+                    result = json.loads(measured)
+                    assert result, f"No callouts rendered in {appearance}/{mode}"
+                    (ROOT / f"reports/obsidian-callouts-{appearance}-{mode}.json").write_text(json.dumps(result, indent=2)+"\n")
+                    ImageGrab.grab(xdisplay=display).save(ROOT / f"reports/obsidian-callouts-{appearance}-{mode}.png")
+            print("Measured installed Obsidian callouts in both themes and views using a disposable profile.")
+            raise SystemExit(0)
         fonts = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], query], text=True)
         (ROOT / "reports/obsidian-typography.json").write_text(json.dumps(json.loads(fonts), indent=2) + "\n")
         reading_mode = "(app.workspace.activeLeaf.setViewState({type:'markdown',state:{file:'Home.md',mode:'preview'}}), 'reading')"

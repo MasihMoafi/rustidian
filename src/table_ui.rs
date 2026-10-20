@@ -695,7 +695,7 @@ impl Tables {
     }
 }
 
-fn checkpoint(ctx: &egui::Context, id: egui::Id, text: &str) {
+pub(crate) fn checkpoint(ctx: &egui::Context, id: egui::Id, text: &str) {
     let mut state = TextEditState::load(ctx, id).unwrap_or_default();
     let cursor = state.cursor.char_range().unwrap_or_default();
     let mut undoer = state.undoer();

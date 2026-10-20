@@ -369,6 +369,149 @@
       "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
       "paths": 1,
       "bytes": 4171
+    },
+    {
+      "name": "callout-note",
+      "source": "artwork/source-callout-note.png",
+      "traced": "artwork/traced-callout-note.svg",
+      "native": "callout-note.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 4114
+    },
+    {
+      "name": "callout-abstract",
+      "source": "artwork/source-callout-abstract.png",
+      "traced": "artwork/traced-callout-abstract.svg",
+      "native": "callout-abstract.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 5188
+    },
+    {
+      "name": "callout-info",
+      "source": "artwork/source-callout-info.png",
+      "traced": "artwork/traced-callout-info.svg",
+      "native": "callout-info.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 4405
+    },
+    {
+      "name": "callout-tip",
+      "source": "artwork/source-callout-tip.png",
+      "traced": "artwork/traced-callout-tip.svg",
+      "native": "callout-tip.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 5210
+    },
+    {
+      "name": "callout-todo",
+      "source": "artwork/source-callout-todo.png",
+      "traced": "artwork/traced-callout-todo.svg",
+      "native": "callout-todo.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 5228
+    },
+    {
+      "name": "callout-success",
+      "source": "artwork/source-callout-success.png",
+      "traced": "artwork/traced-callout-success.svg",
+      "native": "callout-success.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1574
+    },
+    {
+      "name": "callout-question",
+      "source": "artwork/source-callout-question.png",
+      "traced": "artwork/traced-callout-question.svg",
+      "native": "callout-question.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 6984
+    },
+    {
+      "name": "callout-warning",
+      "source": "artwork/source-callout-warning.png",
+      "traced": "artwork/traced-callout-warning.svg",
+      "native": "callout-warning.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 4872
+    },
+    {
+      "name": "callout-failure",
+      "source": "artwork/source-callout-failure.png",
+      "traced": "artwork/traced-callout-failure.svg",
+      "native": "callout-failure.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 3632
+    },
+    {
+      "name": "callout-danger",
+      "source": "artwork/source-callout-danger.png",
+      "traced": "artwork/traced-callout-danger.svg",
+      "native": "callout-danger.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 5786
+    },
+    {
+      "name": "callout-bug",
+      "source": "artwork/source-callout-bug.png",
+      "traced": "artwork/traced-callout-bug.svg",
+      "native": "callout-bug.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 7383
+    },
+    {
+      "name": "callout-example",
+      "source": "artwork/source-callout-example.png",
+      "traced": "artwork/traced-callout-example.svg",
+      "native": "callout-example.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 3022
+    },
+    {
+      "name": "callout-quote",
+      "source": "artwork/source-callout-quote.png",
+      "traced": "artwork/traced-callout-quote.svg",
+      "native": "callout-quote.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 5520
     }
   ],
   "additionalArtwork": {
@@ -465,6 +608,24 @@
       "prompt": "artwork/knowledge-sheet-prompt.json",
       "generator": "Built-in image_gen.imagegen; backend model unidentified.",
       "selectedRationale": "Distinct network, board, ribbon, sun-calendar, page template and recovery-clock silhouettes; rounded monochrome contours match the approved existing family. Source inspected at full sheet size; native-size and source/SVG proof remain required.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    },
+    "callouts": {
+      "original": "artwork/callout-sheet-original.png",
+      "prompt": "artwork/callout-sheet-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "Rounded monochrome symbols are distinct, legible at the intended native size, arranged in the requested grid, and suitable for faithful tracing; no paths are hand drawn.",
       "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
       "preparedRaster": {
         "fit": 648,

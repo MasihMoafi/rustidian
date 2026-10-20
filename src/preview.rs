@@ -23,6 +23,19 @@ struct Block {
     image: Option<String>,
     task: Option<(usize, bool)>,
     list_depth: usize,
+    callout: Option<CalloutBlock>,
+    ordinal: usize,
+}
+#[derive(Clone)]
+struct CalloutBlock {
+    model: rust_notes::callouts::Callout,
+    children: Vec<Block>,
+    ordinal: usize,
+}
+struct CalloutFrame {
+    model: rust_notes::callouts::Callout,
+    parents: Vec<Block>,
+    ordinal: usize,
 }
 #[derive(Clone, Default)]
 struct Code {
@@ -54,11 +67,25 @@ impl TableCell {
     }
 
     pub fn layout(&self, ui: &egui::Ui, header: bool, width: f32) -> Arc<egui::Galley> {
+        self.layout_color(ui, header, width, None)
+    }
+
+    pub fn layout_color(
+        &self,
+        ui: &egui::Ui,
+        header: bool,
+        width: f32,
+        color: Option<egui::Color32>,
+    ) -> Arc<egui::Galley> {
         let mut job = egui::text::LayoutJob::default();
         job.wrap.max_width = width;
         job.first_row_min_height = 23.4;
         for part in &self.parts {
-            job.append(&part.text, 0.0, inline_format(ui, part, 0, Some(header)));
+            let mut format = inline_format(ui, part, 0, Some(header));
+            if let Some(color) = color {
+                format.color = color;
+            }
+            job.append(&part.text, 0.0, format);
         }
         if job.sections.is_empty() {
             job.append(
@@ -68,6 +95,16 @@ impl TableCell {
             );
         }
         ui.fonts_mut(|fonts| fonts.layout_job(job))
+    }
+
+    pub fn link_at(&self, character: usize) -> Option<&str> {
+        let mut offset = 0;
+        self.parts.iter().find_map(|part| {
+            let end = offset + part.text.chars().count();
+            let hit = (offset..end).contains(&character);
+            offset = end;
+            hit.then_some(part.link.as_deref()).flatten()
+        })
     }
 }
 #[derive(Clone, Default)]
@@ -88,6 +125,11 @@ impl Parsed {
         let mut list: Vec<Option<u64>> = Vec::new();
         let mut task_count = 0;
         let mut quote = 0;
+        let mut plain_quotes = 0;
+        let mut quote_frames: Vec<Option<CalloutFrame>> = Vec::new();
+        let mut callout_ordinal = 0;
+        let mut code_ordinal = 0;
+        let mut table_ordinal = 0;
         let mut original_code = None;
         let mut table_row = Vec::new();
         let flush = |block: &mut Block, blocks: &mut Vec<Block>| {
@@ -97,6 +139,7 @@ impl Parsed {
                 || block.task.is_some()
                 || block.code.is_some()
                 || block.table.is_some()
+                || block.callout.is_some()
             {
                 blocks.push(std::mem::take(block));
             }
@@ -107,6 +150,33 @@ impl Parsed {
         )
         .into_offset_iter()
         {
+            if quote_frames
+                .iter()
+                .rev()
+                .flatten()
+                .next()
+                .is_some_and(|frame| {
+                    range.start >= frame.model.marker.start && range.end <= frame.model.header.end
+                })
+                && matches!(
+                    event,
+                    Event::Text(_)
+                        | Event::Code(_)
+                        | Event::SoftBreak
+                        | Event::HardBreak
+                        | Event::Start(
+                            Tag::Strong | Tag::Emphasis | Tag::Strikethrough | Tag::Link { .. }
+                        )
+                        | Event::End(
+                            TagEnd::Strong
+                                | TagEnd::Emphasis
+                                | TagEnd::Strikethrough
+                                | TagEnd::Link
+                        )
+                )
+            {
+                continue;
+            }
             match event {
                 Event::TaskListMarker(checked) => {
                     block.task = Some((task_count, checked));
@@ -124,6 +194,8 @@ impl Parsed {
                 Event::Start(Tag::Heading { level, .. }) => block.heading = level as u8,
                 Event::Start(Tag::CodeBlock(kind)) => {
                     flush(&mut block, &mut parsed.blocks);
+                    block.ordinal = code_ordinal;
+                    code_ordinal += 1;
                     let language = match kind {
                         CodeBlockKind::Fenced(language) => {
                             if quote == 0 && list.is_empty() {
@@ -139,7 +211,7 @@ impl Parsed {
                         }
                         CodeBlockKind::Indented => String::new(),
                     };
-                    block.quote = quote > 0;
+                    block.quote = plain_quotes > 0;
                     block.list_depth = list.len();
                     block.code = Some(Code {
                         language,
@@ -147,15 +219,46 @@ impl Parsed {
                     });
                 }
                 Event::Start(Tag::BlockQuote(_)) => {
+                    flush(&mut block, &mut parsed.blocks);
+                    if let Some(callout) = rust_notes::callouts::Callout::from_range(source, range)
+                    {
+                        quote_frames.push(Some(CalloutFrame {
+                            model: callout,
+                            parents: std::mem::take(&mut parsed.blocks),
+                            ordinal: callout_ordinal,
+                        }));
+                        callout_ordinal += 1;
+                    } else {
+                        quote_frames.push(None);
+                        plain_quotes += 1;
+                    }
                     quote += 1;
-                    block.quote = true;
+                    block.quote = plain_quotes > 0;
                 }
                 Event::End(TagEnd::BlockQuote(_)) => {
                     flush(&mut block, &mut parsed.blocks);
+                    if let Some(CalloutFrame {
+                        model,
+                        parents,
+                        ordinal,
+                    }) = quote_frames.pop().flatten()
+                    {
+                        let children = std::mem::replace(&mut parsed.blocks, parents);
+                        parsed.blocks.push(Block {
+                            callout: Some(CalloutBlock {
+                                model,
+                                children,
+                                ordinal,
+                            }),
+                            ..Default::default()
+                        });
+                    } else {
+                        plain_quotes -= 1;
+                    }
                     quote -= 1;
                 }
                 Event::Start(Tag::Paragraph) => {
-                    block.quote = quote > 0;
+                    block.quote = plain_quotes > 0;
                     block.list_depth = list.len();
                 }
                 Event::Start(Tag::List(start)) => {
@@ -167,7 +270,7 @@ impl Parsed {
                 }
                 Event::Start(Tag::Item) => {
                     block.list_depth = list.len();
-                    block.quote = quote > 0;
+                    block.quote = plain_quotes > 0;
                     let marker = match list.last_mut() {
                         Some(Some(number)) => {
                             let marker = format!("{number}. ");
@@ -234,6 +337,8 @@ impl Parsed {
                 }
                 Event::Start(Tag::Table(alignments)) => {
                     flush(&mut block, &mut parsed.blocks);
+                    block.ordinal = table_ordinal;
+                    table_ordinal += 1;
                     block.table = Some(Table {
                         alignments,
                         rows: Vec::new(),
@@ -339,6 +444,12 @@ pub fn show(
 }
 
 fn matches_anchor(block: &Block, anchor: &str) -> bool {
+    if let Some(callout) = &block.callout {
+        return callout
+            .children
+            .iter()
+            .any(|block| matches_anchor(block, anchor));
+    }
     let content: String = block.parts.iter().map(|part| part.text.as_str()).collect();
     (block.heading > 0 && content.to_lowercase() == anchor.to_lowercase())
         || (anchor.starts_with('^') && content.split_whitespace().last() == Some(anchor))
@@ -390,18 +501,63 @@ fn show_blocks(
         }
     }
     let mut folded_level = None;
-    let mut code_ordinal = 0;
-    let mut table_ordinal = 0;
     for (index, block) in blocks.iter().enumerate() {
-        let ordinal = code_ordinal;
-        code_ordinal += usize::from(block.code.is_some());
-        let table_index = table_ordinal;
-        table_ordinal += usize::from(block.table.is_some());
+        let ordinal = block.ordinal;
+        let table_index = block.ordinal;
         if let Some(level) = folded_level {
             if block.heading == 0 || block.heading > level {
                 continue;
             }
             folded_level = None;
+        }
+        if let Some(callout) = &block.callout {
+            let id = ui.make_persistent_id(("reading-callout", callout.ordinal));
+            let mut folded = ui
+                .ctx()
+                .data(|data| data.get_temp::<bool>(id))
+                .unwrap_or(callout.model.folded.unwrap_or(false));
+            if anchor.is_some_and(|anchor| matches_anchor(block, anchor)) {
+                folded = false;
+            }
+            ui.add_space(8.0);
+            egui::Frame::NONE
+                .fill(crate::callout_ui::background(ui, callout.model.kind))
+                .inner_margin(egui::Margin {
+                    left: 24,
+                    right: 12,
+                    top: 12,
+                    bottom: 12,
+                })
+                .corner_radius(7)
+                .show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.push_id(("callout", callout.ordinal), |ui| {
+                        let (header, link) =
+                            crate::callout_ui::header(ui, &callout.model, callout.ordinal, folded);
+                        if let Some(link) = link {
+                            clicked = follow_destination(ui, &link, native_links);
+                        } else if header.clicked() && callout.model.folded.is_some() {
+                            folded = !folded;
+                        }
+                        if !folded && !callout.children.is_empty() {
+                            ui.add_space(10.0);
+                            let content = ui.scope(|ui| {
+                                show_blocks(ui, &callout.children, native_links, anchor, task)
+                            });
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("callout-body:{}", callout.ordinal),
+                                content.response.rect,
+                            );
+                            if let Some(link) = content.inner {
+                                clicked = Some(link);
+                            }
+                        }
+                    });
+                });
+            ui.ctx().data_mut(|data| data.insert_temp(id, folded));
+            ui.add_space(8.0);
+            continue;
         }
         if let Some(table) = &block.table {
             ui.add_space(16.0);

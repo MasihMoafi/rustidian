@@ -244,10 +244,23 @@ pub enum Icon {
     PropertyTags,
     PropertyDate,
     PropertyDateTime,
+    CalloutNote,
+    CalloutAbstract,
+    CalloutInfo,
+    CalloutTodo,
+    CalloutTip,
+    CalloutSuccess,
+    CalloutQuestion,
+    CalloutWarning,
+    CalloutFailure,
+    CalloutDanger,
+    CalloutBug,
+    CalloutExample,
+    CalloutQuote,
 }
 
 impl Icon {
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 44] = [
         Self::Files,
         Self::Search,
         Self::NewNote,
@@ -279,6 +292,19 @@ impl Icon {
         Self::PropertyTags,
         Self::PropertyDate,
         Self::PropertyDateTime,
+        Self::CalloutNote,
+        Self::CalloutAbstract,
+        Self::CalloutInfo,
+        Self::CalloutTodo,
+        Self::CalloutTip,
+        Self::CalloutSuccess,
+        Self::CalloutQuestion,
+        Self::CalloutWarning,
+        Self::CalloutFailure,
+        Self::CalloutDanger,
+        Self::CalloutBug,
+        Self::CalloutExample,
+        Self::CalloutQuote,
     ];
 
     pub fn asset(self) -> (&'static str, &'static [u8]) {
@@ -406,6 +432,58 @@ impl Icon {
             Self::PropertyDateTime => (
                 "bytes://icons/property-date-time.svg",
                 include_bytes!("../assets/icons/property-date-time.svg"),
+            ),
+            Self::CalloutNote => (
+                "bytes://icons/callout-note.svg",
+                include_bytes!("../assets/icons/callout-note.svg"),
+            ),
+            Self::CalloutAbstract => (
+                "bytes://icons/callout-abstract.svg",
+                include_bytes!("../assets/icons/callout-abstract.svg"),
+            ),
+            Self::CalloutInfo => (
+                "bytes://icons/callout-info.svg",
+                include_bytes!("../assets/icons/callout-info.svg"),
+            ),
+            Self::CalloutTodo => (
+                "bytes://icons/callout-todo.svg",
+                include_bytes!("../assets/icons/callout-todo.svg"),
+            ),
+            Self::CalloutTip => (
+                "bytes://icons/callout-tip.svg",
+                include_bytes!("../assets/icons/callout-tip.svg"),
+            ),
+            Self::CalloutSuccess => (
+                "bytes://icons/callout-success.svg",
+                include_bytes!("../assets/icons/callout-success.svg"),
+            ),
+            Self::CalloutQuestion => (
+                "bytes://icons/callout-question.svg",
+                include_bytes!("../assets/icons/callout-question.svg"),
+            ),
+            Self::CalloutWarning => (
+                "bytes://icons/callout-warning.svg",
+                include_bytes!("../assets/icons/callout-warning.svg"),
+            ),
+            Self::CalloutFailure => (
+                "bytes://icons/callout-failure.svg",
+                include_bytes!("../assets/icons/callout-failure.svg"),
+            ),
+            Self::CalloutDanger => (
+                "bytes://icons/callout-danger.svg",
+                include_bytes!("../assets/icons/callout-danger.svg"),
+            ),
+            Self::CalloutBug => (
+                "bytes://icons/callout-bug.svg",
+                include_bytes!("../assets/icons/callout-bug.svg"),
+            ),
+            Self::CalloutExample => (
+                "bytes://icons/callout-example.svg",
+                include_bytes!("../assets/icons/callout-example.svg"),
+            ),
+            Self::CalloutQuote => (
+                "bytes://icons/callout-quote.svg",
+                include_bytes!("../assets/icons/callout-quote.svg"),
             ),
         }
     }
