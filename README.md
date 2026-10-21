@@ -38,7 +38,8 @@ The included sample is deliberately separate from the real vault. Opening a vaul
 - Atomic saves, permission preservation, external-change checks, new-note collision refusal, and unsaved-close protection. Right-click a folder to rename or move it to an existing parent inside the vault; nested notes/images and open-tab history follow the move. Existing destinations, linked folders and stale move plans are refused.
 - Nested heading folds in reading, Source and Live modes. Editing folds preserve source and undo, skip hidden rows during navigation, and reveal anchor/search targets. Live/source quote, list, Setext and root fenced-code rendering follows the measured reference.
 - Cached native syntax colors match the measured dark/light editing palettes; reading/editing code panels share a generated Copy control, with measured reader padding and mode-specific colors.
-- Native reading tables with aligned columns, inline formatting, wiki links and horizontal scrolling.
+- Native tables with aligned columns, inline formatting, wiki links and horizontal scrolling. Live cells support Tab/Shift+Tab/Enter, shared undo, row/column changes, alignment and sorting while preserving Markdown.
+- Thirteen callout types and their aliases, formatted titles, nested folding and source-preserving type changes. Reading callouts retain native links, tasks, code, tables and images; long nested titles wrap in both themes.
 - Paste and selection edits have independent undo boundaries; Ctrl+S includes text received in the same frame. Wiki completion uses text queued before Tab/Enter and preserves Enter after a closing delimiter or an unmatched query.
 - Embedded Inter prose, Noto Arabic fallback and DejaVu Sans Mono code fonts; their licenses are retained under assets/fonts. The pinned text-backend changes and remaining bidi limits are documented in [vendor provenance](vendor/UPSTREAM.md).
 - Plain UTF-8 `.md` files; hidden/dependency folders and child symlinks are not indexed.
@@ -65,7 +66,7 @@ If another program changes a note, save refuses to overwrite it and retains your
 
 ## Remaining work
 
-Exact full-product parity remains in progress. Properties, aliases, tags, advanced search, guarded note/folder moves with link updates, system Trash, and heading/block navigation are implemented. Visible empty folders and New folder are implemented. Remaining areas include complex-document folding, table editing, callouts/math/diagrams, graph/canvas, file recovery, plugin equivalents, and optional sync. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Vault switching and tab undo isolation have native GUI coverage. Existing Obsidian JavaScript plugins do not execute here.
+Exact full-product parity remains in progress. Remaining areas include complex-document folding, math/diagrams, graph/canvas, file recovery, bookmarks/daily notes/templates, plugin equivalents, and optional sync/mobile. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Existing Obsidian JavaScript plugins do not execute here.
 
 Indexing runs outside rendering, with native file notifications. Release measurements, declared method and limits are in [the plan](docs/PLAN.md) and [desktop benchmark](reports/desktop-benchmark.json). The local comparison uses installed Obsidian 1.5.12 with a different feature set; it does not establish equal-feature performance. The deterministic 5,000-note run is in [vault benchmark](reports/vault-benchmark.json). GUI verification currently covers Linux/X11.
 
@@ -76,4 +77,4 @@ gh workflow run native.yml --repo MasihMoafi/rust-notes
 gh run list --repo MasihMoafi/rust-notes --workflow native.yml --limit 3
 ```
 
-Actions runs formatting, Clippy, Rust checks, a release build and the native GUI suite using Xvfb, xdotool and Pillow. The suite tests a copied executable beside a disposable sample vault, including launch without a vault argument, then saves screenshots and results in the short-lived artifact. It never modifies the real vault. CI verification of this new workflow is pending until its first run passes.
+Actions runs formatting, Clippy, Rust checks, release builds, native GUI checks and serial editor CPU gates. It tests a copied executable beside a disposable sample vault, including launch without a vault argument, and saves screenshots, logs and raw measurements in the short-lived artifact. It never modifies the real vault. [Run39527354572](https://github.com/MasihMoafi/rust-notes/actions/runs/39527354572) passes107 Rust executions/102 unique,89 full native GUI groups and all six CPU conditions for source7e2a903. The exact downloaded release also passes10 local callout groups without rebuilding.

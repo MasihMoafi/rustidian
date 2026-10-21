@@ -215,6 +215,7 @@ pub fn install_fonts(ctx: &egui::Context) {
 pub enum Icon {
     Files,
     Search,
+    Bookmark,
     NewNote,
     NewFolder,
     Sort,
@@ -260,9 +261,10 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 45] = [
         Self::Files,
         Self::Search,
+        Self::Bookmark,
         Self::NewNote,
         Self::NewFolder,
         Self::Sort,
@@ -309,6 +311,10 @@ impl Icon {
 
     pub fn asset(self) -> (&'static str, &'static [u8]) {
         match self {
+            Self::Bookmark => (
+                "bytes://icons/bookmark.svg",
+                include_bytes!("../assets/icons/bookmark.svg"),
+            ),
             Self::Close => (
                 "bytes://icons/close.svg",
                 include_bytes!("../assets/icons/close.svg"),

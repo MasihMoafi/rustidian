@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -1729,6 +1729,197 @@ def main():
                 click_control("search:Bulk/Note0549.md")
                 title_contains("Note0549")
                 results.append("All 550 search matches remained reachable; scrolling opened the last note beyond the previous 200-result cap")
+            def bookmark_checks():
+                nonlocal app, window
+                folder = fixture / "Bookmark folder"
+                folder.mkdir()
+                path = folder / "Bookmark check.md"
+                source = "# Bookmark check\n\nOriginal فارسی 🦀.\n"
+                path.write_text(source)
+                time.sleep(.7)
+                open_note("Bookmark check")
+                command("Source editing")
+                editor_end()
+                type_text(" CONTROL")
+                key("ctrl+z")
+                key("ctrl+s")
+                assert path.read_text() == source
+                command("Reading view")
+                type_text("READ_ONLY_BOOKMARK_CONTROL")
+                key("ctrl+s")
+                assert path.read_text() == source
+                results.append("Bookmark controls: ordinary source editing/undo/save works and Reading input leaves source intact")
+                click_control("bookmarks-tab")
+                assert control_bounds("bookmark-add-current")
+                click_control("bookmark-add-current")
+                command("Bookmark current file")
+
+                def state_with(target):
+                    for state_path in (base / "state/rust-notes").glob("*.json"):
+                        state = json.loads(state_path.read_text())
+                        if any(item["path"] == target for item in state.get("bookmarks", {}).get("items", [])):
+                            return state_path, state
+                    raise AssertionError(f"No saved bookmark: {target}")
+
+                relative = "Bookmark folder/Bookmark check.md"
+                state_path, state = state_with(relative)
+                assert [item["path"] for item in state["bookmarks"]["items"]] == [relative]
+                assert path.read_text() == source
+                results.append("Adding the current file persisted immediately outside the vault and repeated bookmarking created no duplicate")
+                click_control(f"bookmark:{relative}", "3")
+                click_control("bookmark-title")
+                type_text("Writing فارسی", delay=40)
+                key("Return")
+                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                open_note("Home")
+                command("Bookmark current file")
+                # Explorer context menu follows the same bookmark operation for images.
+                xdo("mousemove", "70", "20", "click", "1")
+                pause()
+                click_control("file-collapse")
+                click_control("folder:Assets")
+                click_control("file:Assets/Attachment.png", "3")
+                click_control("file-bookmark:Assets/Attachment.png")
+                command("Show bookmarks")
+                click_control("bookmark:Assets/Attachment.png", "3")
+                click_control("bookmark-up")
+                state = state_with(relative)[1]
+                assert [item["path"] for item in state["bookmarks"]["items"]] == [relative, "Assets/Attachment.png", "Home.md"]
+                image_bytes = attachment.read_bytes()
+                click_control("bookmark:Assets/Attachment.png")
+                title_contains("Attachment")
+                type_text("BOOKMARKED_IMAGE_READ_ONLY")
+                key("ctrl+b")
+                key("ctrl+s")
+                assert attachment.read_bytes() == image_bytes
+                target = folder / "Ctrl target.md"
+                target.write_text("# Ctrl target\n")
+                time.sleep(.7)
+                open_note("Ctrl target")
+                command("Bookmark current file")
+                open_note("Bookmark check")
+                click_control(f"bookmark:{relative}")
+                title_contains("Bookmark check")
+                xdo("keydown", "ctrl")
+                try:
+                    click_control("bookmark:Bookmark folder/Ctrl target.md")
+                finally:
+                    xdo("keyup", "ctrl")
+                title_contains("Ctrl target")
+                key("ctrl+w")
+                title_contains("Bookmark check")
+                click_control("bookmark:Bookmark folder/Ctrl target.md", "3")
+                click_control("bookmark-remove")
+                assert target.read_text() == "# Ctrl target\n"
+                assert path.read_text() == source
+                capture("native-bookmarks-dark.png")
+                results.append("Bookmark titles retained Persian text, ordering persisted, explorer images stayed read-only and Ctrl-click opened a separate tab")
+
+                key("F2")
+                key("ctrl+a")
+                type_text("Bookmark folder/Bookmark renamed.md")
+                key("Return")
+                relative = "Bookmark folder/Bookmark renamed.md"
+                path = fixture / relative
+                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                xdo("mousemove", "70", "20", "click", "1")
+                pause()
+                click_control("file-collapse")
+                click_control("folder:Bookmark folder", "3")
+                click_control("folder-rename:Bookmark folder")
+                key("ctrl+a")
+                type_text("Pinned notes")
+                key("Return")
+                relative = "Pinned notes/Bookmark renamed.md"
+                path = fixture / relative
+                assert path.read_text() == source
+                state_path, state = state_with(relative)
+                assert state["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                command("Show bookmarks")
+                click_control(f"bookmark:{relative}")
+                title_contains("Bookmark renamed")
+                key("ctrl+q")
+                app.wait(timeout=5)
+                app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+                window = ready_window()
+                title_contains("Bookmark renamed")
+                assert control_bounds(f"bookmark:{relative}")
+                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                command("Switch appearance")
+                capture("native-bookmarks-light.png")
+                command("Switch appearance")
+                results.append("File and folder renames updated bookmark paths without losing custom titles; a clean native restart restored the list and current file")
+
+                # Removal never deletes the file; failed state writes roll back the shortcut.
+                click_control(f"bookmark:{relative}", "3")
+                click_control("bookmark-remove")
+                assert control_bounds(f"bookmark:{relative}", required=False) is None
+                assert path.read_text() == source
+                displaced_state = base / "held-workspace-state.json"
+                state_path.rename(displaced_state)
+                state_path.mkdir()
+                try:
+                    click_control("bookmark-add-current")
+                    assert control_bounds(f"bookmark:{relative}", required=False) is None
+                    capture("native-bookmark-state-error.png")
+                finally:
+                    state_path.rmdir()
+                    displaced_state.rename(state_path)
+                click_control("bookmark-add-current")
+                assert control_bounds(f"bookmark:{relative}")
+                assert path.read_text() == source
+                results.append("Removing a bookmark preserved its note; a real workspace-write failure rolled back the added shortcut and a later retry saved it")
+
+                # A missing target must neither open a different file nor edit the active one.
+                open_note("Home")
+                home_before = (fixture / "Home.md").read_bytes()
+                missing = path.with_name("Temporarily elsewhere.md")
+                path.rename(missing)
+                time.sleep(.8)
+                click_control(f"bookmark:{relative}")
+                title_contains("Home")
+                assert (fixture / "Home.md").read_bytes() == home_before
+                assert missing.read_text() == source
+                click_control(f"bookmark:{relative}", "3")
+                click_control("bookmark-remove")
+                assert control_bounds(f"bookmark:{relative}", required=False) is None
+                missing.rename(path)
+                key("ctrl+t")
+                click_control("bookmark-add-current")
+                command("Bookmark current file")
+                assert all(item["path"] for item in state_with("Assets/Attachment.png")[1]["bookmarks"]["items"])
+                key("ctrl+w")
+                results.append("Missing bookmark targets preserved the active note and stayed removable; a blank tab could not create an empty bookmark")
+
+                second = base / "Bookmark other vault"
+                second.mkdir()
+                second_home = second / "Home.md"
+                second_home.write_text("# Separate vault\n")
+                command("Open vault")
+                key("ctrl+a")
+                type_text(str(second))
+                key("Return")
+                title_contains(second.name)
+                command("Show bookmarks")
+                assert control_bounds("bookmark:Assets/Attachment.png", required=False) is None
+                click_control("bookmark-add-current")
+                command("Open vault")
+                key("ctrl+a")
+                type_text(str(fixture))
+                key("Return")
+                title_contains(fixture.name)
+                command("Show bookmarks")
+                assert control_bounds("bookmark:Assets/Attachment.png")
+                assert [item["path"] for item in state_with("Assets/Attachment.png")[1]["bookmarks"]["items"]] == ["Assets/Attachment.png", "Home.md"]
+                assert second_home.read_text() == "# Separate vault\n"
+                assert path.read_text() == source
+                results.append("Two vaults with equal note names retained independent bookmark lists and original note bytes")
+
+            if args.section == "bookmarks":
+                bookmark_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "bookmarks"}))
+                return
             if args.section == "callouts":
                 callout_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -2089,6 +2280,7 @@ def main():
             table_link_checks()
             table_input_checks()
             callout_checks()
+            bookmark_checks()
             persian_checks()
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))

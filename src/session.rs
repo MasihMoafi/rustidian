@@ -22,6 +22,10 @@ struct Session {
     dark: bool,
     #[serde(default)]
     sort_descending: bool,
+    #[serde(default)]
+    bookmarks: rust_notes::bookmarks::Bookmarks,
+    #[serde(default)]
+    bookmarks_open: bool,
 }
 
 fn location(root: &Path) -> Option<PathBuf> {
@@ -86,16 +90,28 @@ impl NotesApp {
         self.show_right = session.right;
         self.dark = session.dark;
         self.sort_descending = session.sort_descending;
+        self.bookmarks = session.bookmarks;
+        self.bookmarks.sanitize();
+        self.show_bookmarks = session.bookmarks_open;
         theme::apply(ctx, self.dark);
         !self.tabs.is_empty()
     }
 
     pub(crate) fn persist_session(&self) {
-        let Some(vault) = &self.vault else {
+        if self.vault.is_none() {
             return;
+        }
+        if let Err(error) = self.write_session() {
+            eprintln!("Cannot preserve workspace layout: {error}");
+        }
+    }
+
+    pub(crate) fn write_session(&self) -> Result<(), String> {
+        let Some(vault) = &self.vault else {
+            return Err("Open a vault first.".into());
         };
         let Some(path) = location(&vault.root) else {
-            return;
+            return Err("Cannot find a folder for workspace state.".into());
         };
         let session = Session {
             editing_modes: self.tabs.iter().map(Tab::editing_view).collect(),
@@ -109,12 +125,12 @@ impl NotesApp {
             right: self.show_right,
             dark: self.dark,
             sort_descending: self.sort_descending,
+            bookmarks: self.bookmarks.clone(),
+            bookmarks_open: self.show_bookmarks,
         };
-        let Ok(bytes) = serde_json::to_vec(&session) else {
-            return;
-        };
+        let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {
-            return;
+            return Err("Cannot find a folder for workspace state.".into());
         };
         let result = (|| -> std::io::Result<()> {
             std::fs::create_dir_all(&parent)?;
@@ -123,8 +139,24 @@ impl NotesApp {
             file.persist(path)?;
             Ok(())
         })();
-        if let Err(error) = result {
-            eprintln!("Cannot preserve workspace layout: {error}");
-        }
+        result.map_err(|error| format!("Cannot preserve workspace state: {error}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Session;
+
+    #[test]
+    fn old_workspace_state_restores_without_bookmarks() {
+        let old =
+            r#"{"tabs":[["Home.md","Live"]],"active":0,"left":true,"right":false,"dark":true}"#;
+        let state: Session = serde_json::from_str(old).unwrap();
+        assert!(state.bookmarks.items.is_empty());
+        assert!(!state.bookmarks_open);
+        let restored: Session =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        assert_eq!(restored.tabs.len(), 1);
+        assert_eq!(restored.tabs[0].0, std::path::Path::new("Home.md"));
     }
 }

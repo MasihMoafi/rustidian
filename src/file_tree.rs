@@ -10,12 +10,58 @@ pub enum FileAction {
     Open(PathBuf),
     Rename(PathBuf),
     Trash(PathBuf),
+    Bookmark(PathBuf),
 }
 
 #[derive(Default)]
 pub struct Tree {
     folders: BTreeMap<String, Tree>,
     files: Vec<PathBuf>,
+}
+
+pub fn file_row(ui: &mut egui::Ui, path: &Path, title: &str, selected: bool) -> egui::Response {
+    let (_, outer) = ui.allocate_space(egui::vec2(ui.available_width(), 31.0));
+    let mut rect = outer.shrink2(egui::vec2(0.0, 1.0));
+    rect.max.x -= 6.0;
+    let response = ui.interact(rect, ui.make_persistent_id(path), egui::Sense::click());
+    if selected || response.hovered() {
+        let fill = if selected {
+            Color32::from_rgba_unmultiplied(23, 127, 131, 40)
+        } else {
+            ui.visuals().widgets.hovered.weak_bg_fill
+        };
+        ui.painter().rect_filled(rect, 6, fill);
+    }
+    let color = if selected {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let title_text = RichText::new(title).size(13.0).color(color);
+    let text = egui::WidgetText::from(if selected {
+        title_text.font(FontId::new(13.0, egui::FontFamily::Name("semibold".into())))
+    } else {
+        title_text
+    });
+    let galley = text.into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        (rect.width() - 18.0).max(1.0),
+        FontId::proportional(13.0),
+    );
+    let position = egui::pos2(rect.left() + 9.0, rect.center().y - galley.size().y * 0.5);
+    ui.painter().galley(position, galley, color);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), title));
+    if selected {
+        ui.painter().line_segment(
+            [
+                response.rect.left_top() + egui::vec2(1.5, 3.0),
+                response.rect.left_bottom() + egui::vec2(1.5, -3.0),
+            ],
+            Stroke::new(3.0, theme::interactive(ui)),
+        );
+    }
+    response
 }
 
 impl Tree {
@@ -157,52 +203,20 @@ impl Tree {
             let path = &self.files[index];
             let title = rust_notes::vault::file_title(path);
             let selected = active == Some(path.as_path());
-            let (_, outer) = ui.allocate_space(egui::vec2(ui.available_width(), 31.0));
-            let mut rect = outer.shrink2(egui::vec2(0.0, 1.0));
-            rect.max.x -= 6.0;
-            let response = ui.interact(rect, ui.make_persistent_id(path), egui::Sense::click());
-            crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), rect);
-            if selected || response.hovered() {
-                let fill = if selected {
-                    Color32::from_rgba_unmultiplied(23, 127, 131, 40)
-                } else {
-                    ui.visuals().widgets.hovered.weak_bg_fill
-                };
-                ui.painter().rect_filled(rect, 6, fill);
-            }
-            let color = if selected {
-                ui.visuals().text_color()
-            } else {
-                ui.visuals().weak_text_color()
-            };
-            let title_text = RichText::new(title.as_str()).size(13.0).color(color);
-            let text = egui::WidgetText::from(if selected {
-                title_text.font(FontId::new(13.0, egui::FontFamily::Name("semibold".into())))
-            } else {
-                title_text
-            });
-            let galley = text.into_galley(
-                ui,
-                Some(egui::TextWrapMode::Truncate),
-                (rect.width() - 18.0).max(1.0),
-                FontId::proportional(13.0),
-            );
-            let position = egui::pos2(rect.left() + 9.0, rect.center().y - galley.size().y * 0.5);
-            ui.painter().galley(position, galley, color);
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), title.as_str())
-            });
-            if selected {
-                ui.painter().line_segment(
-                    [
-                        response.rect.left_top() + egui::vec2(1.5, 3.0),
-                        response.rect.left_bottom() + egui::vec2(1.5, -3.0),
-                    ],
-                    Stroke::new(3.0, theme::interactive(ui)),
-                );
-            }
+            let response = file_row(ui, path, &title, selected);
+            crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);
             let response = response.on_hover_text(path.display().to_string());
             response.context_menu(|ui| {
+                let bookmark = ui.button("Bookmark");
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    format!("file-bookmark:{}", path.display()),
+                    bookmark.rect,
+                );
+                if bookmark.clicked() {
+                    open = Some(FileAction::Bookmark(path.clone()));
+                    ui.close();
+                }
                 if ui.button("Rename or move…").clicked() {
                     open = Some(FileAction::Rename(path.clone()));
                     ui.close();

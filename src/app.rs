@@ -26,6 +26,7 @@ enum Dialog {
     RenameNote,
     TrashNote,
     AddProperty,
+    BookmarkTitle,
 }
 #[derive(Clone, Copy)]
 enum Pending {
@@ -74,6 +75,8 @@ pub struct NotesApp {
     collapse_epoch: u64,
     reveal_folder: Option<PathBuf>,
     reset_tree_scroll: bool,
+    pub(crate) bookmarks: rust_notes::bookmarks::Bookmarks,
+    pub(crate) show_bookmarks: bool,
 }
 
 impl NotesApp {
@@ -121,6 +124,8 @@ impl NotesApp {
             collapse_epoch: 0,
             reveal_folder: None,
             reset_tree_scroll: false,
+            bookmarks: Default::default(),
+            show_bookmarks: false,
         };
         app.load_vault(root);
         app
@@ -221,6 +226,8 @@ impl NotesApp {
                 Ok(vault) => {
                     let opening = self.loading_root.take().is_some();
                     if opening {
+                        self.bookmarks = Default::default();
+                        self.show_bookmarks = false;
                         self.sort_descending = false;
                         self.collapse_epoch = 0;
                         self.reveal_folder = None;
@@ -642,6 +649,7 @@ impl NotesApp {
             }) {
                 self.show_left = true;
                 self.searching = true;
+                self.show_bookmarks = false;
                 self.search_focus = true;
                 self.editor.focus = false;
             } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::F))
@@ -729,6 +737,137 @@ impl NotesApp {
         }
     }
 
+    fn save_bookmarks(&mut self, before: rust_notes::bookmarks::Bookmarks) -> bool {
+        if let Err(error) = self.write_session() {
+            self.bookmarks = before;
+            self.error = Some(error);
+            return false;
+        }
+        self.status = "Bookmarks saved".into();
+        if !self.dirty() {
+            self.error = None;
+        }
+        true
+    }
+
+    fn add_bookmark(&mut self, path: &Path) {
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        let before = self.bookmarks.clone();
+        match self.bookmarks.add(vault, path) {
+            Ok(true) => {
+                self.save_bookmarks(before);
+            }
+            Ok(false) => self.status = "This file is already bookmarked".into(),
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn bookmark_list(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(12.0);
+        ui.label(RichText::new("Bookmarks").size(12.0).strong().weak());
+        ui.add_space(8.0);
+        let can_add = self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| !tab.document.is_blank());
+        let add = ui.add_enabled(
+            can_add,
+            egui::Button::new("Bookmark current file").frame(false),
+        );
+        crate::ui_probe::record(ui.ctx(), "bookmark-add-current", add.rect);
+        if add.clicked()
+            && let Some(path) = self
+                .tabs
+                .get(self.active)
+                .map(|tab| tab.document.path.clone())
+        {
+            self.add_bookmark(&path);
+        }
+        ui.add_space(8.0);
+        if self.bookmarks.items.is_empty() {
+            ui.label(RichText::new("No bookmarks yet").small().weak());
+        }
+        let mut open = None;
+        let mut action = None;
+        ScrollArea::vertical()
+            .id_salt("bookmarks")
+            .max_height((ui.available_height() - 64.0).max(0.0))
+            .show(ui, |ui| {
+                for (index, item) in self.bookmarks.items.iter().enumerate() {
+                    let active = self
+                        .tabs
+                        .get(self.active)
+                        .is_some_and(|tab| tab.document.path == item.path);
+                    let exists = self.vault.as_ref().is_some_and(|vault| {
+                        vault.notes.iter().any(|note| note.path == item.path)
+                            || vault.attachments.contains(&item.path)
+                    });
+                    let label = if exists {
+                        item.label()
+                    } else {
+                        format!("{} (missing)", item.label())
+                    };
+                    let response = crate::file_tree::file_row(ui, &item.path, &label, active)
+                        .on_hover_text(item.path.display().to_string());
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("bookmark:{}", item.path.display()),
+                        response.rect,
+                    );
+                    response.context_menu(|ui| {
+                        for (name, label, enabled) in [
+                            ("title", "Edit title…", true),
+                            ("up", "Move up", index > 0),
+                            ("down", "Move down", index + 1 < self.bookmarks.items.len()),
+                            ("remove", "Remove bookmark", true),
+                        ] {
+                            let response = ui.add_enabled(enabled, egui::Button::new(label));
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("bookmark-{name}"),
+                                response.rect,
+                            );
+                            if response.clicked() {
+                                action = Some((item.path.clone(), name));
+                                ui.close();
+                            }
+                        }
+                    });
+                    if response.clicked() {
+                        open = Some(item.path.clone());
+                    }
+                }
+            });
+        if let Some(path) = open {
+            self.open_note_at(&path, ui.ctx().input(|input| input.modifiers.command));
+        }
+        if let Some((path, action)) = action {
+            if action == "title" {
+                let title = self
+                    .bookmarks
+                    .items
+                    .iter()
+                    .find(|item| item.path == path)
+                    .and_then(|item| item.title.clone())
+                    .unwrap_or_default();
+                self.ask(Dialog::BookmarkTitle);
+                self.dialog_path = Some(path);
+                self.dialog_input = title;
+            } else {
+                let before = self.bookmarks.clone();
+                match action {
+                    "up" => self.bookmarks.move_item(&path, -1),
+                    "down" => self.bookmarks.move_item(&path, 1),
+                    "remove" => self.bookmarks.remove(&path),
+                    _ => {}
+                }
+                self.save_bookmarks(before);
+            }
+        }
+    }
+
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         if !self.show_left {
             return;
@@ -753,62 +892,82 @@ impl NotesApp {
                         let files = icon_button(ui, Icon::Files, "File explorer");
                         if files.clicked() {
                             self.searching = false;
+                            self.show_bookmarks = false;
                         }
                         let search = icon_button(ui, Icon::Search, "Search notes");
                         if search.clicked() {
                             self.searching = true;
+                            self.show_bookmarks = false;
                             self.search_focus = true;
                         }
-                        let selected = if self.searching { &search } else { &files };
+                        let bookmarks = icon_button(ui, Icon::Bookmark, "Bookmarks");
+                        crate::ui_probe::record(ui.ctx(), "bookmarks-tab", bookmarks.rect);
+                        if bookmarks.clicked() {
+                            self.show_bookmarks = true;
+                        }
+                        let selected = if self.show_bookmarks {
+                            &bookmarks
+                        } else if self.searching {
+                            &search
+                        } else {
+                            &files
+                        };
                         ui.painter().line_segment(
                             [selected.rect.left_bottom(), selected.rect.right_bottom()],
                             Stroke::new(1.5, theme::accent(ui)),
                         );
                     },
                 );
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), 40.0),
-                    Layout::left_to_right(Align::Center),
-                    |ui| {
-                        ui.set_min_height(40.0);
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.add_space(74.0);
-                        if icon_button(ui, Icon::NewNote, "New note · Ctrl+N").clicked() {
-                            self.ask(Dialog::NewNote);
-                        }
-                        let new_folder = icon_button(ui, Icon::NewFolder, "New folder");
-                        crate::ui_probe::record(ui.ctx(), "new-folder", new_folder.rect);
-                        if new_folder.clicked() {
-                            self.ask(Dialog::NewFolder);
-                        }
-                        let sort = icon_button(ui, Icon::Sort, "Change sort order");
-                        crate::ui_probe::record(ui.ctx(), "file-sort", sort.rect);
-                        egui::Popup::menu(&sort).show(|ui| {
-                            for (descending, label, probe) in [
-                                (false, "File name (A to Z)", "sort-ascending"),
-                                (true, "File name (Z to A)", "sort-descending"),
-                            ] {
-                                let response =
-                                    ui.selectable_label(self.sort_descending == descending, label);
-                                crate::ui_probe::record(ui.ctx(), probe, response.rect);
-                                if response.clicked() {
-                                    self.sort_descending = descending;
-                                    self.reset_tree_scroll = true;
-                                    ui.close();
-                                }
+                if !self.show_bookmarks {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 40.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.set_min_height(40.0);
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.add_space(74.0);
+                            if icon_button(ui, Icon::NewNote, "New note · Ctrl+N").clicked() {
+                                self.ask(Dialog::NewNote);
                             }
-                        });
-                        let collapse = icon_button(ui, Icon::CollapseAll, "Collapse all folders");
-                        crate::ui_probe::record(ui.ctx(), "file-collapse", collapse.rect);
-                        if collapse.clicked() {
-                            self.collapse_epoch = self.collapse_epoch.wrapping_add(1);
-                            self.reveal_folder = None;
-                        }
-                    },
-                );
-                ui.add_space(8.0);
+                            let new_folder = icon_button(ui, Icon::NewFolder, "New folder");
+                            crate::ui_probe::record(ui.ctx(), "new-folder", new_folder.rect);
+                            if new_folder.clicked() {
+                                self.ask(Dialog::NewFolder);
+                            }
+                            let sort = icon_button(ui, Icon::Sort, "Change sort order");
+                            crate::ui_probe::record(ui.ctx(), "file-sort", sort.rect);
+                            egui::Popup::menu(&sort).show(|ui| {
+                                for (descending, label, probe) in [
+                                    (false, "File name (A to Z)", "sort-ascending"),
+                                    (true, "File name (Z to A)", "sort-descending"),
+                                ] {
+                                    let response = ui.selectable_label(
+                                        self.sort_descending == descending,
+                                        label,
+                                    );
+                                    crate::ui_probe::record(ui.ctx(), probe, response.rect);
+                                    if response.clicked() {
+                                        self.sort_descending = descending;
+                                        self.reset_tree_scroll = true;
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            let collapse =
+                                icon_button(ui, Icon::CollapseAll, "Collapse all folders");
+                            crate::ui_probe::record(ui.ctx(), "file-collapse", collapse.rect);
+                            if collapse.clicked() {
+                                self.collapse_epoch = self.collapse_epoch.wrapping_add(1);
+                                self.reveal_folder = None;
+                            }
+                        },
+                    );
+                    ui.add_space(8.0);
+                }
 
-                if self.searching {
+                if self.show_bookmarks {
+                    self.bookmark_list(ui);
+                } else if self.searching {
                     let input = ui.add(
                         TextEdit::singleline(&mut self.search)
                             .hint_text("Search your notes…")
@@ -931,6 +1090,7 @@ impl NotesApp {
                 }
                 FileAction::Rename(path) => self.ask_file(Dialog::RenameNote, path),
                 FileAction::Trash(path) => self.ask_file(Dialog::TrashNote, path),
+                FileAction::Bookmark(path) => self.add_bookmark(&path),
             }
         }
     }
@@ -1580,6 +1740,7 @@ impl NotesApp {
             Dialog::RenameNote => "Rename or move",
             Dialog::TrashNote => "Move file to system Trash",
             Dialog::AddProperty => "Add property",
+            Dialog::BookmarkTitle => "Edit bookmark title",
         };
         let mut close = false;
         let mut submit = false;
@@ -1612,6 +1773,7 @@ impl NotesApp {
                 Dialog::NewFolder => "Folder/New folder",
                 Dialog::OpenVault => "/path/to/your/vault",
                 Dialog::Commands => "Type a command…",
+                Dialog::BookmarkTitle => "Leave blank to use the file name",
                 Dialog::RenameNote
                     if self.vault.as_ref().is_some_and(|vault| {
                         self.dialog_path
@@ -1721,6 +1883,8 @@ impl NotesApp {
                         "Toggle right sidebar",
                         "Switch appearance",
                         "Refresh vault",
+                        "Bookmark current file",
+                        "Show bookmarks",
                     ];
                     let image = self
                         .tabs
@@ -1801,6 +1965,7 @@ impl NotesApp {
                                 Dialog::TrashNote => "Move to Trash",
                                 Dialog::AddProperty => "Add property",
                                 Dialog::SaveCopy => "Save copy",
+                                Dialog::BookmarkTitle => "Save title",
                                 _ => "Create note",
                             })
                             .clicked();
@@ -1839,6 +2004,14 @@ impl NotesApp {
 
     fn submit_dialog(&mut self, dialog: Dialog) -> bool {
         let input = self.dialog_input.trim().to_owned();
+        if dialog == Dialog::BookmarkTitle {
+            let Some(path) = self.dialog_path.clone() else {
+                return false;
+            };
+            let before = self.bookmarks.clone();
+            self.bookmarks.set_title(&path, &input);
+            return self.save_bookmarks(before);
+        }
         if dialog == Dialog::NewFolder {
             let result = self
                 .vault
@@ -1850,6 +2023,7 @@ impl NotesApp {
                     self.tree = Tree::from_vault(self.vault.as_ref().unwrap());
                     self.reveal_folder = Some(PathBuf::from(&input));
                     self.searching = false;
+                    self.show_bookmarks = false;
                     self.status = format!("Created folder {input}");
                     self.error = None;
                     true
@@ -1930,6 +2104,7 @@ impl NotesApp {
             };
             match result {
                 Ok(Some(outcome)) => {
+                    self.bookmarks.rename(&source, &outcome.path);
                     for tab in &mut self.tabs {
                         tab.history.rename_path(&source, &outcome.path);
                         tab.document.path = rust_notes::paths::moved_path(
@@ -1981,6 +2156,9 @@ impl NotesApp {
                 self.search_cache.invalidate();
             }
             self.cache = CommonMarkCache::default();
+            if let Err(error) = self.write_session() {
+                self.error = Some(error);
+            }
             return true;
         }
         if input.is_empty() {
@@ -2062,6 +2240,19 @@ impl NotesApp {
             }
             "Open a file" => self.ask(Dialog::QuickOpen),
             "Open vault" => self.change_vault(),
+            "Bookmark current file" => {
+                if let Some(path) = self
+                    .tabs
+                    .get(self.active)
+                    .map(|tab| tab.document.path.clone())
+                {
+                    self.add_bookmark(&path);
+                }
+            }
+            "Show bookmarks" => {
+                self.show_left = true;
+                self.show_bookmarks = true;
+            }
             "Save note" => {
                 self.save(self.active);
             }
