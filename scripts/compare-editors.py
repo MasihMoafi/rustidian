@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -58,6 +59,7 @@ def main():
     parser.add_argument("--ours", type=Path)
     parser.add_argument("--ferrite", type=Path)
     parser.add_argument("--ours-source-commit")
+    parser.add_argument("--trace-keys", action="store_true")
     parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args()
     self_check()
@@ -74,6 +76,7 @@ def main():
     report = {
         "status": "running", "metric": "synthetic insertion + common 50ms input gap + explicit save until exact bytes are observed",
         "input_gap_ms": 50,
+        "keyboard_diagnostic": args.trace_keys,
         "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
         "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
         "versions": {"ferrite": "v0.3.0", "rust-notes": source_commit},
@@ -124,6 +127,7 @@ def main():
                             command = [str(binary.resolve()), str(vault if name == "rust-notes" else note)]
                             with (reports / f"{round_number}-{name}.log").open("w") as output:
                                 app = subprocess.Popen(command, cwd=profile, env=env, stdout=output, stderr=output)
+                                recorder = None
                                 try:
                                     deadline = time.monotonic() + 20
                                     while time.monotonic() < deadline:
@@ -157,6 +161,16 @@ def main():
                                         xdo("click", 1)
                                         xdo("key", "Escape")
                                         time.sleep(.3)
+                                    trace = reports / f"{round_number}-{name}-keys.jsonl"
+                                    if args.trace_keys:
+                                        ready = profile / "recorder-ready"
+                                        recorder = subprocess.Popen([sys.executable, str(root / "scripts/record-keyboard.py"),
+                                            "--output", str(trace), "--ready", str(ready)], env=env, stdout=output, stderr=output)
+                                        deadline = time.monotonic()+3
+                                        while not ready.exists() and time.monotonic() < deadline:
+                                            assert recorder.poll() is None, "Keyboard observer exited"
+                                            time.sleep(.02)
+                                        assert ready.exists(), "Keyboard observer was not ready"
                                     xdo("mousemove", "--window", window, 650, 350)
                                     xdo("click", 1)
                                     xdo("key", "--clearmodifiers", "ctrl+End")
@@ -181,6 +195,8 @@ def main():
                                             probe = profile / "probe.json"
                                             if probe.exists():
                                                 diagnostic["controls"] = json.loads(probe.read_text())
+                                            if trace.exists():
+                                                diagnostic["keyboard_events"] = [json.loads(line) for line in trace.read_text().splitlines()[-30:]]
                                             report["failed_input"] = diagnostic
                                             ImageGrab.grab(xdisplay=display).save(reports / f"{round_number}-{name}-failure.png")
                                             print(json.dumps(diagnostic), flush=True)
@@ -193,6 +209,9 @@ def main():
                                     report["rounds"].append({"round": round_number, "app": name, "mode": "source/raw", "samples_ms": samples, "inputs_verified": 30})
                                     preserve()
                                 finally:
+                                    if recorder is not None:
+                                        recorder.terminate()
+                                        recorder.wait(timeout=5)
                                     app.terminate()
                                     try:
                                         app.wait(timeout=5)

@@ -11,6 +11,7 @@ ALLOWED = {
     "tests/gui_smoke.py", "scripts/obsidian-reference.py",
     "scripts/reuse-actions-candidate.py", ".github/workflows/native.yml",
     "scripts/compare-editors.py", "assets/icons/README.md",
+    "scripts/record-keyboard.py",
     "ES.md", "VISION.md", "README.md",
 }
 

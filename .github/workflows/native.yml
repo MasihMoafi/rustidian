@@ -3,9 +3,9 @@ name: Native Rust
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', '.github/workflows/native.yml']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', 'scripts/record-keyboard.py', '.github/workflows/native.yml']
   pull_request:
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', '.github/workflows/native.yml']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', 'scripts/record-keyboard.py', '.github/workflows/native.yml']
   workflow_dispatch:
     inputs:
       reuse_run_id:
@@ -16,6 +16,10 @@ on:
         description: 'Full SHA of that run; runtime source files must be unchanged'
         type: string
         default: ''
+      diagnostic_only:
+        description: 'Trace comparison keyboard input only; never package this as a verified release'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,7 +60,7 @@ jobs:
       - name: Install native GUI test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox python3-pil
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox python3-pil python3-xlib
       - name: Install the declared Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
       - name: Formatting
@@ -89,6 +93,7 @@ jobs:
           timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
       - name: Focused editing, bookmark, callout and vault behavior
+        if: ${{ !inputs.diagnostic_only }}
         run: |
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
@@ -117,13 +122,14 @@ jobs:
             reports/native-navigation.png
             reports/native-tasks.png
       - name: Native GUI and portable bundle checks
+        if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-release-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
       - name: Serial editor CPU measurements
-        if: ${{ !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
+        if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
           if [ ! -x target/release/examples/editor_benchmark ]; then
             cargo build --locked --release --example editor_benchmark 2>&1 | tee reports/benchmark-build.log
@@ -174,8 +180,11 @@ jobs:
           (root / 'binary-path').write_text(str(binaries[0]))
           PY
           /usr/bin/python3 scripts/compare-editors.py --self-check
-          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rust-notes --ours-source-commit "$(cat reports/binary-source-commit.txt)" --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" | tee reports/editor-comparison.log
+          extra=()
+          if [ '${{ inputs.diagnostic_only }}' = 'true' ]; then extra+=(--trace-keys); fi
+          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rust-notes --ours-source-commit "$(cat reports/binary-source-commit.txt)" --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" "${extra[@]}" | tee reports/editor-comparison.log
       - name: Package the verified Linux application
+        if: ${{ !inputs.diagnostic_only && success() }}
         run: |
           sha256sum target/release/rust-notes > reports/release.sha256
           mv reports/rust-notes-candidate-linux-x86_64.tar.gz reports/rust-notes-linux-x86_64.tar.gz
