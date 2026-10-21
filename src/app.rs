@@ -1801,9 +1801,11 @@ impl NotesApp {
                 Dialog::AddProperty => "Property name",
             };
             let input_id = ui.make_persistent_id(("dialog-input", title));
+            let focus_settled = ui.memory(|memory| {
+                memory.has_focus(input_id) && memory.had_focus_last_frame(input_id)
+            });
             if self.dialog_focus {
                 ui.memory_mut(|memory| memory.request_focus(input_id));
-                self.dialog_focus = false;
             }
             let input = ui.add_enabled(
                 dialog != Dialog::TrashNote,
@@ -1812,6 +1814,16 @@ impl NotesApp {
                     .desired_width(f32::INFINITY)
                     .hint_text(hint),
             );
+            if self.dialog_focus {
+                // A new Area/menu may still be completing its first layout pass.
+                // Claim before input, then retain focus until it survives a pass.
+                input.request_focus();
+                self.dialog_focus =
+                    dialog != Dialog::TrashNote && (!focus_settled || ui.is_sizing_pass());
+                if self.dialog_focus {
+                    ctx.request_repaint();
+                }
+            }
             crate::ui_probe::record(ui.ctx(), "dialog-input", input.rect);
             if input.has_focus() {
                 crate::ui_probe::record(ui.ctx(), "dialog-input-focused", input.rect);

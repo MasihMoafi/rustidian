@@ -1768,6 +1768,8 @@ def main():
                 results.append("Adding the current file persisted immediately outside the vault and repeated bookmarking created no duplicate")
                 click_control(f"bookmark:{relative}", "3")
                 click_control("bookmark-title")
+                capture("native-bookmark-title-open.png")
+                assert control_bounds("dialog-input-focused")
                 type_text("Writing فارسی", delay=100)
                 key("Return")
                 assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
