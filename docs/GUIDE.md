@@ -165,7 +165,9 @@ Inspect the actual step logs, exact test counts and native evidence; a green
 shell step can hide a failed process behind `tee` unless pipefail is enabled.
 Download one needed passing artifact after the quota/storage check, validate
 paths and SHA-256, and verify the exact release with disposable files. See the
-existing `reports/check-provider-quota.py` and release verification metadata.
+local `reports/check-provider-quota.py`, when available, and release verification
+metadata. Reports are ignored and will not exist in a fresh clone; use the
+configured provider's allowance information to apply the same reserve policy.
 Never store provider URLs or credentials in the guide, logs or repository.
 
 Keep Actions artifacts one day and avoid persistent Rust caches. Preserve at
@@ -189,9 +191,24 @@ service, startup or Elpis selector/activation changes belong to this work.
   become the default size of dialog titles or filename input.
 - **Checklist completeness:** Reading tests did not cover Live Preview. Verify
   every mode the user actually uses, with code/frontmatter negatives.
+- **Native overlay positions:** galley cursor rectangles are local to the text.
+  Translate them by the painted galley position before clipping or placing
+  checkboxes. A parsed task alone does not prove a checkbox is on screen.
+- **Formatting through a modal:** keep the note's selection while it owns focus,
+  carry it through Ctrl+P with the target tab/path, and use the normal undo path.
+  The direct shortcut can work while the palette loses the selection; test both.
+- **Multiline input fixtures:** simulated Return invokes Markdown editing rules.
+  Write literal Markdown fixtures to a disposable vault, then prove native edit,
+  save and undo before testing the feature; do not weaken assertions around
+  unintended list continuation.
 - **Unicode simulation:** use the verified native input delay for Persian when
   testing the simulator, and preserve exact bytes. A passing glyph-count test
   does not establish visual bidi affinity or desktop IME composition.
+  [xdotool temporarily remaps scratch keys](https://github.com/jordansissel/xdotool/blob/main/xdo.c)
+  for unmapped Unicode; a CI bookmark entry lost letters even at100ms while the
+  same exact app passed locally. Use verified UTF-8 clipboard content plus real
+  Ctrl+V for the bookmark persistence check, retaining ordinary typed input and
+  the exact saved/reopened Persian assertion. Do not call this an IME test.
 - **Evidence and acceptance:** show the built app early. Keep one accepted release
   until its replacement passes checks; do not spend a long feature build before
   asking the user to assess the important visible changes.

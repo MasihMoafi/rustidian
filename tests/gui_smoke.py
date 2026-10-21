@@ -95,6 +95,28 @@ def main():
                 if line: xdo("type", "--clearmodifiers", "--delay", str(delay), "--", line)
             pause()
 
+        def paste_text(value):
+            # xdotool temporarily remaps scratch keys for Unicode. Exercise the
+            # real UTF-8 clipboard path without racing those keymap changes.
+            owner = subprocess.Popen(
+                ["xclip", "-selection", "clipboard", "-in", "-quiet"],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, env=environment,
+            )
+            try:
+                owner.stdin.write(value.encode())
+                owner.stdin.close()
+                pause()
+                actual = subprocess.check_output(
+                    ["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+                    env=environment, timeout=5,
+                )
+                assert actual == value.encode(), (actual, value)
+                key("ctrl+v")
+            finally:
+                owner.terminate()
+                owner.wait(timeout=5)
+
         def queued_steps(*steps):
             # Deliver a known event sequence in one UI frame, before autosave.
             app.send_signal(signal.SIGSTOP)
@@ -1975,7 +1997,8 @@ def main():
                 click_control("bookmark-title")
                 capture("native-bookmark-title-open.png")
                 assert control_bounds("dialog-input-focused")
-                type_text("Writing فارسی", delay=100)
+                type_text("Writing ")
+                paste_text("فارسی")
                 key("Return")
                 assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
                 open_note("Home")
