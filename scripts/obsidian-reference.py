@@ -15,7 +15,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     (settings / "appearance.json").write_text(json.dumps(appearance))
     shutil.copytree(original / "snippets", settings / "snippets", dirs_exist_ok=True)
     (settings / "app.json").write_text(json.dumps({"defaultViewMode": "preview"}))
-    if arguments.section == "inventory":
+    if arguments.section in ("inventory", "workspaces"):
         (vault / "Templates").mkdir(exist_ok=True)
         (vault / "Daily").mkdir(exist_ok=True)
         (vault / "Template target.md").write_text("# Before\n\n")
@@ -98,11 +98,31 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         target = next(target for target in targets if target["type"] == "page")
         query = "JSON.stringify(['.markdown-preview-view','.inline-title','h1','h2','.markdown-preview-view p','.markdown-preview-view li','.markdown-preview-view strong','.markdown-preview-view ul','.markdown-preview-view blockquote','.markdown-preview-sizer','.view-header','.workspace-tab-header-container','.nav-header','.nav-files-container','.status-bar','.nav-file-title','.workspace-tab-header'].map(selector => {const e=document.querySelector(selector);if(!e)return {selector};const s=getComputedStyle(e);return {selector,font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,marginTop:s.marginTop,marginBottom:s.marginBottom,rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height},padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderBottomWidth};}))"
         code = "const ws=new WebSocket(process.argv[1]);ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:process.argv[2],returnByValue:true}}));ws.onmessage=(e)=>{const r=JSON.parse(e.data);if(r.id===1){console.log(r.result.result.value);ws.close();}};setTimeout(()=>process.exit(1),5000).unref();"
-        if arguments.section == "inventory":
-            def evaluate(expression):
-                value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True, timeout=8)
-                return json.loads(value)
+        def evaluate(expression):
+            value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True, timeout=8)
+            return json.loads(value)
 
+        if arguments.section == "workspaces":
+            report = {"appimage": str(arguments.appimage), "profile": "disposable", "status": "observed"}
+            report["commands"] = evaluate("JSON.stringify(Object.entries(app.commands.commands).filter(([id])=>id.startsWith('workspaces:')).map(([id,c])=>({id,name:c.name})))")
+            manage = next(c for c in report["commands"] if c["id"] == "workspaces:open-modal")
+            xdo("key", "--clearmodifiers", "ctrl+p")
+            time.sleep(.25)
+            xdo("type", "--clearmodifiers", "--delay", "4", manage["name"])
+            time.sleep(.25)
+            xdo("key", "Return")
+            time.sleep(.4)
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(f"http://127.0.0.1:{debug_port}/json/list", timeout=2) as response:
+                pages = [page for page in json.load(response) if page["type"] == "page"]
+            report["pages"] = [{key:page.get(key) for key in ("id","title","url")} for page in pages]
+            target = next((page for page in pages if page["id"] != target["id"]), target)
+            report["ui"] = evaluate("JSON.stringify({body:document.body.innerText,origin:[screenX,screenY],controls:[...document.querySelectorAll('input,button,[aria-label]')].filter(e=>e.getBoundingClientRect().height).map(e=>{const r=e.getBoundingClientRect();return {tag:e.tagName,text:e.innerText,value:e.value,placeholder:e.placeholder,label:e.getAttribute('aria-label'),classes:e.className,rect:[r.x,r.y,r.width,r.height]}})})")
+            (ROOT / "reports/obsidian-workspaces-reference.json").write_text(json.dumps(report,indent=2)+"\n")
+            ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-workspaces-manager.png")
+            print(json.dumps({"section":"workspaces","commands":len(report["commands"]),"status":report["status"]}))
+            raise SystemExit(0)
+        if arguments.section == "inventory":
             report = evaluate("JSON.stringify({version:app.appVersion||app.version||null,plugins:Object.entries(app.internalPlugins.plugins).map(([id,p])=>({id,enabled:p.enabled,name:p.instance?.name})),commands:Object.entries(app.commands.commands).map(([id,c])=>({id,name:c.name,hotkeys:c.hotkeys})),settings:app.setting.settingTabs.map(t=>({id:t.id,name:t.name}))})")
             report.update({"appimage": str(arguments.appimage), "profile": "disposable", "actions": [], "status": "in_progress"})
             date_patterns = ["YYYY-MM-DD", "YYYY/MMMM/YYYY-MMM-DD", "YY Y YYYYYY", "M MM MMM MMMM Mo", "D DD Do DDD DDDD DDDo", "d dd ddd dddd do e E", "H HH h hh k kk", "m mm s ss", "S SS SSS SSSS SSSSSSSSS", "A a Z ZZ z zz", "Q Qo", "X x", "w ww wo gg gggg W WW Wo GG GGGG", "L LT LTS LL LLL LLLL", "l ll lll llll", "[Journal] YYYY [week] WW [مرحبا]", r"\Y YYYY [{{title}}]"]

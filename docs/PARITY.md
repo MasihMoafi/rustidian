@@ -52,7 +52,7 @@ still needs the expanded paired reference audit before a parity claim.
 | Bookmarks | File bookmarks/reorder/rename/restart covered; groups, headings, searches and other targets missing. |
 | Canvas | Missing; native .canvas interchange, cards/groups/connectors, interaction and recovery. |
 | Command palette | Available commands and fuzzy matching covered; full core-command registry, pinning and customized hotkeys incomplete. |
-| Daily notes | Source written for date-named create/open, configured folder/format/template and read-only settings import; pending Actions. Paired1.13.7 create/reopen reference passes. Startup/previous-next/date-property links and ribbon/settings parity still incomplete. |
+| Daily notes | Source written for date-named create/open, calendar ribbon action, configured folder/format/template and read-only settings import; pending Actions. Paired1.13.7 create/reopen reference passes. Startup/previous-next/date-property links and full settings parity still incomplete. |
 | Editing mode status | Native status bar shows the current mode; complete reference click/menu/accessibility behavior unverified. |
 | File explorer | Covered subset; complete menus, sorting and drag/drop audit pending. |
 | File recovery | Missing; periodic snapshots, browse/diff/restore, conflict and retention rules. |
@@ -72,7 +72,7 @@ still needs the expanded paired reference audit before a parity claim.
 | Slides | Missing; Markdown slides, presentation/navigation and export behavior. |
 | Sync | Missing integration; service compatibility, offline/concurrent edits, encryption and recovery require evidence. |
 | Tags view | Inline/property query support; dedicated nested tag pane and actions incomplete. |
-| Templates | Source written for folder/chooser, caret insertion, title/date/time tokens, format settings and undo; pending Actions. Paired1.13.7 insertion, unknown tokens and single undo/redo captured;51 date-format fixtures retained. Frontmatter merging, localized formats, ribbon and full settings parity still incomplete. |
+| Templates | Source written for folder/chooser/ribbon action, caret insertion, title/date/time tokens, format settings and undo; pending Actions. Paired1.13.7 insertion, unknown tokens and single undo/redo captured;51 date-format fixtures retained. Frontmatter merging, localized formats and full settings parity still incomplete. |
 | Unique note creator | Missing; configured time title/template, repeated-instant collisions and error paths. |
 | Web viewer | Missing; browser content conflicts with the current native-only runtime constraint and needs a concrete design decision. |
 | Word count | Existing document counts; selection, CJK/Unicode and settings parity unverified. |

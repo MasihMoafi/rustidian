@@ -815,6 +815,14 @@ impl NotesApp {
                 if icon_button(ui, Icon::NewNote, "New note · Ctrl+N").clicked() {
                     self.ask(Dialog::NewNote);
                 }
+                if icon_button(ui, Icon::DailyNote, "Open today's daily note").clicked() {
+                    self.open_daily();
+                }
+                if icon_button(ui, Icon::Templates, "Insert template").clicked()
+                    && self.editable_note()
+                {
+                    self.ask(Dialog::InsertTemplate);
+                }
                 ui.allocate_ui_with_layout(
                     ui.available_size(),
                     Layout::bottom_up(Align::Center),
@@ -2712,26 +2720,24 @@ impl NotesApp {
         }
         match command {
             "Daily notes: Open today's daily note" => self.open_daily(),
-            "Templates: Insert template" => {
-                if self.editable_note() {
-                    self.ask(Dialog::InsertTemplate);
-                }
+            "Templates: Insert template" if self.editable_note() => {
+                self.ask(Dialog::InsertTemplate);
             }
-            "Templates: Insert current date" | "Templates: Insert current time" => {
-                if self.editable_note() {
-                    let variable = if command.ends_with("date") {
-                        "{{date}}"
-                    } else {
-                        "{{time}}"
-                    };
-                    let tab = &self.tabs[self.active];
-                    let text = self.note_aids.expand(
-                        variable,
-                        &tab.document.title(),
-                        chrono::Local::now().fixed_offset(),
-                    );
-                    self.editor.insert_text(tab, text);
-                }
+            "Templates: Insert current date" | "Templates: Insert current time"
+                if self.editable_note() =>
+            {
+                let variable = if command.ends_with("date") {
+                    "{{date}}"
+                } else {
+                    "{{time}}"
+                };
+                let tab = &self.tabs[self.active];
+                let text = self.note_aids.expand(
+                    variable,
+                    &tab.document.title(),
+                    chrono::Local::now().fixed_offset(),
+                );
+                self.editor.insert_text(tab, text);
             }
             "Open settings" => self.ask(Dialog::Settings),
             "New note" => self.ask(Dialog::NewNote),

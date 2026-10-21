@@ -3142,7 +3142,7 @@ def main():
                 title_contains(today)
                 daily = fixture / (today + ".md")
                 assert daily.read_bytes() == b"", "Unconfigured daily notes must start empty, as in Obsidian"
-                command("Daily notes: Open today's daily note")
+                click_control("button:Open today's daily note", hold=.15)
                 assert daily.read_bytes() == b"" and len(list(fixture.glob(today + "*.md"))) == 1
                 results.append("Default daily note opened from a real command and reopened without duplication or content changes")
 
@@ -3198,7 +3198,7 @@ def main():
                 key("Escape")
                 assert target.read_text() == original
                 editor_end()
-                command("Templates: Insert template")
+                click_control("button:Insert template", hold=.15)
                 type_text("Mtg")
                 assert control_bounds("template:Templates/Daily.md", required=False) is None
                 click_control("template:Templates/Meeting.md", hold=.15)
