@@ -13,6 +13,7 @@ import tempfile
 import time
 
 from PIL import ImageGrab
+from native_input import SAVE_KEY_INTERVAL_MS, save_shortcut
 
 
 def wait_bytes(path, expected, timeout=3):
@@ -74,8 +75,8 @@ def main():
     reports = root / "reports" / "editor-comparison"
     reports.mkdir(parents=True, exist_ok=True)
     report = {
-        "status": "running", "metric": "synthetic insertion + common 50ms input gap + explicit save until exact bytes are observed",
-        "input_gap_ms": 50,
+        "status": "running", "metric": "synthetic insertion + explicit held-Control Save chord until exact bytes are observed",
+        "save_key_interval_ms": SAVE_KEY_INTERVAL_MS,
         "keyboard_diagnostic": args.trace_keys,
         "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
         "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
@@ -85,7 +86,7 @@ def main():
         "cpu": subprocess.check_output(["lscpu"], text=True),
         "limitations": ["Combined edit/save response, not display latency or internal CPU time.",
                         "Includes common xdotool subprocess and 1ms file polling overhead.",
-                        "Includes the same 50ms input-to-Save gap for both apps; immediate-sequence failures remain separate rejected evidence.",
+                        "Includes the same 40ms Save key interval and Control-held-through-S-release gesture for both apps; rejected combined-chord failures remain separate evidence.",
                         "Same source size, wrapping, 18px text and software Xvfb host; font families, UI features and save durability differ.",
                         "Two alternating rounds are a bounded observation, not proof of the world's fastest editor."],
         "rounds": [],
@@ -181,8 +182,7 @@ def main():
                                         expected += inserted.encode()
                                         start = time.perf_counter_ns()
                                         xdo("type", "--clearmodifiers", "--delay", 0, inserted)
-                                        time.sleep(report["input_gap_ms"] / 1000)
-                                        xdo("key", "--clearmodifiers", "ctrl+s")
+                                        save_shortcut(xdo)
                                         try:
                                             wait_bytes(note, expected)
                                         except Exception:

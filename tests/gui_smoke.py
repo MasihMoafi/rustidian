@@ -9,12 +9,15 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
 from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from native_input import save_shortcut
 
 
 def pixel_data(picture):
@@ -116,7 +119,10 @@ def main():
             assert app.poll() is None, "The native app exited unexpectedly"
 
         def key(value):
-            xdo("key", "--clearmodifiers", value)
+            if value == "ctrl+s":
+                save_shortcut(xdo)
+            else:
+                xdo("key", "--clearmodifiers", value)
             pause()
 
         def type_text(value, delay=1):

@@ -3,9 +3,9 @@ name: Native Rust
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', 'scripts/record-keyboard.py', '.github/workflows/native.yml']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', 'scripts/record-keyboard.py', 'scripts/native_input.py', '.github/workflows/native.yml']
   pull_request:
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', 'scripts/record-keyboard.py', '.github/workflows/native.yml']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', 'scripts/record-keyboard.py', 'scripts/native_input.py', '.github/workflows/native.yml']
   workflow_dispatch:
     inputs:
       reuse_run_id:
@@ -95,6 +95,9 @@ jobs:
       - name: Focused editing, bookmark, callout and vault behavior
         if: ${{ !inputs.diagnostic_only }}
         run: |
+          gui_status=0
+          trap 'gui_status=1' ERR
+          set +e
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
@@ -109,6 +112,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section bookmarks 2>&1 | tee reports/bookmark-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
+          exit "$gui_status"
       - name: Keep the focused app available for review
         if: ${{ inputs.reuse_run_id == '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -124,10 +128,14 @@ jobs:
       - name: Native GUI and portable bundle checks
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
+          gui_status=0
+          trap 'gui_status=1' ERR
+          set +e
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-release-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
+          exit "$gui_status"
       - name: Serial editor CPU measurements
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
