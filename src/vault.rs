@@ -407,9 +407,7 @@ impl Vault {
             self.paths.contains_key(path)
                 || (!is_markdown(path)
                     && is_text_document(path)
-                    && self
-                        .absolute_path(path, false)
-                        .is_ok_and(|path| path.is_file()))
+                    && self.safe_path(path, false).is_ok_and(|path| path.is_file()))
         };
         let sibling =
             crate::paths::normalise(&from.parent().unwrap_or(Path::new("")).join(&target));
