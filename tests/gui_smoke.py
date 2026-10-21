@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 from PIL import Image, ImageGrab
 
@@ -24,6 +25,17 @@ def pixel_data(picture):
     """Support the Pillow version supplied by the declared Ubuntu runner."""
     modern = getattr(picture, "get_flattened_data", None)
     return modern() if modern else picture.getdata()
+
+
+def run_checks(checks, on_failure):
+    failures = []
+    for check in checks:
+        try:
+            check()
+        except Exception as error:
+            failures.append(check.__name__)
+            on_failure(check.__name__, error)
+    assert not failures, f"Native workflow failures: {', '.join(failures)}"
 
 
 def main():
@@ -1887,9 +1899,11 @@ def main():
                 open_note("Table GUI")
                 command("Reading view")
                 table = control_bounds("table:0")
+                # These reference positions predate the 34px client title bar.
+                titlebar_height = 34 if control_bounds("window-title-drag", required=False) else 0
                 assert abs(table[2] - table[0] - 303.171875) < 3, table
                 assert abs(table[3] - table[1] - 130.640625) < 1, table
-                assert abs(table[1] - 241.84375) < 1, table
+                assert abs(table[1] - titlebar_height - 241.84375) < 1, table
                 middle = control_bounds("table-cell:0:1:1")
                 centered = control_bounds("table-text:0:1:1")
                 assert abs(middle[0] + middle[2] - centered[0] - centered[2]) < 1, (middle, centered)
@@ -1897,7 +1911,7 @@ def main():
                 number = control_bounds("table-text:0:1:2")
                 assert abs(right[2] - number[2] - 8.5) < 1, (right, number)
                 code_panel = control_bounds("code-block:0")
-                assert abs(code_panel[1] - 491.1875) < 1, code_panel
+                assert abs(code_panel[1] - titlebar_height - 491.1875) < 1, code_panel
                 assert control_bounds("table-cell:0:3:1")
                 capture("native-reading-table-dark.png")
                 click_control("fold:0")
@@ -3267,37 +3281,54 @@ def main():
             key("ctrl+s")
             assert "RESTORED_SOURCE_EDIT" in (fixture / "Notes/Created in GUI.md").read_text()
             results.append("Clean exit/restart restored selected tab and independent reading/source modes")
-            properties_checks()
-            image_checks()
-            attachment_tab_checks()
-            task_checks()
-            task_clip_checks()
-            essential_checks()
-            color_checks()
-            navigation_checks()
-            hover_checks()
-            title_checks()
-            scrolling_checks()
-            diagram_checks()
-            large_search_checks()
-            folder_checks()
-            explorer_checks()
-            vault_switch_checks()
-            file_toolbar_checks()
-            folding_checks()
-            typography_checks()
-            code_checks()
-            syntax_checks()
-            tab_overflow_checks()
-            keyboard_focus_checks()
-            reading_code_checks()
-            table_checks()
-            table_edit_checks()
-            table_link_checks()
-            table_input_checks()
-            callout_checks()
-            bookmark_checks()
-            persian_checks()
+            failure_details = []
+            (reports / "gui-all-failures.json").write_text("[]\n")
+
+            def retain_failure(name, error):
+                capture(f"gui-all-{name}-failure.png")
+                candidates = [path for path in fixture.rglob("*") if path.is_file() and path.suffix.lower() in (".md", ".txt")]
+                recent = sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True)[:5]
+                (reports / f"gui-all-{name}-failure-notes.json").write_text(json.dumps({str(path.relative_to(fixture)): path.read_text() for path in recent if path.stat().st_size <= 500_000}, ensure_ascii=False, indent=2)+"\n")
+                failure_details.append({"workflow": name, "error": repr(error), "traceback": traceback.format_exc()})
+                (reports / "gui-all-failures.json").write_text(json.dumps(failure_details, indent=2)+"\n")
+                print(traceback.format_exc(), flush=True)
+                # Close failed fixture menus only; retain unsaved text for diagnosis.
+                xdo("key", "--clearmodifiers", "Escape", "Escape")
+                pause()
+
+            run_checks([
+                properties_checks,
+                image_checks,
+                attachment_tab_checks,
+                task_checks,
+                task_clip_checks,
+                essential_checks,
+                color_checks,
+                navigation_checks,
+                hover_checks,
+                title_checks,
+                scrolling_checks,
+                diagram_checks,
+                large_search_checks,
+                folder_checks,
+                explorer_checks,
+                vault_switch_checks,
+                file_toolbar_checks,
+                folding_checks,
+                typography_checks,
+                code_checks,
+                syntax_checks,
+                tab_overflow_checks,
+                keyboard_focus_checks,
+                reading_code_checks,
+                table_checks,
+                table_edit_checks,
+                table_link_checks,
+                table_input_checks,
+                callout_checks,
+                bookmark_checks,
+                persian_checks,
+            ], retain_failure)
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))
         except BaseException:

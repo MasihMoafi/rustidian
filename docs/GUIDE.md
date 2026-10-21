@@ -22,9 +22,10 @@ Runtime candidate `4dbb842a013f8400fbaab8c831d6c7e38ba445cd`, built by
 passes128 Rust executions, Clippy, all focused UI sections and six CPU
 conditions. Its exact copied-plan link and scrolled checklist also pass locally.
 Binary SHA256 is `8bd8663257d5cc8a9c17a45af66c68edc8a203654eca44e06a40c573d7304e4e`.
-Its observer-free comparison passes in Actions39627064113; the full GUI run
-stopped at a reader-width fixture that left Outline open. That setup is now
-explicit and passes locally. The next complete reuse run is recorded in `ES.md`.
+Its observer-free comparisons pass in Actions39627064113 and39629890625.
+Full GUI runs exposed two stale layout assumptions: an open Outline pane and
+absolute table coordinates before the new titlebar. Both corrections pass
+focused checks; the next complete reuse run is recorded in `ES.md`.
 Installation is pending those gates. The previous fully verified release is `21a1271`;
 `reports/release-verification.json` records accepted checks, not user acceptance.
 Reports are ignored: download Actions evidence when starting from a fresh clone.
@@ -166,6 +167,12 @@ The restored source artifact also contains historical report sidecars. Attribute
 Rust/build evidence to the source run; count GUI/performance evidence only when
 the current run actually invoked that section and produced its passing log.
 Do not promote an inherited result file as a fresh verification.
+The complete native stage runs all31 existing workflows in their original
+order. On a failure it retains that workflow's screenshot, controls, recent
+notes and traceback, closes menus without saving/discarding, and continues
+the later workflows. Any failure still fails the run and prevents packaging.
+Calibrate this collector with all-success, early-failure/later-execution and
+cancellation cases; isolate later failures before treating them as product bugs.
 
 After checking route, quota and storage, download one needed artifact with `gh`.
 If its downloader stalls, `gh api repos/MasihMoafi/rust-notes/actions/artifacts/ARTIFACT_ID/zip`
@@ -252,7 +259,9 @@ and screenshot polling; scrolling checks distance, direction and no delayed tail
   full-suite explorer folders once before timing a root-file hover. No repeated
   toggles, weakened thresholds or save retries. Close a visible right pane before
   a fixed920px reader check; resizing back to a wide window can restore it. Keep
-  the exact geometry assertions after establishing that layout.
+  the exact geometry assertions after establishing that layout. Normalize old
+  table viewport positions for the new34px client titlebar; preserve the old
+  table sizes, spacing, reference positions and tolerances.
 - **Native placement:** use painted galley coordinates for overlays and natural
   dimensions for diagrams. Inspect the complete image; an offscreen sliver or
   parser/probe success is not successful rendering.
