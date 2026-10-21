@@ -1302,14 +1302,16 @@ impl Editor {
             follow = Some(target);
         }
         if live && crate::ui_probe::enabled() {
+            // Table cells can edit the document after this frame's text layout.
+            // Probe the same source that owns the parsed ranges and galley.
             let mut character = 0;
             for span in &self.parsed.spans {
-                let length = tab.document.text[span.range.clone()].chars().count();
+                let length = self.source[span.range.clone()].chars().count();
                 if span.style.link
                     && !span.style.hidden
                     && !span.style.code
                     && !span.style.property
-                    && let Some(target) = link_at(&tab.document.text, character)
+                    && let Some(target) = link_at(&self.source, character)
                 {
                     let first = output.galley.pos_from_cursor(CCursor::new(character));
                     let last = output

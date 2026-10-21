@@ -11,7 +11,17 @@ Finish the essential native Rust Notes workflow from Masih's actual Obsidian scr
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
-## Latest checkpoint — 21 October16:15UTC
+## Latest checkpoint — 21 October16:35UTC
+
+Masih confirmed both preview fixes (Approved spec navigation and scrolled checkbox clipping). Preserve exact4dbb842 preview PID482901/session17123; never drive/close it while he may use it. Default remains oldb9 debug; no install before all release gates pass.
+
+Normal Actions39633233148 / eed1a68 completed: focused sections, Chrome6, md/txt1 each, all six CPU conditions and observer-free comparison pass. Full native reaches83 groups, then table_edit_checks crashes the probe: src/editor_ui.rs slices newer table text with the previous frame's parsed ranges. Raw runtime logs and partial CRC-verified evidence are reports/github-eed1a68-normal; comparison median92.496355ms/p95130.455336ms vs Ferrite585.9134865/599.720846ms. No accepted package. Collector cannot continue after its app dies; later workflows were not executed. Failed direct range entry timed out;49 valid entries recovered, small runtime-log subset independently CRC checked.
+
+Focused local table-edit reproduces the identical crash with exact4dbb842 (table-edit-4dbb842-stale-probe-before.log and before-app.log). Source now probes the same self.source snapshot that owns the parsed spans and galley; table edits can mutate the document later in the frame. Add table-edit to early Actions regressions; retain every existing complete-suite check. This runtime correction requires one fresh optimized remote build, not candidate reuse. No local Rust compile/target. Run formatting/diff checks, upload exact reviewed change, monitor its single normal Actions run and finish verification/install. Current disk75GB free; direct/TUN false, shared VPN routing unchanged.
+
+## Historical checkpoint — 21 October16:17UTC
+
+Active normal Actions39633233148 / harnesseed1a685616e85b2dff8a708c48b66933dab9a51 uses original4dbb842 app/benchmark. Continue this complete run; do not duplicate it, rebuild Rust or install before every gate passes. All31 workflows remain; any collected failure fails the job/package.
 
 Normal Actions39629890625 / harness091ca5e completes with full GUI80 groups before an obsolete table viewport-coordinate assertion. The reading-pane correction passes all3 reading groups in that full run. The new native titlebar adds34 client pixels: table Y275 versus old241.84375; code-panel Y524.53125 versus old491.1875. Normalize only that known titlebar offset, retaining exact reference positions/tolerances and all width/height/alignment/file-byte/link/folding assertions. All4 focused table groups pass locally (reports/tables-4dbb842-titlebar-offset.log). No runtime change or Rust rebuild.
 
@@ -463,3 +473,8 @@ Local cleanup moved17,840,361bytes of duplicate/incomplete downloads to recovera
 Preview reopened at16:09UTC: PID482901, tool session17123, exact4dbb842 SHA8bd866, profile reports/user-feedback-review, UI probe disabled. Latest capture native-preview-reopened.png visually checked2760x1800. Existing copied documents and workspace state preserved; never automate or close while Masih may be using it. Additional missing contained Markdown siblings copied read-only to make preview note links complete; no existing copy or source overwritten (added-linked-documents.json).
 
 Normal39629890625 failure audit: full80 groups, reading correction passes, table absolute-Y assertion predates34px titlebar. Focused normalized table check passes4 groups. Collector retains all31 original workflows, captures per-workflow failures and is behaviorally calibrated to continue but fail the overall group. No runtime build/install. Next one complete normal reuse run, then inspect all failures together or install only if every gate passes.
+
+Active full verification Actions39633233148 / eed1a685616e85b2dff8a708c48b66933dab9a51 uses the table-offset correction and calibrated all31 collector. App source4dbb842 remains frozen/optimized. PreviewPID482901/session17123 remains for user feedback; verify it exists before claiming open, never drive/close it while Masih may be using it. Next inspect all failure records together or install only after all gates and release.sha256 pass.
+
+
+Masih explicitly confirmed "Both work" in the open optimized preview: Approved spec opens and checkboxes stay inside the document while scrolling (21 October16:27UTC). This accepts these two visible fixes on the real desktop; it is not acceptance of every Obsidian feature or a substitute for required release gates. Keep exact8bd866/4dbb842 and continue active Actions39633233148, then install only if every gate and release.sha256 pass.

@@ -92,7 +92,7 @@ jobs:
           timeout 25s gh run view "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha > "$RUNNER_TEMP/source-run.json"
           timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
-      - name: Focused link, window, diagram and checklist regressions
+      - name: Focused link, window, diagram, checklist and table regressions
         if: ${{ !inputs.diagnostic_only }}
         run: |
           gui_status=0
@@ -102,6 +102,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
           exit "$gui_status"
       - name: Keep the focused candidate and native evidence available
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
@@ -121,6 +122,7 @@ jobs:
             reports/native-navigation.png
             reports/native-tasks.png
             reports/native-task-clipping.png
+            reports/native-edit-table-*.png
       - name: Native GUI and portable bundle checks
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |

@@ -265,6 +265,8 @@ and screenshot polling; scrolling checks distance, direction and no delayed tail
 - **Native placement:** use painted galley coordinates for overlays and natural
   dimensions for diagrams. Inspect the complete image; an offscreen sliver or
   parser/probe success is not successful rendering.
+  A table cell can replace document bytes after its parent layout was created;
+  probe ranges against that layout's parsed source, not the newer document.
 - **Recovery:** confirmed active-file Trash opens a blank workspace; deleting a
   background note preserves the active tab. Reset restart fixtures through real
   Close actions and require exact tab order/modes plus recoverable deleted bytes.
