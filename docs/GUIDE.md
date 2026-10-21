@@ -527,3 +527,50 @@ in `VISION.md`, `ES.md` and release metadata, then remove obsolete owned rebuild
 output while retaining selected artifacts and raw evidence. Check actual disk
 space. Full visual bidi/desktop IME and complex folding remain unresolved; do not
 convert an essential-workflow release into a claim of complete Obsidian parity.
+
+### Audit file moves by resolved destinations
+
+The actual1.13.7 `file-move` audit uses disposable notes, real menu/input actions
+and read-only metadata observation. Its five passing cases cover filtered Escape,
+existing/root/nested destinations and an occupied filename. Keep the rejected
+assumptions and raw evidence beside `obsidian-file-move-reference.json`.
+
+- Match the separate `Move file to...` picker: `Type a folder`, `/`, fuzzy folder
+  choices, arrows/Enter, Escape and the new-folder row/Shift+Enter. Moving an
+  inactive file keeps the active document. Cancellation preserves exact bytes.
+- With the reference's default automatic-link setting false, necessary rewrites
+  offer Always update/Just once/Do not update. Just once leaves the preference
+  false; Always update persists true. A still-valid unique basename needs no
+  rewrite/prompt. Assert actual resolved paths and preserved aliases/labels:
+  the reference may shorten a rooted link to its unique basename.
+- An occupied destination does not reject or overwrite: it chooses the first
+  available numbered filename. The normal Rename action has its own contract;
+  do not change its collision semantics to implement Move. Verify the moved
+  content, occupied bytes, open views/history and every affected link.
+- Creation/error/cancellation need contained paths and guarded atomic moves.
+  Check hidden/linked/missing parents, concurrent destinations and dirty/external
+  changes before calling the native workflow equivalent. Native implementation
+  of this separate picker/update-choice flow is still pending.
+
+### Escape belongs to the editor before focus navigation
+
+The512 early native check exposed Escape dropping focus after a unique-link edit.
+Egui applies focus-navigation keys during begin-pass, before widget `consume_key`.
+Set the main TextEdit EventFilter explicitly for Tab, both arrow axes and Escape;
+its default filter has both arrow flags false. Keep the real focus/typed-alias
+assertion and exact independent link/label undo/redo, rather than retrying focus.
+Audit the phase: Obsidian places the initial link caret before `]]`, but redo can
+place it after the completed link. Do not infer redo selection from the initial
+command. Raw reference observations and the failed native controls stay in reports.
+
+The actual1.13.7 `page-preview` audit also records Reading, Live Preview and Source
+with plain/Ctrl hover. Reading shows the target card without Ctrl; editing modes
+require it. Pointer-away dismissal preserves the active note and all original
+bytes. Keep mode/modifier and dismissal negatives when implementing the native
+card; a text tooltip or navigating the active tab is not equivalent.
+
+The early debug correctness gate collects all five independent workflow results
+before failing, retaining section-specific screenshots. Keep that aggregate
+failure as a hard prerequisite for optimized compilation. One broken workflow
+must not prevent discovery of unrelated failures in the already compiled app;
+this avoids rebuilding merely to reach the next new check.

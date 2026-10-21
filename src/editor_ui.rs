@@ -1017,7 +1017,12 @@ impl Editor {
                     .frame(egui::Frame::NONE)
                     .font(FontId::proportional(18.0))
                     .layouter(&mut layouter)
-                    .lock_focus(true)
+                    .event_filter(egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    })
                     .show(ui)
             })
             .inner;

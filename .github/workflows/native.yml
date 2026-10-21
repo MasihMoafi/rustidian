@@ -91,13 +91,16 @@ jobs:
       - name: Check new workflows before optimized compilation
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
-          if [ -x target/debug/rust-notes ]; then
-            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section vaults 2>&1 | tee reports/early-vaults-gui.log
-            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section recovery 2>&1 | tee reports/early-recovery-gui.log
-            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
-            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-actions 2>&1 | tee reports/early-tab-actions-gui.log
-            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
-          fi
+          test -x target/debug/rust-notes
+          early_status=0
+          trap 'early_status=1' ERR
+          set +e
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section vaults 2>&1 | tee reports/early-vaults-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section recovery 2>&1 | tee reports/early-recovery-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-actions 2>&1 | tee reports/early-tab-actions-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
+          exit "$early_status"
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -120,6 +123,7 @@ jobs:
             reports/native-tab-menu-*.png
             reports/native-file-copy*.png
             reports/gui-*.json
+            reports/gui-*-failure*
             reports/gui-failure.png
             reports/missing-control*
       - name: Build the optimized GUI candidate

@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     (settings / "appearance.json").write_text(json.dumps(appearance))
     shutil.copytree(original / "snippets", settings / "snippets", dirs_exist_ok=True)
     (settings / "app.json").write_text(json.dumps({"defaultViewMode": "preview"}))
-    if arguments.section in ("inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows"):
+    if arguments.section in ("inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "page-preview"):
         (vault / "Templates").mkdir(exist_ok=True)
         (vault / "Daily").mkdir(exist_ok=True)
         (vault / "Template target.md").write_text("# Before\n\n")
@@ -47,6 +47,9 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         if arguments.section == "unique-links-configured":
             (vault / "Unique").mkdir()
             (settings / "zk-prefixer.json").write_text(json.dumps({"folder":"Unique","format":"[Link-]YYYYMMDDHHmm","template":"Templates/Meeting.md"}))
+        if arguments.section == "page-preview":
+            (vault/'Preview source.md').write_text('# Preview source\n\n[[Preview target|Target preview]]\n')
+            (vault/'Preview target.md').write_text('# Preview target\n\nVISIBLE_PREVIEW_DESTINATION\n\n- [ ] Preview task\n')
     profile = base / "profile"
     profile.mkdir()
     (profile / "obsidian.json").write_text(json.dumps({"updateDisabled": True, "vaults": {"0123456789abcdef": {"path": str(vault), "ts": 1, "open": True}}}))
@@ -106,7 +109,48 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True, timeout=8)
             return json.loads(value)
 
-        if arguments.section == "file-actions":
+        if arguments.section == "page-preview":
+            report={'appimage':str(arguments.appimage),'profile':'disposable','status':'observed','cases':[]}
+            originals={p.relative_to(vault).as_posix():p.read_bytes() for p in vault.rglob('*.md')}
+            def popovers():
+                return evaluate("JSON.stringify({active:app.workspace.activeLeaf?.view.file?.path||null,popovers:[...document.querySelectorAll('.hover-popover')].filter(e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height).map(e=>({text:e.innerText,rect:(()=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()}))})")
+            try:
+                xdo('key','ctrl+o');time.sleep(.2);xdo('type','--clearmodifiers','Preview source');time.sleep(.3);xdo('key','Return');time.sleep(.7)
+                for mode in ('Reading','Live preview','Source'):
+                    xdo('mousemove','30','930');time.sleep(.6)
+                    if mode=='Live preview':
+                        xdo('key','ctrl+e');time.sleep(.5)
+                    elif mode=='Source':
+                        xdo('key','ctrl+p');time.sleep(.2);xdo('type','--clearmodifiers','Toggle Live Preview/Source mode');time.sleep(.3);xdo('key','Return');time.sleep(.5)
+                    view=evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")
+                    report.setdefault('views',[]).append({'mode':mode,'state':view})
+                    assert view['mode']==('preview' if mode=='Reading' else 'source'),view
+                    if mode!='Reading':assert view.get('source',False)==(mode=='Source'),view
+                    for control in (False,True):
+                        xdo('mousemove','30','930');xdo('keyup','Control_L');time.sleep(.6)
+                        assert popovers()['popovers']==[]
+                        selector='a.internal-link[data-href="Preview target"]' if mode=='Reading' else '.cm-hmd-internal-link'
+                        rect=evaluate("JSON.stringify((()=>{const e=document.querySelector('.workspace-leaf.mod-active '+"+json.dumps(selector)+");if(!e)return null;const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                        assert rect,('The actual preview link must be present',mode)
+                        if control:xdo('keydown','Control_L')
+                        xdo('mousemove',*[str(round(v)) for v in rect]);time.sleep(.9)
+                        state=popovers();state.update(control=control,mode=mode)
+                        report['cases'].append(state)
+                        ImageGrab.grab(xdisplay=display).save(ROOT/f'reports/obsidian-page-preview-{mode.lower().replace(" ","-")}-{int(control)}.png')
+                        assert state['active']=='Preview source.md'
+                        xdo('keyup','Control_L')
+                assert any('VISIBLE_PREVIEW_DESTINATION' in p['text'] for state in report['cases'] for p in state['popovers'])
+                xdo('mousemove','30','930');time.sleep(.7)
+                assert popovers()['popovers']==[]
+                assert all((vault/name).read_bytes()==data for name,data in originals.items())
+                report['notes_unchanged']=True;report['status']='passed'
+                print(json.dumps({'section':'page-preview','status':'passed','cases':[(c['mode'],c['control'],len(c['popovers'])) for c in report['cases']]}))
+            finally:
+                xdo('keyup','Control_L')
+                (ROOT/'reports/obsidian-page-preview-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+            raise SystemExit(0)
+
+        if arguments.section in ("file-actions", "file-move"):
             report={"appimage":str(arguments.appimage),"profile":"disposable","status":"observed","actions":[]}
             original_notes={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
             sample=vault/'Notes/Menu sample.md';sample.write_bytes(b'# Menu sample\r\n\r\nKeep exact bytes.\r\n')
@@ -127,6 +171,103 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             def action(name):
                 click_element("[...document.querySelectorAll('.menu-item')].find(e=>e.querySelector('.menu-item-title')?.textContent.trim()==="+json.dumps(name)+")")
             try:
+                if arguments.section == "file-move":
+                    sample.write_bytes(b'# Menu sample\n\nKeep exact bytes.\n')
+                    source=sample.read_bytes()
+                    folder=vault/'Move destination';folder.mkdir()
+                    reference=vault/'Move reference.md'
+                    reference.write_text('[[Notes/Menu sample|Sample alias]]\n\n[Sample](Notes/Menu%20sample.md)\n')
+                    time.sleep(.7)
+                    deadline=time.monotonic()+6
+                    while time.monotonic()<deadline:
+                        cache=evaluate("JSON.stringify(app.metadataCache.getCache('Move reference.md')||null)")
+                        if cache and len(cache.get('links',[]))==2:break
+                        time.sleep(.15)
+                    assert cache and len(cache.get('links',[]))==2,cache
+                    report['indexed_reference']=cache
+                    report['automatic_links']=evaluate("JSON.stringify(app.vault.getConfig('alwaysUpdateLinks')??null)")
+                    def move(path,query):
+                        menu(path);action('Move file to...')
+                        xdo('type','--clearmodifiers',query);time.sleep(.35)
+                        return evaluate("JSON.stringify({body:document.body.innerText,rows:[...document.querySelectorAll('.suggestion-item')].map(e=>e.textContent.trim()),inputs:[...document.querySelectorAll('input')].filter(e=>e.getBoundingClientRect().height).map(e=>({value:e.value,placeholder:e.placeholder}))})")
+                    def linked_to(path):
+                        deadline=time.monotonic()+5
+                        while time.monotonic()<deadline:
+                            state=evaluate("JSON.stringify({targets:(app.metadataCache.getCache('Move reference.md')?.links||[]).map(l=>app.metadataCache.getFirstLinkpathDest(decodeURIComponent(l.link),'Move reference.md')?.path||null)})")
+                            state['text']=reference.read_text()
+                            if state['targets']==[path,path]:return state
+                            time.sleep(.15)
+                        raise AssertionError(('Moved links must resolve to the actual destination',path,state))
+                    report['cancel_ui']=move('Notes/Menu sample.md','Move destination')
+                    assert report['cancel_ui']['rows']==['Move destination']
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-filtered.png')
+                    xdo('key','Escape');time.sleep(.2)
+                    assert sample.read_bytes()==source and not (folder/sample.name).exists()
+                    report['actions'].append({'name':'Cancel filtered move','source_unchanged':True})
+                    report['move_ui']=move('Notes/Menu sample.md','Move destination')
+                    xdo('key','Return');time.sleep(.8)
+                    moved=folder/sample.name
+                    assert not sample.exists() and moved.read_bytes()==source
+                    report['linked_after_move']=reference.read_text()
+                    report['after_move_ui']=evaluate("JSON.stringify({body:document.body.innerText,buttons:[...document.querySelectorAll('.modal-container button')].map(e=>e.textContent.trim())})")
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-after.png')
+                    assert report['after_move_ui']['buttons']==['Always update','Just once','Do not update']
+                    click_element("[...document.querySelectorAll('.modal-container button')].find(e=>e.textContent.trim()==='Just once')")
+                    time.sleep(.4)
+                    assert evaluate("JSON.stringify(app.vault.getConfig('alwaysUpdateLinks'))") is False
+                    report['resolved_after_once']=linked_to(moved.relative_to(vault).as_posix())
+                    assert '|Sample alias]]' in reference.read_text() and '[Sample](' in reference.read_text()
+                    report['actions'].append({'name':'Move to existing folder','path':moved.relative_to(vault).as_posix(),'active':evaluate("JSON.stringify(app.workspace.activeLeaf?.view.file?.path||null)"),'reference':reference.read_text()})
+                    report['new_folder_ui']=move(moved.relative_to(vault).as_posix(),'New parent/Nested')
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-create.png')
+                    xdo('key','shift+Return');time.sleep(.8)
+                    nested=vault/'New parent/Nested'/sample.name
+                    assert nested.is_file() and nested.read_bytes()==source and not moved.exists()
+                    report['nested_prompt']=evaluate("JSON.stringify({buttons:[...document.querySelectorAll('.modal-container button')].map(e=>e.textContent.trim())})")
+                    assert report['nested_prompt']['buttons']==[]
+                    report['resolved_after_nested']=linked_to(nested.relative_to(vault).as_posix())
+                    assert reference.read_text()==report['resolved_after_once']['text']
+                    report['actions'].append({'name':'Create nested folder and move','path':nested.relative_to(vault).as_posix(),'reference':reference.read_text(),'no_rewrite_prompt_needed':True})
+                    # Use explicit paths again to exercise the persistent choice.
+                    reference.write_text('[[New parent/Nested/Menu sample|Sample alias]]\n\n[Sample](New%20parent/Nested/Menu%20sample.md)\n')
+                    deadline=time.monotonic()+5
+                    while time.monotonic()<deadline:
+                        links=evaluate("JSON.stringify((app.metadataCache.getCache('Move reference.md')?.links||[]).map(l=>l.link))")
+                        if links and all(l.startswith(('New parent/','New%20parent/')) for l in links):break
+                        time.sleep(.15)
+                    assert len(links)==2 and all(l.startswith(('New parent/','New%20parent/')) for l in links),links
+                    report['explicit_root_fixture']=reference.read_text()
+                    report['root_ui']=move(nested.relative_to(vault).as_posix(),'/')
+                    xdo('key','Return');time.sleep(.8)
+                    root_file=vault/sample.name
+                    assert root_file.is_file() and root_file.read_bytes()==source and not nested.exists()
+                    report['root_prompt']=evaluate("JSON.stringify({buttons:[...document.querySelectorAll('.modal-container button')].map(e=>e.textContent.trim())})")
+                    assert report['root_prompt']['buttons']==['Always update','Just once','Do not update']
+                    click_element("[...document.querySelectorAll('.modal-container button')].find(e=>e.textContent.trim()==='Always update')")
+                    time.sleep(.4)
+                    assert evaluate("JSON.stringify(app.vault.getConfig('alwaysUpdateLinks'))") is True
+                    report['resolved_after_root']=linked_to(root_file.name)
+                    assert not evaluate("JSON.stringify(Boolean(document.querySelector('.modal-container')))")
+                    report['actions'].append({'name':'Move to vault root','path':root_file.name,'reference':reference.read_text()})
+                    (folder/root_file.name).write_bytes(b'KEEP_MOVE_COLLISION\n');time.sleep(.4)
+                    before_collision={p.relative_to(vault).as_posix() for p in vault.rglob('*.md')}
+                    report['collision_picker']=move(root_file.name,'Move destination')
+                    xdo('key','Return');time.sleep(.5)
+                    report['collision_ui']=evaluate("JSON.stringify({body:document.body.innerText,modal:Boolean(document.querySelector('.modal-container')),active:app.workspace.activeLeaf?.view.file?.path||null})")
+                    after_collision={p.relative_to(vault).as_posix() for p in vault.rglob('*.md')}
+                    added=after_collision-before_collision
+                    assert added=={'Move destination/Menu sample 1.md'},added
+                    numbered=vault/next(iter(added))
+                    assert not root_file.exists() and numbered.read_bytes()==source
+                    assert (folder/root_file.name).read_bytes()==b'KEEP_MOVE_COLLISION\n'
+                    report['resolved_after_collision']=linked_to(numbered.relative_to(vault).as_posix())
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-collision.png')
+                    xdo('key','Escape');time.sleep(.2)
+                    report['actions'].append({'name':'Occupied destination chooses numbered name','path':numbered.relative_to(vault).as_posix(),'exact_bytes':True,'occupied_target_unchanged':True,'no_further_prompt':not report['collision_ui']['modal']})
+                    assert all((vault/name).is_file() and hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in original_notes.items())
+                    report['status']='passed';report['notes_unchanged']=True
+                    print(json.dumps({'section':'file-move','status':'passed','actions':len(report['actions'])}))
+                    raise SystemExit(0)
                 before={p.relative_to(vault).as_posix() for p in vault.rglob('*.md')}
                 menu('Notes/Menu sample.md');action('Make a copy')
                 time.sleep(.7)
@@ -165,7 +306,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 assert report['notes_unchanged'];report['status']='passed'
                 print(json.dumps({'section':'file-actions','status':'passed','created':copied,'move':report['move_ui']}))
             finally:
-                (ROOT/'reports/obsidian-file-actions-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+                (ROOT/f'reports/obsidian-{arguments.section}-reference.json').write_text(json.dumps(report,indent=2)+'\n')
             raise SystemExit(0)
 
         if arguments.section in ("tab-actions", "tab-windows"):
@@ -662,8 +803,18 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                     assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.file?.path||null)")=="Template target.md"
                     report['actions'].append({'workflow':'unique internal link','inserted':inserted,'created':[{'path':name,'text':(vault/name).read_text()} for name in sorted(added)],'selection':evaluate("JSON.stringify(app.workspace.activeLeaf.view.editor?.getSelection?.()||'')"),'cursor':evaluate("JSON.stringify(app.workspace.activeLeaf.view.editor?.getCursor?.()||null)")})
                     ImageGrab.grab(xdisplay=display).save(ROOT/f"reports/obsidian-{arguments.section}.png")
+                    xdo("key","Escape");time.sleep(.2)
+                    focused=evaluate("JSON.stringify(Boolean(document.activeElement?.closest('.cm-editor')))")
+                    report['escape_focus']={'editor_focused':focused,'cursor':evaluate("JSON.stringify(app.workspace.activeLeaf.view.editor?.getCursor?.()||null)")}
+                    assert focused,'Escape must preserve the actual editor focus'
+                    xdo('type','--clearmodifiers','|LABEL')
+                    wait_until(lambda:note.read_text()==inserted[:-2]+'|LABEL]]','Escape must preserve the caret before closing link markers')
+                    report['escape_focus']['typed']=note.read_text()
+                    xdo("key","--clearmodifiers","ctrl+z");wait_until(lambda:note.read_text()==inserted,"Label insertion did not undo exactly")
                     xdo("key","--clearmodifiers","ctrl+z");wait_until(lambda:note.read_bytes()==originals['Template target.md'],"Unique link did not undo as one edit")
                     xdo("key","--clearmodifiers","ctrl+shift+z");wait_until(lambda:note.read_text()==inserted,"Unique link did not redo exactly")
+                    xdo("key","--clearmodifiers","ctrl+shift+z");wait_until(lambda:note.read_text()==inserted[:-2]+'|LABEL]]',"Label insertion did not redo exactly")
+                    xdo("key","--clearmodifiers","ctrl+z");wait_until(lambda:note.read_text()==inserted,"Label undo did not restore the plain link")
                     xdo("key","--clearmodifiers","ctrl+z");wait_until(lambda:note.read_bytes()==originals['Template target.md'],"Reference source did not return to original bytes")
                     if arguments.section == "unique-links-configured":
                         saved_folder=base/"unavailable-unique-folder";(vault/"Unique").rename(saved_folder)

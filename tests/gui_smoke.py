@@ -3371,14 +3371,16 @@ def main():
                 inserted=origin.read_bytes()
                 assert inserted.startswith(original_origin+b"[[Pair-") and inserted.endswith(b"]]")
                 assert {p.relative_to(fixture).as_posix() for p in fixture.rglob("*.md")}==set(before)
-                key("ctrl+z");key("ctrl+s");assert origin.read_bytes()==original_origin
-                key("ctrl+y");key("ctrl+s");assert origin.read_bytes()==inserted
                 key("Escape");assert control_bounds("editor-focused")
                 type_text("|LABEL");key("ctrl+s")
                 assert origin.read_bytes()==inserted[:-2]+b"|LABEL]]",origin.read_bytes()
                 capture("native-unique-internal-link.png")
-                modified_shortcut(xdo,"a");paste_text(original_origin.decode(),held=True);key("ctrl+s")
-                assert origin.read_bytes()==original_origin
+                key("ctrl+z");key("ctrl+s");assert origin.read_bytes()==inserted
+                key("ctrl+z");key("ctrl+s");assert origin.read_bytes()==original_origin
+                key("ctrl+y");key("ctrl+s");assert origin.read_bytes()==inserted
+                key("ctrl+y");key("ctrl+s");assert origin.read_bytes()==inserted[:-2]+b"|LABEL]]"
+                key("ctrl+z");key("ctrl+s");assert origin.read_bytes()==inserted
+                key("ctrl+z");key("ctrl+s");assert origin.read_bytes()==original_origin
                 command("Reading view")
                 command("Unique note creator: Add unique internal link",available=False)
                 key("Escape");assert origin.read_bytes()==original_origin

@@ -60,6 +60,18 @@ This increment does not establish complete Daily notes/Templates parity: startup
 
 Masih wants his familiar Obsidian note workflow and appearance, implemented in Rust, with faster startup and interaction. The app runs on his Ubuntu desktop; changing distributions is unnecessary. Other desktop platforms follow once Linux behavior is established.
 
+## Next file-move contract
+
+Use the passing actual1.13.7 five-action `file-move` reference and the guide's
+resolved-link lesson. Provide the separate folder picker, existing/root/nested
+moves, collision numbering and link-update choices. Preserve inactive-file
+navigation, dirty/conflict guards, all aliases/Markdown targets and exact
+unaffected bytes. Reuse the existing guarded rename implementation; keep Rename
+collision behavior distinct. Prove missing native behavior first, then verify
+positive/cancel/error/restart/compact/both-theme cases in Actions. This remains
+pending after the currently submitted creator/tab/copy increment; PARITY.md owns
+coverage status.
+
 ## Meaning of fully Rust
 
 The first desktop application uses Rust for the UI, editor, Markdown rendering, search, and filesystem operations. No Electron, embedded browser, JavaScript frontend, or server. Third-party Rust crates and OS libraries are permitted. Existing Obsidian JavaScript plugins will not automatically execute in a Rust UI; compatibility needs its own design and explicit acceptance.
