@@ -17,18 +17,18 @@ plugin/settings replication are optional. Existing Obsidian JavaScript plugins
 do not execute in this application. Masih decides whether the result is good
 enough; CI alone does not establish an identical Obsidian or the fastest editor.
 
-Runtime candidate `4dbb842a013f8400fbaab8c831d6c7e38ba445cd`, built by
-[Actions39608458012](https://github.com/MasihMoafi/rust-notes/actions/runs/39608458012),
-passes128 Rust executions, Clippy, all focused UI sections and six CPU
-conditions. Its exact copied-plan link and scrolled checklist also pass locally.
-Binary SHA256 is `8bd8663257d5cc8a9c17a45af66c68edc8a203654eca44e06a40c573d7304e4e`.
-Its observer-free comparisons pass in Actions39627064113 and39629890625.
-Full GUI runs exposed two stale layout assumptions: an open Outline pane and
-absolute table coordinates before the new titlebar. Both corrections pass
-focused checks; the next complete reuse run is recorded in `ES.md`.
-Installation is pending those gates. The previous fully verified release is `21a1271`;
-`reports/release-verification.json` records accepted checks, not user acceptance.
-Reports are ignored: download Actions evidence when starting from a fresh clone.
+The combined source adds the vault chooser and keeps the pending link-probe
+snapshot correction. Follow [the Actions workflow](https://github.com/MasihMoafi/rust-notes/actions/workflows/native.yml)
+and the exact active run in `ES.md`; this combined source is awaiting compilation and complete native
+verification. Require all release gates and exact checksums before installing.
+The default executable remains older b9 debug, with a matching rollback retained.
+
+Masih accepted the copied-plan link and scrolled checkbox fixes in preview4dbb842.
+That candidate's full suite later exposed a table-edit probe crash; preserve its
+failing evidence. The previous fully verified release is `21a1271`;
+`reports/release-verification.json` records verified checks, with user acceptance
+scoped separately. Reports are ignored: download Actions evidence when starting
+from a fresh clone.
 
 ## Protect the user's work and machine
 
@@ -167,10 +167,11 @@ The restored source artifact also contains historical report sidecars. Attribute
 Rust/build evidence to the source run; count GUI/performance evidence only when
 the current run actually invoked that section and produced its passing log.
 Do not promote an inherited result file as a fresh verification.
-The complete native stage runs all31 existing workflows in their original
-order. On a failure it retains that workflow's screenshot, controls, recent
+The complete native stage retains all31 original workflows and the new vault
+workflow (32 total). On a failure it retains that workflow's screenshot, controls, recent
 notes and traceback, closes menus without saving/discarding, and continues
-the later workflows. Any failure still fails the run and prevents packaging.
+the later workflows while the app remains alive. An app crash prevents later
+workflow execution and retains its exit log. Any failure still rejects packaging.
 Calibrate this collector with all-success, early-failure/later-execution and
 cancellation cases; isolate later failures before treating them as product bugs.
 

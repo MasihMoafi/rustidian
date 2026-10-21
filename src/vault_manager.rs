@@ -171,7 +171,7 @@ impl Manager {
         let mut selected = self.poll_picker();
         let mut close = false;
         let mut forget = None;
-        let response = egui::Modal::new(egui::Id::new("vault-manager")).show(ctx, |ui| {
+        let response = egui::Modal::new(egui::Id::unique("vault-manager")).show(ctx, |ui| {
             theme::dialog_style(ui);
             for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
                 ui.style_mut()
