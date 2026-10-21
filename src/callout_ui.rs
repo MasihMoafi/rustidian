@@ -84,7 +84,11 @@ pub fn header(
             }
         })
         .response;
-    let response = ui.interact(response.rect, ui.id().with("header"), egui::Sense::click());
+    let response = ui.interact(
+        response.rect,
+        ui.scope_id().with("header"),
+        egui::Sense::click(),
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &model.title));
     crate::ui_probe::record(ui.ctx(), format!("callout:{ordinal}"), response.rect);
     let link = response.clicked().then_some(hovered_link).flatten();
