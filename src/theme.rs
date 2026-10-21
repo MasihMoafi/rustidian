@@ -632,6 +632,16 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     response
 }
 
+pub fn dialog_style(ui: &mut egui::Ui) {
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+    ui.style_mut().text_styles.insert(
+        egui::TextStyle::Heading,
+        egui::FontId::new(20.0, egui::FontFamily::Name("semibold".into())),
+    );
+}
+
 pub fn menu_style(ui: &mut egui::Ui) {
     for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
         ui.style_mut()

@@ -861,7 +861,7 @@ def main():
                 control_bounds("dialog-input")
                 key("Return")
                 title_contains("New tab")
-                assert control_bounds("tab-full:Notes/First steps.md")
+                assert control_bounds("tab-full:Home.md")
                 assert not (fixture / "Menu renamed.md").exists()
                 assert any(p.read_bytes() == originals["Home.md"] for p in (base / "data/Trash/files").iterdir() if p.is_file())
                 assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
@@ -907,12 +907,18 @@ def main():
                     capture("native-window-controls.png")
                     (reports / "window-manager-results.json").write_text(json.dumps({"status":"passed","manager":"Openbox","geometry":geometry()},indent=2)+"\n")
                     results.append("Real window manager confirmed maximize/restore, minimize/reopen, title-bar dragging and edge resizing")
+                # The close guard is meaningful when the source cannot autosave.
+                command("Open settings")
+                click_control("settings-autosave")
+                key("Escape")
                 open_note("First steps")
-                command("Source mode")
+                command("Source editing")
                 control_bounds("editor-focused")
                 key("ctrl+End")
                 type_text("WINDOW_CLOSE_UNSAVED")
                 active = "Notes/First steps.md"
+                time.sleep(.75)
+                assert (fixture / active).read_bytes() == originals[active]
                 title_contains("First steps")
                 click_control("window:Close window")
                 pause()
@@ -920,6 +926,7 @@ def main():
                 assert app.poll() is None, "Close must preserve an unsaved note"
                 assert (fixture / active).read_bytes() == originals[active]
                 key("Escape")
+                control_bounds("editor-focused")
                 key("ctrl+z")
                 key("ctrl+s")
                 assert (fixture / active).read_bytes() == originals[active]

@@ -1824,6 +1824,7 @@ impl NotesApp {
     fn dialogs(&mut self, ctx: &egui::Context) {
         if let Some(pending) = self.pending {
             let response = egui::Modal::new(egui::Id::unique("unsaved-changes")).show(ctx, |ui| {
+                theme::dialog_style(ui);
                 ui.set_width(440.0);
                 ui.heading("Keep your changes?");
                 ui.label("You have unsaved edits. Save them before continuing, or discard them explicitly.");
@@ -1845,6 +1846,9 @@ impl NotesApp {
             });
             if response.should_close() {
                 self.pending = None;
+            }
+            if self.pending.is_none() && self.dialog.is_none() && !self.allow_close {
+                self.focus_editor();
             }
             return;
         }
@@ -1891,13 +1895,7 @@ impl NotesApp {
             } else {
                 500.0
             });
-            ui.style_mut()
-                .text_styles
-                .insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
-            ui.style_mut().text_styles.insert(
-                egui::TextStyle::Heading,
-                egui::FontId::new(20.0, egui::FontFamily::Name("semibold".into())),
-            );
+            theme::dialog_style(ui);
             if dialog != Dialog::Commands {
                 ui.heading(title);
                 ui.add_space(10.0);
