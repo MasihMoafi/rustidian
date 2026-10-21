@@ -310,7 +310,12 @@ def main():
                 bounds = control_bounds("editor", required=False)
                 if bounds:
                     left, top, right, bottom = bounds
-                    xdo("mousemove", str(round((left + right) / 2)), str(round(max(90, min(900, top + 20)))), "click", "1")
+                    # A scrolled galley can extend behind the note header.
+                    header_bottom = control_bounds("button:More options")[3]
+                    visible_top = max(top, header_bottom + 1)
+                    visible_bottom = min(bottom, 900)
+                    assert visible_bottom > visible_top, bounds
+                    xdo("mousemove", str(round((left + right) / 2)), str(round(min(visible_bottom - 1, visible_top + 20))), "click", "1")
                 else:
                     xdo("mousemove", "650", "300", "click", "1")
                 key("ctrl+End")
@@ -2264,7 +2269,8 @@ def main():
                 title_contains("Home")
                 key("ctrl+w")
                 title_contains("First steps")
-                editor_end()
+                control_bounds("editor-focused")
+                key("ctrl+End")
                 key("ctrl+z")
                 key("ctrl+s")
                 time.sleep(.3)
