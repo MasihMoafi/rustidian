@@ -14,7 +14,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus"], default="all")
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     base = Path(temporary)
@@ -86,6 +86,20 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         target = next(target for target in targets if target["type"] == "page")
         query = "JSON.stringify(['.markdown-preview-view','.inline-title','h1','h2','.markdown-preview-view p','.markdown-preview-view li','.markdown-preview-view strong','.markdown-preview-view ul','.markdown-preview-view blockquote','.markdown-preview-sizer','.view-header','.workspace-tab-header-container','.nav-header','.nav-files-container','.status-bar','.nav-file-title','.workspace-tab-header'].map(selector => {const e=document.querySelector(selector);if(!e)return {selector};const s=getComputedStyle(e);return {selector,font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,marginTop:s.marginTop,marginBottom:s.marginBottom,rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height},padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderBottomWidth};}))"
         code = "const ws=new WebSocket(process.argv[1]);ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:process.argv[2],returnByValue:true}}));ws.onmessage=(e)=>{const r=JSON.parse(e.data);if(r.id===1){console.log(r.result.result.value);ws.close();}};setTimeout(()=>process.exit(1),5000).unref();"
+        if arguments.section == "menus":
+            def evaluate(expression):
+                value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True)
+                return json.loads(value)
+
+            row = evaluate("JSON.stringify((()=>{const e=document.querySelector('.nav-file-title');const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})())")
+            xdo("mousemove", str(round(row["x"])), str(round(row["y"])), "click", "3")
+            time.sleep(.3)
+            report = evaluate("JSON.stringify({version:app.appVersion,items:[...document.querySelectorAll('.menu .menu-item')].map(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return {text:e.innerText,icon:e.querySelector('svg')?.outerHTML,font:s.fontSize,height:r.height,padding:s.padding};}),menu:[...document.querySelectorAll('.menu')].map(e=>({text:e.innerText,width:e.getBoundingClientRect().width,font:getComputedStyle(e).fontSize,padding:getComputedStyle(e).padding}))})")
+            assert report["items"], "The reference file context menu did not open"
+            (ROOT / "reports/obsidian-file-menu.json").write_text(json.dumps(report,indent=2)+"\n")
+            ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-file-menu.png")
+            print(json.dumps({"section":"menus","items":[item["text"] for item in report["items"]]}))
+            raise SystemExit(0)
         if arguments.section == "hover":
             def evaluate(expression):
                 value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True)
@@ -121,6 +135,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
 
             boxes = "JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active input[type=checkbox]')].filter(e=>e.getBoundingClientRect().width).map(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e),t=getComputedStyle(e.parentElement),a=getComputedStyle(e,'::after');return {checked:e.checked,x:r.x,y:r.y,width:r.width,height:r.height,radius:s.borderRadius,border:s.border,background:s.backgroundColor,marker:a.backgroundColor,margin:s.margin,font:t.fontSize,lineHeight:t.lineHeight,textColor:t.color,decoration:t.textDecorationLine,variables:Object.fromEntries(['--checkbox-size','--checkbox-radius','--checkbox-color','--checkbox-marker-color','--checklist-done-color','--checklist-done-decoration'].map(k=>[k,s.getPropertyValue(k)]))}}))"
             report = {"identity":evaluate("JSON.stringify({userAgent:navigator.userAgent})"), "cases":[]}
+            report["link_hotkeys"] = evaluate("JSON.stringify(Object.entries(app.commands.commands).filter(([id])=>id.includes('link')).map(([id,c])=>({id,name:c.name,hotkeys:c.hotkeys,defaults:app.hotkeyManager.defaultKeys?.[id]})))")
             for mode in ("preview", "source"):
                 open_reference(mode)
                 report[mode + "_checkboxes"] = evaluate(boxes)
@@ -140,6 +155,33 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                             xdo("keyup", "Control_L")
                     state = evaluate("JSON.stringify({file:app.workspace.activeLeaf.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').length})")
                     report["cases"].append({"mode":mode,"ctrl":modified,"link":bounds,"result":state})
+            evaluate("(app.workspace.activeLeaf.setViewState({type:'markdown',state:{file:'Notes/Navigation check.md',mode:'source',source:true}}),JSON.stringify('opening'))")
+            time.sleep(.8)
+            report["ctrl_enter_before"] = evaluate("JSON.stringify({file:app.workspace.activeLeaf.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').length})")
+            evaluate("(()=>{const e=app.workspace.activeLeaf.view.editor;const i=e.getValue().indexOf('[[');if(i<0)throw Error('Missing source wiki link');e.setCursor(e.offsetToPos(i+5));e.focus();return JSON.stringify('ready')})()")
+            xdo("key", "--clearmodifiers", "ctrl+Return")
+            time.sleep(.7)
+            report["ctrl_enter_after"] = evaluate("JSON.stringify({file:app.workspace.activeLeaf.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').length})")
+            def delete_reference_current():
+                before = evaluate("JSON.stringify({file:app.workspace.activeLeaf.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').length,type:app.workspace.activeLeaf.view.getViewType()})")
+                evaluate("(()=>{if(app.vault.config)app.vault.config.trashOption='local';if(!app.commands.executeCommandById('app:delete-file'))throw Error('Missing delete command');return JSON.stringify('deleting')})()")
+                time.sleep(.3)
+                modal = evaluate("JSON.stringify([...document.querySelectorAll('.modal button')].map(b=>({text:b.textContent,classes:b.className})))")
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-delete-confirmation.png")
+                confirmed = evaluate("(()=>{const b=[...document.querySelectorAll('.modal button')].find(b=>/delete|trash/i.test(b.textContent));if(b)b.click();return JSON.stringify(!!b)})()")
+                time.sleep(.8)
+                after = evaluate("JSON.stringify({file:app.workspace.activeLeaf.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').length,type:app.workspace.activeLeaf.view.getViewType()})")
+                exists = evaluate("JSON.stringify(!!app.vault.getAbstractFileByPath(" + json.dumps(before["file"]) + "))")
+                return {"before": before, "after": after, "modal_buttons": modal, "confirmed": confirmed, "file_still_exists": exists}
+            report["delete_with_other_tabs"] = delete_reference_current()
+            evaluate("(()=>{const active=app.workspace.activeLeaf;for(const leaf of app.workspace.getLeavesOfType('markdown'))if(leaf!==active)leaf.detach();return JSON.stringify('one tab')})()")
+            time.sleep(.3)
+            report["delete_last_tab"] = delete_reference_current()
+            for case in (report["delete_with_other_tabs"], report["delete_last_tab"]):
+                assert case["confirmed"] and not case["file_still_exists"], case
+                assert case["after"]["tabs"] == case["before"]["tabs"] - 1, case
+            assert report["delete_with_other_tabs"]["after"]["file"] == "Notes/Navigation check.md"
+            assert report["delete_last_tab"]["after"]["type"] == "empty"
             (ROOT / "reports/obsidian-navigation.json").write_text(json.dumps(report,indent=2)+"\n")
             print(json.dumps(report))
             raise SystemExit(0)

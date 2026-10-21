@@ -12,6 +12,8 @@ const { vectorizeMulticolourImage, vectorizeImage } = await import(pathToFileURL
 const root = path.resolve('assets/icons');
 const artwork = path.join(root, 'artwork');
 const groups = {
+  'trash': {key: 'trash', sheet: 'trash', columns: 1, rows: 1, names: ['trash'], scale: 3, monochrome: true},
+  'window-controls': {key: 'windowControls', sheet: 'window-controls-sheet', columns: 3, rows: 1, names: ['minimize', 'maximize', 'restore'], scale: 3, monochrome: true},
   callouts: {key: 'callouts', sheet: 'callout-sheet', columns: 4, rows: 4, names: ['callout-note', 'callout-abstract', 'callout-info', 'callout-tip', 'callout-todo', 'callout-success', 'callout-question', 'callout-warning', 'callout-failure', 'callout-danger', 'callout-bug', 'callout-example', 'callout-quote'], scale: 3, monochrome: true},
   knowledge: {key: 'knowledge', sheet: 'knowledge-sheet', columns: 3, rows: 2, names: ['graph', 'canvas', 'bookmark', 'daily-note', 'templates', 'recovery'], scale: 3, monochrome: true},
   'code-controls': {key: 'codeControls', sheet: 'code-controls-sheet', columns: 2, rows: 1, names: ['close', 'copy'], scale: 3, monochrome: true},
@@ -40,7 +42,7 @@ for (const [index, name] of names.entries()) {
   let left = info.width, right = -1, top = info.height, bottom = -1;
   for (let y = 0; y < info.height; y++) for (let x = 0; x < info.width; x++) {
     const offset = (y * info.width + x) * 4;
-    const coverage = 255 - Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3);
+    const coverage = Math.round((255 - (data[offset] + data[offset + 1] + data[offset + 2]) / 3) * data[offset + 3] / 255);
     data[offset] = data[offset + 1] = data[offset + 2] = 0;
     data[offset + 3] = coverage > 16 ? coverage : 0;
     if (coverage >= 128) { left = Math.min(left, x); right = Math.max(right, x); top = Math.min(top, y); bottom = Math.max(bottom, y); }

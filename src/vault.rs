@@ -10,6 +10,20 @@ use walkdir::WalkDir;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// Navigation and watcher refreshes share the same development-clutter policy.
+pub fn is_ignored_path(relative: &Path) -> bool {
+    relative.components().any(|part| {
+        let Component::Normal(name) = part else {
+            return false;
+        };
+        name.as_encoded_bytes().first() == Some(&b'.')
+            || matches!(
+                name.to_str(),
+                Some("node_modules" | "__pycache__" | "target" | "vendor" | "dist" | "build")
+            )
+    })
+}
+
 #[derive(Clone, Debug)]
 pub struct Note {
     pub path: PathBuf,
@@ -153,12 +167,7 @@ impl Vault {
             .follow_links(false)
             .into_iter()
             .filter_entry(|entry| {
-                entry.depth() == 0
-                    || (!entry.file_name().to_string_lossy().starts_with('.')
-                        && !matches!(
-                            entry.file_name().to_str(),
-                            Some("node_modules" | "target" | "vendor" | "dist" | "build")
-                        ))
+                entry.depth() == 0 || !is_ignored_path(Path::new(entry.file_name()))
             });
         for entry in entries {
             let entry = match entry {

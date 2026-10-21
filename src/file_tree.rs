@@ -8,6 +8,9 @@ use std::{
 
 pub enum FileAction {
     Open(PathBuf),
+    OpenInNewTab(PathBuf),
+    Copy(PathBuf),
+    CopyPath(PathBuf),
     Rename(PathBuf),
     Trash(PathBuf),
     Bookmark(PathBuf),
@@ -176,6 +179,7 @@ impl Tree {
             ui.visuals_mut().widgets.inactive.bg_fill = idle_fill;
             ui.visuals_mut().widgets.inactive.bg_stroke = idle_stroke;
             header.header_response.context_menu(|ui| {
+                theme::menu_style(ui);
                 let path = PathBuf::from(id.trim_start_matches('/'));
                 let response = ui.button("Rename or move…");
                 crate::ui_probe::record(
@@ -227,7 +231,17 @@ impl Tree {
             crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);
             let response = response.on_hover_text(path.display().to_string());
             response.context_menu(|ui| {
-                let bookmark = ui.button("Bookmark");
+                theme::menu_style(ui);
+                if theme::menu_item(ui, theme::Icon::NewTab, "Open in new tab").clicked() {
+                    open = Some(FileAction::OpenInNewTab(path.clone()));
+                    ui.close();
+                }
+                ui.separator();
+                if theme::menu_item(ui, theme::Icon::Copy, "Make a copy…").clicked() {
+                    open = Some(FileAction::Copy(path.clone()));
+                    ui.close();
+                }
+                let bookmark = theme::menu_item(ui, theme::Icon::Bookmark, "Bookmark…");
                 crate::ui_probe::record(
                     ui.ctx(),
                     format!("file-bookmark:{}", path.display()),
@@ -237,11 +251,16 @@ impl Tree {
                     open = Some(FileAction::Bookmark(path.clone()));
                     ui.close();
                 }
-                if ui.button("Rename or move…").clicked() {
+                if theme::menu_item(ui, theme::Icon::Copy, "Copy path").clicked() {
+                    open = Some(FileAction::CopyPath(path.clone()));
+                    ui.close();
+                }
+                ui.separator();
+                if theme::menu_item(ui, theme::Icon::Edit, "Rename…").clicked() {
                     open = Some(FileAction::Rename(path.clone()));
                     ui.close();
                 }
-                if ui.button("Move to system Trash…").clicked() {
+                if theme::menu_item(ui, theme::Icon::Trash, "Delete").clicked() {
                     open = Some(FileAction::Trash(path.clone()));
                     ui.close();
                 }

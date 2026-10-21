@@ -1,0 +1,6 @@
+{
+  "prompt": "Create a production icon atlas for a very fast native dark Markdown note editor. This is a specified functional icon set, not a logo exploration. Exactly three separate monochrome window-control icons arranged in one horizontal row with equal square cells, large clear margins, no text, no labels, no decoration, no shadows, no gradients. Cell 1: MINIMIZE, a simple centered horizontal bar. Cell 2: MAXIMIZE, one hollow square with subtly rounded corners. Cell 3: RESTORE, two overlapping hollow squares, offset diagonally so it clearly means restore from maximized. Use consistent clean medium-thin black rounded strokes, crisp and balanced, centered in each cell with matched optical size. The strokes must remain unmistakable when each icon is displayed at 14 by 14 pixels. Flat vector-like artwork on a transparent background. Keep all three icons completely separate without overlap between cells. All glyphs use the same stroke weight. No close icon needed; we have an existing matching X.",
+  "transparentBackground": true,
+  "selectedRationale": "The user selected the existing interface and requested clearer window controls. Directly generated the three specified standard glyphs; retain the already generated Close icon.",
+  "generator": "Built-in image_gen.imagegen; backend model unidentified."
+}

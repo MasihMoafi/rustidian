@@ -269,6 +269,10 @@ pub enum Icon {
     Outline,
     More,
     Close,
+    Minimize,
+    Maximize,
+    Restore,
+    Trash,
     Copy,
     PropertyText,
     PropertyList,
@@ -294,7 +298,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 49] = [
         Self::Files,
         Self::Search,
         Self::Bookmark,
@@ -318,6 +322,10 @@ impl Icon {
         Self::Outline,
         Self::More,
         Self::Close,
+        Self::Minimize,
+        Self::Maximize,
+        Self::Restore,
+        Self::Trash,
         Self::Copy,
         Self::PropertyText,
         Self::PropertyList,
@@ -344,6 +352,22 @@ impl Icon {
 
     pub fn asset(self) -> (&'static str, &'static [u8]) {
         match self {
+            Self::Trash => (
+                "bytes://icons/trash.svg",
+                include_bytes!("../assets/icons/trash.svg"),
+            ),
+            Self::Minimize => (
+                "bytes://icons/minimize.svg",
+                include_bytes!("../assets/icons/minimize.svg"),
+            ),
+            Self::Maximize => (
+                "bytes://icons/maximize.svg",
+                include_bytes!("../assets/icons/maximize.svg"),
+            ),
+            Self::Restore => (
+                "bytes://icons/restore.svg",
+                include_bytes!("../assets/icons/restore.svg"),
+            ),
             Self::Bookmark => (
                 "bytes://icons/bookmark.svg",
                 include_bytes!("../assets/icons/bookmark.svg"),
@@ -605,6 +629,33 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
             );
         }
     }
+    response
+}
+
+pub fn menu_style(ui: &mut egui::Ui) {
+    for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
+        ui.style_mut()
+            .text_styles
+            .insert(style, egui::FontId::proportional(13.0));
+    }
+    ui.spacing_mut().item_spacing.y = 1.0;
+    ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+}
+
+pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
+    let color = if matches!(icon, Icon::Trash) {
+        ui.visuals().error_fg_color
+    } else {
+        ui.visuals().text_color()
+    };
+    let image = icon_image(icon, color).fit_to_exact_size(egui::vec2(16.0, 16.0));
+    let response = ui.add(
+        egui::Button::image_and_text(image, egui::RichText::new(label).size(13.0).color(color))
+            .min_size(egui::vec2(210.0, 26.0))
+            .frame_when_inactive(false)
+            .corner_radius(4.0),
+    );
+    crate::ui_probe::record(ui.ctx(), format!("menu:{label}"), response.rect);
     response
 }
 

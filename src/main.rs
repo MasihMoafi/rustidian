@@ -13,6 +13,7 @@ mod table_ui;
 mod theme;
 mod title_ui;
 mod ui_probe;
+mod window;
 
 use std::{
     path::{Path, PathBuf},
@@ -101,6 +102,7 @@ fn main() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Rust Notes")
             .with_app_id("rust-notes")
+            .with_decorations(false)
             .with_inner_size([1380.0, 900.0])
             .with_min_inner_size([860.0, 560.0]),
         renderer: eframe::Renderer::Glow,

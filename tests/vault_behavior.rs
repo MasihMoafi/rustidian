@@ -1,5 +1,8 @@
 use rust_notes::vault::{Document, Vault, headings, wiki_links};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use tempfile::tempdir;
 
 #[test]
@@ -70,7 +73,14 @@ fn backlink_cache_tracks_saved_created_moved_and_externally_changed_notes() {
 #[test]
 fn discovers_markdown_without_indexing_dependencies_or_hidden_data() {
     let dir = tempdir().unwrap();
-    for path in ["Notes", "node_modules", ".obsidian-data", "target"] {
+    for path in [
+        "Notes",
+        "node_modules",
+        ".obsidian-data",
+        ".git",
+        "__pycache__",
+        "target",
+    ] {
         fs::create_dir(dir.path().join(path)).unwrap();
     }
     for path in [
@@ -79,11 +89,15 @@ fn discovers_markdown_without_indexing_dependencies_or_hidden_data() {
         "node_modules/no.md",
         ".obsidian-data/no.md",
         "target/no.md",
+        "__pycache__/no.md",
+        ".git/no.md",
+        ".gitignore.md",
     ] {
         fs::write(dir.path().join(path), "# note").unwrap();
     }
     let vault = Vault::open(dir.path()).unwrap();
     assert_eq!(vault.notes.len(), 2);
+    assert_eq!(vault.folders, vec![PathBuf::from("Notes")]);
     assert!(
         vault
             .notes

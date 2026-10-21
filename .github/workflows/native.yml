@@ -3,13 +3,23 @@ name: Native Rust
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', '.github/workflows/native.yml']
   pull_request:
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', '.github/workflows/native.yml']
   workflow_dispatch:
+    inputs:
+      reuse_run_id:
+        description: 'Optional previous Actions run containing the optimized candidate'
+        type: string
+        default: ''
+      reuse_commit:
+        description: 'Full SHA of that run; runtime source files must be unchanged'
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 defaults:
   run:
@@ -32,6 +42,8 @@ jobs:
       LIBGL_ALWAYS_SOFTWARE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Check runner storage
         run: |
           mkdir -p reports
@@ -44,25 +56,43 @@ jobs:
       - name: Install native GUI test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip python3-pil
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox python3-pil
       - name: Install the declared Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
       - name: Formatting
         run: cargo fmt --all -- --check
       - name: Clippy
+        if: ${{ inputs.reuse_run_id == '' }}
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
       - name: Rust behavior checks
+        if: ${{ inputs.reuse_run_id == '' }}
         run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
       - name: Build the optimized GUI candidate
+        if: ${{ inputs.reuse_run_id == '' }}
         run: |
           cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/candidate-build.log
           sha256sum target/release/rust-notes > reports/candidate.sha256
+          git rev-parse HEAD > reports/binary-source-commit.txt
           tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+      - name: Restore an unchanged optimized candidate
+        if: ${{ inputs.reuse_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_RUN_ID: ${{ inputs.reuse_run_id }}
+          REUSE_COMMIT: ${{ inputs.reuse_commit }}
+        run: |
+          command -v gh
+          python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --check-source
+          timeout 25s gh run view "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha > "$RUNNER_TEMP/source-run.json"
+          timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
+          python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
       - name: Focused editing, bookmark, callout and vault behavior
+        if: ${{ inputs.reuse_run_id == '' }}
         run: |
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section hover 2>&1 | tee reports/hover-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section title 2>&1 | tee reports/title-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section scrolling 2>&1 | tee reports/scrolling-gui.log
@@ -74,6 +104,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
       - name: Keep the focused app available for review
+        if: ${{ inputs.reuse_run_id == '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: focused-native-${{ github.sha }}
@@ -86,18 +117,38 @@ jobs:
             reports/native-tasks.png
       - name: Native GUI and portable bundle checks
         run: |
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-release-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
       - name: Serial editor CPU measurements
         run: |
-          git rev-parse HEAD > reports/measured-commit.txt
-          rustc -Vv > reports/measured-toolchain.txt
+          if [ ! -x target/release/examples/editor_benchmark ]; then
+            cargo build --locked --release --example editor_benchmark 2>&1 | tee reports/benchmark-build.log
+          fi
+          if [ -f reports/benchmark-source-commit.txt ]; then
+            cp reports/benchmark-source-commit.txt reports/measured-commit.txt
+            cp reports/benchmark-toolchain.txt reports/measured-toolchain.txt
+          else
+            git rev-parse HEAD > reports/measured-commit.txt
+            rustc -Vv > reports/measured-toolchain.txt
+          fi
           lscpu > reports/measured-cpu.txt
           sha256sum src/*.rs Cargo.lock examples/editor_benchmark.rs > reports/measured-source.sha256
           target/release/examples/editor_benchmark --diverse > reports/editor-ci-unfolded.json
           target/release/examples/editor_benchmark --diverse --folded > reports/editor-ci-folded.json
           /usr/bin/python3 scripts/check-editor-timings.py reports/editor-ci-unfolded.json reports/editor-ci-folded.json | tee reports/editor-ci-gates.log
+      - name: Keep the exact CPU benchmark for harness-only verification
+        if: always()
+        run: |
+          if [ -x target/release/examples/editor_benchmark ]; then
+            if [ ! -f reports/benchmark-source-commit.txt ]; then
+              git rev-parse HEAD > reports/benchmark-source-commit.txt
+              rustc -Vv > reports/benchmark-toolchain.txt
+            fi
+            tar -czf reports/editor-benchmark-candidate.tar.gz -C target/release/examples editor_benchmark
+            sha256sum target/release/examples/editor_benchmark > reports/editor-benchmark.sha256
+          fi
       - name: Compare serial source editing and saving with Ferrite
         env:
           GH_TOKEN: ${{ github.token }}

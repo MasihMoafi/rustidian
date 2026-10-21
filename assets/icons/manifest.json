@@ -512,6 +512,50 @@
       "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
       "paths": 1,
       "bytes": 5520
+    },
+    {
+      "name": "minimize",
+      "source": "artwork/source-minimize.png",
+      "traced": "artwork/traced-minimize.svg",
+      "native": "minimize.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 628
+    },
+    {
+      "name": "maximize",
+      "source": "artwork/source-maximize.png",
+      "traced": "artwork/traced-maximize.svg",
+      "native": "maximize.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 1356
+    },
+    {
+      "name": "restore",
+      "source": "artwork/source-restore.png",
+      "traced": "artwork/traced-restore.svg",
+      "native": "restore.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2564
+    },
+    {
+      "name": "trash",
+      "source": "artwork/source-trash.png",
+      "traced": "artwork/traced-trash.svg",
+      "native": "trash.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 4527
     }
   ],
   "additionalArtwork": {
@@ -626,6 +670,42 @@
       "prompt": "artwork/callout-sheet-prompt.json",
       "generator": "Built-in image_gen.imagegen; backend model unidentified.",
       "selectedRationale": "Rounded monochrome symbols are distinct, legible at the intended native size, arranged in the requested grid, and suitable for faithful tracing; no paths are hand drawn.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    },
+    "windowControls": {
+      "original": "artwork/window-controls-sheet-original.png",
+      "prompt": "artwork/window-controls-sheet-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "The user selected the existing interface and requested clearer window controls. Directly generated the three specified standard glyphs; retain the already generated Close icon.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    },
+    "trash": {
+      "original": "artwork/trash-original.png",
+      "prompt": "artwork/trash-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "A specified standard trash glyph, generated directly to make recoverable deletion recognizable in the compact file menu.",
       "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
       "preparedRaster": {
         "fit": 648,

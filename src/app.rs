@@ -200,6 +200,13 @@ impl NotesApp {
                         if (event.kind.is_modify()
                             || event.kind.is_create()
                             || event.kind.is_remove())
+                            && self.vault.as_ref().is_some_and(|vault| {
+                                event.paths.iter().any(|path| {
+                                    path.strip_prefix(&vault.root).is_ok_and(|relative| {
+                                        !rust_notes::vault::is_ignored_path(relative)
+                                    })
+                                })
+                            })
                             && (matches!(
                                 event.kind,
                                 notify::EventKind::Create(notify::event::CreateKind::Folder)
@@ -1136,6 +1143,23 @@ impl NotesApp {
             match action {
                 FileAction::Open(path) => {
                     self.open_note_at(&path, ui.ctx().input(|i| i.modifiers.command))
+                }
+                FileAction::OpenInNewTab(path) => self.open_note_at(&path, true),
+                FileAction::Copy(path) => {
+                    self.open_note(&path);
+                    if self
+                        .tabs
+                        .get(self.active)
+                        .is_some_and(|tab| tab.document.path == path)
+                    {
+                        self.ask(Dialog::SaveCopy);
+                    }
+                }
+                FileAction::CopyPath(path) => {
+                    if let Some(vault) = &self.vault {
+                        ui.ctx()
+                            .copy_text(vault.root.join(path).display().to_string());
+                    }
                 }
                 FileAction::Rename(path) => self.ask_file(Dialog::RenameNote, path),
                 FileAction::Trash(path) => self.ask_file(Dialog::TrashNote, path),
@@ -2317,8 +2341,21 @@ impl NotesApp {
                     };
                 }
                 Ok(None) => {
+                    let active_id = self.tabs.get(self.active).map(Tab::id);
+                    let deleted_active = self
+                        .tabs
+                        .get(self.active)
+                        .is_some_and(|tab| tab.document.path == source);
                     self.tabs.retain(|tab| tab.document.path != source);
-                    self.active = self.active.min(self.tabs.len().saturating_sub(1));
+                    if deleted_active {
+                        self.new_tab();
+                    } else {
+                        self.active = self
+                            .tabs
+                            .iter()
+                            .position(|tab| Some(tab.id()) == active_id)
+                            .unwrap_or(0);
+                    }
                     self.status = format!("Moved {} to system Trash", source.display());
                     self.error = None;
                 }
@@ -2492,6 +2529,7 @@ impl eframe::App for NotesApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
         }
+        crate::window::title_bar(ui, &self.window_title);
         egui::Panel::bottom("status")
             .exact_size(28.0)
             .resizable(false)

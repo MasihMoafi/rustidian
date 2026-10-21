@@ -29,7 +29,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -77,6 +77,19 @@ def main():
             browser.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nwith Path(" + repr(str(reports / "browser-requests.txt")) + ").open('a') as f: f.write(repr(sys.argv[1:])+'\\n')\n")
             browser.chmod(0o700)
             environment["BROWSER"] = str(browser)
+        if args.section == "chrome":
+            for path in ["__pycache__", ".git", "Notes/__pycache__"]:
+                folder = fixture / path
+                folder.mkdir(parents=True, exist_ok=True)
+                (folder / "Cache.md").write_text("Never index this generated file.\n")
+            (fixture / ".gitignore").write_text("__pycache__/\n")
+            (fixture / ".gitignore.md").write_text("Hidden file.\n")
+            (fixture / "Cache notes.md").write_text("Keep this ordinary note.\n")
+        window_manager = None
+        if args.section == "chrome" and shutil.which("openbox"):
+            window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
+                stdout=log, stderr=log)
+            time.sleep(.4)
         launch_command = [str(ROOT / args.binary), str(fixture)]
         if args.open_file:
             startup_path = fixture / f"Open me سلام.{args.open_file}"
@@ -259,7 +272,28 @@ def main():
                 actual = second_path.read_text()
                 assert actual == second_text + "Second document saved", repr(actual)
                 assert startup_path.read_text() == expected
-                results.append(f"Individual .{args.open_file} files with Unicode names opened and saved; a new file took precedence over restored tabs")
+                # The last open note is a separate case from deleting one of many tabs.
+                target_tab = "close-tab:" + str(second_path.relative_to(fixture))
+                for _ in range(8):
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    others = [name for name in controls if name.startswith("tab-full:") and name != "tab-full:" + str(second_path.relative_to(fixture))]
+                    if not others:
+                        break
+                    click_control(others[0])
+                    key("ctrl+w")
+                controls = json.loads((base / "ui-probe.json").read_text())
+                assert len([name for name in controls if name.startswith("tab-full:")]) == 1, "The last-tab deletion case must start with exactly one tab"
+                title_contains(second_path.stem)
+                last_bytes = second_path.read_bytes()
+                key("ctrl+p")
+                type_text("Move file to system Trash")
+                key("Return")
+                key("Return")
+                title_contains("New tab")
+                assert not second_path.exists()
+                assert any(path.read_bytes() == last_bytes for path in (base / "data/Trash/files").iterdir() if path.is_file())
+                assert startup_path.read_text() == expected
+                results.append(f"Individual .{args.open_file} files opened, saved and reopened; the last note became a blank tab after recoverable deletion")
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "open_file": args.open_file}))
                 return
@@ -587,7 +621,7 @@ def main():
             def attachment_tab_checks():
                 nonlocal app, window
                 home_before = fixture.joinpath("Home.md").read_bytes()
-                xdo("mousemove", "70", "20", "click", "1")
+                click_control("button:File explorer")
                 pause()
                 if not control_bounds("file:Assets/Attachment.png", required=False):
                     click_control("folder:Assets")
@@ -753,6 +787,143 @@ def main():
                     key("ctrl+s")
                     assert note.read_text() == expected + " reopened", (name, "reopen")
                 results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
+
+            def chrome_checks():
+                assert control_bounds("folder:__pycache__", required=False) is None
+                assert control_bounds("folder:.git", required=False) is None
+                assert control_bounds("file:.gitignore.md", required=False) is None
+                click_control("file:Cache notes.md")
+                title_contains("Cache notes")
+                open_note("Home")
+                results.append("Explorer excludes dotfiles, Git data and Python caches while keeping ordinary cache-related notes")
+                originals = {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")}
+                for name in ["Close window", "Maximize window", "Minimize window"]:
+                    xdo("mousemove", "800", "500")
+                    time.sleep(.07)
+                    bounds = tuple(round(x) for x in control_bounds("window:" + name))
+                    before = ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB")
+                    left, top, right, bottom = bounds
+                    xdo("mousemove", str((left + right)//2), str((top + bottom)//2))
+                    time.sleep(.08)
+                    after = ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB")
+                    assert sum(a != b for a, b in zip(pixel_data(before), pixel_data(after))) > 100, name
+                capture("native-window-controls-hover.png")
+                results.append("All three generated window controls show immediate visible hover feedback")
+
+                def file_menu(path):
+                    if control_bounds("file:" + path, required=False) is None:
+                        click_control("folder:Notes")
+                    click_control("file:" + path, "3")
+                    control_bounds("menu:Open in new tab")
+
+                file_menu("Notes/First steps.md")
+                for label in ["Open in new tab", "Make a copy…", "Bookmark…", "Copy path", "Rename…", "Delete"]:
+                    left, top, right, bottom = control_bounds("menu:" + label)
+                    assert 24 <= bottom-top <= 30 and 190 <= right-left <= 240, (label, right-left, bottom-top)
+                capture("native-file-context-menu.png")
+                key("Escape")
+                title_contains("Home")
+                assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
+                file_menu("Notes/First steps.md")
+                click_control("menu:Open in new tab")
+                title_contains("First steps")
+                assert control_bounds("tab-full:Home.md")
+                assert control_bounds("tab-full:Notes/First steps.md")
+                file_menu("Home.md")
+                click_control("menu:Copy path")
+                clipboard = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, timeout=5).decode()
+                assert clipboard == str(fixture / "Home.md"), repr(clipboard)
+                title_contains("First steps")
+                file_menu("Home.md")
+                click_control("menu:Make a copy…")
+                control_bounds("dialog-input-focused")
+                key("ctrl+a")
+                type_text("Menu copy.md")
+                key("Return")
+                title_contains("Menu copy")
+                assert (fixture / "Menu copy.md").read_bytes() == originals["Home.md"]
+                file_menu("Menu copy.md")
+                click_control("menu:Rename…")
+                control_bounds("dialog-input-focused")
+                key("ctrl+a")
+                type_text("Menu renamed.md")
+                key("Return")
+                title_contains("Menu renamed")
+                assert not (fixture / "Menu copy.md").exists()
+                assert (fixture / "Menu renamed.md").read_bytes() == originals["Home.md"]
+                file_menu("Menu renamed.md")
+                click_control("menu:Delete")
+                control_bounds("dialog-input")
+                key("Escape")
+                assert (fixture / "Menu renamed.md").exists(), "Cancel must preserve the note"
+                file_menu("Menu renamed.md")
+                click_control("menu:Delete")
+                control_bounds("dialog-input")
+                key("Return")
+                title_contains("New tab")
+                assert control_bounds("tab-full:Notes/First steps.md")
+                assert not (fixture / "Menu renamed.md").exists()
+                assert any(p.read_bytes() == originals["Home.md"] for p in (base / "data/Trash/files").iterdir() if p.is_file())
+                assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
+                results.append("Compact grouped file menu opens a background note in a new tab, copies its actual path and contents, renames safely, cancels deletion and recovers the confirmed deletion from Trash")
+                if window_manager is not None:
+                    def geometry():
+                        return {k:int(v) for k,v in (line.split("=",1) for line in xdo("getwindowgeometry", "--shell", window).splitlines()) if k in ("X", "Y", "WIDTH", "HEIGHT")}
+                    xdo("windowsize", window, "1100", "760")
+                    xdo("windowmove", window, "0", "0")
+                    pause()
+                    click_control("window:Maximize window")
+                    control_bounds("window:Restore window")
+                    assert geometry()["WIDTH"] == 1440 and geometry()["HEIGHT"] == 960, geometry()
+                    click_control("window:Restore window")
+                    control_bounds("window:Maximize window")
+                    assert geometry()["WIDTH"] == 1100 and geometry()["HEIGHT"] == 760, geometry()
+                    click_control("window:Minimize window")
+                    state = subprocess.check_output(["xprop", "-id", window, "WM_STATE"], env=environment, text=True)
+                    assert "Iconic" in state, state
+                    xdo("windowmap", window)
+                    xdo("windowactivate", "--sync", window)
+                    pause()
+                    before = geometry()
+                    left, top, right, bottom = control_bounds("window-title-drag")
+                    x = round((left + right)/2)
+                    y = round((top + bottom)/2)
+                    xdo("mousemove", str(x), str(y), "mousedown", "1")
+                    time.sleep(.15)
+                    xdo("mousemove", str(x+80), str(y+40))
+                    time.sleep(.15)
+                    xdo("mouseup", "1")
+                    pause()
+                    assert geometry()["X"] >= before["X"] + 60 and geometry()["Y"] >= before["Y"] + 20, (before, geometry())
+                    xdo("windowmove", window, "0", "0")
+                    pause()
+                    xdo("mousemove", "1098", "758", "mousedown", "1")
+                    time.sleep(.15)
+                    xdo("mousemove", "1180", "820")
+                    time.sleep(.15)
+                    xdo("mouseup", "1")
+                    pause()
+                    assert geometry()["WIDTH"] >= 1150 and geometry()["HEIGHT"] >= 800, geometry()
+                    capture("native-window-controls.png")
+                    (reports / "window-manager-results.json").write_text(json.dumps({"status":"passed","manager":"Openbox","geometry":geometry()},indent=2)+"\n")
+                    results.append("Real window manager confirmed maximize/restore, minimize/reopen, title-bar dragging and edge resizing")
+                open_note("First steps")
+                command("Source mode")
+                control_bounds("editor-focused")
+                key("ctrl+End")
+                type_text("WINDOW_CLOSE_UNSAVED")
+                active = "Notes/First steps.md"
+                title_contains("First steps")
+                click_control("window:Close window")
+                pause()
+                capture("native-window-unsaved-close.png")
+                assert app.poll() is None, "Close must preserve an unsaved note"
+                assert (fixture / active).read_bytes() == originals[active]
+                key("Escape")
+                key("ctrl+z")
+                key("ctrl+s")
+                assert (fixture / active).read_bytes() == originals[active]
+                results.append("Generated close button respects unsaved-change confirmation and preserves original file bytes")
 
             def hover_checks():
                 key("ctrl+t")
@@ -1932,7 +2103,7 @@ def main():
                 results.append("The final section folded safely from an EOF caret and Ctrl+End revealed it; folded code/images stayed hidden through edits and returned on expansion")
             def file_toolbar_checks():
                 nonlocal app, window
-                xdo("mousemove", "70", "20", "click", "1")
+                click_control("button:File explorer")
                 pause()
                 click_control("new-folder")
                 key("ctrl+a")
@@ -2155,7 +2326,7 @@ def main():
                 for number in range(5000):
                     (bulk / f"Note{number:05d}.md").write_text(f"# Note{number:05d}\n\nShort content.\n")
                 time.sleep(1)
-                xdo("mousemove", "70", "20", "click", "1")
+                click_control("button:File explorer")
                 pause()
                 # Collapse an existing expansion, then explicitly expand it.
                 header = control_bounds("folder:Explorer bulk")
@@ -2178,7 +2349,7 @@ def main():
                 capture("native-large-explorer.png")
                 results.append("The native explorer scrolled through 5,000 files and opened the final row; folder toggling retained the complete scroll range")
             def folder_checks():
-                xdo("mousemove", "70", "20", "click", "1")
+                click_control("button:File explorer")
                 pause()
                 if control_bounds("folder:Bulk", required=False):
                     click_control("folder:Bulk")
@@ -2372,7 +2543,7 @@ def main():
                 open_note("Home")
                 command("Bookmark current file")
                 # Explorer context menu follows the same bookmark operation for images.
-                xdo("mousemove", "70", "20", "click", "1")
+                click_control("button:File explorer")
                 pause()
                 click_control("file-collapse")
                 click_control("folder:Assets")
@@ -2431,7 +2602,7 @@ def main():
                 assert path.exists(), "Queued rename lost input or did not finish"
                 assert path.read_text() == source
                 assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
-                xdo("mousemove", "70", "20", "click", "1")
+                click_control("button:File explorer")
                 pause()
                 click_control("file-collapse")
                 click_control("folder:Bookmark folder", "3")
@@ -2530,6 +2701,11 @@ def main():
                 assert path.read_text() == source
                 results.append("Two vaults with equal note names retained independent bookmark lists and original note bytes")
 
+            if args.section == "chrome":
+                chrome_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "chrome"}))
+                return
             if args.section == "bookmarks":
                 bookmark_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -2696,7 +2872,7 @@ def main():
             results.append("Reading view rejected text input")
 
             # Exercise the generated new-tab icon rather than only its shortcut.
-            xdo("mousemove", "573", "20", "click", "1")
+            click_control("new-tab")
             pause()
             title_contains("New tab")
             capture("native-empty-tab.png")
@@ -2747,18 +2923,25 @@ def main():
             assert home.read_text() == before_collision
             title_contains("Renamed note")
             key("Escape")
+            deleted_bytes = (fixture / "Moved/Renamed note.md").read_bytes()
             command("Move file to system Trash")
             key("Return")
-            title_contains("New tab")
+            title_contains("First steps")
+            assert control_bounds("close-tab:Moved/Renamed note.md", required=False) is None
+            assert home.read_text() == before_collision
             assert not (fixture / "Moved/Renamed note.md").exists()
             trashed = list((base / "data/Trash/files").glob("Renamed note*"))
-            assert trashed and trashed[0].read_text().startswith("# Created by link")
+            assert any(path.read_bytes() == deleted_bytes for path in trashed)
             results.append("F2 moved a note and updated links; collision preserved both files; deletion remained recoverable in system Trash")
             key("ctrl+o")
             type_text("cnnctdthnk")
             key("Return")
             title_contains("Connected thinking")
             results.append("Wiki-link completion, Ctrl+Enter navigation, missing-note creation and fuzzy quick-open used native paths")
+            # Ctrl+Enter opens another tab; finish that scenario before the
+            # independent two-tab history and view-mode checks.
+            key("ctrl+w")
+            title_contains("Home")
             open_note("Home")
             command("Reading view")
             key("ctrl+t")
@@ -2868,6 +3051,17 @@ def main():
             app.wait(timeout=5)
             app = launch_app(launch_command)
             window = ready_window()
+            # Rename/bookmark actions may already have persisted an older layout.
+            # Arrange the two-tab restart case through real close actions.
+            for _ in range(32):
+                controls = json.loads((base / "ui-probe.json").read_text())
+                tabs = [name for name in controls if name.startswith("tab-full:")]
+                if not tabs:
+                    break
+                click_control(tabs[0])
+                key("ctrl+w")
+            controls = json.loads((base / "ui-probe.json").read_text())
+            assert not any(name.startswith("tab-full:") for name in controls)
             open_note("Home")
             command("Reading view")
             key("ctrl+t")
@@ -2879,6 +3073,7 @@ def main():
             assert len(session_files) == 1
             session = json.loads(session_files[0].read_text())
             assert len(session["tabs"]) == 2 and session["active"] == 1
+            assert [path for path, view in session["tabs"]] == ["Home.md", "Notes/Created in GUI.md"]
             assert [view for path, view in session["tabs"]] == ["Read", "Source"]
             app = launch_app(launch_command)
             window = ready_window()
@@ -2943,6 +3138,9 @@ def main():
             except subprocess.TimeoutExpired:
                 app.kill()
                 app.wait()
+            if window_manager is not None:
+                window_manager.terminate()
+                window_manager.wait(timeout=5)
             server.terminate()
             server.wait(timeout=5)
             xvfb_log.close()

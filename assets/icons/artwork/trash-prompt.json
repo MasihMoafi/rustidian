@@ -1,0 +1,6 @@
+{
+  "prompt": "A single precisely specified standard trash-can icon for a native desktop file context menu, matching thin rounded line window controls. Simple monochrome black line art on a transparent square canvas, centered with generous even margins: small top handle, horizontal lid, slightly tapered bin body, two thin vertical marks inside. Clean hollow shapes, consistent medium-thin rounded strokes and corners. Flat vector-like artwork, no text, no shadow, no gradients, no decorations. Must remain immediately readable at 16 by 16 pixels. Draw only one trash can.",
+  "transparentBackground": true,
+  "selectedRationale": "A specified standard trash glyph, generated directly to make recoverable deletion recognizable in the compact file menu.",
+  "generator": "Built-in image_gen.imagegen; backend model unidentified."
+}
