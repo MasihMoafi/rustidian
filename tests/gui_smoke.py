@@ -205,9 +205,20 @@ def main():
                 raise AssertionError(f"No visible control: {name}; X focus={xdo('getwindowfocus')}; focus={focus}; visible={list(controls)}")
             return None
 
-        def click_control(name, button="1"):
+        def click_control(name, button="1", *, hold=0):
             left, top, right, bottom = control_bounds(name)
-            xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", button)
+            pointer = ("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)))
+            if hold:
+                xdo(*pointer)
+                time.sleep(.1)
+                assert control_bounds(name) == [left, top, right, bottom]
+                xdo("mousedown", button)
+                try:
+                    time.sleep(hold)
+                finally:
+                    xdo("mouseup", button)
+            else:
+                xdo(*pointer, "click", button)
             pause()
 
         def title_contains(value):
@@ -2506,6 +2517,16 @@ def main():
                 command("Switch appearance")
                 results.append("The vault profile opened the recent/create/open chooser in both themes; cancelling creation preserved the active vault and created nothing")
 
+                def autosave(enabled):
+                    command("Open settings")
+                    type_text("autosave")
+                    assert control_bounds("settings-dark", required=False) is None
+                    if json.loads(fixture_state.read_text())["autosave_enabled"] is not enabled:
+                        click_control("settings-autosave", hold=.15)
+                    wait_autosave(base / "state", enabled, session_path=fixture_state)
+                    capture(f"native-vault-autosave-{enabled}.png")
+                    key("Escape")
+
                 created = base / "Created vault یادداشت"
                 manager()
                 click_control("vault-create")
@@ -2516,6 +2537,8 @@ def main():
                 title_contains(created.name)
                 assert list(created.iterdir()) == []
                 assert roots()[0] == str(created)
+                # Leaving the first vault has now persisted its session.
+                fixture_state = max((base / "state/rust-notes").glob("*.json"), key=lambda path: path.stat().st_mtime_ns)
                 key("ctrl+n")
                 type_text("Home")
                 key("Return")
@@ -2614,9 +2637,7 @@ def main():
                 results.append("Open folder as vault used the real native chooser; shared recent entries refreshed on opening and survived an actual app restart")
                 click_control("vault-manager-close")
 
-                command("Open settings")
-                click_control("settings-autosave")
-                key("Escape")
+                autosave(False)
                 command("Source editing")
                 editor_end()
                 type_text("DIRTY_VAULT_CANCEL")
@@ -2633,9 +2654,7 @@ def main():
                 key("ctrl+z")
                 key("ctrl+s")
                 assert (fixture / "Home.md").read_bytes() == original
-                command("Open settings")
-                click_control("settings-autosave")
-                key("Escape")
+                autosave(True)
                 results.append("Cancelling a vault switch retained unsaved editing and the current vault; explicit save and undo preserved the original bytes")
 
                 manager()
@@ -2960,6 +2979,10 @@ def main():
                 time.sleep(.7)
                 open_note("Ctrl target")
                 command("Bookmark current file")
+                # Give the new-tab check a fresh target and a last-tab origin.
+                # Earlier workflows may leave other tabs on either side.
+                key("ctrl+w")
+                key("ctrl+t")
                 open_note("Bookmark check")
                 click_control(f"bookmark:{relative}")
                 title_contains("Bookmark check")

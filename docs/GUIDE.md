@@ -47,6 +47,7 @@ from a fresh clone.
   when `/tmp` has a quota; never override reserves. Move obsolete owned output to
   recoverable Trash, preserve selected artifacts and raw evidence, and report
   actual `df` space rather than claiming Trash reclaimed it.
+- An active overnight guard can forbid every proxy download even with quota available. Honor that restriction: use direct requests and keep the guard enabled.
 - Reserve1,000,000,000 bytes of provider allowance. Local network counters do not
   prove remaining provider quota. Prefer direct GitHub access and preserve shared
   routing; unsetting proxy variables does not bypass an enabled TUN. Stop our VPN
@@ -330,6 +331,18 @@ are not an after result. Inspect both-theme screenshots before showing them.
 - **Recovery:** confirmed active-file Trash opens a blank workspace; deleting a
   background note preserves the active tab. Reset restart fixtures through real
   Close actions and require exact tab order/modes plus recoverable deleted bytes.
+
+A settings click is complete when its exact vault session acknowledges the
+value. Use a normal held click on settled controls, then wait before closing
+settings. With multiple vaults, retain the first session path after switching
+has persisted it and acknowledge that file; unrelated sessions cannot prove
+that the active checkbox changed.
+
+For a new-tab/close evaluation, explicitly create its origin and ensure its
+target is not already open. Earlier workflows can leave many unrelated tabs;
+use real Close/New tab actions to establish the pair, preserving all navigation
+and file-byte assertions. A focused pass with one tab does not establish that
+the fixture is valid in the complete suite.
 
 ## Deliver the change
 

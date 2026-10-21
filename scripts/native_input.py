@@ -26,11 +26,11 @@ def release_save_shortcut(environment):
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)
 
 
-def wait_autosave(state_root, enabled, timeout=3):
+def wait_autosave(state_root, enabled, timeout=3, *, session_path=None):
     deadline = time.monotonic() + timeout
     observed = []
     while time.monotonic() < deadline:
-        paths = list((Path(state_root) / "rust-notes").glob("*.json"))
+        paths = [Path(session_path)] if session_path is not None else list((Path(state_root) / "rust-notes").glob("*.json"))
         observed = [(path, json.loads(path.read_text())) for path in paths]
         if len(observed) == 1 and observed[0][1]["autosave_enabled"] is enabled:
             return observed[0][0]
