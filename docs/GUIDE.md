@@ -22,8 +22,9 @@ Runtime candidate `4dbb842a013f8400fbaab8c831d6c7e38ba445cd`, built by
 passes128 Rust executions, Clippy, all focused UI sections and six CPU
 conditions. Its exact copied-plan link and scrolled checklist also pass locally.
 Binary SHA256 is `8bd8663257d5cc8a9c17a45af66c68edc8a203654eca44e06a40c573d7304e4e`.
-Follow-up runs reuse that app to correct fixture/setup failures and finish full
-regressions plus the comparison; the active run is recorded in `ES.md`.
+Its observer-free comparison passes in Actions39627064113; the full GUI run
+stopped at a reader-width fixture that left Outline open. That setup is now
+explicit and passes locally. The next complete reuse run is recorded in `ES.md`.
 Installation is pending those gates. The previous fully verified release is `21a1271`;
 `reports/release-verification.json` records accepted checks, not user acceptance.
 Reports are ignored: download Actions evidence when starting from a fresh clone.
@@ -161,10 +162,19 @@ gh workflow run native.yml --repo MasihMoafi/rust-notes   -f reuse_run_id=SOURCE
 The guard permits only declared harness/docs changes. Never restore locally:
 restore mode creates `target/release` and belongs on the runner. A runtime change
 needs a fresh optimized Actions build. Keep one candidate active at a time.
+The restored source artifact also contains historical report sidecars. Attribute
+Rust/build evidence to the source run; count GUI/performance evidence only when
+the current run actually invoked that section and produced its passing log.
+Do not promote an inherited result file as a fresh verification.
 
 After checking route, quota and storage, download one needed artifact with `gh`.
 If its downloader stalls, `gh api repos/MasihMoafi/rust-notes/actions/artifacts/ARTIFACT_ID/zip`
 can write a checked ZIP into ignored `reports/` on the healthy home filesystem.
+For a large evidence archive, `gh api -H "Range: bytes=START-END"` can
+retrieve its ZIP directory and selected compressed entries. Verify each extracted
+entry with ZIP CRC before using it; this recovered601KB of diagnostics from a
+29.8MB artifact without another app download. Keep source/checksum receipts.
+
 Validate ZIP/tar member paths, reject links/escapes, verify candidate/release and
 bundle SHA256, and retain source-run identity. A candidate may be previewed on
 copies; it is not an accepted installation while release gates are failing.
@@ -236,9 +246,13 @@ and screenshot polling; scrolling checks distance, direction and no delayed tail
   and plain-S negative control. A verified UTF-8 clipboard plus Ctrl+V avoids
   scratch-key remapping losses in Persian fixtures; it does not prove IME/bidi.
 - **UI acknowledgement:** Escape runs before settings rendering. Observe one
-  checkbox click's persisted value before closing the modal. Collapse expanded
+  checkbox click's persisted value before closing the modal. Filtering can change
+  modal geometry: require settled bounds before a single setup gesture and
+  retain its pointer/geometry; keep this setup outside speed measurements. Collapse expanded
   full-suite explorer folders once before timing a root-file hover. No repeated
-  toggles, weakened thresholds or save retries.
+  toggles, weakened thresholds or save retries. Close a visible right pane before
+  a fixed920px reader check; resizing back to a wide window can restore it. Keep
+  the exact geometry assertions after establishing that layout.
 - **Native placement:** use painted galley coordinates for overlays and natural
   dimensions for diagrams. Inspect the complete image; an offscreen sliver or
   parser/probe success is not successful rendering.

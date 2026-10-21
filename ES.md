@@ -11,7 +11,17 @@ Finish the essential native Rust Notes workflow from Masih's actual Obsidian scr
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
-## Latest checkpoint — link clicks, checklist clipping and daily installation
+## Latest checkpoint — 21 October15:54UTC
+
+Normal Actions39627064113 / harnessc63647f failed the full reading-code fixture after77 passing groups. The outline was open; its859px available code panel was correct, while the fixture assumes920px with the pane closed. The fixture now explicitly closes a visible right pane and retains exact920/177/49.515 geometry, source and clipboard assertions. A bounded local check opens Outline first and passes all4 native groups after the reset (reports/reading-code-4dbb842-pane-reset.log). No runtime changes or Rust rebuild.
+
+That normal run passes focused navigation5/Chrome6/diagrams2/tasks3, repeated Chrome6, md/txt1 each, all six CPU conditions and the observer-free comparison. Raw selected evidence: reports/github-c63647f-normal, reports/github-c63647f-focused; failure log reports/c63647f-normal-failed.log. Median edit/save95.5276625ms/p95111.061575ms vs Ferrite592.9233325/602.199224ms,120 exact saved insertions. This is a bounded edit/save observation, not display latency. It cannot package/install while the full GUI stage fails.
+
+Runtime remains optimized4dbb842a013f8400fbaab8c831d6c7e38ba445cd from source Actions39608458012, SHA2568bd8663257d5cc8a9c17a45af66c68edc8a203654eca44e06a40c573d7304e4e. Reuse the same app/benchmark for the next complete normal run; keep all checks and actual performance results. Next: verify every gate and release.sha256, atomically install the exact app, preserve launcher/default-vault/MIME/icon/rollback, then reopen copies for review. Never install a debug or diagnostic payload.
+
+Default installed b9 debug SHA8bae13f38dc54c7e5267c22b438175239c52089c862bc39661f2cc64832b01e7 has exact rollback reports/github-b9d68d2/runtime/rust-notes. No Rust Notes process/preview ran at15:36UTC; verify before claiming one is open. Actual copied translation plan/spec passes navigation5; task boxes escape0 chrome pixels vs822 before. All4 originals remain unchanged. No local target/build;71GB root free last checked. Direct requests/TUN false only;1GB VPN reserve and shared routing untouched. Preserve demo Home line22/trailing space and concurrent untracked assets/app-icon.
+
+## Historical checkpoint — before focused4dbb842 verification
 
 Candidate4dbb842a013f8400fbaab8c831d6c7e38ba445cd / Actions39608458012 completed: formatting, Clippy, Rust checks, optimized build, every focused native section and all CPU conditions pass. Full GUI reaches hover_checks but its root Home row is offscreen after earlier groups expanded many Notes fixtures; the independent hover section passes. Comparator fails during untimed setup: Escape closes settings before the queued checkbox click persists. No comparison samples or accepted release. Reuse this exact optimized source/binary for the two harness corrections; do not rebuild Rust. No new binary installed.
 
@@ -23,7 +33,7 @@ The4db Actions run39603344501 collected independent failures. The settings filte
 
 No local Rust build/target. The initial local baseline could not copy a binary into/tmp because of its per-user quota; the bounded focused checks used an owned disposable directory under ignored reports/private-tmp on the home filesystem. No reserve override or unrelated cleanup. About82GB root space remains. Direct GitHub access only, TUN false; no VPN/provider changes. Preserve concurrent untracked assets/app-icon. Next: one combined optimized Actions candidate, actual link/checklist/WM verification, then verified release installation while preserving the running old process and rollback binary.
 
-## Current evidence
+## Historical candidate evidence
 
 Last fully verified app: source21a12711d6cf1183b68c2c2be4f1248f23422d2d, Actions39540024536,113 Rust executions/108unique,96 full GUI groups,6 internal CPU conditions. Exact artifact/checksums: reports/release-verification.json. Candidate a96dd86a347b1b46f014254d2e18d401157bc418 / Actions39552747964 passed fmt/Clippy,120 Rust executions/115unique and focused tasks2,essentials4,colors2 native groups, then failed the existing Persian bookmark simulator input (Writing فس versus Writing فارسی). The exact same debug binary passed all8 bookmark groups locally. The next candidate changes only the harness to type ASCII and paste verified UTF-8 through real Ctrl+V, retaining exact Persian saved/reopened assertions; xclip is declared in CI. Release/full GUI/CPU/Ferrite results remain pending. Do not replace selected release metadata or claim acceptance/speed until actual results are inspected.
 
@@ -425,3 +435,16 @@ Diagnostic-only Actions39625044772 uses harnessdff2db114b5723f81c7782b33eeded4be
 ## Diagnostic39625044772: setup click still unapplied
 
 No timed samples were taken. Captured settings still shows autosave enabled, and no session file exists. Selected CRC-verified raw files are in reports/github-dff2db1-diagnostic;601,305 direct bytes retrieved using gh HTTP ranges instead of the29.8MB archive. Original source4dbb842 and SHA8bd866 remain exact. A bounded local setup on this executable succeeds with one click (reports/settings-click-diagnostic, not a speed run); CI cause remains unproven. Next harness waits for100ms stable filtered bounds, moves/settles the pointer, records exact geometry and performs one150ms held click, requiring persisted false. All setup is untimed; no retries or weaker save/median/p95 gates. The desktop preview PID36227 has exited, observed15:30UTC; do not claim it remains open.
+
+
+Diagnostic Actions39626592955 / harnessc63647f164ecc0346f211dc83b8520510e88f115 uses the unchanged4dbb842 optimized app and benchmark. It tests the stable-bounds/held setup gesture with keyboard observation before another full normal run. Diagnostic results cannot package/install. VISION now distinguishes this pending candidate from the older verified21a and installedb9 app.
+
+
+Diagnostic39626592955 (harnessc63647f) passed the complete two-app comparison with the unchanged4dbb842 runtime. Untimed single held settings click persisted false and setup reached timed editing. Diagnostic combined edit/save medians96.6287415ms Rust Notes vs597.3644235ms Ferrite; p95114.510713/616.840414ms. This run uses keyboard observation and cannot package/install or establish normal timings. Preserve reports/c63647f-diagnostic.log; a normal full run is next, with observer off and every native/CPU gate retained.
+
+Normal full Actions39627064113 is running on harnessc63647f with diagnostic_only=false, reusing exact4dbb842 source/binary. Full native, four focused groups, md/txt, all six CPU conditions and the observer-free comparison remain required before optimized packaging/installation. No local builds or target.
+
+
+Normal39627064113 failed only the full native reading_code_checks fixture after77 passing groups; Chrome6 and md/txt1 each pass. Screenshot/probes show the Outline pane open and a correctly fitted859px code panel; the check assumes920px with the right pane closed. Retain the exact920/177/49.515 geometry and source/clipboard assertions, and explicitly close the visible outline before this fixture. Raw selected evidence is reports/github-c63647f-normal; normal failure log reports/c63647f-normal-failed.log. Observer-free edit/save comparison passes: median95.5276625ms/p95111.061575ms vs Ferrite592.9233325/602.199224ms, all120 exact insertions verified. No accepted release/package/install. Next local bounded reading-code check starts with Outline explicitly open to reproduce the failing precondition before reset; then one normal complete reuse run. No runtime changes or Rust rebuild.
+
+The bounded after check passes all4 native reading-code groups with Outline explicitly opened first (reports/reading-code-4dbb842-pane-reset.log), preserving strict920px width,177/49.515 heights, exact Unicode clipboard/source and both-theme token colors. Actual failed CI screenshot proves the before precondition; no runtime workaround or relaxed geometry.

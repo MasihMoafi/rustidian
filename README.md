@@ -46,6 +46,7 @@ The included sample is deliberately separate from the real vault. Opening a vaul
 - Nested heading folds in reading, Source and Live modes. Editing folds preserve source and undo, skip hidden rows during navigation, and reveal anchor/search targets. Live/source quote, list, Setext and root fenced-code rendering follows the measured reference.
 - Cached native syntax colors match the measured dark/light editing palettes; reading/editing code panels share a generated Copy control, with measured reader padding and mode-specific colors.
 - Native tables with aligned columns, inline formatting, wiki links and horizontal scrolling. Live cells support Tab/Shift+Tab/Enter, shared undo, row/column changes, alignment and sorting while preserving Markdown.
+- Native Mermaid fenced diagrams in Live and Reading views, cached by source and theme and rendered away from the UI thread. Clicking a Live diagram exposes its editable Markdown source.
 - Thirteen callout types and their aliases, formatted titles, nested folding and source-preserving type changes. Reading callouts retain native links, tasks, code, tables and images; long nested titles wrap in both themes.
 - File bookmarks with custom titles and ordering, immediate per-vault persistence, guarded rename tracking, and removable missing targets. Bookmarking and removing shortcuts preserve file content.
 - Paste and selection edits have independent undo boundaries; Ctrl+S includes text received in the same frame. Wiki completion uses text queued before Tab/Enter and preserves Enter after a closing delimiter or an unmatched query.
@@ -74,7 +75,7 @@ If another program changes a note, save refuses to overwrite it and retains your
 
 ## Remaining work
 
-Exact full-product parity remains in progress. Remaining areas include complex-document folding, math/diagrams, graph/canvas, file recovery, bookmark groups and non-file targets, daily notes/templates, plugin equivalents, and optional sync/mobile. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Existing Obsidian JavaScript plugins do not execute here.
+Exact full-product parity remains in progress. Remaining areas include complex-document folding, math, graph/canvas, file recovery UI, bookmark groups and non-file targets, daily notes/templates, plugin equivalents, and optional sync/mobile. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Existing Obsidian JavaScript plugins do not execute here.
 
 Indexing runs outside rendering, with native file notifications. Release measurements, declared method and limits are in [the plan](docs/PLAN.md) and [desktop benchmark](reports/desktop-benchmark.json). The local comparison uses installed Obsidian 1.5.12 with a different feature set; it does not establish equal-feature performance. The deterministic 5,000-note run is in [vault benchmark](reports/vault-benchmark.json). GUI verification currently covers Linux/X11.
 

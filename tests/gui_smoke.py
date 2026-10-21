@@ -1626,6 +1626,11 @@ def main():
                 results.append("An unknown fence language stayed readable as plain code without inheriting the previous file's syntax colors")
 
             def reading_code_checks():
+                # The compact-tab check can restore a previously open outline.
+                # This fixture measures the 920px reader with that pane closed.
+                if control_bounds("panel:outline", required=False) is not None:
+                    click_control("button:Toggle right sidebar")
+                assert control_bounds("panel:outline", required=False) is None
                 source = (ROOT / "tests/fixtures/syntax.md").read_text()
                 plain_body = "**literal** [[Never open]] π\n"
                 source += "\n~~~text\n" + plain_body + "~~~\n\n~~~\n~~~\n\nAfter code.\n"
