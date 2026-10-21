@@ -43,6 +43,7 @@ pub struct Editor {
     focus_range: Option<(egui::Id, CCursorRange)>,
     image_cursor: Option<(usize, usize)>,
     image_cursor_time: f64,
+    pressed_link: Option<(u64, egui::PointerButton, String)>,
 }
 
 struct Format {
@@ -1062,6 +1063,7 @@ impl Editor {
                     );
                 }
             }
+            let task_clip = output.text_clip_rect.intersect(ui.clip_rect());
             for (ordinal, task) in self.parsed.tasks.iter().enumerate() {
                 let character = task.character;
                 if hidden.iter().any(|range| range.contains(&character)) {
@@ -1074,7 +1076,7 @@ impl Editor {
                     egui::pos2(point.min.x + 9.0, point.center().y),
                     egui::vec2(18.0, 18.0),
                 );
-                if !rect.intersects(output.text_clip_rect) {
+                if !rect.intersects(task_clip) {
                     continue;
                 }
                 let mut child = ui.new_child(
@@ -1082,7 +1084,7 @@ impl Editor {
                         .id_salt((id, "task", ordinal))
                         .max_rect(rect),
                 );
-                child.set_clip_rect(output.text_clip_rect);
+                child.set_clip_rect(task_clip);
                 let mut checked = task.checked;
                 let response = crate::theme::checkbox(&mut child, &mut checked);
                 crate::ui_probe::record(ui.ctx(), format!("task-live:{ordinal}"), response.rect);
@@ -1248,6 +1250,14 @@ impl Editor {
                 .translate(output.galley_pos.to_vec2());
             ui.scroll_to_rect(rect, Some(egui::Align::Center));
         }
+        let pressed_button = ui.input(|input| {
+            [egui::PointerButton::Primary, egui::PointerButton::Middle]
+                .into_iter()
+                .find(|button| input.pointer.button_pressed(*button))
+        });
+        if pressed_button.is_some() {
+            self.pressed_link = None;
+        }
         if let Some(pointer) = output.response.hover_pos() {
             let character = output
                 .galley
@@ -1274,12 +1284,22 @@ impl Editor {
                     .is_some_and(|line| line.contains(&byte));
             if link && (rendered || ui.input(|input| input.modifiers.command)) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                if output.response.clicked()
-                    || output.response.clicked_by(egui::PointerButton::Middle)
+                if let Some(button) = pressed_button
+                    && let Some(target) = link_at(&tab.document.text, character)
                 {
-                    follow = link_at(&tab.document.text, character);
+                    self.pressed_link = Some((tab.id(), button, target));
                 }
             }
+        }
+        if self
+            .pressed_link
+            .as_ref()
+            .is_some_and(|(_, button, _)| ui.input(|input| input.pointer.button_released(*button)))
+            && let Some((tab_id, button, target)) = self.pressed_link.take()
+            && tab_id == tab.id()
+            && output.response.clicked_by(button)
+        {
+            follow = Some(target);
         }
         if live && crate::ui_probe::enabled() {
             let mut character = 0;

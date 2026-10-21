@@ -32,7 +32,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -52,7 +52,7 @@ def main():
         read_fd, write_fd = os.pipe()
         xvfb_log = (reports / "gui-xvfb.log").open("w")
         server = subprocess.Popen(
-            ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1440x960x24", "-nolisten", "tcp", "-ac"],
+            ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1440x960x24", "-nolisten", "tcp", "-ac", "-noreset"],
             pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=xvfb_log,
         )
         os.close(write_fd)
@@ -195,7 +195,7 @@ def main():
 
         def click_control(name, button="1"):
             left, top, right, bottom = control_bounds(name)
-            xdo("mousemove", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", button)
+            xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", button)
             pause()
 
         def title_contains(value):
@@ -695,7 +695,8 @@ def main():
                 key("ctrl+Return")
                 title_contains("Viewer[1].png")
                 assert control_bounds("attachment-image")
-                key("alt+Left")
+                assert control_bounds("tab-full:Notes/Attachment links GUI.md")
+                key("ctrl+w")
                 title_contains("Attachment links GUI")
                 assert control_bounds("editor")
                 editor_end()
@@ -704,12 +705,20 @@ def main():
                 key("ctrl+Return")
                 title_contains("Viewer[1].png")
                 assert control_bounds("attachment-image")
+                assert control_bounds("tab-full:Notes/Attachment links GUI.md")
+                key("ctrl+w")
+                title_contains("Attachment links GUI")
+                command("Reading view")
+                left, top, right, bottom = control_bounds("reading-block:1")
+                xdo("mousemove", "--sync", str(round(left + min(25, (right-left)/2))), str(round((top+bottom)/2)), "click", "1")
+                pause()
+                title_contains("Viewer[1].png")
                 key("alt+Left")
                 title_contains("Attachment links GUI")
                 key("alt+Right")
                 title_contains("Viewer[1].png")
                 assert control_bounds("attachment-image")
-                results.append("Image link completion kept its extension; Ctrl+Enter and history navigated between source note and read-only image")
+                results.append("Image link completion kept its extension; Ctrl+Enter retained its source tab and ordinary Reading clicks supported Back/Forward between the note and read-only image")
 
                 Image.new("RGB", (1920, 1200), (184, 101, 145)).save(image_path)
                 external = image_path.read_bytes()
@@ -916,6 +925,18 @@ def main():
                 assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
                 results.append("Compact grouped file menu opens a background note in a new tab, copies its actual path and contents, renames safely, cancels deletion and recovers the confirmed deletion from Trash")
                 if window_manager is not None:
+                    def drag(start, distance):
+                        x, y = start
+                        dx, dy = distance
+                        xdo("mousemove", "--sync", str(x), str(y), "mousedown", "1")
+                        try:
+                            for step in range(1, 9):
+                                time.sleep(.025)
+                                xdo("mousemove", "--sync", str(round(x+dx*step/8)), str(round(y+dy*step/8)))
+                        finally:
+                            xdo("mouseup", "1")
+                        pause()
+
                     def geometry():
                         return {k:int(v) for k,v in (line.split("=",1) for line in xdo("getwindowgeometry", "--shell", window).splitlines()) if k in ("X", "Y", "WIDTH", "HEIGHT")}
                     xdo("windowsize", window, "1100", "760")
@@ -937,21 +958,11 @@ def main():
                     left, top, right, bottom = control_bounds("window-title-drag")
                     x = round((left + right)/2)
                     y = round((top + bottom)/2)
-                    xdo("mousemove", str(x), str(y), "mousedown", "1")
-                    time.sleep(.15)
-                    xdo("mousemove", str(x+80), str(y+40))
-                    time.sleep(.15)
-                    xdo("mouseup", "1")
-                    pause()
+                    drag((x, y), (128, 64))
                     assert geometry()["X"] >= before["X"] + 60 and geometry()["Y"] >= before["Y"] + 20, (before, geometry())
                     xdo("windowmove", window, "0", "0")
                     pause()
-                    xdo("mousemove", "1098", "758", "mousedown", "1")
-                    time.sleep(.15)
-                    xdo("mousemove", "1180", "820")
-                    time.sleep(.15)
-                    xdo("mouseup", "1")
-                    pause()
+                    drag((1098, 758), (82, 62))
                     assert geometry()["WIDTH"] >= 1150 and geometry()["HEIGHT"] >= 800, geometry()
                     capture("native-window-controls.png")
                     (reports / "window-manager-results.json").write_text(json.dumps({"status":"passed","manager":"Openbox","geometry":geometry()},indent=2)+"\n")
@@ -1261,6 +1272,64 @@ def main():
                 capture("native-navigation.png")
                 results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, and all source bytes stay intact")
 
+                plan = fixture / "Notes/Plan UI.md"
+                spec = fixture / "Notes/spec.md"
+                plan_source = "# Plan\n\n**Status:** Approved · **Date:** 21 October · [Approved spec](spec.md)\n\nTail.\n"
+                plan.write_text(plan_source)
+                spec.write_text("# Approved specification\n\nLinked document.\n")
+                time.sleep(.6)
+                open_note("Plan UI")
+                command("Live preview")
+                key("ctrl+End")
+                click_control("editor-link:spec.md")
+                title_contains("spec")
+                key("alt+Left")
+                title_contains("Plan UI")
+                assert plan.read_text() == plan_source
+                results.append("A plain click on the inline Approved spec Markdown link opens the sibling file and Back returns to the unchanged plan")
+                command("Live preview")
+                key("ctrl+End")
+                left, top, right, bottom = control_bounds("editor-link:spec.md")
+                x, y = round((left+right)/2), round((top+bottom)/2)
+                xdo("mousemove", "--sync", str(x), str(y), "mousedown", "1")
+                time.sleep(.15)
+                xdo("mousemove", "--sync", str(x+160), str(y), "mouseup", "1")
+                pause()
+                title_contains("Plan UI")
+                key("ctrl+End")
+                left, top, right, bottom = control_bounds("editor-link:spec.md")
+                xdo("mousemove", "--sync", str(round((left+right)/2)), str(round((top+bottom)/2)), "mousedown", "1")
+                time.sleep(.15)
+                xdo("mouseup", "1")
+                pause()
+                title_contains("spec")
+                key("alt+Left")
+                title_contains("Plan UI")
+                assert plan.read_text() == plan_source
+                results.append("A held click follows the original rendered Live link across separate input frames; dragging that link selects text without opening its file")
+
+                origin = fixture / "Notes/Queued origin.md"
+                destination = fixture / "Notes/Queued target.md"
+                origin_source = "# Queued origin\n\n[[Notes/Queued target]]"
+                origin.write_text(origin_source)
+                destination.write_text("# Queued target\n\nIndependent destination.\n")
+                time.sleep(.6)
+                key("ctrl+t")
+                open_note("Queued origin")
+                command("Source editing")
+                key("ctrl+End")
+                before = tab_count()
+                queued_steps(("key", "ctrl+Return"))
+                title_contains("Queued target")
+                assert tab_count() == before + 1, "A complete Ctrl+Enter chord in one frame must retain its source in a new tab"
+                assert control_bounds("tab-full:Notes/Queued origin.md")
+                key("alt+Left")
+                title_contains("Queued target")
+                key("ctrl+w")
+                title_contains("Queued origin")
+                assert origin.read_text() == origin_source
+                results.append("Queued Ctrl+Enter retains the origin and gives its new destination tab independent history even when Control is released in the same frame")
+
             def essential_checks():
                 nonlocal app, window
                 source = "# Highlight check\n\n==yellow **bold**==\n\n`==literal code==`\n\neditable"
@@ -1326,6 +1395,7 @@ def main():
                 assert control_bounds("settings-autosave")
                 key("ctrl+a")
                 key("BackSpace")
+                control_bounds("settings-dark")
                 click_control("settings-autosave")
                 state_files = [p for p in (base / "state" / "rust-notes").glob("*.json") if any(path == "Notes/Essential UI.md" for path, _ in json.loads(p.read_text()).get("tabs", []))]
                 assert len(state_files) == 1
@@ -1458,6 +1528,33 @@ def main():
                 assert second[1]-first[3] >= 14, "Blank lines in loose lists must retain paragraph spacing"
                 assert loose.read_text() == loose_source
                 results.append("Reading and Live tasks preserve exact Markdown, nested/Unicode tasks and undo/redo; Source and fenced task syntax stay literal")
+            def task_clip_checks():
+                task_note = fixture / "Notes/Task clipping.md"
+                source = "# Task clipping\n\n" + "\n".join(f"- [x] Completed task {index}" for index in range(48)) + "\n\nEnd.\n"
+                task_note.write_text(source)
+                time.sleep(.6)
+                open_note("Task clipping")
+                command("Live preview")
+                key("ctrl+Home")
+                first = control_bounds("task-live:0")
+                chrome_bottom = round(control_bounds("button:More options")[3])
+                band = (round(first[0])-2, 0, round(first[2])+2, chrome_bottom)
+                before = ImageGrab.grab(xdisplay=display).crop(band).convert("RGB")
+                xdo("mousemove", "900", "500", "click", "5")
+                pause()
+                assert control_bounds("document-scroll-y")[0] >= 260
+                capture("native-task-clipping.png")
+                after = Image.open(reports / "native-task-clipping.png").crop(band).convert("RGB")
+                accent = lambda pixel: max(abs(pixel[i] - (23, 127, 131)[i]) for i in range(3)) <= 3
+                escaped = sum(accent(new) and not accent(old) for old, new in zip(pixel_data(before), pixel_data(after)))
+                (reports / "task-clipping.json").write_text(json.dumps({"chrome_band":band,"escaped_checkbox_pixels":escaped},indent=2)+"\n")
+                assert escaped <= 4, ("Checkboxes painted over the tabs or navigation bar", escaped)
+                assert control_bounds("task-live:0", required=False) is None, "An offscreen task must not expose a checkbox over the window chrome"
+                visible = json.loads((base / "ui-probe.json").read_text())
+                assert any(name.startswith("task-live:") and bounds[1] >= chrome_bottom for name,bounds in visible.items())
+                assert task_note.read_text() == source
+                results.append("Scrolled Live checklist checkboxes stay inside the document; the tabs and navigation bar retain their pixels and the note stays unchanged")
+
             dark_palette = [(250,153,205), (68,207,110), (168,130,255), (251,70,76), (83,223,221), (104,115,117)]
             light_palette = [(213,57,132), (8,185,78), (120,82,238), (233,49,71), (0,191,188), (171,171,171)]
 
@@ -2870,8 +2967,8 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
-            if args.section in ("hover", "title", "scrolling", "diagrams"):
-                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks}[args.section]()
+            if args.section in ("hover", "title", "scrolling", "diagrams", "task-clipping"):
+                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "task-clipping":task_clip_checks}[args.section]()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
@@ -2892,6 +2989,7 @@ def main():
                 return
             if args.section == "tasks":
                 task_checks()
+                task_clip_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "tasks"}))
                 return
@@ -3151,6 +3249,7 @@ def main():
             image_checks()
             attachment_tab_checks()
             task_checks()
+            task_clip_checks()
             essential_checks()
             color_checks()
             navigation_checks()

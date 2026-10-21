@@ -12,5 +12,12 @@ def save_shortcut(xdo):
 
 
 def begin_save_shortcut(environment):
-    return subprocess.Popen(["xdotool", *SAVE_CHORD], env=environment,
+    # The measured caller releases Control only after observing exact saved
+    # bytes, so a slow frame cannot miss the chord's modifier state.
+    return subprocess.Popen(["xdotool", *SAVE_CHORD[:-2]], env=environment,
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
+def release_save_shortcut(environment):
+    subprocess.run(["xdotool", "keyup", "ctrl"], env=environment, check=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5)

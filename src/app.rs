@@ -73,6 +73,7 @@ pub struct NotesApp {
     editor: crate::editor_ui::Editor,
     title: crate::title_ui::Title,
     pending_anchor: Option<String>,
+    new_tab_gesture: bool,
     properties: crate::properties_ui::Properties,
     pub(crate) sort_descending: bool,
     collapse_epoch: u64,
@@ -132,6 +133,7 @@ impl NotesApp {
             editor: Default::default(),
             title: Default::default(),
             pending_anchor: None,
+            new_tab_gesture: false,
             properties: Default::default(),
             sort_descending: false,
             collapse_epoch: 0,
@@ -462,9 +464,10 @@ impl NotesApp {
             self.ctx.open_url(egui::OpenUrl::new_tab(target));
             return;
         }
-        let new_tab = self.ctx.input(|input| {
-            input.modifiers.command || input.pointer.button_clicked(egui::PointerButton::Middle)
-        });
+        let new_tab = self.new_tab_gesture
+            || self.ctx.input(|input| {
+                input.modifiers.command || input.pointer.button_clicked(egui::PointerButton::Middle)
+            });
         if !new_tab
             && self
                 .tabs
@@ -1141,9 +1144,10 @@ impl NotesApp {
             });
         if let Some(action) = selected {
             match action {
-                FileAction::Open(path) => {
-                    self.open_note_at(&path, ui.ctx().input(|i| i.modifiers.command))
-                }
+                FileAction::Open(path) => self.open_note_at(
+                    &path,
+                    self.new_tab_gesture || ui.ctx().input(|i| i.modifiers.command),
+                ),
                 FileAction::OpenInNewTab(path) => self.open_note_at(&path, true),
                 FileAction::Copy(path) => {
                     self.open_note(&path);
@@ -2513,6 +2517,25 @@ impl NotesApp {
 impl eframe::App for NotesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Event modifiers retain the gesture even if Control was released in
+        // this frame. The editor consumes Ctrl+Enter before following its link.
+        self.new_tab_gesture = ctx.input(|input| {
+            input.events.iter().any(|event| match event {
+                egui::Event::Key {
+                    key: Key::Enter,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => modifiers.command,
+                egui::Event::PointerButton {
+                    button,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } => modifiers.command || *button == egui::PointerButton::Middle,
+                _ => false,
+            })
+        });
         self.background(&ctx);
         self.shortcuts(&ctx);
         let title = format!(
