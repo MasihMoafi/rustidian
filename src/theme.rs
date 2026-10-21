@@ -251,6 +251,7 @@ pub enum Icon {
     Bookmark,
     DailyNote,
     Templates,
+    Recovery,
     NewNote,
     NewFolder,
     Sort,
@@ -300,12 +301,13 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 52] = [
         Self::Files,
         Self::Search,
         Self::Bookmark,
         Self::DailyNote,
         Self::Templates,
+        Self::Recovery,
         Self::NewNote,
         Self::NewFolder,
         Self::Sort,
@@ -383,6 +385,10 @@ impl Icon {
             Self::Templates => (
                 "bytes://icons/templates.svg",
                 include_bytes!("../assets/icons/templates.svg"),
+            ),
+            Self::Recovery => (
+                "bytes://icons/recovery.svg",
+                include_bytes!("../assets/icons/recovery.svg"),
             ),
             Self::Close => (
                 "bytes://icons/close.svg",

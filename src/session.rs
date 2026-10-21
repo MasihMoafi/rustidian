@@ -5,11 +5,7 @@ use rust_notes::{
     vault::Document,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize)]
 struct Session {
@@ -36,6 +32,8 @@ struct Session {
     note_aids: Option<rust_notes::note_aids::Config>,
     #[serde(default = "default_sidebars")]
     sidebar_widths: [f32; 2],
+    #[serde(default)]
+    recovery_config: Option<rust_notes::recovery::Config>,
 }
 
 fn default_sidebars() -> [f32; 2] {
@@ -50,17 +48,7 @@ fn default_autosave() -> bool {
 }
 
 fn location(root: &Path) -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    let mut hash = DefaultHasher::new();
-    root.hash(&mut hash);
-    Some(
-        base.join("rust-notes")
-            .join(format!("{:016x}.json", hash.finish())),
-    )
+    rust_notes::paths::state_file(root, "", "json")
 }
 
 // The persisted state contains paths and layout, never unsaved note contents.
@@ -129,6 +117,11 @@ impl NotesApp {
         if let Some(config) = session.note_aids {
             self.note_aids = config;
         }
+        if let Some(config) = session.recovery_config
+            && config.validate().is_ok()
+        {
+            self.recovery_config = config;
+        }
         ctx.set_zoom_factor(self.ui_zoom);
         self.sort_descending = session.sort_descending;
         self.bookmarks = session.bookmarks;
@@ -173,6 +166,7 @@ impl NotesApp {
             autosave_enabled: self.autosave_enabled,
             note_aids: Some(self.note_aids.clone()),
             sidebar_widths: self.sidebar_widths,
+            recovery_config: Some(self.recovery_config.clone()),
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {

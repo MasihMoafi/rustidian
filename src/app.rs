@@ -37,6 +37,7 @@ enum Pending {
     ChangeVault,
     OpenVault(PathBuf),
     LoadWorkspace(String),
+    RestoreSnapshot(Box<crate::recovery_ui::Restore>),
 }
 
 pub struct NotesApp {
@@ -95,6 +96,14 @@ pub struct NotesApp {
     workspace_manager: crate::workspace_ui::Manager,
     pub(crate) sidebar_widths: [f32; 2],
     pub(crate) restore_sidebars: [bool; 2],
+    pub(crate) recovery_config: rust_notes::recovery::Config,
+    recovery_history: Option<rust_notes::recovery::History>,
+    recovery_recorder: Option<rust_notes::recovery_capture::Recorder>,
+    recovery_revisions: std::collections::HashMap<PathBuf, u64>,
+    recovery_changed_paths: std::collections::HashSet<PathBuf>,
+    recovery_index_paths: std::collections::HashSet<PathBuf>,
+    recovery_saved: std::collections::HashMap<PathBuf, String>,
+    recovery_manager: crate::recovery_ui::Manager,
 }
 
 impl NotesApp {
@@ -163,6 +172,14 @@ impl NotesApp {
             workspace_manager: Default::default(),
             sidebar_widths: [300.0, 234.0],
             restore_sidebars: [false; 2],
+            recovery_config: Default::default(),
+            recovery_history: None,
+            recovery_recorder: None,
+            recovery_revisions: Default::default(),
+            recovery_changed_paths: Default::default(),
+            recovery_index_paths: Default::default(),
+            recovery_saved: Default::default(),
+            recovery_manager: Default::default(),
         };
         app.load_vault(root);
         app
@@ -203,6 +220,8 @@ impl NotesApp {
     }
 
     fn queue_index(&mut self, root: PathBuf) {
+        self.recovery_index_paths
+            .extend(self.recovery_changed_paths.drain());
         let (sender, receiver) = mpsc::channel();
         self.loading = Some(receiver);
         let ctx = self.ctx.clone();
@@ -240,6 +259,16 @@ impl NotesApp {
                                     || p.extension().is_none()
                             })) =>
                     {
+                        if let Some(vault) = &self.vault {
+                            for path in &event.paths {
+                                if let Ok(relative) = path.strip_prefix(&vault.root)
+                                    && rust_notes::vault::is_markdown(relative)
+                                    && !rust_notes::vault::is_ignored_path(relative)
+                                {
+                                    self.recovery_changed_paths.insert(relative.to_owned());
+                                }
+                            }
+                        }
                         for path in event
                             .paths
                             .iter()
@@ -271,6 +300,19 @@ impl NotesApp {
                     let opening = self.loading_root.take().is_some();
                     if opening {
                         self.workspace_manager.open = false;
+                        self.recovery_manager = Default::default();
+                        self.recovery_recorder = None;
+                        self.recovery_history = None;
+                        self.recovery_revisions.clear();
+                        self.recovery_changed_paths.clear();
+                        self.recovery_index_paths.clear();
+                        self.recovery_saved.clear();
+                        self.recovery_config =
+                            rust_notes::recovery::Config::from_obsidian(&vault.root)
+                                .unwrap_or_else(|error| {
+                                    self.error = Some(error);
+                                    Default::default()
+                                });
                         self.sidebar_widths = [300.0, 234.0];
                         self.restore_sidebars = [true; 2];
                         self.bookmarks = Default::default();
@@ -345,6 +387,15 @@ impl NotesApp {
                             self.open_note_at(&path, true);
                         }
                     } else {
+                        // Indexing already read these saved bytes off the UI thread.
+                        // Capture changed files even when they have no editor tab.
+                        for note in &vault.notes {
+                            if self.recovery_index_paths.remove(&note.path) {
+                                self.recovery_saved
+                                    .insert(note.path.clone(), note.text.clone());
+                            }
+                        }
+                        self.recovery_index_paths.clear();
                         for tab in &mut self.tabs {
                             if !tab.document.dirty() && !tab.document.is_blank() {
                                 match vault.open_document(&tab.document.path) {
@@ -373,6 +424,8 @@ impl NotesApp {
                     self.cache = CommonMarkCache::default();
                 }
                 Err(error) => {
+                    self.recovery_changed_paths
+                        .extend(self.recovery_index_paths.drain());
                     self.loading_root = None;
                     if self.vault_manager.open {
                         self.vault_manager.show_error(error.clone());
@@ -401,6 +454,137 @@ impl NotesApp {
         }
         if let Some(due) = self.refresh_due {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
+        }
+        self.capture_recovery(ctx);
+    }
+
+    fn capture_recovery(&mut self, ctx: &egui::Context) {
+        let Some(vault) = &self.vault else { return };
+        if self.recovery_recorder.is_none() {
+            match rust_notes::recovery::History::open(&vault.root) {
+                Ok(history) => {
+                    let wake = ctx.clone();
+                    self.recovery_recorder = Some(rust_notes::recovery_capture::Recorder::start(
+                        history.clone(),
+                        self.recovery_config.clone(),
+                        move || wake.request_repaint(),
+                    ));
+                    self.recovery_history = Some(history);
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
+        }
+        let Some(recorder) = &mut self.recovery_recorder else {
+            return;
+        };
+        if !recorder.configure(&self.recovery_config) {
+            ctx.request_repaint_after(Duration::from_millis(20));
+        }
+        while let Ok(error) = recorder.errors.try_recv() {
+            self.error = Some(error);
+        }
+        if recorder.events.try_iter().count() > 0 {
+            self.recovery_manager.changed(ctx);
+        }
+        self.recovery_manager.poll(ctx);
+        if !self.recovery_manager.open {
+            if let Some(error) = self.recovery_manager.take_error() {
+                self.error = Some(error);
+            }
+            if let Some(notice) = self.recovery_manager.take_notice() {
+                self.status = notice;
+            }
+        }
+        for tab in &self.tabs {
+            let document = &tab.document;
+            if !rust_notes::vault::is_markdown(&document.path)
+                || self.recovery_revisions.get(&document.path) == Some(&document.saved_revision())
+            {
+                continue;
+            }
+            if let Some(text) = document.saved_text() {
+                if recorder.capture(&document.path, text, &self.recovery_config) {
+                    self.recovery_saved.remove(&document.path);
+                    self.recovery_revisions
+                        .insert(document.path.clone(), document.saved_revision());
+                } else {
+                    ctx.request_repaint_after(Duration::from_millis(20));
+                }
+            }
+        }
+        let pending: Vec<_> = self.recovery_saved.keys().take(16).cloned().collect();
+        for path in pending {
+            let text = &self.recovery_saved[&path];
+            if recorder.capture(&path, text, &self.recovery_config) {
+                self.recovery_saved.remove(&path);
+            } else {
+                break;
+            }
+        }
+        if !self.recovery_saved.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(20));
+        }
+    }
+
+    fn open_recovery(&mut self, current_file: bool) {
+        if let (Some(history), Some(vault)) = (&self.recovery_history, &self.vault) {
+            let path = current_file
+                .then(|| {
+                    self.tabs
+                        .get(self.active)
+                        .filter(|tab| rust_notes::vault::is_markdown(&tab.document.path))
+                        .map(|tab| tab.document.path.clone())
+                })
+                .flatten();
+            self.dialog = None;
+            self.editor.focus = false;
+            self.recovery_manager
+                .open(history.clone(), vault, path, &self.ctx);
+        }
+    }
+
+    fn restore_snapshot(&mut self, request: crate::recovery_ui::Restore) {
+        let result = match (&self.recovery_history, &mut self.vault) {
+            (Some(history), Some(vault)) => history.restore(
+                vault,
+                &request.expected,
+                request.version,
+                chrono::Local::now().timestamp_millis(),
+                &self.recovery_config,
+            ),
+            _ => Err("Open a vault first.".into()),
+        };
+        match result {
+            Ok(document) => {
+                let mut found = false;
+                for tab in &mut self.tabs {
+                    if tab.document.path == document.path {
+                        tab.replace(document.clone());
+                        found = true;
+                    }
+                }
+                if !found {
+                    self.tabs.push(Tab::new(document.clone()));
+                    self.active = self.tabs.len() - 1;
+                }
+                if let Some(vault) = &self.vault {
+                    self.tree = Tree::from_vault(vault);
+                    self.files = rust_notes::search::FileMatcher::from_vault(vault);
+                }
+                self.cache = Default::default();
+                self.search_cache.invalidate();
+                self.recovery_manager.restored(document, &self.ctx);
+                self.status = "Snapshot restored".into();
+                self.error = None;
+                self.ctx.request_repaint();
+            }
+            Err(error) => {
+                self.recovery_manager.error(error.clone());
+                self.error = Some(error);
+            }
         }
     }
 
@@ -714,6 +898,7 @@ impl NotesApp {
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
             Pending::OpenVault(root) => self.load_vault(&root),
             Pending::LoadWorkspace(name) => self.load_workspace(&name),
+            Pending::RestoreSnapshot(request) => self.restore_snapshot(*request),
         }
     }
 
@@ -728,7 +913,11 @@ impl NotesApp {
         if self.pending.is_some() {
             return;
         }
-        if self.loading_root.is_some() || self.vault_manager.open || self.workspace_manager.open {
+        if self.loading_root.is_some()
+            || self.vault_manager.open
+            || self.workspace_manager.open
+            || self.recovery_manager.active()
+        {
             return;
         }
         if self.dialog.is_none() {
@@ -828,6 +1017,9 @@ impl NotesApp {
                 }
                 if icon_button(ui, Icon::DailyNote, "Open today's daily note").clicked() {
                     self.open_daily();
+                }
+                if icon_button(ui, Icon::Recovery, "Open local history").clicked() {
+                    self.open_recovery(true);
                 }
                 if icon_button(ui, Icon::Templates, "Insert template").clicked()
                     && self.editable_note()
@@ -2068,7 +2260,12 @@ impl NotesApp {
                             _ => self.tabs.iter().enumerate().filter(|(_, tab)| tab.document.dirty()).map(|(i, _)| i).collect(),
                         };
                         if indices.into_iter().all(|index| self.save(index)) {
-                            self.pending = None; self.run_pending(pending.clone(), ctx);
+                            let mut next = pending.clone();
+                            if let Pending::RestoreSnapshot(request) = &mut next
+                                && let Some(tab) = self.tabs.iter().find(|tab|tab.document.path == request.expected.path) {
+                                request.expected = tab.document.clone();
+                            }
+                            self.pending = None; self.run_pending(next, ctx);
                         }
                     }
                     let discard = ui.button("Discard");
@@ -2111,6 +2308,22 @@ impl NotesApp {
                 self.request_workspace(name);
             } else if !self.workspace_manager.open {
                 self.focus_editor();
+            }
+            return;
+        }
+        if self.recovery_manager.open {
+            if let (Some(vault), Some(recorder)) = (&self.vault, &self.recovery_recorder) {
+                if let Some(request) = self.recovery_manager.show(ctx, vault, recorder) {
+                    if self.tabs.iter().any(|tab| {
+                        tab.document.path == request.expected.path && tab.document.dirty()
+                    }) {
+                        self.pending = Some(Pending::RestoreSnapshot(Box::new(request)));
+                    } else {
+                        self.restore_snapshot(request);
+                    }
+                } else if !self.recovery_manager.active() {
+                    self.focus_editor();
+                }
             }
             return;
         }
@@ -2158,6 +2371,7 @@ impl NotesApp {
             .input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
         let mut select = None;
         let mut run_command = None;
+        let mut recovery_action = None;
         let response = egui::Modal::new(egui::Id::unique("main-dialog")).show(ctx, |ui| {
             ui.set_width(if matches!(dialog, Dialog::Commands | Dialog::Settings) {
                 650.0
@@ -2425,6 +2639,7 @@ impl NotesApp {
                                 self.ui_zoom,
                                 self.autosave_enabled,
                                 self.note_aids.clone(),
+                                self.recovery_config.clone(),
                             );
                             let query = self.dialog_input.to_lowercase();
                             let show =
@@ -2503,6 +2718,74 @@ impl NotesApp {
                                     "HH:mm",
                                 );
                             }
+                            if show("file recovery snapshots history interval length days") {
+                                ui.separator();
+                                ui.strong("File recovery");
+                                ui.horizontal(|ui| {
+                                    ui.label("Snapshot interval (minutes)");
+                                    let input = ui.add(
+                                        egui::DragValue::new(
+                                            &mut self.recovery_config.interval_minutes,
+                                        )
+                                        .range(0.0..=f64::MAX)
+                                        .speed(0.1),
+                                    );
+                                    crate::ui_probe::record(
+                                        ctx,
+                                        "settings-recovery-interval",
+                                        input.rect,
+                                    );
+                                    changed |= input.changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("History length (days)");
+                                    let input = ui.add(
+                                        egui::DragValue::new(&mut self.recovery_config.keep_days)
+                                            .range(1.0..=f64::MAX),
+                                    );
+                                    crate::ui_probe::record(
+                                        ctx,
+                                        "settings-recovery-days",
+                                        input.rect,
+                                    );
+                                    changed |= input.changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Snapshots");
+                                    let button = ui.add_enabled(
+                                        !self.recovery_manager.active(),
+                                        egui::Button::new("View"),
+                                    );
+                                    crate::ui_probe::record(
+                                        ctx,
+                                        "settings-recovery-view",
+                                        button.rect,
+                                    );
+                                    if !self.recovery_manager.active() {
+                                        crate::ui_probe::record(
+                                            ctx,
+                                            "settings-recovery-view-ready",
+                                            button.rect,
+                                        );
+                                    }
+                                    if button.clicked() {
+                                        recovery_action = Some(false);
+                                    }
+                                    ui.label("Clear history");
+                                    let button = ui.add_enabled(
+                                        !self.recovery_manager.active(),
+                                        egui::Button::new("Clear"),
+                                    );
+                                    crate::ui_probe::record(
+                                        ctx,
+                                        "settings-recovery-clear",
+                                        button.rect,
+                                    );
+                                    if button.clicked() {
+                                        recovery_action = Some(true);
+                                    }
+                                });
+                            }
                             if changed {
                                 if let Err(error) = self.write_session() {
                                     (
@@ -2510,6 +2793,7 @@ impl NotesApp {
                                         self.ui_zoom,
                                         self.autosave_enabled,
                                         self.note_aids,
+                                        self.recovery_config,
                                     ) = before;
                                     self.error = Some(format!("Settings weren’t saved: {error}"));
                                 } else {
@@ -2590,6 +2874,26 @@ impl NotesApp {
         });
         if response.should_close() {
             close = true;
+        }
+        if let Some(clear) = recovery_action {
+            if clear {
+                self.recovery_manager.request_clear();
+            } else {
+                self.open_recovery(false);
+                return;
+            }
+        }
+        if self.recovery_manager.active()
+            && !self.recovery_manager.open
+            && let (Some(vault), Some(recorder)) = (&self.vault, &self.recovery_recorder)
+        {
+            let _ = self.recovery_manager.show(ctx, vault, recorder);
+            if let Some(error) = self.recovery_manager.take_error() {
+                self.error = Some(error);
+            }
+            if let Some(notice) = self.recovery_manager.take_notice() {
+                self.status = notice;
+            }
         }
         if let Some(command) = run_command {
             self.dialog = None;
@@ -2875,6 +3179,7 @@ impl NotesApp {
             return;
         }
         match command {
+            "File recovery: Open local history" => self.open_recovery(true),
             "Workspaces: Manage workspace layouts" => self.show_workspaces(false),
             "Workspaces: Load workspace layout" => self.show_workspaces(true),
             "Workspaces: Save layout" | "Workspaces: Save and load another layout" => {
@@ -3186,6 +3491,7 @@ impl eframe::App for NotesApp {
             && self.loading_root.is_none()
             && !self.vault_manager.open
             && !self.workspace_manager.open
+            && !self.recovery_manager.active()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::S))
         {
             self.save(self.active);

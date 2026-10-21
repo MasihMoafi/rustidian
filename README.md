@@ -76,7 +76,7 @@ If another program changes a note, save refuses to overwrite it and retains your
 
 ## Remaining work
 
-Full Obsidian parity is the target and remains unfinished. The single [coverage ledger](docs/PARITY.md) records every core plugin and other feature gaps. Daily notes/templates source is written but awaiting its Actions build. Math, graph/canvas, recovery, broader bookmarks, extensions/services/platforms and full visual bidi/desktop IME still need work. Existing Obsidian JavaScript plugins do not execute here.
+Full Obsidian parity is the target and remains unfinished. The single [coverage ledger](docs/PARITY.md) records every core plugin and other feature gaps. Daily notes/templates and named workspaces have an optimized Actions candidate awaiting complete verification; native snapshot recovery remains local and uncompiled. Math, graph/canvas, recovery, broader bookmarks, extensions/services/platforms and full visual bidi/desktop IME still need work. Existing Obsidian JavaScript plugins do not execute here.
 
 Indexing runs outside rendering, with native file notifications. Release measurements, declared method and limits are in [the plan](docs/PLAN.md) and [desktop benchmark](reports/desktop-benchmark.json). The local comparison uses installed Obsidian 1.5.12 with a different feature set; it does not establish equal-feature performance. The deterministic 5,000-note run is in [vault benchmark](reports/vault-benchmark.json). GUI verification currently covers Linux/X11.
 

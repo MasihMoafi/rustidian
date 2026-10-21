@@ -11,6 +11,8 @@ pub mod note_aids;
 pub mod operations;
 pub mod paths;
 pub mod query;
+pub mod recovery;
+pub mod recovery_capture;
 pub mod search;
 pub mod structure;
 pub mod tab;

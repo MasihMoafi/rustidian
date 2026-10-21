@@ -66,38 +66,9 @@ fn relative(value: &str, empty: bool) -> Result<PathBuf> {
 impl Config {
     /// Import only these two small settings files, without writing .obsidian.
     pub fn from_obsidian(root: &Path) -> Result<Self> {
-        let folder = root.join(".obsidian");
-        match std::fs::symlink_metadata(&folder) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
-            _ => {
-                return Err(
-                    "Cannot import note settings from a linked or unreadable .obsidian folder."
-                        .into(),
-                );
-            }
-        }
-        fn read<T: serde::de::DeserializeOwned + Default>(path: &Path) -> Result<T> {
-            let meta = match std::fs::symlink_metadata(path) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Ok(T::default());
-                }
-                Err(error) => return Err(format!("Cannot read note settings: {error}")),
-                Ok(meta) => meta,
-            };
-            if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 65536 {
-                return Err("Note settings must be small ordinary JSON files.".into());
-            }
-            let bytes = std::fs::read(path)
-                .map_err(|error| format!("Cannot read note settings: {error}"))?;
-            serde_json::from_slice(&bytes)
-                .map_err(|error| format!("Cannot import note settings: {error}"))
-        }
         Ok(Self {
-            templates: read(&folder.join("templates.json"))?,
-            daily: read(&folder.join("daily-notes.json"))?,
+            templates: crate::paths::read_obsidian(root, "templates.json")?,
+            daily: crate::paths::read_obsidian(root, "daily-notes.json")?,
         })
     }
 

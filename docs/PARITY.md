@@ -27,7 +27,7 @@ positive/negative cases, visual review and exact Rust executable with each resul
 | Workflow | Current evidence and remaining acceptance |
 | --- | --- |
 | Vault create/open/recent/switch/remove | Installed048fced passes7 focused groups and the complete release, including real Browse, cancellation, dirty guards, concurrent recents and registered file roots. Compare separate-window and vault-setting behavior next. |
-| Explorer, folders, rename/move/Trash | Native behavioral coverage; preserve excluded development folders and recoverable Trash. Full context-menu, sort/filter and drag/drop parity still require a reference audit. |
+| Explorer, folders, rename/move/Trash | Native behavioral coverage includes file-menu Open in new tab, Make a copy, Bookmark, Copy path, Rename and Delete. Preserve excluded development folders and recoverable Trash. Current1.13.7 file-menu audit records13 ordered actions with13px/24.9px rows; seven actions still need paired implementation/verification, including split/window opening, separate Move, merge, version history and OS opening. Folder menus, complete sorting/filtering and drag/drop remain incomplete. |
 | Tabs and history | Native per-tab mode/history/undo, ordinary/modified links and session restoration covered. Split groups, stacked tabs, popouts, pinning and tab menus remain incomplete. |
 | Live/Source/Reading Markdown | Existing native tasks, tables/cell editing, callouts, headings, links/images, syntax and Mermaid have focused coverage. Complete syntax/selection/clipboard/drag/indent/IME/bidi parity remains incomplete. |
 | Inline title, properties and aliases | Editable title/property interactions covered. Complete type editing, metadata UI and all alias/anchor cases need comparison. |
@@ -55,7 +55,7 @@ still needs the expanded paired reference audit before a parity claim.
 | Daily notes | Source written for date-named create/open, calendar ribbon action, configured folder/format/template and read-only settings import; pending Actions. Paired1.13.7 create/reopen reference passes. Startup/previous-next/date-property links and full settings parity still incomplete. |
 | Editing mode status | Native status bar shows the current mode; complete reference click/menu/accessibility behavior unverified. |
 | File explorer | Covered subset; complete menus, sorting and drag/drop audit pending. |
-| File recovery | Missing; periodic snapshots, browse/diff/restore, conflict and retention rules. |
+| File recovery | Native transactional storage, bounded background capture/coalescing, watched changes to unopened notes, version/Copy/diff/Restore UI, settings and dirty/conflict guards are written locally with behavioral checks; this increment remains uncompiled and unverified. Paired1.13.7 audit verifies exact Copy/Restore, older-version selection, Show changes, settings defaults5min/7days, both cancelled/confirmed Clear, deleted-note recreation and two external versions of a never-opened note with unchanged originals. Native retention, conflict and storage behavior remain pending. |
 | Footnotes view | Missing panel; reference syntax/jump/backlink behavior unverified. |
 | Format converter | Legacy plugin present but disabled in the installed1.13.7 inventory; import/conversion workflows unverified. |
 | Graph view | Missing; global/local graph, filters, search, groups and navigation. |
@@ -66,17 +66,17 @@ still needs the expanded paired reference audit before a parity claim.
 | Properties view | Existing note properties/query support; all-properties pane/type management incomplete. |
 | Publish | Missing integration; requires supported service or an explicitly chosen equivalent. Publishing private notes requires authorization. |
 | Quick switcher | Native open/create/link completion covered; complete ranking/modifier/empty-state audit pending. |
-| Random note | Missing; nonempty/empty vault behavior. |
+| Random note | Missing natively. Paired1.13.7 reference opens valid notes from a blank tab and creates no files in an empty vault; the empty reference also displays a failed-open/busy notice. Original notes remain unchanged. reports/obsidian-note-creators-reference.json records the actual outcome; do not claim native coverage. |
 | Search | Native queries/virtualized results/property search covered; full operators, saved query embeds and controls unverified. |
 | Slash commands | Missing; typed slash chooser with normal-text/code negatives. |
 | Slides | Missing; Markdown slides, presentation/navigation and export behavior. |
 | Sync | Missing integration; service compatibility, offline/concurrent edits, encryption and recovery require evidence. |
 | Tags view | Inline/property query support; dedicated nested tag pane and actions incomplete. |
 | Templates | Source written for folder/chooser/ribbon action, caret insertion, title/date/time tokens, format settings and undo; pending Actions. Paired1.13.7 insertion, unknown tokens and single undo/redo captured;51 date-format fixtures retained. Frontmatter merging, localized formats and full settings parity still incomplete. |
-| Unique note creator | Missing; configured time title/template, repeated-instant collisions and error paths. |
+| Unique note creator | Missing natively. Paired1.13.7 reference creates empty YYYYMMDDHHmm notes and handles two identical current-time prefixes by advancing the second filename without changing the first note. Raw report records both sampled prefixes and filenames. Configured folder/template/format and failure cases remain unaudited. |
 | Web viewer | Missing; browser content conflicts with the current native-only runtime constraint and needs a concrete design decision. |
 | Word count | Existing document counts; selection, CJK/Unicode and settings parity unverified. |
-| Workspaces | Paired1.13.7 reference passes save/load/overwrite/delete/cancel, order/modes/sidebar widths and actual restored-tab clicks with unchanged notes. Native named storage/manager, four commands, dirty-load guards and sidebar width restoration are now written with behavioral checks; they remain uncompiled/unverified. |
+| Workspaces | Paired1.13.7 reference passes save/load/overwrite/delete/cancel, order/modes/sidebar widths and actual restored-tab clicks with unchanged notes. Native named storage/manager, four commands, dirty-load guards and sidebar width restoration are now written with behavioral checks; corrected sourcea104d89 is currently in Actions after an earlier candidate exposed row clipping and width loss; not installed. |
 
 ## Community extensions, services and platforms
 

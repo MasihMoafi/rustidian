@@ -75,10 +75,12 @@ a source commit or old chat title can identify the wrong app.
 
 Masih supplied eleven Obsidian screenshots under
 `/home/masih/Pictures/Screenshots/`, dated21 October08:13:12 through08:14:46.
-They identify Obsidian1.14.4. The isolated installed reference used by
-`scripts/obsidian-reference.py` is1.5.12: retain that distinction. Its `navigation`
-and `menus` sections record real interactions, CSS geometry and screenshots on
-sample data. Never use the user's real Obsidian profile for automation.
+They identify Obsidian1.14.4. Current paired audits explicitly pass
+`--appimage /home/masih/.local/opt/Obsidian/Obsidian-1.13.7.AppImage` to
+`scripts/obsidian-reference.py`. The script's historical default points to1.5.12;
+never silently substitute it or equate either version with the screenshots.
+Its sections record real interactions, geometry and screenshots on sample data.
+Never use the user's real Obsidian profile for automation.
 
 Compare the same task, mode, theme, window, zoom and display scale. The desktop
 preview has2760x1800 physical pixels for1380x900 logical pixels; probe coordinates
@@ -206,8 +208,11 @@ The restored source artifact also contains historical report sidecars. Attribute
 Rust/build evidence to the source run; count GUI/performance evidence only when
 the current run actually invoked that section and produced its passing log.
 Do not promote an inherited result file as a fresh verification.
-The complete native stage retains all31 original workflows and the new vault
-workflow (32 total). On a failure it retains that workflow's screenshot, controls, recent
+The complete native stage retains every named workflow in tests/gui_smoke.py.
+Its fresh gui-all-workflows.json lists each completed workflow and a positive
+behavioral check count; a function completing zero checks must fail. Verify that
+the list matches the exact committed harness before installing. On a failure it
+retains that workflow's screenshot, controls, recent
 notes and traceback, closes menus without saving/discarding, and continues
 the later workflows while the app remains alive. An app crash prevents later
 workflow execution and retains its exit log. Any failure still rejects packaging.
@@ -352,8 +357,26 @@ are not an after result. Inspect both-theme screenshots before showing them.
   one process. Preserve stable tab IDs across neighboring-tab deletion.
 - **Input simulation:** xdotool's combined Ctrl+S releases Control before S;
   frame-current shortcut matchers can miss it. Retain private-X11 RECORD evidence
-  and plain-S negative control. A verified UTF-8 clipboard plus Ctrl+V avoids
-  scratch-key remapping losses in Persian fixtures; it does not prove IME/bidi.
+  and plain-S negative control. For Unicode typing, map the fixture's symbols once
+  on the private Xvfb display before starting the app, and restore them after it
+  exits. A100ms typing delay does not prevent xdotool from restoring a temporary
+  keymap before a delayed event loop decodes it. Prove this with the same paused
+  executable: transient mappings lose Persian/Greek/ZWNJ text; held mappings
+  preserve exact bytes. Keep this negative/positive calibration separate from
+  real IME and bidirectional-text acceptance.
+- **Palette input:** wait for the real focused query field and the requested
+  first result before the driver's Enter. Separately queue shortcut, query and
+  Enter while the app is paused, checking a valid action and an unknown command.
+  This preserves fast-input coverage without confusing unready test setup with
+  a runtime defect. Record focus, command rows and timestamps when diagnosing.
+  Give intentional unavailable-command cases an explicit negative expectation:
+  image tabs must hide Source editing and Save a copy, and Enter must leave them
+  inert. Prove the same driver rejects that negative expectation for a registered
+  command. A helper that insists every query have a selectable action invalidates
+  the existing read-only negative checks; do not remove or skip them.
+- **Conflict copies:** Save a copy preserves the dirty original. Verify the
+  copy's exact bytes, then explicitly Discard the original before loading a
+  layout that replaces it. Never treat making a copy as permission to discard.
 - **UI acknowledgement:** Escape runs before settings rendering. Observe one
   checkbox click's persisted value before closing the modal. Filtering can change
   modal geometry: require settled bounds before a single setup gesture and
@@ -389,6 +412,10 @@ If cargo test has already produced target/debug/rust-notes, retain that existing
 app in functional-native-$SHA before optimized compilation. Do not add a debug
 build just to create it, and never use it for release latency or installation.
 This permits early focused interaction checks without extra Rust compilation.
+For a new workflow that has not passed native interaction checks, run its one
+focused section against that existing debug app before optimized compilation.
+Keep its failure images/JSON even if compilation is skipped. Retain the same
+section in the optimized focused and full suites; an early pass is not a release.
 
 The optimized app should be downloadable immediately after compilation from
 application-native-$SHA. Focused reports and the final passing release remain
@@ -403,6 +430,32 @@ multiple saved versions; use the real interval setting0 in a disposable profile,
 then change the file, select the older size/date and check exact Copy/Restore
 bytes. Scope confirmation clicks to the top dialog: Settings remains below it
 and exposes a different Clear button with the same text. Five-minute/7-day defaults must remain separate from that test setup.
+Recovery also captures externally modified notes that never had an editor tab.
+Exercise two distinct versions, copy each and verify browsing leaves the newer
+file unchanged. Use watcher paths and already indexed saved bytes for native
+capture; keep new events separate from the paths covered by an in-flight index.
+Bound queue submission per frame and retry retained payloads after backpressure.
+An asynchronous version query must clear the previous text immediately. On a
+read error, disable Copy/Restore rather than showing old content under a new
+selection. Check this with a genuinely unreadable private history file, a seeded
+clipboard negative and successful exact Copy after access returns. Wait for the
+loaded version's identity, not just a generic ready flag, before inspecting it.
+Inspect the reference's actual size labels: short snapshots use bytes, so looking
+for a decimal KB label can falsely report a missing version. Preserve the failed
+driver evidence instead of attributing that selector failure to snapshot loss.
+
+For unique-note collision checks, sample the reference's current time prefix
+before each command and avoid the minute boundary. Two different timestamps do
+not prove collision handling. The1.13.7 default created adjacent minute-shaped
+filenames while both sampled prefixes were identical, preserving the first file.
+Random-note checks should start from a blank tab so doing nothing cannot pass;
+an empty-vault negative must verify no note opens or is created. Retain observed
+reference errors separately from the safe empty outcome.
+
+Measure the actual menu rows, not just their parent container. The1.13.7 file
+menu container is15px, while its items are13px and about24.9px high. Match the
+ordered actions and test each action before mapping similarly named features;
+the menu's version history is not evidence of local snapshot recovery.
 
 ## Deliver the change
 

@@ -7,6 +7,7 @@ mod file_tree;
 mod image_view;
 mod preview;
 mod properties_ui;
+mod recovery_ui;
 mod session;
 mod syntax;
 mod table_ui;

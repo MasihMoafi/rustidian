@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "note-creators"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     (settings / "appearance.json").write_text(json.dumps(appearance))
     shutil.copytree(original / "snippets", settings / "snippets", dirs_exist_ok=True)
     (settings / "app.json").write_text(json.dumps({"defaultViewMode": "preview"}))
-    if arguments.section in ("inventory", "workspaces", "recovery"):
+    if arguments.section in ("inventory", "workspaces", "recovery", "note-creators"):
         (vault / "Templates").mkdir(exist_ok=True)
         (vault / "Daily").mkdir(exist_ok=True)
         (vault / "Template target.md").write_text("# Before\n\n")
@@ -117,9 +117,12 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             def controls():
                 return evaluate("JSON.stringify({body:document.body.innerText,controls:[...document.querySelectorAll('input,button,[aria-label]')].filter(e=>e.getBoundingClientRect().height).map(e=>{const r=e.getBoundingClientRect();return {tag:e.tagName,text:e.innerText,value:e.value,type:e.type,placeholder:e.placeholder,label:e.getAttribute('aria-label'),min:e.min,max:e.max,rect:[r.x,r.y,r.width,r.height]}})})")
             def click_dom(expression):
-                rect=evaluate("JSON.stringify((()=>{const e="+expression+";if(!e)return null;const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                get_rect="JSON.stringify((()=>{const e="+expression+";if(!e)return null;const r=e.getBoundingClientRect();return r.width&&r.height?[screenX+r.x+r.width/2,screenY+r.y+r.height/2]:null})())"
+                rect=evaluate(get_rect)
                 assert rect, 'Missing recovery control: '+expression
-                xdo('mousemove',*[str(round(value)) for value in rect],'click','1');time.sleep(.3)
+                time.sleep(.1)
+                assert evaluate(get_rect)==rect, 'Recovery control moved before its click: '+expression
+                xdo('mousemove',*[str(round(value)) for value in rect],'mousedown','1');time.sleep(.1);xdo('mouseup','1');time.sleep(.3)
             def wait(predicate,message):
                 deadline=time.monotonic()+5
                 while time.monotonic()<deadline:
@@ -161,6 +164,32 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshot interval')?.querySelector('input')")
                 xdo('key','--clearmodifiers','ctrl+a');xdo('type','--clearmodifiers','0');xdo('key','Tab');time.sleep(.4)
                 report['interval_setting']=json.loads((settings/'file-recovery.json').read_text())
+                settings_target=target
+                target=original_target
+                opened=evaluate("JSON.stringify(app.workspace.getLeavesOfType('markdown').map(leaf=>leaf.view.file?.path))")
+                assert 'Template target.md' not in opened
+                target=settings_target
+                unopened=vault/'Template target.md'
+                unopened_original=unopened.read_bytes()
+                first_closed=b'# Closed note\n\nFIRST_CLOSED_SNAPSHOT\n'
+                second_closed=b'# Closed note\n\nSECOND_CLOSED_VERSION_IS_DIFFERENT\n'
+                unopened.write_bytes(first_closed);time.sleep(1.2)
+                unopened.write_bytes(second_closed);time.sleep(1.2)
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                click_dom("document.querySelector('input[placeholder=\"Choose a file...\"]')")
+                xdo('type','--clearmodifiers','Template target');time.sleep(.3);xdo('key','Return');time.sleep(.4)
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Copy')")
+                assert subprocess.check_output(['xclip','-selection','clipboard','-out'],env=environment)==second_closed
+                first_size=f'{len(first_closed)} B'
+                click_dom("[...document.querySelectorAll('.modal div,.modal span')].find(e=>!e.children.length&&e.textContent.trim()==="+json.dumps(first_size)+")")
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Copy')")
+                assert subprocess.check_output(['xclip','-selection','clipboard','-out'],env=environment)==first_closed
+                assert unopened.read_bytes()==second_closed
+                report['unopened_external_note']={'never_opened':True,'both_versions_exact':True,'history_browsing_preserved_current_bytes':True}
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-unopened.png')
+                close="[...document.querySelectorAll('.modal.mod-sync-history .modal-header-button')].filter(e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height).at(-1)"
+                click_dom(close)
+                unopened.write_bytes(unopened_original);time.sleep(.5)
                 home.write_bytes(original+b'\nRECOVERY_SECOND_VERSION\n')
                 time.sleep(2)
                 click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
@@ -183,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 report['restore_ui']=controls()
                 wait(lambda:home.read_bytes()==original,'Restore did not recover exact snapshot bytes')
                 report['copy_restore']={'copy_exact_bytes':True,'restored_exact_bytes':True,'show_changes_toggled':True}
-                close="document.querySelector('.modal.mod-sync-history .modal-header-button')"
+                close="[...document.querySelectorAll('.modal.mod-sync-history .modal-header-button')].filter(e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height).at(-1)"
                 if evaluate("JSON.stringify(Boolean("+close+"))"):click_dom(close)
                 click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Clear history')?.querySelector('button')")
                 report['clear_confirmation']=controls()
@@ -207,6 +236,26 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 report['notes_unchanged']=True
                 report['status']='passed'
                 ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-after-clear.png')
+                if evaluate("JSON.stringify(Boolean("+close+"))"):click_dom(close)
+                home.write_bytes(original+b'\nAFTER_CLEAR_RECOVERY\n');time.sleep(1)
+                home.write_bytes(original);time.sleep(1)
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                click_dom("document.querySelector('input[placeholder=\"Choose a file...\"]')")
+                xdo('type','--clearmodifiers','Home');time.sleep(.3);xdo('key','Return');time.sleep(.4)
+                home.rename(Path(temporary)/'deleted-Home.md')
+                time.sleep(.7)
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                click_dom("document.querySelector('input[placeholder=\"Choose a file...\"]')")
+                xdo('type','--clearmodifiers','Home');time.sleep(.3);xdo('key','Return');time.sleep(.4)
+                report['deleted_note_history']=controls()
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-deleted-note.png')
+                click_dom("[...document.querySelectorAll('.modal div,.modal span')].find(e=>!e.children.length&&e.textContent.trim()==="+json.dumps(size)+")")
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Restore')")
+                wait(lambda:home.exists() and home.read_bytes()==original,'Restore did not recreate a deleted note from its selected snapshot')
+                report['deleted_note_recreated_exactly']=True
+                report['dialogs_after_deleted_restore']=evaluate("JSON.stringify([...document.querySelectorAll('.modal')].map(e=>e.outerHTML))")
+                assert original_notes=={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-deleted-restored.png')
             except Exception as error:
                 report.update(status='failed',error=str(error))
                 ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-failure.png')
@@ -350,13 +399,13 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 (ROOT / "reports/obsidian-workspaces-reference.json").write_text(json.dumps(report,indent=2)+"\n")
             print(json.dumps({"section":"workspaces","commands":len(report["commands"]),"status":report["status"]}))
             raise SystemExit(0)
-        if arguments.section == "inventory":
+        if arguments.section in ("inventory", "note-creators"):
             report = evaluate("JSON.stringify({version:app.appVersion||app.version||null,plugins:Object.entries(app.internalPlugins.plugins).map(([id,p])=>({id,enabled:p.enabled,name:p.instance?.name})),commands:Object.entries(app.commands.commands).map(([id,c])=>({id,name:c.name,hotkeys:c.hotkeys})),settings:app.setting.settingTabs.map(t=>({id:t.id,name:t.name}))})")
             report.update({"appimage": str(arguments.appimage), "profile": "disposable", "actions": [], "status": "in_progress"})
             date_patterns = ["YYYY-MM-DD", "YYYY/MMMM/YYYY-MMM-DD", "YY Y YYYYYY", "M MM MMM MMMM Mo", "D DD Do DDD DDDD DDDo", "d dd ddd dddd do e E", "H HH h hh k kk", "m mm s ss", "S SS SSS SSSS SSSSSSSSS", "A a Z ZZ z zz", "Q Qo", "X x", "w ww wo gg gggg W WW Wo GG GGGG", "L LT LTS LL LLL LLLL", "l ll lll llll", "[Journal] YYYY [week] WW [مرحبا]", r"\Y YYYY [{{title}}]"]
             date_inputs = ["2026-10-21T13:05:09.123+03:30", "2024-02-29T00:00:00.007-05:00", "2023-12-31T23:59:59.999+00:00"]
             report["date_formats"] = evaluate("JSON.stringify(" + json.dumps(date_inputs) + ".map(source=>{const date=window.moment.parseZone(source).local().locale('en');return {source,input:date.format('YYYY-MM-DD[T]HH:mm:ss.SSSZ'),formats:" + json.dumps(date_patterns) + ".map(pattern=>({pattern,expected:date.format(pattern)}))}}))")
-            output = ROOT / "reports/obsidian-parity-reference.json"
+            output = ROOT / ("reports/obsidian-note-creators-reference.json" if arguments.section == "note-creators" else "reports/obsidian-parity-reference.json")
 
             def persist():
                 output.write_text(json.dumps(report, indent=2) + "\n")
@@ -385,6 +434,66 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
 
             persist()
             try:
+                if arguments.section == "note-creators":
+                    originals={p.relative_to(vault).as_posix():p.read_bytes() for p in vault.rglob('*.md')}
+                    report['unique_defaults']=evaluate("JSON.stringify(app.internalPlugins.plugins['zk-prefixer']?.instance?.options||null)")
+                    created=[]
+                    prefixes=[]
+                    second=evaluate('JSON.stringify(window.moment().seconds())')
+                    if second>50:time.sleep(61-second)
+                    for index in range(2):
+                        before={p.relative_to(vault).as_posix() for p in vault.rglob('*.md')}
+                        prefixes.append(evaluate("JSON.stringify(window.moment().format('YYYYMMDDHHmm'))"))
+                        entry=command('Unique note creator:','unique')
+                        wait_until(lambda:len(list(vault.rglob('*.md')))==len(before)+1,'Unique note command did not create exactly one new file')
+                        added={p.relative_to(vault).as_posix() for p in vault.rglob('*.md')}-before
+                        assert len(added)==1
+                        name=added.pop();note=vault/name
+                        assert note.read_bytes()==b''
+                        assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.file?.path||null)")==name
+                        created.append(name)
+                        if index==0:note.write_bytes(b'KEEP_UNIQUE_FIRST\n');time.sleep(.4)
+                    assert (vault/created[0]).read_bytes()==b'KEEP_UNIQUE_FIRST\n'
+                    assert prefixes[0]==prefixes[1] and Path(created[0]).stem==prefixes[0]
+                    report['actions'].append({'workflow':'unique','created':created,'time_prefixes':prefixes,'same_prefix_collision_handled':True,'first_file_preserved':True,'second_file_empty':True,'defaults':report['unique_defaults']})
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-unique-notes.png')
+                    valid={p.relative_to(vault).as_posix() for p in vault.rglob('*.md')}
+                    opened=[]
+                    for _ in range(3):
+                        xdo('key','--clearmodifiers','ctrl+t');time.sleep(.2)
+                        assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.file?.path||null)") is None
+                        command('Random note:','random')
+                        path=evaluate("JSON.stringify(app.workspace.activeLeaf.view.file?.path||null)")
+                        assert path in valid
+                        opened.append(path)
+                    xdo('key','--clearmodifiers','ctrl+t');time.sleep(.2)
+                    stash=base/'empty-vault-stash';stash.mkdir()
+                    moved=[]
+                    try:
+                        for note in list(vault.rglob('*.md')):
+                            relative=note.relative_to(vault);saved=stash/relative;saved.parent.mkdir(parents=True,exist_ok=True)
+                            note.rename(saved);moved.append((note,saved))
+                        wait_until(lambda:evaluate("JSON.stringify(app.vault.getMarkdownFiles().length)")==0,'Reference did not observe its empty disposable vault')
+                        name=next(c['name'] for c in report['commands'] if c['id']=='random-note')
+                        xdo('key','--clearmodifiers','ctrl+p');time.sleep(.2);xdo('type','--clearmodifiers','--delay','4',name);time.sleep(.2)
+                        selected=evaluate("JSON.stringify(document.querySelector('.suggestion-item.is-selected')?.innerText||'')")
+                        normalized=lambda text:''.join(c for c in text if c.isalnum()).casefold()
+                        assert not selected or normalized(name) in normalized(selected)
+                        xdo('key','Return');time.sleep(.3)
+                        assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.file?.path||null)") is None
+                        assert not list(vault.rglob('*.md'))
+                        report['empty_random']={'selected_command':selected,'opened_file':None,'files_created':False,'ui':evaluate('JSON.stringify(document.body.innerText)')}
+                        ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-random-empty.png')
+                        xdo('key','Escape')
+                    finally:
+                        for note,saved in moved:saved.rename(note)
+                    assert all((vault/name).read_bytes()==data for name,data in originals.items())
+                    assert (vault/created[0]).read_bytes()==b'KEEP_UNIQUE_FIRST\n' and (vault/created[1]).read_bytes()==b''
+                    report['actions'].append({'workflow':'random','opened_from_blank':opened,'empty_vault_safe':True,'original_notes_unchanged':True})
+                    report['status']='passed'
+                    persist()
+                    print(json.dumps({'section':'note-creators','status':'passed','created':created,'opened':opened}))
+                    raise SystemExit(0)
                 entry = command("Daily notes:", "today")
                 wait_until(lambda: len(list((vault / "Daily").glob("*.md"))) == 1, "Daily-note command did not create a dated file")
                 daily = next((vault / "Daily").glob("*.md"))

@@ -5,8 +5,6 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     io::Write,
     path::{Component, Path, PathBuf},
 };
@@ -113,17 +111,7 @@ pub struct Workspaces {
 }
 
 pub fn location(root: &Path) -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
-        })?;
-    let mut hash = DefaultHasher::new();
-    root.hash(&mut hash);
-    Some(
-        base.join("rust-notes/workspaces")
-            .join(format!("{:016x}.json", hash.finish())),
-    )
+    crate::paths::state_file(root, "workspaces", "json")
 }
 
 impl Workspaces {

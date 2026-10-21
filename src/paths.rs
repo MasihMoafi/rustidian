@@ -1,6 +1,54 @@
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 use std::path::{Component, Path, PathBuf};
 
+/// Read one small, ordinary settings file; never follow a linked profile.
+pub fn read_obsidian<T: serde::de::DeserializeOwned + Default>(
+    root: &Path,
+    name: &str,
+) -> Result<T, String> {
+    let folder = root.join(".obsidian");
+    match std::fs::symlink_metadata(&folder) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(T::default()),
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => {}
+        _ => {
+            return Err(
+                "Cannot import note settings from a linked or unreadable .obsidian folder.".into(),
+            );
+        }
+    }
+    let path = folder.join(name);
+    let meta = match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(T::default()),
+        Err(error) => return Err(format!("Cannot read note settings: {error}")),
+        Ok(meta) => meta,
+    };
+    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > 65536 {
+        return Err("Note settings must be small ordinary JSON files.".into());
+    }
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("Cannot read note settings: {error}"))?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("Cannot import note settings: {error}"))
+}
+
+pub fn state_file(root: &Path, group: &str, extension: &str) -> Option<PathBuf> {
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+    };
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
+        })?;
+    let mut hash = DefaultHasher::new();
+    root.hash(&mut hash);
+    Some(
+        base.join("rust-notes")
+            .join(group)
+            .join(format!("{:016x}.{extension}", hash.finish())),
+    )
+}
+
 pub fn wiki_destination(path: &Path) -> String {
     if crate::vault::is_markdown(path) {
         let stem = path.with_extension("");

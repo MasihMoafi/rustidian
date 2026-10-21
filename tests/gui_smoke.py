@@ -345,13 +345,13 @@ def main():
             capture("native-desktop.png")
             results.append("Native window opened; three-pane home captured")
 
-            def command(value):
+            def command(value, *, available=True):
                 def trace(stage):
                     if os.environ.get("RUST_NOTES_TRACE_COMMANDS") == "1":
                         with (reports/"command-sequence.jsonl").open("a") as output:
                             controls=json.loads((base/"ui-probe.json").read_text())
                             relevant={name:bounds for name,bounds in controls.items() if name.startswith(("command:","dialog","workspace","pending-","editor","tab-full:"))}
-                            output.write(json.dumps({"command":value,"stage":stage,"section":args.section,"pid":app.pid,"time":time.monotonic(),"controls":relevant,"x_focus":xdo("getwindowfocus")})+"\n")
+                            output.write(json.dumps({"command":value,"expected_available":available,"stage":stage,"section":args.section,"pid":app.pid,"time":time.monotonic(),"controls":relevant,"x_focus":xdo("getwindowfocus")})+"\n")
                 trace("before")
                 key("ctrl+p")
                 control_bounds("dialog-input-focused")
@@ -363,15 +363,20 @@ def main():
                     controls=json.loads((base/"ui-probe.json").read_text())
                     matches={name:bounds for name,bounds in controls.items() if name.startswith("command:")}
                     wanted=matches.get("command:"+expected)
-                    if wanted is not None and wanted[1] == min(bounds[1] for bounds in matches.values()):
+                    if not available and not matches:
+                        break
+                    if available and wanted is not None and wanted[1] == min(bounds[1] for bounds in matches.values()):
                         break
                     time.sleep(.05)
                 else:
                     trace("query-not-selected")
                     capture("command-query-not-selected.png")
-                    raise AssertionError(("Requested command was not the first result",value,matches))
+                    raise AssertionError(("Requested command availability/result differs",value,available,matches))
                 trace("query")
                 key("Return")
+                if not available:
+                    assert control_bounds("dialog-input")
+                    assert not any(name.startswith("command:") for name in json.loads((base/"ui-probe.json").read_text()))
                 trace("result")
 
             def close_tabs():
@@ -738,7 +743,7 @@ def main():
                     key(shortcut)
                 key("ctrl+semicolon")
                 for unavailable in ["Source editing", "Save a copy"]:
-                    command(unavailable)
+                    command(unavailable,available=False)
                     key("Escape")
                 queued_text("SHOULD_NOT_EDIT_IMAGE", "ctrl+s")
                 assert control_bounds("attachment-image")
@@ -2018,8 +2023,7 @@ def main():
                 assert note.read_text() == source
                 command("Source editing")
                 key("ctrl+End")
-                # xdotool remaps a spare X11 keycode for Unicode. Allow the
-                # native event loop to consume each mapping before it changes.
+                # Unicode symbols stay mapped until this private app exits.
                 type_text("\nسلام از صفحه‌کلید", delay=100)
                 key("ctrl+s")
                 assert note.read_text() == source + "\nسلام از صفحه‌کلید", repr(note.read_text())
@@ -3614,6 +3618,248 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other workspace vault\n"
                 results.append("Deleting saved layouts removed only metadata and preserved every original workspace document")
 
+            def recovery_checks():
+                nonlocal app, window
+                close_tabs()
+                originals = {p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
+                target = fixture / "Recovery target.md"
+                second = fixture / "Recovery second.md"
+                original = "# Original\r\n\r\nسلام\r\n- [x] Keep this\r\n".encode()
+                changed = "# Changed\n\nسلام\n- [ ] New version\n".encode()
+                target.write_bytes(original)
+                second.write_text("# Second recovery note\n")
+                command("Refresh vault");pause();open_note("Recovery target")
+                command("Source editing")
+                key("ctrl+p");type_text("Save note")
+                assert control_bounds("command:Save note"), "Existing commands must work before checking the missing one"
+                key("Escape")
+                command("Open settings");type_text("file recovery")
+                left,top,right,bottom=control_bounds("settings-recovery-interval")
+                xdo("mousemove",str(round((left+right)/2)),str(round((top+bottom)/2)),"click","--repeat","2","--delay","70","1")
+                key("ctrl+a");type_text("0");key("Return");key("Tab")
+                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Recovery target.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(sessions)==1
+                session_path=sessions[0]
+                assert json.loads(session_path.read_text())["recovery_config"]["intervalMinutes"]==0
+                capture("native-recovery-settings.png")
+                key("Escape")
+
+                def versions(minimum=1):
+                    deadline=time.monotonic()+8
+                    while time.monotonic()<deadline:
+                        controls=json.loads((base/"ui-probe.json").read_text())
+                        ids=sorted(int(name.split(":",1)[1]) for name in controls if name.startswith("recovery-version:"))
+                        if len(ids)>=minimum and "recovery-ready" in controls:
+                            geometry=dict(line.split("=",1) for line in xdo("getwindowgeometry","--shell",window).splitlines() if "=" in line)
+                            dialog=control_bounds("recovery-dialog")
+                            assert 0<=dialog[0]<dialog[2]<=int(geometry["WIDTH"]) and 0<=dialog[1]<dialog[3]<=int(geometry["HEIGHT"]),dialog
+                            for name in ("recovery-files","recovery-close","recovery-copy","recovery-restore","recovery-changes"):
+                                rect=control_bounds(name)
+                                assert dialog[0]<=rect[0]<rect[2]<=dialog[2] and dialog[1]<=rect[1]<rect[3]<=dialog[3],(name,rect,dialog)
+                            return ids
+                        time.sleep(.1)
+                    raise AssertionError(("Missing stored recovery versions",minimum,controls))
+
+                def history(minimum=1):
+                    command("File recovery: Open local history")
+                    assert control_bounds("recovery-files")
+                    return versions(minimum)
+
+                def copy_snapshot():
+                    control_bounds("recovery-ready")
+                    click_control("recovery-copy",hold=.15)
+                    return subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)
+
+                def choose_version(version):
+                    click_control("recovery-version:"+str(version),hold=.15)
+                    control_bounds("recovery-selected:"+str(version))
+
+                def choose_file(query):
+                    click_control("recovery-files",hold=.15);key("ctrl+a");paste_text(query,held=True);key("Return")
+                    return versions()
+
+                initial=history()[0]
+                assert copy_snapshot()==original
+                assert target.read_bytes()==original
+                capture("native-recovery-initial.png")
+                key("Escape");control_bounds("editor-focused")
+                results.append("File recovery command opened stored history; Copy preserved exact Unicode/CRLF and closing returned editor focus")
+
+                open_note("Recovery second");history();assert copy_snapshot()==second.read_bytes();key("Escape")
+                open_note("Recovery target")
+                command("Open settings");type_text("file recovery");click_control("settings-recovery-view",hold=.15)
+                control_bounds("recovery-loaded")
+                assert control_bounds("recovery-ready",required=False) is None
+                choose_file("rcvryscnd");assert copy_snapshot()==second.read_bytes()
+                choose_file("Recovery target");assert copy_snapshot()==original
+                key("Escape")
+                results.append("Settings View opened the file chooser; fuzzy keyboard selection switched between two stored files without changing their bytes")
+
+                unopened=fixture/("Unopened recovery "+"long filename "*8+".md")
+                first_unopened=b"# Closed note\n\nFIRST_CLOSED_SNAPSHOT\n"
+                second_unopened=b"# Closed note\n\nSECOND_CLOSED_VERSION_IS_DIFFERENT\n"
+                assert "tab-full:"+unopened.name not in json.loads((base/"ui-probe.json").read_text())
+                unopened.write_bytes(first_unopened);time.sleep(.6)
+                command("Open settings");type_text("file recovery");click_control("settings-recovery-view",hold=.15)
+                choose_file("Unopened recovery");closed_initial=versions()[0]
+                assert copy_snapshot()==first_unopened and unopened.read_bytes()==first_unopened
+                key("Escape")
+                unopened.write_bytes(second_unopened);time.sleep(.6)
+                command("Open settings");type_text("file recovery");click_control("settings-recovery-view",hold=.15)
+                choose_file("Unopened recovery");versions(2)
+                assert copy_snapshot()==second_unopened
+                choose_version(closed_initial)
+                assert copy_snapshot()==first_unopened and unopened.read_bytes()==second_unopened
+                assert "tab-full:"+unopened.name not in json.loads((base/"ui-probe.json").read_text())
+                capture("native-recovery-unopened.png");key("Escape")
+                assert target.read_bytes()==original
+                results.append("Two external versions of a never-opened note were captured; selecting and copying either history version preserved its current bytes and the active document")
+
+                click_control("editor");key("ctrl+a");paste_text(changed.decode(),held=True);key("ctrl+s")
+                assert target.read_bytes()==changed
+                ids=history(2)
+                assert ids[0]==initial
+                choose_version(initial)
+                assert copy_snapshot()==original
+                click_control("recovery-changes",hold=.15)
+                capture("native-recovery-changes.png")
+                picture=Image.open(reports/"native-recovery-changes.png").convert("RGB")
+                assert sum(color==(70,33,35) for color in pixel_data(picture))>5
+                assert sum(color==(29,65,46) for color in pixel_data(picture))>5
+                assert copy_snapshot()==original and target.read_bytes()==changed
+                click_control("recovery-restore",hold=.15)
+                assert target.read_bytes()==original
+                versions(2)
+                choose_version(ids[-1])
+                assert copy_snapshot()==changed
+                key("Escape")
+                results.append("Changed notes created a second snapshot; older selection, visible additions/removals and Restore preserved exact bytes plus the displaced version")
+
+                history(2)
+                store=base/"state/rust-notes/recovery"/session_path.with_suffix(".redb").name
+                permissions=store.stat().st_mode & 0o777
+                owner=subprocess.Popen(["xclip","-selection","clipboard","-in","-quiet"],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=environment)
+                try:
+                    owner.stdin.write(b"RECOVERY_READ_ERROR_CLIPBOARD");owner.stdin.close();pause()
+                    store.chmod(0)
+                    assert not os.access(store,os.R_OK),"The read-error fixture must actually refuse access"
+                    click_control("recovery-version:"+str(initial),hold=.15)
+                    control_bounds("recovery-error")
+                    assert control_bounds("recovery-ready",required=False) is None
+                    click_control("recovery-copy",hold=.15)
+                    assert subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)==b"RECOVERY_READ_ERROR_CLIPBOARD"
+                    click_control("recovery-restore",hold=.15)
+                    assert target.read_bytes()==original
+                    capture("native-recovery-read-error.png")
+                finally:
+                    store.chmod(permissions)
+                    owner.terminate();owner.wait(timeout=5)
+                choose_version(initial)
+                assert copy_snapshot()==original and target.read_bytes()==original
+                key("Escape")
+                results.append("Unreadable history showed an error and disabled stale Copy/Restore; restoring access made the exact selected version available again without changing the document")
+
+                command("Open settings");type_text("autosave")
+                if json.loads(session_path.read_text())["autosave_enabled"]:
+                    click_control("settings-autosave",hold=.15)
+                wait_autosave(base/"state",False,session_path=session_path)
+                key("Escape");click_control("editor");key("ctrl+a");paste_text("UNSAVED_RECOVERY\n",held=True)
+                history(2);choose_version(initial);control_bounds("recovery-ready")
+                click_control("recovery-restore",hold=.15)
+                click_control("pending-cancel",hold=.15)
+                assert target.read_bytes()==original
+                key("Escape");click_control("editor");key("ctrl+a");key("ctrl+c")
+                assert subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)==b"UNSAVED_RECOVERY\n"
+                key("End")
+                history(2);choose_version(initial);control_bounds("recovery-ready")
+                click_control("recovery-restore",hold=.15);click_control("pending-save",hold=.15)
+                assert target.read_bytes()==original
+                preserved=[]
+                for version in versions(3):
+                    choose_version(version)
+                    preserved.append(copy_snapshot())
+                assert b"UNSAVED_RECOVERY\n" in preserved
+                key("Escape")
+                results.append("Dirty Restore cancellation retained the unsaved buffer; Save and continue preserved those exact edits in history before restoring")
+
+                history(3);choose_version(initial);control_bounds("recovery-ready")
+                target.write_bytes(b"# EXTERNAL_RECOVERY\n")
+                click_control("recovery-restore",hold=.15)
+                assert control_bounds("recovery-error") and target.read_bytes()==b"# EXTERNAL_RECOVERY\n"
+                assert copy_snapshot()==original
+                capture("native-recovery-conflict.png")
+                key("Escape")
+                target.write_bytes(original)
+                command("Refresh vault");pause()
+                results.append("A note changed outside the history dialog refused Restore, retained the replacement and kept the selected snapshot copyable")
+
+                deleted=base/"deleted-recovery-target.md"
+                target.rename(deleted);pause()
+                history(3);choose_version(initial);control_bounds("recovery-ready")
+                click_control("recovery-restore",hold=.15)
+                assert target.read_bytes()==original
+                capture("native-recovery-deleted-note.png");key("Escape")
+                target.rename(base/"deleted-recovery-target-again.md");pause()
+                history(3);choose_version(initial);control_bounds("recovery-ready")
+                target.write_bytes(b"# New collision\n")
+                click_control("recovery-restore",hold=.15)
+                assert control_bounds("recovery-error") and target.read_bytes()==b"# New collision\n"
+                key("Escape");target.write_bytes(original);command("Refresh vault");pause()
+                results.append("A previously deleted note was recreated from its exact snapshot; a file appearing meanwhile was preserved without overwrite")
+
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window()
+                open_note("Recovery target")
+                history(3);choose_version(initial)
+                assert copy_snapshot()==original
+                key("Escape")
+                assert json.loads(session_path.read_text())["recovery_config"]["intervalMinutes"]==0
+                results.append("History and recovery settings survived a real application restart")
+
+                other=base/"Recovery other vault";other.mkdir()
+                (other/"Recovery target.md").write_bytes(b"# Other vault snapshot\n")
+                command("Open vault");key("ctrl+a");paste_text(str(other),held=True);key("Return")
+                title_contains(other.name);open_note("Recovery target")
+                history();assert copy_snapshot()==b"# Other vault snapshot\n";key("Escape")
+                command("Open vault");key("ctrl+a");paste_text(str(fixture),held=True);key("Return")
+                title_contains(fixture.name);open_note("Recovery target")
+                history(3);choose_version(initial)
+                assert copy_snapshot()==original;key("Escape")
+                assert (other/"Recovery target.md").read_bytes()==b"# Other vault snapshot\n"
+                results.append("Equal file names in separate vaults had isolated snapshots and switching back restored the original history")
+
+                command("Switch appearance")
+                history(3)
+                capture("native-recovery-light.png")
+                xdo("windowsize",window,"860","560");pause()
+                bounds=control_bounds("recovery-dialog")
+                assert 0<=bounds[0]<bounds[2]<=860 and 0<=bounds[1]<bounds[3]<=560,bounds
+                for name in ["recovery-files","recovery-copy","recovery-restore","recovery-close"]:
+                    b=control_bounds(name)
+                    assert bounds[0]<=b[0]<b[2]<=bounds[2] and bounds[1]<=b[1]<b[3]<=bounds[3],(name,b,bounds)
+                capture("native-recovery-compact.png",size=(860,560))
+                key("Escape");xdo("windowsize",window,"1440","960");pause();command("Switch appearance")
+                results.append("The real history controls fitted a compact window and rendered in both themes")
+
+                command("Open settings");type_text("file recovery");click_control("settings-recovery-clear",hold=.15)
+                click_control("recovery-clear-cancel",hold=.15)
+                control_bounds("settings-recovery-view-ready");click_control("settings-recovery-view",hold=.15)
+                choose_file("Recovery target");versions(3);assert copy_snapshot() in (original,changed,b"UNSAVED_RECOVERY\n")
+                key("Escape")
+                command("Open settings");type_text("file recovery");click_control("settings-recovery-clear",hold=.15)
+                click_control("recovery-clear-confirm",hold=.15)
+                control_bounds("settings-recovery-view-ready");click_control("settings-recovery-view",hold=.15)
+                control_bounds("recovery-loaded")
+                assert not any(name.startswith("recovery-version:") for name in json.loads((base/"ui-probe.json").read_text()))
+                assert control_bounds("recovery-ready",required=False) is None
+                assert target.read_bytes()==original
+                key("Escape")
+                for name,digest in originals.items():
+                    assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
+                assert second.read_text()=="# Second recovery note\n"
+                assert unopened.read_bytes()==second_unopened
+                results.append("Clear history cancellation preserved snapshots; confirmed Clear removed history only and every original Markdown file stayed unchanged")
+
             def palette_queue_checks():
                 sources={p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
                 before=control_bounds("sidebar:details",required=False) is not None
@@ -3641,13 +3887,11 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
-
             if args.section == "palette-queued":
                 palette_queue_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"palette-queued"}))
                 return
-
             def unicode_queue_checks():
                 note=fixture/"Keyboard calibration.md";original="# Keyboard calibration\n\n"
                 note.write_text(original);command("Refresh vault");pause();open_note("Keyboard calibration");command("Source editing");editor_end()
@@ -3667,22 +3911,13 @@ def main():
                 capture("native-unicode-keyboard.png")
                 assert actual==original+suffix,repr(actual)
                 results.append("ASCII typing and queued Persian, Greek and ZWNJ key events saved exact bytes through the same native editor")
-
             if args.section == "unicode-queued":
                 unicode_queue_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"unicode-queued"}))
                 return
-
             if args.section == "recovery":
-                command("Source editing")
-                key("ctrl+p");type_text("Save note")
-                assert control_bounds("command:Save note"), "Existing commands must work before checking the missing one"
-                key("Escape")
-                key("ctrl+p");type_text("File recovery: Open local history")
-                click_control("command:File recovery: Open local history",hold=.15)
-                assert control_bounds("recovery-files")
-                results.append("File recovery opened through its real available command")
+                recovery_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"recovery"}))
                 return
@@ -4143,6 +4378,7 @@ def main():
                 workspace_checks,
                 palette_queue_checks,
                 unicode_queue_checks,
+                recovery_checks,
             ], retain_failure,count_checks=lambda:len(results),on_success=retain_success)
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))

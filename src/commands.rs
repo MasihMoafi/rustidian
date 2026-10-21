@@ -18,6 +18,11 @@ impl AsRef<str> for Command {
 
 pub const ALL: &[Command] = &[
     Command {
+        name: "File recovery: Open local history",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
         name: "Workspaces: Manage workspace layouts",
         shortcut: "",
         markdown_only: false,

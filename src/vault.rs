@@ -57,6 +57,7 @@ pub struct Document {
     pub path: PathBuf,
     pub text: String,
     original: Option<String>,
+    saved_revision: u64,
     kind: DocumentKind,
 }
 
@@ -67,11 +68,27 @@ enum DocumentKind {
 }
 
 impl Document {
+    fn next_revision() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Changes only when saved bytes are loaded or successfully committed.
+    pub fn saved_revision(&self) -> u64 {
+        self.saved_revision
+    }
+
+    pub fn saved_text(&self) -> Option<&str> {
+        self.original.as_deref()
+    }
+
     pub fn blank() -> Self {
         Self {
             path: PathBuf::new(),
             text: String::new(),
             original: Some(String::new()),
+            saved_revision: Self::next_revision(),
             kind: DocumentKind::Note,
         }
     }
@@ -85,6 +102,7 @@ impl Document {
             path,
             text: String::new(),
             original: None,
+            saved_revision: Self::next_revision(),
             kind: DocumentKind::Note,
         }
     }
@@ -273,6 +291,7 @@ impl Vault {
         Ok(Document {
             path: path.into(),
             original: Some(text.clone()),
+            saved_revision: Document::next_revision(),
             text,
             kind: DocumentKind::Note,
         })
@@ -293,6 +312,7 @@ impl Vault {
             path: path.to_owned(),
             text: String::new(),
             original: Some(String::new()),
+            saved_revision: Document::next_revision(),
             kind: DocumentKind::Image,
         })
     }
@@ -353,6 +373,7 @@ impl Vault {
                 .map_err(|e| format!("Cannot finish save: {}", e.error))?;
         }
         document.original = Some(document.text.clone());
+        document.saved_revision = Document::next_revision();
         let note = Note::new(document.path.clone(), document.text.clone());
         if let Some(existing) = self
             .notes
