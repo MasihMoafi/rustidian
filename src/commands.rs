@@ -78,6 +78,31 @@ pub const ALL: &[Command] = &[
         markdown_only: true,
     },
     Command {
+        name: crate::highlight::Color::Cyan.command(),
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
+        name: crate::highlight::Color::Green.command(),
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
+        name: crate::highlight::Color::Orange.command(),
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
+        name: crate::highlight::Color::Red.command(),
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
+        name: crate::highlight::Color::Yellow.command(),
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
         name: "Rename or move file",
         shortcut: "F2",
         markdown_only: false,

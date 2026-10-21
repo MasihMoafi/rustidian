@@ -25,7 +25,7 @@ do not execute in this native Rust application.
    another implementation from an old chat title or summary.
 2. View all eleven screenshots supplied on 21 October, under
    `/home/masih/Pictures/Screenshots/Screenshot From 2026-10-21 08-13-12.png`
-   through `08-14-46.png`. They show the note surface, command palette, explorer
+   through `08-14-46.png`: 08-13-12, 20, 22, 25, 27, 29, 31, 38, 50, 55 and 08-14-46. The settings screenshot identifies Obsidian 1.14.4; older installed 1.5.12 benchmarks remain historical. They show the note surface, command palette, explorer
    controls, file menu and settings. The palette is a primary workflow; optional
    plugin commands visible there are not automatically requirements.
 3. Exercise the same task in the currently built app, using a disposable vault
@@ -52,6 +52,10 @@ Use primary repositories and pinned releases. The initial shortlist is:
 | [Zed](https://github.com/zed-industries/zed) | Rust/GPUI editor; useful input, text-buffer and rendering architecture | A general editor with a different feature set. Check component licenses before reuse. |
 | [Helix](https://github.com/helix-editor/helix) | Rust text editing and incremental syntax techniques | Terminal interaction is not equivalent to a graphical Markdown notebook. |
 | [Markion](https://github.com/willmove/markion) | Native Rust/GPUI source-backed Markdown workflows; repository MIT license | Packaging, maturity and measured performance need verification. |
+
+Ferrite’s [version 0.3.0 changelog](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/CHANGELOG.md) describes a rope-backed buffer, virtual scrolling, viewport-aware syntax highlighting and a bounded line cache. Treat those as candidate techniques, not independently verified speed results. Start by measuring the editor core before selecting or replacing a text widget; preserve Unicode, undo and safe-save behavior if adopting a technique.
+
+The inspected [buffer](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/src/editor/ferrite/buffer.rs) wraps Ropey and exposes character/line operations. The [line cache](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/src/editor/ferrite/line_cache.rs) retains content-based galley entries, adjusts capacity to the visible line count, and invalidates edited ranges while preserving unchanged lines. If large-note edits miss the target, measure parsing/layout work first; consider these techniques with Unicode and undo checks before changing frameworks.
 
 Do not call one the fastest because of its language, popularity or README.
 Inspect a small relevant implementation and measure the actual workflow. Prefer
@@ -89,8 +93,11 @@ the exact source and license for any code copied or adapted, and retain notices.
    controls; do not fill a window with nonfunctional plugin/theme options.
 3. **Highlighting and Markdown commands.** Preserve the exact source around a
    selection, render standard `==highlight==` in Live and Reading, retain literal
-   Source/code content, and verify undo/redo and persisted text. Add colored
-   plugin-style marks only when their syntax and required behavior are clear.
+   Source/code content, and verify undo/redo and persisted text. Masih selected
+   Cyan, Green, Orange, Red and Yellow. Use portable hex-background `<mark>`
+   tags for colored highlights and `==` for yellow; preserve selection through
+   Ctrl+P, native rendering, save/reopen and undo/redo. These are native commands,
+   not a claim that arbitrary Obsidian community plugins execute.
 4. **Familiar panels.** Make the existing files, search, bookmarks, outline,
    backlinks and outgoing links easy to find. Prefer actual working panels to
    extra toolbar symbols. Review the result against the supplied screenshots.
@@ -130,6 +137,8 @@ into a win. If the comparator cannot run correctly, record the reason and leave
 the comparative result unverified. Do not remove safety checks to win a timing.
 Measure broader "fastest editor" claims only with a broader equivalent study.
 
+The exact comparison procedure is `scripts/compare-editors.py`; its `--self-check` verifies rejection of unchanged text. The workflow downloads the pinned archive into runner temporary storage, verifies the published SHA-256, and retains only logs, screenshots and raw measurements in `reports/editor-comparison/`, not the third-party executable.
+
 Continue the existing internal CPU checks independently: 20/200/500-block
 corpora, five warmups, 20 idle and 20 edited samples, 25 verified insertions,
 unfolded and mostly folded modes, idle median <=5 ms and edited <=16.7 ms.
@@ -141,6 +150,8 @@ Use the private repository `MasihMoafi/rust-notes`. No local Rust builds, tests,
 Clippy or new `target/`. Local source editing, formatting and small Python/Node
 checks are allowed. Use `gh` for remote GitHub operations and only upload this
 project's reviewed sources/assets. Do not upload real vaults or local reports.
+
+From a clean machine, clone the authorized private repository with `gh repo clone MasihMoafi/rust-notes`, then work in that checkout. The checked-in workflow declares the runner/toolchain/dependencies; do not install a local Rust build tree to reproduce the CI result.
 
 ```sh
 git status --short

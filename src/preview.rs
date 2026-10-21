@@ -10,7 +10,7 @@ struct Inline {
     italic: bool,
     code: bool,
     strike: bool,
-    highlight: bool,
+    highlight: Option<rust_notes::highlight::Rgba>,
     link: Option<String>,
 }
 #[derive(Clone, Default)]
@@ -135,6 +135,7 @@ impl Parsed {
         let source = marked.as_str();
         let mut block = Block::default();
         let mut style = Inline::default();
+        let mut highlights = Vec::new();
         let mut list: Vec<Option<u64>> = Vec::new();
         let mut task_count = 0;
         let mut quote = 0;
@@ -367,8 +368,13 @@ impl Parsed {
                     }
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
-                Event::InlineHtml(tag) if tag.as_ref() == "<mark>" => style.highlight = true,
-                Event::InlineHtml(tag) if tag.as_ref() == "</mark>" => style.highlight = false,
+                Event::InlineHtml(tag) if rust_notes::highlight::mark_color(&tag).is_some() => {
+                    highlights.push(style.highlight);
+                    style.highlight = rust_notes::highlight::mark_color(&tag);
+                }
+                Event::InlineHtml(tag) if tag.as_ref() == "</mark>" && !highlights.is_empty() => {
+                    style.highlight = highlights.pop().flatten();
+                }
                 Event::Html(_) | Event::InlineHtml(_) => parsed.fallback = true,
                 _ => {}
             }
@@ -855,8 +861,8 @@ fn inline_format(
                 1.62
             },
         ),
-        background: if part.highlight {
-            crate::theme::highlight_background()
+        background: if let Some([red, green, blue, alpha]) = part.highlight {
+            egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha)
         } else if part.code && table_header.is_none() {
             ui.visuals().code_bg_color
         } else {

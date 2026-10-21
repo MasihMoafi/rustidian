@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -608,6 +608,56 @@ def main():
                 assert not fixture.joinpath("Assets/Renamed viewer[1].png.md").exists()
                 assert fixture.joinpath("Home.md").read_bytes() == home_before
                 results.append("Clean restart restored the image tab; image Trash preserved its bytes and ordinary note editing still worked")
+
+            def color_checks():
+                colors = [
+                    ("Cyan", '<mark style="background: #00bfbc41;">', "</mark>", lambda r, g, b: g > r + 15 and b > r + 15),
+                    ("Green", '<mark style="background: #44cf6e41;">', "</mark>", lambda r, g, b: g > r + 15 and g > b + 15),
+                    ("Orange", '<mark style="background: #ffaa4041;">', "</mark>", lambda r, g, b: r > g + 16 and g > b + 15),
+                    ("Red", '<mark style="background: #fb464c41;">', "</mark>", lambda r, g, b: r > g + 20 and r > b + 20),
+                    ("Yellow", "==", "==", lambda r, g, b: r > g > b + 20 and r - g < 45),
+                ]
+                for name, opening, closing, tinted in colors:
+                    source = f"# {name} highlight\n\neditable"
+                    note = fixture / f"Notes/Highlight {name}.md"
+                    note.write_text(source)
+                    time.sleep(.6)
+                    open_note(f"Highlight {name}")
+                    command("Source editing")
+                    editor_end()
+                    key("ctrl+shift+Left")
+                    key("ctrl+p")
+                    type_text(f"Highlight {name}")
+                    assert control_bounds(f"command:Highlight {name}"), f"{name} command is missing"
+                    key("Return")
+                    key("ctrl+s")
+                    expected = source[:-len("editable")] + opening + "editable" + closing
+                    assert note.read_text() == expected, (name, note.read_text())
+                    key("ctrl+z")
+                    key("ctrl+s")
+                    assert note.read_text() == source, (name, "undo")
+                    key("ctrl+y")
+                    key("ctrl+s")
+                    assert note.read_text() == expected, (name, "redo")
+                    for view, control in [("Reading view", "reading-block:1"), ("Live preview", "editor")]:
+                        command(view)
+                        picture = f"native-highlight-{name.lower()}-{view.split()[0].lower()}.png"
+                        capture(picture)
+                        box = tuple(round(value) for value in control_bounds(control))
+                        count = sum(tinted(r, g, b) for r, g, b in pixel_data(Image.open(ROOT / "reports" / picture).crop(box).convert("RGB")))
+                        assert count > 15, (name, view, count)
+                    command("Switch appearance")
+                    command("Reading view")
+                    capture(f"native-highlight-{name.lower()}-light.png")
+                    command("Switch appearance")
+                    key("ctrl+w")
+                    open_note(f"Highlight {name}")
+                    command("Source editing")
+                    editor_end()
+                    type_text(" reopened")
+                    key("ctrl+s")
+                    assert note.read_text() == expected + " reopened", (name, "reopen")
+                results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
 
             def essential_checks():
                 nonlocal app, window
@@ -2191,6 +2241,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
+            if args.section == "colors":
+                color_checks()
+                (reports / "gui-results.txt").write_text("\n".join(results) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "essential":
                 essential_checks()
                 (ROOT / "reports/gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -2444,6 +2499,7 @@ def main():
             attachment_tab_checks()
             task_checks()
             essential_checks()
+            color_checks()
             large_search_checks()
             folder_checks()
             explorer_checks()

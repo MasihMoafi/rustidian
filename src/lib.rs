@@ -4,6 +4,7 @@ pub mod callouts;
 pub mod commands;
 pub mod editor;
 pub mod folding;
+pub mod highlight;
 pub mod metadata;
 pub mod navigation;
 pub mod operations;

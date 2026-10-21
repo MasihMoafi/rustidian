@@ -2344,21 +2344,27 @@ impl NotesApp {
     }
 
     fn command(&mut self, command: &str, ctx: &egui::Context) {
+        let highlight = rust_notes::highlight::Color::ALL
+            .into_iter()
+            .find(|color| color.command() == command)
+            .or_else(|| {
+                (command == "Highlight selection").then_some(rust_notes::highlight::Color::Yellow)
+            });
+        if let Some(color) = highlight {
+            if let Some(tab) = self
+                .tabs
+                .get(self.active)
+                .filter(|tab| !tab.document.is_image() && tab.view != View::Read)
+            {
+                self.editor.highlight(tab, color);
+                ctx.request_repaint();
+            } else {
+                self.error = Some("Choose an editable Markdown note to highlight text.".into());
+            }
+            return;
+        }
         match command {
             "Open settings" => self.ask(Dialog::Settings),
-            "Highlight selection" => {
-                if let Some(tab) = self
-                    .tabs
-                    .get(self.active)
-                    .filter(|tab| !tab.document.is_image() && tab.view != View::Read)
-                {
-                    self.editor.format = Some((tab.id(), tab.document.path.clone(), "=="));
-                    self.editor.focus = true;
-                    ctx.request_repaint();
-                } else {
-                    self.error = Some("Choose an editable Markdown note to highlight text.".into());
-                }
-            }
             "New note" => self.ask(Dialog::NewNote),
             "New folder" => self.ask(Dialog::NewFolder),
             "Add property" => self.ask(Dialog::AddProperty),

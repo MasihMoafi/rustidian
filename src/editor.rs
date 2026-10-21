@@ -39,7 +39,7 @@ pub struct Style {
     pub bullet: bool,
     pub task_marker: bool,
     pub task_checked: bool,
-    pub highlight: bool,
+    pub highlight: Option<crate::highlight::Rgba>,
     pub property: bool,
     pub image: bool,
     pub marker: bool,
@@ -216,6 +216,8 @@ impl Markdown {
         let mut tables = Vec::new();
         let mut callouts = Vec::new();
         let mut tasks = Vec::new();
+        let mut mark_stack = Vec::new();
+        let mut marks = Vec::new();
         let mut current_item = 0;
         let mut task_positions = text.char_indices().enumerate().peekable();
         let mut table = None;
@@ -366,6 +368,15 @@ impl Markdown {
                         });
                     }
                 }
+                Event::InlineHtml(tag) => {
+                    if let Some(color) = crate::highlight::mark_color(&tag) {
+                        mark_stack.push((range, color));
+                    } else if tag.as_ref() == "</mark>"
+                        && let Some((opening, color)) = mark_stack.pop()
+                    {
+                        marks.push((opening, range, color));
+                    }
+                }
                 _ => {}
             }
         }
@@ -410,7 +421,7 @@ impl Markdown {
                     && !content.contains("\r\n\r\n")
                 {
                     patch(&mut styles, start + 2..index, |style| {
-                        style.highlight = true
+                        style.highlight = Some(crate::highlight::Color::Yellow.rgba())
                     });
                     for marker in [start..start + 2, index..index + 2] {
                         hide(&mut styles, marker.clone());
@@ -422,6 +433,19 @@ impl Markdown {
                 }
             } else {
                 opening = Some(index);
+            }
+        }
+        marks.sort_by_key(|(opening, _, _)| opening.start);
+        for (opening, closing, color) in marks {
+            if styles[opening.start].property || styles[closing.start].property {
+                continue;
+            }
+            patch(&mut styles, opening.end..closing.start, |style| {
+                style.highlight = Some(color);
+            });
+            for marker in [opening, closing] {
+                hide(&mut styles, marker.clone());
+                patch(&mut styles, marker, |style| style.marker = true);
             }
         }
         for callout in &callouts {
@@ -547,6 +571,15 @@ fn delimit(styles: &mut [Style], range: Range<usize>, size: usize) {
 
 /// Both input and output selections use Unicode scalar indices, as egui does.
 pub fn surround(text: &mut String, selection: Range<usize>, marker: &str) -> Range<usize> {
+    wrap(text, selection, marker, marker)
+}
+
+pub fn wrap(
+    text: &mut String,
+    selection: Range<usize>,
+    opening: &str,
+    closing: &str,
+) -> Range<usize> {
     let offsets: Vec<_> = text
         .char_indices()
         .map(|(i, _)| i)
@@ -555,14 +588,14 @@ pub fn surround(text: &mut String, selection: Range<usize>, marker: &str) -> Ran
     let Some((&start, &end)) = offsets.get(selection.start).zip(offsets.get(selection.end)) else {
         return selection;
     };
-    let size = marker.chars().count();
-    if text[..start].ends_with(marker) && text[end..].starts_with(marker) {
-        text.replace_range(end..end + marker.len(), "");
-        text.replace_range(start - marker.len()..start, "");
+    let size = opening.chars().count();
+    if text[..start].ends_with(opening) && text[end..].starts_with(closing) {
+        text.replace_range(end..end + closing.len(), "");
+        text.replace_range(start - opening.len()..start, "");
         selection.start - size..selection.end - size
     } else {
-        text.insert_str(end, marker);
-        text.insert_str(start, marker);
+        text.insert_str(end, closing);
+        text.insert_str(start, opening);
         selection.start + size..selection.end + size
     }
 }

@@ -4,7 +4,8 @@ use eframe::egui::{
     widgets::text_edit::TextEditState,
 };
 use rust_notes::{
-    editor::{Markdown, complete_link, find_matches, link_at, link_completion, surround},
+    editor::{Markdown, complete_link, find_matches, link_at, link_completion, wrap},
+    highlight::Color,
     search::FileMatcher,
     tab::Tab,
 };
@@ -29,7 +30,8 @@ pub struct Find {
 pub struct Editor {
     pub jump: Option<usize>,
     pub focus: bool,
-    pub format: Option<(u64, std::path::PathBuf, &'static str)>,
+    format: Option<Format>,
+    selection: Option<(u64, CCursorRange)>,
     source: String,
     parsed: Markdown,
     sections: rust_notes::folding::Sections,
@@ -41,6 +43,13 @@ pub struct Editor {
     focus_range: Option<(egui::Id, CCursorRange)>,
     image_cursor: Option<(usize, usize)>,
     image_cursor_time: f64,
+}
+
+struct Format {
+    tab: u64,
+    path: std::path::PathBuf,
+    color: Color,
+    selection: Option<CCursorRange>,
 }
 
 struct LiveImage {
@@ -362,6 +371,19 @@ fn consume_action(ui: &egui::Ui, modifiers: egui::Modifiers, keys: &[Key]) -> bo
 }
 
 impl Editor {
+    pub fn highlight(&mut self, tab: &Tab, color: Color) {
+        self.format = Some(Format {
+            tab: tab.id(),
+            path: tab.document.path.clone(),
+            color,
+            selection: self
+                .selection
+                .filter(|(id, _)| *id == tab.id())
+                .map(|(_, range)| range),
+        });
+        self.focus = true;
+    }
+
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -374,7 +396,7 @@ impl Editor {
         if self
             .format
             .as_ref()
-            .is_some_and(|(target, path, _)| *target != tab.id() || path != &tab.document.path)
+            .is_some_and(|format| format.tab != tab.id() || format.path != tab.document.path)
         {
             self.format = None;
         }
@@ -582,7 +604,8 @@ impl Editor {
             }
         }
         if ui.memory(|m| m.has_focus(id)) {
-            for (key, modifiers, marker) in [
+            let pending = self.format.take();
+            let shortcut = [
                 (Key::B, egui::Modifiers::COMMAND, "**"),
                 (Key::I, egui::Modifiers::COMMAND, "*"),
                 (
@@ -590,32 +613,38 @@ impl Editor {
                     egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
                     "==",
                 ),
-            ] {
-                if self
-                    .format
-                    .as_ref()
-                    .is_some_and(|(_, _, pending)| *pending == marker)
-                    || ui.input_mut(|i| i.consume_key(modifiers, key))
+            ]
+            .into_iter()
+            .find_map(|(key, modifiers, marker)| {
+                ui.input_mut(|i| i.consume_key(modifiers, key))
+                    .then_some((marker, marker))
+            });
+            let markers = pending
+                .as_ref()
+                .map(|format| format.color.markers())
+                .or(shortcut);
+            if let Some((opening, closing)) = markers {
+                let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                if let Some(selection) = pending
+                    .and_then(|format| format.selection)
+                    .or_else(|| state.cursor.char_range())
                 {
-                    self.format = None;
-                    let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
-                    if let Some(selection) = state.cursor.char_range() {
-                        let mut undoer = state.undoer();
-                        undoer.add_undo(&(selection, tab.document.text.clone()));
-                        let range = surround(
-                            &mut tab.document.text,
-                            selection.as_sorted_char_range().start.0
-                                ..selection.as_sorted_char_range().end.0,
-                            marker,
-                        );
-                        let cursor =
-                            CCursorRange::two(CCursor::new(range.start), CCursor::new(range.end));
-                        state.cursor.set_char_range(Some(cursor));
-                        undoer.add_undo(&(cursor, tab.document.text.clone()));
-                        state.set_undoer(undoer);
-                        state.store(ui.ctx(), id);
-                        tab.edited();
-                    }
+                    let mut undoer = state.undoer();
+                    undoer.add_undo(&(selection, tab.document.text.clone()));
+                    let range = wrap(
+                        &mut tab.document.text,
+                        selection.as_sorted_char_range().start.0
+                            ..selection.as_sorted_char_range().end.0,
+                        opening,
+                        closing,
+                    );
+                    let cursor =
+                        CCursorRange::two(CCursor::new(range.start), CCursor::new(range.end));
+                    state.cursor.set_char_range(Some(cursor));
+                    undoer.add_undo(&(cursor, tab.document.text.clone()));
+                    state.set_undoer(undoer);
+                    state.store(ui.ctx(), id);
+                    tab.edited();
                 }
             }
         }
@@ -904,6 +933,11 @@ impl Editor {
             save_undo(ui.ctx(), &tab.document.text);
         }
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
+        if output.response.has_focus()
+            && let Some(range) = output.cursor_range
+        {
+            self.selection = Some((tab.id(), range));
+        }
         if header_end > 0 && !tab.document.text.starts_with(&self.source[..header_end]) {
             tab.document.text.clone_from(&self.source);
             self.focus_range = Some((id, CCursorRange::one(CCursor::new(body_start))));
@@ -953,7 +987,9 @@ impl Editor {
                 if hidden.iter().any(|range| range.contains(&character)) {
                     continue;
                 }
-                let point = positioned.at(character);
+                let point = positioned
+                    .at(character)
+                    .translate(output.galley_pos.to_vec2());
                 let rect = egui::Rect::from_center_size(
                     egui::pos2(point.min.x + 9.0, point.center().y),
                     egui::vec2(18.0, 18.0),
@@ -2038,8 +2074,10 @@ fn layout(
                 } else {
                     Stroke::NONE
                 },
-                background: if live && style.highlight && !hidden {
-                    crate::theme::highlight_background()
+                background: if let Some([red, green, blue, alpha]) =
+                    style.highlight.filter(|_| live && !hidden)
+                {
+                    Color32::from_rgba_unmultiplied(red, green, blue, alpha)
                 } else if highlighted {
                     Color32::from_rgba_unmultiplied(170, 135, 20, 95)
                 } else if style.code && !style.block_code {
