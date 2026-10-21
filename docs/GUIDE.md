@@ -22,9 +22,9 @@ Runtime candidate `4dbb842a013f8400fbaab8c831d6c7e38ba445cd`, built by
 passes128 Rust executions, Clippy, all focused UI sections and six CPU
 conditions. Its exact copied-plan link and scrolled checklist also pass locally.
 Binary SHA256 is `8bd8663257d5cc8a9c17a45af66c68edc8a203654eca44e06a40c573d7304e4e`.
-[Actions39621264420](https://github.com/MasihMoafi/rust-notes/actions/runs/39621264420)
-reuses that app to finish full regressions and the comparison. Installation is
-pending those gates. The previous fully verified release is `21a1271`;
+Follow-up runs reuse that app to correct fixture/setup failures and finish full
+regressions plus the comparison; the active run is recorded in `ES.md`.
+Installation is pending those gates. The previous fully verified release is `21a1271`;
 `reports/release-verification.json` records accepted checks, not user acceptance.
 Reports are ignored: download Actions evidence when starting from a fresh clone.
 

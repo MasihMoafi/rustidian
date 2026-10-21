@@ -166,20 +166,34 @@ def main():
                                         palette("Open settings")
                                         xdo("type", "--clearmodifiers", "--delay", 15, "autosave")
                                         deadline = time.monotonic() + 3
+                                        bounds = None
+                                        stable_since = time.monotonic()
                                         while time.monotonic() < deadline:
                                             probe = json.loads((profile / "probe.json").read_text())
-                                            if "settings-dark" not in probe and "settings-autosave" in probe:
+                                            visible = probe.get("settings-autosave") if "settings-dark" not in probe else None
+                                            if visible != bounds:
+                                                bounds = visible
+                                                stable_since = time.monotonic()
+                                            if bounds and time.monotonic() - stable_since >= .1:
                                                 break
                                             time.sleep(.01)
-                                        assert "settings-dark" not in probe and "settings-autosave" in probe
-                                        probe = json.loads((profile / "probe.json").read_text())
-                                        bounds = probe["settings-autosave"]
+                                        else:
+                                            raise AssertionError("Filtered settings must settle before the single setup click")
                                         sessions = list((profile / "state/rust-notes").glob("*.json"))
                                         assert len(sessions) <= 1
                                         assert all(json.loads(path.read_text())["autosave_enabled"] is True for path in sessions)
                                         x1, y1, x2, y2 = bounds
                                         xdo("mousemove", "--sync", "--window", window, int((x1 + x2) / 2), int((y1 + y2) / 2))
-                                        xdo("click", 1)
+                                        time.sleep(.1)
+                                        assert json.loads((profile / "probe.json").read_text())["settings-autosave"] == bounds
+                                        report.setdefault("setup_clicks", []).append({"round": round_number,
+                                            "bounds": bounds, "pointer": xdo("getmouselocation", "--shell"),
+                                            "geometry": xdo("getwindowgeometry", "--shell", window),
+                                            "hold_ms": 150, "timed": False})
+                                        preserve()
+                                        xdo("mousedown", 1)
+                                        time.sleep(.15)
+                                        xdo("mouseup", 1)
                                         # Escape is handled before the settings UI. Queuing
                                         # it with the click can close the dialog first.
                                         session_path = wait_autosave(profile / "state", False)
