@@ -438,9 +438,9 @@ impl Editor {
         if self.focus {
             // A closing modal remains the top interaction layer for one pass.
             // Keep the request until the editor can register its focus interest.
-            if ui.memory(|memory| memory.allows_interaction(ui.layer_id())) {
+            if !ui.is_sizing_pass() && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
+            {
                 ui.memory_mut(|memory| memory.request_focus(id));
-                self.focus = false;
             }
             ui.ctx().request_repaint();
         }
@@ -982,6 +982,14 @@ impl Editor {
         if bulk_edit && output.response.changed() {
             save_undo(ui.ctx(), &tab.document.text);
         }
+        if self.focus
+            && !ui.is_sizing_pass()
+            && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
+        {
+            output.response.request_focus();
+            self.focus = !output.response.has_focus();
+            ui.ctx().request_repaint();
+        }
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
         if output.response.has_focus() {
             crate::ui_probe::record(ui.ctx(), "editor-focused", output.response.rect);
@@ -1095,7 +1103,15 @@ impl Editor {
             ui,
             &positioned,
             &self.source,
-            &self.parsed,
+            self.parsed
+                .code_blocks
+                .iter()
+                .enumerate()
+                .filter(|(_, block)| {
+                    !images
+                        .iter()
+                        .any(|image| image.block.as_ref() == Some(&block.range))
+                }),
             live,
             active_line.as_ref(),
             code_background,
@@ -1114,7 +1130,10 @@ impl Editor {
                 .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start);
             let character = tab.document.text[..image.range.start].chars().count();
             let caret = positioned.at(character);
-            let origin = output.galley_pos + caret.min.to_vec2();
+            let mut origin = output.galley_pos + caret.min.to_vec2();
+            if image.block.is_some() {
+                origin.x = output.galley_pos.x;
+            }
             let rect = egui::Rect::from_min_size(
                 origin
                     + egui::vec2(
@@ -1782,11 +1801,11 @@ fn space_rows(
     galley.mesh_bounds.max.y += offset;
 }
 
-fn paint_code_blocks(
+fn paint_code_blocks<'a>(
     ui: &egui::Ui,
     positioned: &PositionedText<'_>,
     source: &str,
-    parsed: &Markdown,
+    blocks: impl Iterator<Item = (usize, &'a rust_notes::editor::CodeBlock)>,
     live: bool,
     active_line: Option<&Range<usize>>,
     background: egui::layers::ShapeIdx,
@@ -1795,7 +1814,7 @@ fn paint_code_blocks(
     let mut shapes = Vec::new();
     let mut previous_byte = 0;
     let mut character = 0;
-    for (ordinal, block) in parsed.code_blocks.iter().enumerate() {
+    for (ordinal, block) in blocks {
         character += source[previous_byte..block.range.start].chars().count();
         let start = character;
         let end_byte = block.range.end

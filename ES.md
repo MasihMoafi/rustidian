@@ -314,3 +314,14 @@ Exact c6 debug binary sha256 5c0d430bdea992fee4e975f6d2d903e14d95421aecd03a17bea
 Installed ~/.local/lib/rust-notes/rust-notes sha8bae13f matches b9 debug candidate. No user app currently running at last ps check. Do not install another debug build. Use final optimized release from Actions and compare speed on that exact payload. New project rule records this.
 
 Pending local fixes: checkbox first-line vertical centering and9px text gap; tight-list spacing3px vs loose-list16px (new parsed flag), file/folder7px hover with bright folder text, and diagram sizing/placement. Old b9 fails the actual checkbox geometry in reports/task-geometry-before.log. User-app source/vault remain untouched. Next commit builds all fixes in Actions; no local Rust compilation. Tests retain real user flows and do not weaken safety/byte checks.
+
+
+## 21 October — 88c55b6 native verification and focus hardening
+
+88c55b6432762834f18d8a641a1be917fe97d229 / Actions39567527741 passes fmt/Clippy/Rust and debug build, but startup-file second-launch typing fails in CI before focused sections. Exact debug sha7c10bfcc2167e79c636baa5cc5e363d804b3b9f8138fb779d463777a7a645e8a at reports/github-88c55b6/runtime/rust-notes, archive/checksum and exact Home bytes verified. Quota3.87GB before28.7MB download,1GB reserve untouched. No local target.
+
+Local sequential checks on that exact executable pass opening/reopening both md and txt, diagrams/natural size+visible bounds, task geometry/loose-list preservation, essential4, colors2 and bookmarks8. Saved logs reports/*-88-local.log and images/json reports/github-88c55b6/local/. Actual task image shows correct filled accent, first-line centering,9px label gap and tight32px rows. Diagram now fits/natural271x78; visual review still finds its Live x based on glyph leading space rather than explicit block alignment, with an unwanted code background. The next source anchors rendered blocks to galley left and excludes rendered diagrams from code-frame painting; test now requires matching Reading/Live x.
+
+Second-launch failure had no actual text diagnostic. Editor currently clears requested focus before the TextEdit registers interest; preserve the request through a real non-sizing pass, request focus again on the actual TextEdit response, and clear only after has_focus. Startup GUI checks remove stale probe JSON before the second process and wait for actual editor-focused state, then retain exact saved-byte assertions with repr diagnostics and a second-launch screenshot. No clicks/retries substitute for automatic startup focus.
+
+A96 obsolete debug runtime/archive moved to recoverable Trash; all raw evidence retained (~2.2MB left in that report). b9 installed payload and21a selected release remain preserved. Actual filesystem free63GB; don't claim Trash recovered physical space. User-facing replacement still must be an optimized Actions release, not any of these debug candidates.

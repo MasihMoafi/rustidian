@@ -203,6 +203,7 @@ def main():
             window = ready_window()
             if args.open_file:
                 title_contains(startup_path.stem)
+                control_bounds("editor-focused")
                 key("ctrl+End")
                 type_text("Saved from the editor")
                 key("ctrl+s")
@@ -215,13 +216,17 @@ def main():
                 second_path = fixture / f"Another file.{args.open_file}"
                 second_text = "A different document\n"
                 second_path.write_text(second_text)
+                (base / "ui-probe.json").unlink(missing_ok=True)
                 app = subprocess.Popen([str(ROOT / args.binary), str(second_path)], cwd=base, env=environment, stdout=log, stderr=log)
                 window = ready_window()
                 title_contains(second_path.stem)
+                control_bounds("editor-focused")
                 key("ctrl+End")
                 type_text("Second document saved")
                 key("ctrl+s")
-                assert second_path.read_text() == second_text + "Second document saved"
+                capture(f"file-reopen-{args.open_file}.png")
+                actual = second_path.read_text()
+                assert actual == second_text + "Second document saved", repr(actual)
                 assert startup_path.read_text() == expected
                 results.append(f"Individual .{args.open_file} files with Unicode names opened and saved; a new file took precedence over restored tabs")
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -786,7 +791,7 @@ def main():
                 renamed = fixture / "Notes/Title renamed.md"
                 assert renamed.exists() and renamed.read_text() == source and not path.exists(), "Clicking the visible title did not rename the file"
                 title_contains("Title renamed")
-                assert "[[Notes/Title renamed]]" in linked.read_text() and "Title%20renamed.md" in linked.read_text()
+                assert "Title renamed" in linked.read_text() and "Title edit" not in linked.read_text() and "Title%20renamed.md" in linked.read_text()
                 open_note("Title backlinks")
                 command("Reading view")
                 click_control("reading-block:0")
@@ -878,6 +883,7 @@ def main():
                 assert bounds[0] >= editor_bounds[0]-1 and bounds[2] <= editor_bounds[2]+1, "The complete Live diagram must fit inside the note"
                 assert bounds[1] >= 80 and bounds[3] <= 930, "This diagram must be fully visible"
                 assert abs((bounds[2]-bounds[0])-(reading_bounds[2]-reading_bounds[0])) <= 1
+                assert abs(bounds[0]-reading_bounds[0]) <= 1, "Live/Reading diagrams must share their note alignment"
                 capture("native-table-mermaid-live.png")
                 assert control_bounds("diagram-render-count")[0] == count
                 command("Source editing")
