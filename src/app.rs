@@ -1804,7 +1804,7 @@ impl NotesApp {
             let focus_settled = ui.memory(|memory| {
                 memory.has_focus(input_id) && memory.had_focus_last_frame(input_id)
             });
-            if self.dialog_focus {
+            if self.dialog_focus && !ui.memory(|memory| memory.has_focus(input_id)) {
                 ui.memory_mut(|memory| memory.request_focus(input_id));
             }
             let input = ui.add_enabled(
@@ -1817,7 +1817,9 @@ impl NotesApp {
             if self.dialog_focus {
                 // A new Area/menu may still be completing its first layout pass.
                 // Claim before input, then retain focus until it survives a pass.
-                input.request_focus();
+                if !ui.memory(|memory| memory.has_focus(input_id)) {
+                    input.request_focus();
+                }
                 self.dialog_focus =
                     dialog != Dialog::TrashNote && (!focus_settled || ui.is_sizing_pass());
                 if self.dialog_focus {
