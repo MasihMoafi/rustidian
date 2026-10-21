@@ -403,15 +403,23 @@ impl Vault {
         } else {
             crate::paths::markdown_name(Path::new(target))
         };
+        let exists = |path: &Path| {
+            self.paths.contains_key(path)
+                || (!is_markdown(path)
+                    && is_text_document(path)
+                    && self
+                        .absolute_path(path, false)
+                        .is_ok_and(|path| path.is_file()))
+        };
         let sibling =
             crate::paths::normalise(&from.parent().unwrap_or(Path::new("")).join(&target));
         if let Some(sibling) = sibling
-            && self.paths.contains_key(&sibling)
+            && exists(&sibling)
         {
             return Some(sibling);
         }
         if let Some(root) = crate::paths::normalise(&target)
-            && self.paths.contains_key(&root)
+            && exists(&root)
         {
             return Some(root);
         }

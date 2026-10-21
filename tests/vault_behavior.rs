@@ -350,11 +350,17 @@ fn text_links_resolve_relative_encoded_paths_without_creating_markdown_copies() 
     .unwrap();
     fs::write(dir.path().join("Plain text.txt"), "Original text\r\n").unwrap();
     let mut vault = Vault::open(dir.path()).unwrap();
+    assert_eq!(
+        vault.notes.len(),
+        1,
+        "Unopened text files must not expand the note index"
+    );
     let document = vault
         .open_link(Path::new("Notes/From.md"), "../Plain%20text.txt")
         .unwrap();
     assert_eq!(document.path, Path::new("Plain text.txt"));
     assert_eq!(document.text, "Original text\r\n");
+    assert_eq!(vault.notes.len(), 1);
     assert!(!dir.path().join("Plain text.txt.md").exists());
     assert!(
         vault
