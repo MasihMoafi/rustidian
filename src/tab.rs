@@ -34,10 +34,15 @@ pub struct Tab {
 
 impl Tab {
     pub fn new(document: Document) -> Self {
+        let editing_view = if document.is_plain_text() {
+            View::Source
+        } else {
+            View::Live
+        };
         let view = if document.is_image() {
             View::Read
         } else {
-            View::Live
+            editing_view
         };
         let mut history = History::default();
         if !document.is_blank() {
@@ -48,7 +53,7 @@ impl Tab {
             document,
             history,
             view,
-            editing_view: View::Live,
+            editing_view,
             image_scale: ImageScale::Fit,
             edited_at: None,
             autosave_failed: false,
@@ -74,6 +79,9 @@ impl Tab {
             if self.document.path != document.path {
                 self.image_scale = ImageScale::Fit;
             }
+        } else if document.is_plain_text() && self.document.path != document.path {
+            self.view = View::Source;
+            self.editing_view = View::Source;
         } else if self.document.is_image() {
             self.view = self.editing_view;
         }

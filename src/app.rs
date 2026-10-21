@@ -68,6 +68,7 @@ pub struct NotesApp {
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
     refresh_due: Option<Instant>,
     loading_root: Option<PathBuf>,
+    startup_document: Option<PathBuf>,
     find: crate::editor_ui::Find,
     editor: crate::editor_ui::Editor,
     pending_anchor: Option<String>,
@@ -84,7 +85,12 @@ pub struct NotesApp {
 }
 
 impl NotesApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, root: &Path, started: Instant) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        root: &Path,
+        started: Instant,
+        startup_document: Option<PathBuf>,
+    ) -> Self {
         theme::apply(&cc.egui_ctx, true);
         theme::install_fonts(&cc.egui_ctx);
         theme::install_icons(&cc.egui_ctx);
@@ -120,6 +126,7 @@ impl NotesApp {
             watch_events: None,
             refresh_due: None,
             loading_root: None,
+            startup_document,
             find: Default::default(),
             editor: Default::default(),
             pending_anchor: None,
@@ -199,8 +206,8 @@ impl NotesApp {
                             ) || event.paths.iter().any(|p| {
                                 p.is_dir()
                                     || rust_notes::assets::is_image(p)
-                                    || p.extension()
-                                        .is_none_or(|ext| ext.eq_ignore_ascii_case("md"))
+                                    || rust_notes::vault::is_text_document(p)
+                                    || p.extension().is_none()
                             })) =>
                     {
                         for path in event
@@ -291,6 +298,9 @@ impl NotesApp {
                             && let Some(path) = first
                         {
                             self.open_note(&path);
+                        }
+                        if let Some(path) = self.startup_document.take() {
+                            self.open_note_at(&path, true);
                         }
                     } else {
                         for tab in &mut self.tabs {

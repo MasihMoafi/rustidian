@@ -26,6 +26,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
+    parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
@@ -70,6 +71,11 @@ def main():
         assert display_ready, f"Private X server {display} did not accept a connection"
         log = (reports / "gui-smoke.log").open("w")
         launch_command = [str(ROOT / args.binary), str(fixture)]
+        if args.open_file:
+            startup_path = fixture / f"Open me سلام.{args.open_file}"
+            startup_text = "# File opening\n\nOriginal text سلام\n"
+            startup_path.write_text(startup_text)
+            launch_command = [str(ROOT / args.binary), str(startup_path)]
         if args.default_vault:
             bundled_binary = base / "rust-notes"
             shutil.copy2(ROOT / args.binary, bundled_binary)
@@ -190,6 +196,32 @@ def main():
 
         try:
             window = ready_window()
+            if args.open_file:
+                title_contains(startup_path.stem)
+                key("ctrl+End")
+                type_text("Saved from the editor")
+                key("ctrl+s")
+                expected = startup_text + "Saved from the editor"
+                assert startup_path.read_text() == expected
+                assert (fixture / "Home.md").read_text() == (ROOT / "demo-vault/Home.md").read_text()
+                capture(f"file-open-{args.open_file}.png")
+                key("ctrl+q")
+                app.wait(timeout=5)
+                second_path = fixture / f"Another file.{args.open_file}"
+                second_text = "A different document\n"
+                second_path.write_text(second_text)
+                app = subprocess.Popen([str(ROOT / args.binary), str(second_path)], cwd=base, env=environment, stdout=log, stderr=log)
+                window = ready_window()
+                title_contains(second_path.stem)
+                key("ctrl+End")
+                type_text("Second document saved")
+                key("ctrl+s")
+                assert second_path.read_text() == second_text + "Second document saved"
+                assert startup_path.read_text() == expected
+                results.append(f"Individual .{args.open_file} files with Unicode names opened and saved; a new file took precedence over restored tabs")
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "open_file": args.open_file}))
+                return
             title_contains("Home")
             capture("native-desktop.png")
             results.append("Native window opened; three-pane home captured")

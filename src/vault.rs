@@ -82,6 +82,12 @@ impl Document {
         self.kind == DocumentKind::Image
     }
 
+    pub fn is_plain_text(&self) -> bool {
+        self.path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+    }
+
     pub fn title(&self) -> String {
         if self.is_blank() {
             "New tab".into()
@@ -168,7 +174,7 @@ impl Vault {
             if !entry.file_type().is_file() {
                 continue;
             }
-            if !is_markdown(entry.path()) {
+            if !is_text_document(entry.path()) {
                 if crate::assets::is_image(entry.path()) {
                     attachments.push(entry.path().strip_prefix(&self.root).unwrap().into());
                 }
@@ -194,8 +200,8 @@ impl Vault {
     }
 
     pub(crate) fn safe_path(&self, relative: &Path, create_parents: bool) -> Result<PathBuf> {
-        if !is_markdown(relative) {
-            return Err("Notes must use the .md extension.".into());
+        if !is_text_document(relative) {
+            return Err("Documents must use the .md or .txt extension.".into());
         }
         self.safe_file_path(relative, create_parents)
     }
@@ -264,7 +270,7 @@ impl Vault {
     }
 
     pub fn open_document(&self, path: &Path) -> Result<Document> {
-        if is_markdown(path) {
+        if is_text_document(path) {
             return self.read(path);
         }
         if !self.attachments.iter().any(|attachment| attachment == path) {
@@ -502,6 +508,13 @@ impl Vault {
 pub fn is_markdown(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+}
+
+pub fn is_text_document(path: &Path) -> bool {
+    is_markdown(path)
+        || path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
 }
 
 pub fn file_title(path: &Path) -> String {

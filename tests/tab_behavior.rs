@@ -5,6 +5,20 @@ use rust_notes::{
 use std::fs;
 
 #[test]
+fn plain_text_opens_in_source_mode_and_markdown_keeps_live_mode() {
+    use rust_notes::vault::Document;
+    let mut tab = Tab::new(Document::new("Read me.txt".into()));
+    assert_eq!(tab.view, View::Source);
+    tab.toggle_reading();
+    tab.toggle_reading();
+    assert_eq!(tab.view, View::Source);
+    let mut markdown = Tab::new(Document::blank());
+    assert_eq!(markdown.view, View::Live);
+    markdown.open(Document::new("Another.TXT".into())).unwrap();
+    assert_eq!(markdown.view, View::Source);
+}
+
+#[test]
 fn navigation_reuses_the_tab_and_histories_and_modes_are_independent() {
     let root = tempfile::tempdir().unwrap();
     for name in ["Home", "First", "Second"] {

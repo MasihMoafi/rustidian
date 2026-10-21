@@ -15,6 +15,13 @@ From the extracted Actions application bundle:
 # Your existing Markdown folder
 ./rust-notes "/home/masih/Desktop/o/Main Vault"
 
+# An individual Markdown or plain-text document
+./rust-notes "/path/to/document.md"
+./rust-notes "/path/to/document.txt"
+
+# Set the vault used when launching without a file
+RUST_NOTES_DEFAULT_VAULT="/home/masih/Desktop/o/Main Vault" ./rust-notes
+
 # Index a vault without opening a window or modifying files
 ./rust-notes --check-vault "/path/to/vault"
 ```
@@ -43,7 +50,7 @@ The included sample is deliberately separate from the real vault. Opening a vaul
 - File bookmarks with custom titles and ordering, immediate per-vault persistence, guarded rename tracking, and removable missing targets. Bookmarking and removing shortcuts preserve file content.
 - Paste and selection edits have independent undo boundaries; Ctrl+S includes text received in the same frame. Wiki completion uses text queued before Tab/Enter and preserves Enter after a closing delimiter or an unmatched query.
 - Embedded Inter prose, Noto Arabic fallback and DejaVu Sans Mono code fonts; their licenses are retained under assets/fonts. The pinned text-backend changes and remaining bidi limits are documented in [vendor provenance](vendor/UPSTREAM.md).
-- Plain UTF-8 `.md` files; hidden/dependency folders and child symlinks are not indexed.
+- Plain UTF-8 `.md` and `.txt` files; hidden/dependency folders and child symlinks are not indexed.
 
 | Shortcut | Action |
 | --- | --- |

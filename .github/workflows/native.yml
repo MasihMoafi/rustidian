@@ -60,6 +60,8 @@ jobs:
           sha256sum target/debug/rust-notes > reports/candidate.sha256
       - name: Focused editing, bookmark, callout and vault behavior
         run: |
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section essential 2>&1 | tee reports/essential-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log
@@ -72,7 +74,10 @@ jobs:
           sha256sum target/release/rust-notes > reports/rust-notes.sha256
           tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
       - name: Native GUI and portable bundle checks
-        run: /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
+        run: |
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
       - name: Serial editor CPU measurements
         run: |
           git rev-parse HEAD > reports/measured-commit.txt

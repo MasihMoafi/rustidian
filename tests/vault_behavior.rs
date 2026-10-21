@@ -3,6 +3,31 @@ use std::{fs, path::Path};
 use tempfile::tempdir;
 
 #[test]
+fn plain_text_documents_can_be_indexed_edited_and_saved_without_overwriting_external_changes() {
+    let folder = tempdir().unwrap();
+    let filename = Path::new("Notes سلام.TXT");
+    let path = folder.path().join(filename);
+    fs::write(&path, "# Literal text\n\nسلام\n").unwrap();
+    let mut vault = Vault::open(folder.path()).unwrap();
+    assert_eq!(vault.notes.len(), 1);
+    let mut document = vault.open_document(filename).unwrap();
+    assert!(document.is_plain_text());
+    document.text.push_str("Saved text\n");
+    vault.save(&mut document).unwrap();
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "# Literal text\n\nسلام\nSaved text\n"
+    );
+    assert!(!document.dirty());
+    document.text.push_str("Unsaved text\n");
+    fs::write(&path, "External change\n").unwrap();
+    assert!(vault.save(&mut document).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "External change\n");
+    assert!(document.dirty());
+    assert!(vault.read(Path::new("../escape.txt")).is_err());
+}
+
+#[test]
 fn backlink_cache_tracks_saved_created_moved_and_externally_changed_notes() {
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("Home.md"), "[[Home]]").unwrap();
@@ -142,7 +167,7 @@ fn creates_nested_notes_and_rejects_paths_outside_the_vault() {
     );
     assert!(
         vault
-            .save(&mut Document::new("not-markdown.txt".into()))
+            .save(&mut Document::new("not-a-text-document.bin".into()))
             .is_err()
     );
 }
