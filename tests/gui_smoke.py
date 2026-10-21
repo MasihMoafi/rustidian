@@ -1815,23 +1815,31 @@ def main():
                 capture("native-bookmarks-dark.png")
                 results.append("Bookmark titles retained Persian text, ordering persisted, explorer images stayed read-only and Ctrl-click opened a separate tab")
 
-                key("F2")
-                key("ctrl+a")
-                type_text("Bookmark folder/Bookmark renamed.md")
-                key("Return")
+                queued_steps(("key", "F2"), ("key", "ctrl+a"),
+                             ("text", "Bookmark folder/Bookmark renamed.md"), ("key", "Return"))
                 relative = "Bookmark folder/Bookmark renamed.md"
                 path = fixture / relative
+                deadline = time.monotonic() + 5
+                while not path.exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert path.exists(), "Queued rename lost input or did not finish"
+                assert path.read_text() == source
                 assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
                 xdo("mousemove", "70", "20", "click", "1")
                 pause()
                 click_control("file-collapse")
                 click_control("folder:Bookmark folder", "3")
                 click_control("folder-rename:Bookmark folder")
+                assert control_bounds("dialog-input-focused")
                 key("ctrl+a")
                 type_text("Pinned notes")
                 key("Return")
                 relative = "Pinned notes/Bookmark renamed.md"
                 path = fixture / relative
+                deadline = time.monotonic() + 5
+                while not path.exists() and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert path.exists(), "Folder rename did not finish"
                 assert path.read_text() == source
                 state_path, state = state_with(relative)
                 assert state["bookmarks"]["items"][0]["title"] == "Writing فارسی"

@@ -534,6 +534,11 @@ impl NotesApp {
             return;
         }
         self.editor.focus = false;
+        self.ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
         self.dialog_path = None;
         self.dialog_input = match dialog {
             Dialog::RenameNote | Dialog::TrashNote => self
@@ -1795,15 +1800,21 @@ impl NotesApp {
                 Dialog::RenameNote | Dialog::TrashNote => "Folder/Note.md",
                 Dialog::AddProperty => "Property name",
             };
+            let input_id = ui.make_persistent_id(("dialog-input", title));
+            if self.dialog_focus {
+                ui.memory_mut(|memory| memory.request_focus(input_id));
+                self.dialog_focus = false;
+            }
             let input = ui.add_enabled(
                 dialog != Dialog::TrashNote,
                 TextEdit::singleline(&mut self.dialog_input)
+                    .id(input_id)
                     .desired_width(f32::INFINITY)
                     .hint_text(hint),
             );
-            if self.dialog_focus {
-                input.request_focus();
-                self.dialog_focus = false;
+            crate::ui_probe::record(ui.ctx(), "dialog-input", input.rect);
+            if input.has_focus() {
+                crate::ui_probe::record(ui.ctx(), "dialog-input-focused", input.rect);
             }
             let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
             ui.add_space(12.0);
