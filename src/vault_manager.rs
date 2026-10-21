@@ -400,9 +400,13 @@ impl Manager {
                                     let confirm =
                                         ui.button(if creating { "Create" } else { "Open" });
                                     ui_probe::record(ctx, "vault-confirm", confirm.rect);
-                                    let enter = ui.input_mut(|input| {
-                                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
-                                    });
+                                    let enter = ui.is_enabled()
+                                        && ui.input_mut(|input| {
+                                            input.consume_key(
+                                                egui::Modifiers::NONE,
+                                                egui::Key::Enter,
+                                            )
+                                        });
                                     if confirm.clicked() || enter {
                                         let result = if creating {
                                             vaults::create(Path::new(&self.folder), &self.name)

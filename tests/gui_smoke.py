@@ -2548,6 +2548,11 @@ def main():
                         break
                     time.sleep(.05)
                 assert picker, "Browse must launch the real native folder chooser"
+                xdo("windowfocus", "--sync", window)
+                key("Return")
+                assert control_bounds("vault-manager")
+                assert xdo("getwindowname", picker) == "Open folder as vault", "A busy parent must not submit or close its picker"
+                title_contains(fixture.name)
                 xdo("windowfocus", "--sync", picker)
                 key("ctrl+l")
                 type_text(str(opened))
