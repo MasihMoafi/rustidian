@@ -281,8 +281,11 @@ control to remain visible on every opening, not just the first screenshot.
 A rapid simulated key stream can race GTK's native location completion and
 append a stale suffix to a valid path. Select the location field and paste the
 whole path through the real clipboard, then activate the native OK action.
-Enter can navigate into a populated folder instead of confirming it. Assert the
-exact opened root and retain a picker screenshot. Local positive/negative calibration must distinguish this
+Enter can navigate into a populated folder instead of confirming it. Hold each
+shortcut modifier through its key release with `native_input.modified_shortcut`.
+Copy the native location entry back and require the exact intended path before
+OK; this distinguishes a focused entry from file-list search or relative path
+input. Assert the exact opened root and retain a picker screenshot. Local positive/negative calibration must distinguish this
 input problem from a Rust vault failure.
 
 Run the focused `--section vaults` and retained full regression through Actions.

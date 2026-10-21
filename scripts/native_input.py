@@ -11,7 +11,11 @@ SAVE_CHORD = ("keydown", "ctrl", "key", "--delay", str(SAVE_KEY_INTERVAL_MS), "s
 def save_shortcut(xdo):
     # Hold Control through S's press/release. xdotool's combined ctrl+s
     # releases Control first, which can hide a shortcut from frame-state users.
-    xdo(*SAVE_CHORD)
+    modified_shortcut(xdo, "s")
+
+
+def modified_shortcut(xdo, key, modifier="ctrl"):
+    xdo("keydown", modifier, "key", "--delay", str(SAVE_KEY_INTERVAL_MS), key, "keyup", modifier)
 
 
 def begin_save_shortcut(environment):

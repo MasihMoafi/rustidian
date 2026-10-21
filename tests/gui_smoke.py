@@ -18,7 +18,7 @@ from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from native_input import save_shortcut, wait_autosave
+from native_input import modified_shortcut, save_shortcut, wait_autosave
 
 
 def pixel_data(picture):
@@ -143,7 +143,7 @@ def main():
                 if line: xdo("type", "--clearmodifiers", "--delay", str(delay), "--", line)
             pause()
 
-        def paste_text(value):
+        def paste_text(value, *, held=False):
             # xdotool temporarily remaps scratch keys for Unicode. Exercise the
             # real UTF-8 clipboard path without racing those keymap changes.
             owner = subprocess.Popen(
@@ -160,7 +160,11 @@ def main():
                     env=environment, timeout=5,
                 )
                 assert actual == value.encode(), (actual, value)
-                key("ctrl+v")
+                if held:
+                    modified_shortcut(xdo, "v")
+                    pause()
+                else:
+                    key("ctrl+v")
             finally:
                 owner.terminate()
                 owner.wait(timeout=5)
@@ -2580,13 +2584,26 @@ def main():
                 assert xdo("getwindowname", picker) == "Open folder as vault", "A busy parent must not submit or close its picker"
                 title_contains(fixture.name)
                 xdo("windowfocus", "--sync", picker)
-                key("ctrl+l")
-                key("ctrl+a")
+                pause()
+                modified_shortcut(xdo, "l")
+                pause()
+                modified_shortcut(xdo, "a")
+                pause()
                 # GTK path completion can race a rapid per-key typing stream.
-                paste_text(str(opened))
+                paste_text(str(opened), held=True)
+                modified_shortcut(xdo, "a")
+                modified_shortcut(xdo, "c")
+                pause()
+                entered = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, timeout=5).decode()
+                location = {"expected": str(opened), "actual": entered, "focus": xdo("getwindowfocus"), "picker": picker}
+                (reports / "native-vault-picker-entry.json").write_text(json.dumps(location, indent=2) + "\n")
+                if entered.rstrip("/") != str(opened):
+                    (reports / "gui-vaults-failure-location.json").write_text(json.dumps(location, indent=2) + "\n")
+                    raise AssertionError(f"The native location entry must acknowledge its exact path: {location}")
                 capture("native-vault-picker-location.png")
                 # Activate OK: Enter can navigate into a populated directory.
-                key("alt+o")
+                modified_shortcut(xdo, "o", "alt")
+                pause()
                 title_contains(opened.name)
                 xdo("windowfocus", "--sync", window)
                 assert roots()[0] == str(opened)
