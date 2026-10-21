@@ -15,3 +15,4 @@ pub mod structure;
 pub mod tab;
 pub mod tables;
 pub mod vault;
+pub mod vaults;

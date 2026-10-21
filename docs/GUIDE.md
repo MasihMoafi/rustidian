@@ -230,6 +230,38 @@ Targets are idle median<=5ms and edited median<=16.7ms. Different runner CPUs
 cannot establish before/after speedups. Hover's150ms gate includes native input
 and screenshot polling; scrolling checks distance, direction and no delayed tail.
 
+## Vault chooser contract
+
+Match the isolated Obsidian1.13.7 Home/Create captures in
+`reports/obsidian-vaults-reference-{home,create}.png/json`: recent folders on the
+left, Create/Open on the right, then a name and parent location for creation.
+The user selected these flows as the next parity gap; the official
+[Manage vaults guide](https://obsidian.md/help/manage-vaults) confirms the core
+opening/creation/list behavior. These captures differ from the
+1.14.4 screenshots; do not silently equate reference versions.
+
+`src/vaults.rs` owns the recent list in
+`XDG_DATA_HOME/rust-notes/vaults.json` (or `~/.local/share/rust-notes/`). Keep
+per-vault sessions in their existing XDG state files. Canonical paths distinguish
+equal names; missing roots remain removable. Removing a list entry preserves the
+folder. Atomic failed list writes retain the prior in-memory list; corrupt state
+is reported, never overwritten silently. Creation uses one validated name and an
+existing parent, refuses collisions, and creates only that empty directory.
+
+`src/vault_manager.rs` renders the chooser using existing generated controls.
+Browse polls an owned native Zenity child, never blocking the UI while choosing;
+closing cancels/reaps it. Zenity is installed on this Ubuntu machine and declared
+in the Actions dependencies. Manual path entry remains available when a picker
+cannot start. Do one index on the background worker after selecting a root;
+metadata validation is not a reason to scan the vault on the UI thread. Preserve
+the current launcher/default, dirty-work guard and per-vault tabs/settings.
+
+Run the focused `--section vaults` and retained full regression through Actions.
+Require real picker selection, creation/collision/cancel, recent switching and
+restart, unsaved-switch cancellation and non-destructive list removal. The before
+candidate lacks the visible profile control and fails this check; source edits
+are not an after result. Inspect both-theme screenshots before showing them.
+
 ## Failure lessons to apply before shipping
 
 - **Scrolled tasks:** TextEdit's full text clip is not the parent scroll clip.

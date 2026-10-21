@@ -2,6 +2,14 @@
 
 Current scope, implementation order and reproducible route: [GUIDE.md](GUIDE.md). Masih narrowed the goal on21October2026 to fast essential editing, tasks, highlighting, commands, panels and settings. The broad parity stages below are retained history; optional graph/drawings/plugin replication are deferred.
 
+## Current vault workflow — 21 October
+
+Masih identifies opening, creating and switching vaults as the next parity gap. The bottom-left vault profile must open a familiar chooser with recent vaults, Create new vault and Open folder as vault. Browse uses the installed native folder chooser without blocking rendering; entering a path remains available. Create accepts one vault name and an existing parent folder, refuses collisions and creates only the requested empty folder.
+
+Store the recent list outside note folders, canonicalize roots and distinguish equal names by their paths. Opening and removing a list entry must never modify or delete notes. Switching preserves each vault's tabs/settings and the existing unsaved-work guard; failure or cancellation retains the active vault. Select an existing recent vault in one click, without rescanning the list or indexing a selected root twice on the UI thread. Preserve the current launcher/default vault.
+
+Before delivery, Actions must exercise actual chooser controls, native Browse, create/collision/cancel, switching and restart/list removal on disposable folders, plus all retained regressions. Inspect both themes. Combine this work with the pending link-probe correction in one optimized candidate; no local Rust build.
+
 Requested by Masih, 20 October 2026. Implementation begins now; full Obsidian equivalence is a staged product, not a first-build claim.
 
 ## Goal and users

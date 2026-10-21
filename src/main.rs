@@ -13,6 +13,7 @@ mod table_ui;
 mod theme;
 mod title_ui;
 mod ui_probe;
+mod vault_manager;
 mod window;
 
 use std::{

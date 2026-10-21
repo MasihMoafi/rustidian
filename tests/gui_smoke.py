@@ -44,7 +44,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -2463,6 +2463,154 @@ def main():
                 time.sleep(.3)
                 assert first.read_text() == original
                 results.append("Closing an earlier tab retained the active note’s undo/redo history without editing the closed note")
+            def vault_checks():
+                nonlocal app, window
+                open_note("Home")
+                original = (fixture / "Home.md").read_bytes()
+                if control_bounds("vault-profile", required=False) is None:
+                    command("Toggle left sidebar")
+
+                def manager():
+                    click_control("vault-profile")
+                    assert control_bounds("vault-manager")
+
+                def field(name, value):
+                    click_control(name)
+                    key("ctrl+a")
+                    paste_text(value)
+
+                def recent(root):
+                    click_control(f"vault-recent:{root}")
+                    title_contains(root.name)
+                    assert control_bounds("vault-manager", required=False) is None
+
+                def roots():
+                    return json.loads((base / "data/rust-notes/vaults.json").read_text())["roots"]
+
+                manager()
+                assert control_bounds(f"vault-recent:{fixture}")
+                capture("native-vaults-dark.png")
+                click_control("vault-manager-close")
+                command("Switch appearance")
+                manager()
+                capture("native-vaults-light.png")
+                click_control("vault-create")
+                field("vault-name", "Cancelled vault")
+                field("vault-folder", str(base))
+                click_control("vault-manager-close")
+                assert not (base / "Cancelled vault").exists()
+                assert (fixture / "Home.md").read_bytes() == original
+                command("Switch appearance")
+                results.append("The vault profile opened the recent/create/open chooser in both themes; cancelling creation preserved the active vault and created nothing")
+
+                created = base / "Created vault یادداشت"
+                manager()
+                click_control("vault-create")
+                field("vault-name", created.name)
+                field("vault-folder", str(base))
+                capture("native-vault-create.png")
+                click_control("vault-confirm")
+                title_contains(created.name)
+                assert list(created.iterdir()) == []
+                assert roots()[0] == str(created)
+                key("ctrl+n")
+                type_text("Home")
+                key("Return")
+                type_text("# Created vault\n\nVAULT_CREATED_ORIGINAL\n")
+                key("ctrl+s")
+                created_source = (created / "Home.md").read_bytes()
+                manager()
+                recent(fixture)
+                title_contains("Home")
+                assert (fixture / "Home.md").read_bytes() == original
+                manager()
+                click_control("vault-create")
+                field("vault-name", created.name)
+                field("vault-folder", str(base))
+                click_control("vault-confirm")
+                assert control_bounds("vault-error")
+                capture("native-vault-collision.png")
+                assert (created / "Home.md").read_bytes() == created_source
+                click_control("vault-manager-close")
+                results.append("Creating a named Unicode vault made only its empty folder, one-click switching restored the previous note, and a name collision retained every original byte")
+
+                opened = base / "Browsed vault"
+                opened.mkdir()
+                (opened / "Home.md").write_text("# Browsed vault\n\nBROWSE_ORIGINAL\n")
+                manager()
+                click_control("vault-open")
+                deadline = time.monotonic() + 8
+                picker = None
+                while time.monotonic() < deadline:
+                    found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^Open folder as vault$"], env=environment, text=True, capture_output=True)
+                    if found.returncode == 0:
+                        picker = found.stdout.splitlines()[-1]
+                        break
+                    time.sleep(.05)
+                assert picker, "Browse must launch the real native folder chooser"
+                xdo("windowfocus", "--sync", picker)
+                key("ctrl+l")
+                type_text(str(opened))
+                key("Return")
+                still_open = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^Open folder as vault$"], env=environment, capture_output=True)
+                if still_open.returncode == 0:
+                    key("Return")
+                title_contains(opened.name)
+                xdo("windowfocus", "--sync", window)
+                assert roots()[0] == str(opened)
+                assert (opened / "Home.md").read_text() == "# Browsed vault\n\nBROWSE_ORIGINAL\n"
+                manager()
+                recent(fixture)
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=5)
+                app = launch_app(launch_command)
+                window = ready_window()
+                manager()
+                assert control_bounds(f"vault-recent:{opened}")
+                assert control_bounds(f"vault-recent:{created}")
+                results.append("Open folder as vault used the real native chooser, selected the intended folder, and recent vaults survived an actual app restart")
+                click_control("vault-manager-close")
+
+                command("Open settings")
+                click_control("settings-autosave")
+                key("Escape")
+                command("Source editing")
+                editor_end()
+                type_text("DIRTY_VAULT_CANCEL")
+                time.sleep(.8)
+                assert (fixture / "Home.md").read_bytes() == original
+                manager()
+                click_control(f"vault-recent:{created}")
+                assert control_bounds("pending-cancel")
+                click_control("pending-cancel")
+                title_contains(fixture.name)
+                assert (fixture / "Home.md").read_bytes() == original
+                key("ctrl+s")
+                assert (fixture / "Home.md").read_bytes() == original + b"DIRTY_VAULT_CANCEL"
+                key("ctrl+z")
+                key("ctrl+s")
+                assert (fixture / "Home.md").read_bytes() == original
+                command("Open settings")
+                click_control("settings-autosave")
+                key("Escape")
+                results.append("Cancelling a vault switch retained unsaved editing and the current vault; explicit save and undo preserved the original bytes")
+
+                manager()
+                click_control(f"vault-more:{created}")
+                click_control(f"vault-forget:{created}")
+                assert str(created) not in roots()
+                assert (created / "Home.md").read_bytes() == created_source
+                moved = base / "Moved browsed vault"
+                opened.rename(moved)
+                click_control(f"vault-recent:{opened}")
+                assert control_bounds("vault-error")
+                title_contains(fixture.name)
+                assert (fixture / "Home.md").read_bytes() == original
+                assert (moved / "Home.md").read_text() == "# Browsed vault\n\nBROWSE_ORIGINAL\n"
+                click_control("vault-manager-close")
+                results.append("Remove from list preserved the vault's notes; an externally moved recent vault reported an error and retained the active vault")
+
+
             def vault_switch_checks():
                 open_note("Home")
                 command("Source editing")
@@ -2938,6 +3086,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "tables"}))
                 return
+            if args.section == "vaults":
+                vault_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "vaults"}))
+                return
             if args.section == "reading-code":
                 reading_code_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -3312,6 +3465,7 @@ def main():
                 large_search_checks,
                 folder_checks,
                 explorer_checks,
+                vault_checks,
                 vault_switch_checks,
                 file_toolbar_checks,
                 folding_checks,

@@ -29,11 +29,12 @@ enum Dialog {
     BookmarkTitle,
     Settings,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Pending {
     CloseTab(usize),
     Quit,
     ChangeVault,
+    OpenVault(PathBuf),
 }
 
 pub struct NotesApp {
@@ -84,6 +85,7 @@ pub struct NotesApp {
     pub(crate) right_tab: u8,
     pub(crate) ui_zoom: f32,
     pub(crate) autosave_enabled: bool,
+    vault_manager: crate::vault_manager::Manager,
 }
 
 impl NotesApp {
@@ -144,6 +146,7 @@ impl NotesApp {
             right_tab: 0,
             ui_zoom: 1.0,
             autosave_enabled: true,
+            vault_manager: Default::default(),
         };
         app.load_vault(root);
         app
@@ -304,7 +307,11 @@ impl NotesApp {
                             vault.index_time.as_micros(),
                             vault.warnings.len()
                         );
+                        if let Err(error) = self.vault_manager.remember(&vault.root) {
+                            self.error = Some(error);
+                        }
                         self.vault = Some(vault);
+                        self.vault_manager.close();
                         if !self.restore_session(ctx)
                             && let Some(path) = first
                         {
@@ -343,6 +350,9 @@ impl NotesApp {
                 }
                 Err(error) => {
                     self.loading_root = None;
+                    if self.vault_manager.open {
+                        self.vault_manager.show_error(error.clone());
+                    }
                     self.error = Some(error);
                 }
             }
@@ -659,6 +669,7 @@ impl NotesApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
+            Pending::OpenVault(root) => self.load_vault(&root),
         }
     }
 
@@ -673,7 +684,7 @@ impl NotesApp {
         if self.pending.is_some() {
             return;
         }
-        if self.loading_root.is_some() {
+        if self.loading_root.is_some() || self.vault_manager.open {
             return;
         }
         if self.dialog.is_none() {
@@ -789,6 +800,23 @@ impl NotesApp {
         } else {
             self.ask(Dialog::OpenVault);
         }
+    }
+
+    fn request_vault(&mut self, root: PathBuf) {
+        if self.vault.as_ref().is_some_and(|vault| vault.root == root) {
+            self.vault_manager.close();
+            self.focus_editor();
+        } else if self.dirty() {
+            self.vault_manager.close();
+            self.pending = Some(Pending::OpenVault(root));
+        } else {
+            self.load_vault(&root);
+        }
+    }
+
+    fn manage_vaults(&mut self) {
+        self.vault_manager
+            .show_chooser(self.vault.as_ref().map(|vault| vault.root.as_path()));
     }
 
     fn save_bookmarks(&mut self, before: rust_notes::bookmarks::Bookmarks) -> bool {
@@ -1135,8 +1163,21 @@ impl NotesApp {
                     Layout::bottom_up(Align::LEFT),
                     |ui| {
                         ui.separator();
-                        if ui.button(RichText::new("Open vault…").size(13.0)).clicked() {
-                            self.change_vault();
+                        let name = self
+                            .vault
+                            .as_ref()
+                            .map(Vault::name)
+                            .unwrap_or_else(|| "Open vault…".into());
+                        let vault = ui.add(
+                            egui::Button::new((
+                                theme::icon_image(Icon::Vault, ui.visuals().text_color()),
+                                RichText::new(name).size(13.0),
+                            ))
+                            .truncate(),
+                        );
+                        crate::ui_probe::record(ui.ctx(), "vault-profile", vault.rect);
+                        if vault.clicked() {
+                            self.manage_vaults();
                         }
                         ui.label(RichText::new("Ctrl+O  Quick switcher").size(11.0).weak());
                     },
@@ -1826,7 +1867,7 @@ impl NotesApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
-        if let Some(pending) = self.pending {
+        if let Some(pending) = self.pending.clone() {
             let response = egui::Modal::new(egui::Id::unique("unsaved-changes")).show(ctx, |ui| {
                 theme::dialog_style(ui);
                 ui.set_width(440.0);
@@ -1834,17 +1875,23 @@ impl NotesApp {
                 ui.label("You have unsaved edits. Save them before continuing, or discard them explicitly.");
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Save & continue").clicked() {
-                        let indices: Vec<usize> = match pending {
-                            Pending::CloseTab(index) => vec![index],
+                    let save = ui.button("Save & continue");
+                    crate::ui_probe::record(ctx, "pending-save", save.rect);
+                    if save.clicked() {
+                        let indices: Vec<usize> = match &pending {
+                            Pending::CloseTab(index) => vec![*index],
                             _ => self.tabs.iter().enumerate().filter(|(_, tab)| tab.document.dirty()).map(|(i, _)| i).collect(),
                         };
                         if indices.into_iter().all(|index| self.save(index)) {
-                            self.pending = None; self.run_pending(pending, ctx);
+                            self.pending = None; self.run_pending(pending.clone(), ctx);
                         }
                     }
-                    if ui.button("Discard").clicked() { self.pending = None; self.run_pending(pending, ctx); }
-                    if ui.button("Cancel").clicked() { self.pending = None; }
+                    let discard = ui.button("Discard");
+                    crate::ui_probe::record(ctx, "pending-discard", discard.rect);
+                    if discard.clicked() { self.pending = None; self.run_pending(pending.clone(), ctx); }
+                    let cancel = ui.button("Cancel");
+                    crate::ui_probe::record(ctx, "pending-cancel", cancel.rect);
+                    if cancel.clicked() { self.pending = None; }
                 });
                 if let Some(error) = &self.error { ui.colored_label(Color32::from_rgb(235, 157, 132), error); }
             });
@@ -1852,6 +1899,23 @@ impl NotesApp {
                 self.pending = None;
             }
             if self.pending.is_none() && self.dialog.is_none() && !self.allow_close {
+                self.focus_editor();
+            }
+            return;
+        }
+        if self.vault_manager.open {
+            let root = self.vault_manager.show(
+                ctx,
+                self.vault.as_ref().map(|vault| vault.root.as_path()),
+                self.loading_root.is_some(),
+            );
+            if let Some(root) = root {
+                self.request_vault(root);
+            } else if !self.vault_manager.open {
+                if self.loading_root.take().is_some() {
+                    self.loading = None;
+                    self.status = "Ready".into();
+                }
                 self.focus_editor();
             }
             return;
@@ -2383,13 +2447,16 @@ impl NotesApp {
             return false;
         }
         if dialog == Dialog::OpenVault {
-            // Validate before dropping any open tabs.
-            if let Err(error) = Vault::open(Path::new(&input)) {
-                self.error = Some(error);
-                return false;
+            match rust_notes::vaults::folder(Path::new(&input)) {
+                Ok(root) => {
+                    self.load_vault(&root);
+                    return true;
+                }
+                Err(error) => {
+                    self.error = Some(error);
+                    return false;
+                }
             }
-            self.load_vault(Path::new(&input));
-            return true;
         }
         let mut path = PathBuf::from(input);
         if path.extension().is_none() {
@@ -2477,6 +2544,11 @@ impl NotesApp {
             }
             "Open a file" => self.ask(Dialog::QuickOpen),
             "Open vault" => self.change_vault(),
+            "Open another vault" => self.manage_vaults(),
+            "Create new vault" => {
+                self.vault_manager
+                    .show_create(self.vault.as_ref().map(|vault| vault.root.as_path()));
+            }
             "Bookmark current file" => {
                 if let Some(path) = self
                     .tabs
@@ -2633,6 +2705,7 @@ impl eframe::App for NotesApp {
         // the same frame as the final characters of a fast typing burst.
         if self.pending.is_none()
             && self.loading_root.is_none()
+            && !self.vault_manager.open
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::S))
         {
             self.save(self.active);

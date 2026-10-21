@@ -38,6 +38,16 @@ pub const ALL: &[Command] = &[
         markdown_only: false,
     },
     Command {
+        name: "Open another vault",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
+        name: "Create new vault",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
         name: "Save note",
         shortcut: "Ctrl+S",
         markdown_only: true,
