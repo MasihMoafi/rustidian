@@ -367,8 +367,8 @@ impl Parsed {
                     }
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
-                Event::InlineHtml(tag) if tag == "<mark>" => style.highlight = true,
-                Event::InlineHtml(tag) if tag == "</mark>" => style.highlight = false,
+                Event::InlineHtml(tag) if tag.as_ref() == "<mark>" => style.highlight = true,
+                Event::InlineHtml(tag) if tag.as_ref() == "</mark>" => style.highlight = false,
                 Event::Html(_) | Event::InlineHtml(_) => parsed.fallback = true,
                 _ => {}
             }
