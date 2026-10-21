@@ -189,7 +189,10 @@ mod tests {
             [b.clone(), a.clone()]
         );
         first.forget(&a).unwrap();
-        assert_eq!(Vaults::load(location).unwrap().roots(), [b.clone()]);
+        assert_eq!(
+            Vaults::load(location).unwrap().roots(),
+            std::slice::from_ref(&b)
+        );
 
         let location = base.path().join("parallel/vaults.json");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
