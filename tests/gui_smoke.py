@@ -3561,6 +3561,10 @@ def main():
                 assert first.read_text()=="# External workspace version\n"
                 first.write_text(first_source);time.sleep(.6)
                 load("Writing")
+                assert control_bounds("pending-discard")
+                assert "CONFLICTED_WORKSPACE" in (fixture/"Workspace recovered.md").read_text()
+                click_control("pending-discard",hold=.15)
+                assert_layout(writing)
                 command("Open settings");type_text("autosave")
                 click_control("settings-autosave",hold=.15)
                 wait_autosave(base/"state",True,session_path=session_path)
