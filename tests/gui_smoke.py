@@ -765,7 +765,7 @@ def main():
                 source = "# Body heading stays independent\n\nExact body فارسی.\n"
                 path.write_text(source)
                 linked = fixture / "Notes/Title backlinks.md"
-                linked.write_text("[[Title edit]] and [read](Title%20edit.md)\n")
+                linked.write_text("[[Title edit]]\n\n[read](Title%20edit.md)\n")
                 conflict = fixture / "Notes/Title conflict.md"
                 conflict.write_text("Do not replace this note.\n")
                 time.sleep(.7)
@@ -786,7 +786,15 @@ def main():
                 renamed = fixture / "Notes/Title renamed.md"
                 assert renamed.exists() and renamed.read_text() == source and not path.exists(), "Clicking the visible title did not rename the file"
                 title_contains("Title renamed")
-                assert "[[Title renamed]]" in linked.read_text() and "Title%20renamed.md" in linked.read_text()
+                assert "[[Notes/Title renamed]]" in linked.read_text() and "Title%20renamed.md" in linked.read_text()
+                open_note("Title backlinks")
+                command("Reading view")
+                click_control("reading-block:0")
+                title_contains("Title renamed")
+                key("alt+Left")
+                title_contains("Title backlinks")
+                click_control("reading-block:1")
+                title_contains("Title renamed")
                 capture("native-title-renamed.png")
                 click_control("note-title")
                 key("ctrl+a")
@@ -851,7 +859,8 @@ def main():
                 command("Reading view")
                 control_bounds("table:0")
                 bounds = control_bounds("mermaid-diagram")
-                assert bounds[2]-bounds[0] > 100 and bounds[3]-bounds[1] > 30
+                assert 100 < bounds[2]-bounds[0] <= 500 and 30 < bounds[3]-bounds[1] <= 200, "Small diagrams must retain natural size"
+                reading_bounds = bounds
                 count = control_bounds("diagram-render-count")[0]
                 capture("native-table-mermaid-reading.png")
                 for _ in range(4):
@@ -864,7 +873,11 @@ def main():
                 key("ctrl+Home")
                 control_bounds("edit-table:0")
                 bounds = control_bounds("mermaid-live")
-                assert bounds[2]-bounds[0] > 100 and bounds[3]-bounds[1] > 30
+                assert 100 < bounds[2]-bounds[0] <= 500 and 30 < bounds[3]-bounds[1] <= 200
+                editor_bounds = control_bounds("editor")
+                assert bounds[0] >= editor_bounds[0]-1 and bounds[2] <= editor_bounds[2]+1, "The complete Live diagram must fit inside the note"
+                assert bounds[1] >= 80 and bounds[3] <= 930, "This diagram must be fully visible"
+                assert abs((bounds[2]-bounds[0])-(reading_bounds[2]-reading_bounds[0])) <= 1
                 capture("native-table-mermaid-live.png")
                 assert control_bounds("diagram-render-count")[0] == count
                 command("Source editing")
@@ -1098,6 +1111,12 @@ def main():
                 assert task_note.read_text() == source
                 command("Reading view")
                 capture("native-tasks.png")
+                first_box = control_bounds("task:0")
+                first_label = control_bounds("reading-block:1")
+                next_label = control_bounds("reading-block:2")
+                assert abs((first_box[1]+first_box[3])/2-(first_label[1]+14.5)) <= 1, "Task checkbox must align with its first text line"
+                assert 8 <= first_label[0]-first_box[2] <= 10, "Task label gap must match Obsidian"
+                assert 2 <= next_label[1]-first_label[3] <= 4, "Tight checklist rows must stay compact"
                 box = tuple(round(value) for value in control_bounds("task:1"))
                 pixels = pixel_data(Image.open(ROOT / "reports/native-tasks.png").crop(box).convert("RGB"))
                 assert sum(abs(r-23) <= 3 and abs(g-127) <= 3 and abs(b-131) <= 3 for r, g, b in pixels) > 80, "Completed tasks must have Obsidian's solid accent fill"
@@ -1130,6 +1149,16 @@ def main():
                 command("Switch appearance")
                 capture("native-tasks-live-light.png")
                 command("Switch appearance")
+                loose = fixture / "Notes/Loose checklist.md"
+                loose_source = "# Loose checklist\n\n- [ ] First paragraph\n\n- [x] Second paragraph\n"
+                loose.write_text(loose_source)
+                time.sleep(.6)
+                open_note("Loose checklist")
+                command("Reading view")
+                first = control_bounds("reading-block:1")
+                second = control_bounds("reading-block:2")
+                assert second[1]-first[3] >= 14, "Blank lines in loose lists must retain paragraph spacing"
+                assert loose.read_text() == loose_source
                 results.append("Reading and Live tasks preserve exact Markdown, nested/Unicode tasks and undo/redo; Source and fenced task syntax stay literal")
             dark_palette = [(250,153,205), (68,207,110), (168,130,255), (251,70,76), (83,223,221), (104,115,117)]
             light_palette = [(213,57,132), (8,185,78), (120,82,238), (233,49,71), (0,191,188), (171,171,171)]

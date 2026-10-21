@@ -1118,7 +1118,11 @@ impl Editor {
             let rect = egui::Rect::from_min_size(
                 origin
                     + egui::vec2(
-                        if active { 0.0 } else { -image.size.x },
+                        if active || image.block.is_some() {
+                            0.0
+                        } else {
+                            -image.size.x
+                        },
                         if active { 29.16 } else { 0.0 },
                     ),
                 image.size,

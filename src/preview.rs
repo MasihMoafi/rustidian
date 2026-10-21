@@ -24,6 +24,7 @@ struct Block {
     image: Option<String>,
     task: Option<(usize, bool)>,
     list_depth: usize,
+    loose_item: bool,
     callout: Option<CalloutBlock>,
     ordinal: usize,
 }
@@ -274,6 +275,7 @@ impl Parsed {
                 Event::Start(Tag::Paragraph) => {
                     block.quote = plain_quotes > 0;
                     block.list_depth = list.len();
+                    block.loose_item = !list.is_empty();
                 }
                 Event::Start(Tag::List(start)) => {
                     flush(&mut block, &mut parsed.blocks);
@@ -656,7 +658,7 @@ fn show_blocks(
         }
         let mut job = egui::text::LayoutJob::default();
         let task_indent = if block.task.is_some() {
-            20.0 + 40.5 * block.list_depth.saturating_sub(1) as f32
+            13.5 + 40.5 * block.list_depth.saturating_sub(1) as f32
         } else {
             0.0
         };
@@ -712,9 +714,19 @@ fn show_blocks(
                     .selectable(true);
                 if let Some((ordinal, mut checked)) = block.task {
                     ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.5;
+                        ui.spacing_mut().item_spacing.x = 9.0;
                         ui.add_space(task_indent);
-                        let checkbox = crate::theme::checkbox(ui, &mut checked);
+                        let line_height = galley.rows.first().map_or(29.16, |row| row.height());
+                        let checkbox = ui
+                            .allocate_ui_with_layout(
+                                egui::vec2(18.0, line_height),
+                                egui::Layout::top_down(egui::Align::Min),
+                                |ui| {
+                                    ui.add_space(((line_height - 18.0) / 2.0).max(0.0));
+                                    crate::theme::checkbox(ui, &mut checked)
+                                },
+                            )
+                            .inner;
                         crate::ui_probe::record(ui.ctx(), format!("task:{ordinal}"), checkbox.rect);
                         if checkbox.clicked() {
                             *task = Some(ordinal);
@@ -801,17 +813,11 @@ fn show_blocks(
                 }
             }
         }
-        ui.add_space(
-            if block
-                .parts
-                .first()
-                .is_some_and(|p| p.text.starts_with("•  "))
-            {
-                3.0
-            } else {
-                16.0
-            },
-        );
+        ui.add_space(if block.list_depth > 0 && !block.loose_item {
+            3.0
+        } else {
+            16.0
+        });
     }
     clicked
 }

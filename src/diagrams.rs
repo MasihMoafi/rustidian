@@ -13,7 +13,11 @@ use std::{
 #[derive(Clone)]
 enum State {
     Pending,
-    Ready { uri: String, micros: u64 },
+    Ready {
+        uri: String,
+        micros: u64,
+        natural: egui::Vec2,
+    },
     Failed(String),
 }
 
@@ -43,7 +47,7 @@ fn render(source: &str, dark: bool) -> Result<String, String> {
     mermaid_rs_renderer::render_with_options(source, options).map_err(|error| error.to_string())
 }
 
-fn svg_paths(svg: &str) -> Result<String, String> {
+fn svg_paths(svg: &str) -> Result<(String, egui::Vec2), String> {
     static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
     let fonts = FONTS.get_or_init(|| {
         let mut fonts = usvg::fontdb::Database::new();
@@ -63,7 +67,13 @@ fn svg_paths(svg: &str) -> Result<String, String> {
         ..Default::default()
     };
     usvg::Tree::from_str(svg, &options)
-        .map(|tree| tree.to_string(&usvg::WriteOptions::default()))
+        .map(|tree| {
+            let size = tree.size();
+            (
+                tree.to_string(&usvg::WriteOptions::default()),
+                egui::vec2(size.width(), size.height()),
+            )
+        })
         .map_err(|error| error.to_string())
 }
 
@@ -90,11 +100,12 @@ impl Renderer {
                     .find(|entry| entry.source == job.source && entry.dark == job.dark)
                 {
                     entry.state = match result {
-                        Ok(svg) => {
+                        Ok((svg, natural)) => {
                             job.ctx.include_bytes(job.uri.clone(), svg.into_bytes());
                             State::Ready {
                                 uri: job.uri,
                                 micros: start.elapsed().as_micros() as u64,
+                                natural,
                             }
                         }
                         Err(error) => State::Failed(error),
@@ -171,15 +182,18 @@ pub fn image(ui: &egui::Ui, source: &str) -> Result<Option<(String, egui::Vec2)>
     match state {
         State::Pending => Ok(None),
         State::Failed(error) => Err(error),
-        State::Ready { uri, micros } => {
+        State::Ready {
+            uri,
+            micros,
+            natural,
+        } => {
             crate::ui_probe::metric(ui.ctx(), "diagram-render-us", micros as f32);
-            let width = ui.available_width().max(1.0);
+            let width = ui.available_width().min(natural.x).max(1.0);
             match ui
                 .ctx()
                 .try_load_image(&uri, egui::load::SizeHint::Width(width.ceil() as u32))
             {
-                Ok(egui::load::ImagePoll::Ready { image }) => {
-                    let natural = egui::vec2(image.size[0] as f32, image.size[1] as f32);
+                Ok(egui::load::ImagePoll::Ready { .. }) => {
                     let size = natural * (width / natural.x.max(1.0)).min(1.0);
                     Ok(Some((uri, size)))
                 }
@@ -216,8 +230,9 @@ mod tests {
         for dark in [false, true] {
             let svg = super::render("flowchart LR\n A[Write] --> B[Read]", dark).unwrap();
             assert!(svg.contains("<svg") && svg.contains("Write") && svg.contains("Read"));
-            let paths = super::svg_paths(&svg).unwrap();
+            let (paths, size) = super::svg_paths(&svg).unwrap();
             assert!(paths.contains("<path") && !paths.contains("<text"));
+            assert!(size.x > 100.0 && size.y > 30.0);
         }
         assert!(super::render("not a diagram", false).is_err());
     }

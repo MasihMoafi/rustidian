@@ -32,7 +32,7 @@ pub fn file_row(ui: &mut egui::Ui, path: &Path, title: &str, selected: bool) -> 
         } else {
             theme::hover_fill(ui)
         };
-        ui.painter().rect_filled(rect, 6, fill);
+        ui.painter().rect_filled(rect, 7, fill);
     }
     let color = if selected || response.hovered() {
         ui.visuals().text_color()
@@ -145,11 +145,20 @@ impl Tree {
             ui.visuals_mut().collapsing_header_frame = true;
             ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
             ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            let hovered = ui.is_enabled()
+                && ui.rect_contains_pointer(egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    egui::vec2(ui.available_width(), 31.0),
+                ));
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
                     .size(13.0)
                     .line_height(Some(16.9))
-                    .color(ui.visuals().weak_text_color()),
+                    .color(if hovered {
+                        ui.visuals().text_color()
+                    } else {
+                        ui.visuals().weak_text_color()
+                    }),
             )
             .id_salt(&id)
             .open(reveal)
