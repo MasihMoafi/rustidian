@@ -3653,7 +3653,8 @@ def main():
                 note.write_text(original);command("Refresh vault");pause();open_note("Keyboard calibration");command("Source editing");editor_end()
                 type_text("ASCII_BASE");key("ctrl+s")
                 assert note.read_text()==original+"ASCII_BASE"
-                note.write_text(original);time.sleep(.6);command("Refresh vault");pause();editor_end()
+                modified_shortcut(xdo,"a");paste_text(original,held=True);key("ctrl+s")
+                assert note.read_text()==original
                 suffix="سلام π صفحه‌کلید"
                 os.kill(app.pid,signal.SIGSTOP)
                 try:
