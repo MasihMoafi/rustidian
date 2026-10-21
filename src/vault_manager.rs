@@ -210,6 +210,8 @@ impl Manager {
                                                         .file_name()
                                                         .unwrap_or(root.as_os_str())
                                                         .to_string_lossy();
+                                                    let is_current =
+                                                        current == Some(root.as_path());
                                                     let mut label =
                                                         egui::text::LayoutJob::default();
                                                     label.append(
@@ -226,12 +228,15 @@ impl Manager {
                                                         0.0,
                                                         egui::TextFormat {
                                                             font_id: FontId::proportional(12.0),
-                                                            color: ui.visuals().weak_text_color(),
+                                                            color: if is_current {
+                                                                ui.visuals().text_color()
+                                                            } else {
+                                                                ui.visuals().weak_text_color()
+                                                            },
                                                             ..Default::default()
                                                         },
                                                     );
-                                                    let width =
-                                                        (ui.available_width() - 32.0).max(1.0);
+                                                    let width: f32 = 200.0;
                                                     label.wrap.max_width = (width - 16.0).max(1.0);
                                                     label.wrap.max_rows = 2;
                                                     let galley = ui
@@ -242,9 +247,7 @@ impl Manager {
                                                             .left_text(egui::WidgetText::Galley(
                                                                 galley,
                                                             ))
-                                                            .selected(
-                                                                current == Some(root.as_path()),
-                                                            ),
+                                                            .selected(is_current),
                                                     );
                                                     ui_probe::record(
                                                         ctx,
@@ -291,10 +294,12 @@ impl Manager {
                                 });
                         },
                     );
-                    ui.separator();
+                    ui.add_sized([1.0, 330.0], egui::Separator::default().vertical());
                     ui.vertical(|ui| {
                         ui.set_width(460.0);
                         ui.set_min_height(280.0);
+                        let button_fill = ui.visuals().widgets.inactive.bg_fill;
+                        ui.visuals_mut().widgets.inactive.weak_bg_fill = button_fill;
                         ui.style_mut().text_styles.insert(
                             egui::TextStyle::Heading,
                             FontId::new(14.0, egui::FontFamily::Name("semibold".into())),

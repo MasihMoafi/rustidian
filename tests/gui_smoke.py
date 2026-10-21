@@ -2472,7 +2472,10 @@ def main():
 
                 def manager():
                     click_control("vault-profile")
-                    assert control_bounds("vault-manager")
+                    bounds = control_bounds("vault-manager")
+                    left, top, right, bottom = bounds
+                    assert 0 <= left < right <= 1440 and 0 <= top < bottom <= 960, f"Vault chooser escaped its viewport: {bounds}"
+                    assert control_bounds("vault-manager-close")
 
                 def field(name, value):
                     click_control(name)
@@ -2555,11 +2558,12 @@ def main():
                 title_contains(fixture.name)
                 xdo("windowfocus", "--sync", picker)
                 key("ctrl+l")
-                type_text(str(opened))
-                key("Return")
-                still_open = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^Open folder as vault$"], env=environment, capture_output=True)
-                if still_open.returncode == 0:
-                    key("Return")
+                key("ctrl+a")
+                # GTK path completion can race a rapid per-key typing stream.
+                paste_text(str(opened))
+                capture("native-vault-picker-location.png")
+                # Activate OK: Enter can navigate into a populated directory.
+                key("alt+o")
                 title_contains(opened.name)
                 xdo("windowfocus", "--sync", window)
                 assert roots()[0] == str(opened)
@@ -2573,8 +2577,13 @@ def main():
                 pending_catalog = catalog.with_suffix(".pending")
                 pending_catalog.write_text(json.dumps(updated))
                 pending_catalog.replace(catalog)
+                assert str(shared) in roots()
                 manager()
-                assert control_bounds(f"vault-recent:{shared}"), "Opening the chooser must refresh entries added by another window"
+                try:
+                    control_bounds(f"vault-recent:{shared}")
+                except AssertionError:
+                    (reports / "vault-catalog-refresh-failure.json").write_text(json.dumps({"seeded": updated, "after_open": json.loads(catalog.read_text())}, indent=2) + "\n")
+                    raise
                 click_control("vault-manager-close")
                 nested = opened / "Notes/Nested.md"
                 nested.parent.mkdir()

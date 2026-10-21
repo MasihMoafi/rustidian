@@ -271,6 +271,19 @@ before falling back to the file's parent. A nested note must retain root-level
 links and must not turn its subfolder into another recent vault. Check component
 boundaries so a vault named `Vault` does not claim files under `Vault-other`.
 
+Bound separator height inside an automatically sized modal. Filling the
+available height feeds the previous modal size back into the next layout and
+can push repeated openings offscreen. Keep recent-row widths within their
+column including the More control. Require the chooser bounds and its Close
+control to remain visible on every opening, not just the first screenshot.
+
+A rapid simulated key stream can race GTK's native location completion and
+append a stale suffix to a valid path. Select the location field and paste the
+whole path through the real clipboard, then activate the native OK action.
+Enter can navigate into a populated folder instead of confirming it. Assert the
+exact opened root and retain a picker screenshot. Local positive/negative calibration must distinguish this
+input problem from a Rust vault failure.
+
 Run the focused `--section vaults` and retained full regression through Actions.
 Require real picker selection, creation/collision/cancel, recent switching and
 restart, unsaved-switch cancellation and non-destructive list removal. The before
