@@ -1797,7 +1797,20 @@ fn layout(
             .iter()
             .map(|callout| {
                 let title = crate::preview::TableCell::new(&callout.title);
-                let height = title.layout(ui, true, (width - 80.0).max(1.0)).size().y + 24.0;
+                let depth = parsed
+                    .callouts
+                    .iter()
+                    .filter(|parent| {
+                        parent.range.start < callout.range.start
+                            && parent.range.contains(&callout.range.start)
+                    })
+                    .count();
+                let header_width = width - 24.0 * depth as f32 - 36.0;
+                let height = title
+                    .layout(ui, true, crate::callout_ui::title_width(header_width))
+                    .size()
+                    .y
+                    + 24.0;
                 (callout.header.clone(), height)
             })
             .collect()

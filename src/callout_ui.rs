@@ -1,6 +1,13 @@
 use eframe::egui;
 use rust_notes::callouts::{Callout, Kind};
 
+const TITLE_GAP: f32 = 4.0;
+
+/// Header width excludes the panel's left and right padding.
+pub fn title_width(header_width: f32) -> f32 {
+    (header_width - 18.0 - TITLE_GAP - 24.0).max(1.0)
+}
+
 pub fn color(ui: &egui::Ui, kind: Kind) -> egui::Color32 {
     // Installed Obsidian, Masih's appearance/snippets; measured 21 October 2026.
     let dark = ui.visuals().dark_mode;
@@ -54,10 +61,10 @@ pub fn header(
     let mut hovered_link = None;
     let response = ui
         .horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.spacing_mut().item_spacing.x = TITLE_GAP;
+            let width = title_width(ui.available_width());
             ui.add(crate::theme::icon_image(icon, ink));
-            let galley =
-                title.layout_color(ui, true, (ui.available_width() - 24.0).max(1.0), Some(ink));
+            let galley = title.layout_color(ui, true, width, Some(ink));
             let response = ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::hover()));
             if let Some(pointer) = ui
                 .ctx()

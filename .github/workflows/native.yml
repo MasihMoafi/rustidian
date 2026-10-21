@@ -58,8 +58,10 @@ jobs:
           cargo build --locked --bin rust-notes 2>&1 | tee reports/candidate-build.log
           tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault
           sha256sum target/debug/rust-notes > reports/candidate.sha256
-      - name: Focused callout behavior
-        run: /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
+      - name: Focused callout and vault behavior
+        run: |
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
       - name: Build the release application
         run: |
           cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/release-build.log

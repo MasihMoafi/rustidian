@@ -315,6 +315,29 @@ def main():
                 key("ctrl+s")
                 assert end_note.read_text() == end_source
                 results.append("Ctrl+End reveals a collapsed callout at EOF and immediate typing/undo preserves every byte")
+                wrap_note = fixture / "Notes/Wrap callout.md"
+                for theme, size in (("dark", (1440, 960)), ("light", (1040, 800))):
+                    if theme == "light":
+                        command("Switch appearance")
+                        xdo("windowsize", window, *map(str, size))
+                        pause()
+                    for count in (38, 39):
+                        wrap_source = "# Wrap callout\n\n> [!note]+ Outer\n> > [!tip]+ " + "M " * count + "\n> > Nested body.\n\nAfter.\n"
+                        wrap_note.write_text(wrap_source)
+                        time.sleep(.65)
+                        if theme == "dark" and count == 38:
+                            open_note("Wrap callout")
+                            command("Live preview")
+                            key("Escape")
+                        header = control_bounds("callout:1")
+                        body = control_bounds("callout-body:1")
+                        assert header[3] <= body[1], (theme, count, header, body)
+                        assert wrap_note.read_text() == wrap_source
+                    capture(f"native-callout-wrap-{theme}.png", size)
+                command("Switch appearance")
+                xdo("windowsize", window, "1440", "960")
+                pause()
+                results.append("Long nested callout titles reserve their actual wrapped height in both themes and compact width")
 
             def properties_checks():
                 key("ctrl+n")
@@ -1526,7 +1549,7 @@ def main():
                 type_text(str(fixture))
                 key("Return")
                 time.sleep(.8)
-                title_contains("Test Vault")
+                title_contains(fixture.name)
                 assert first_home.read_text() == first_source
                 assert second_home.read_text() == second_source + "\nVAULT_TWO_EDIT", repr(second_home.read_text())
                 capture("native-vault-switch.png")
