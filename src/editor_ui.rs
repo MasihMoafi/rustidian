@@ -991,6 +991,23 @@ impl Editor {
             ui.ctx().request_repaint();
         }
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
+        if crate::ui_probe::enabled() {
+            crate::ui_probe::metric(
+                ui.ctx(),
+                "window-focused",
+                f32::from(u8::from(ui.input(|input| input.focused))),
+            );
+            crate::ui_probe::metric(
+                ui.ctx(),
+                "editor-memory-focus",
+                f32::from(u8::from(ui.memory(|memory| memory.has_focus(id)))),
+            );
+            crate::ui_probe::metric(
+                ui.ctx(),
+                "editor-focus-request",
+                f32::from(u8::from(self.focus)),
+            );
+        }
         if output.response.has_focus() {
             crate::ui_probe::record(ui.ctx(), "editor-focused", output.response.rect);
         }

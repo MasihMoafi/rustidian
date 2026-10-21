@@ -2,6 +2,7 @@
 """Exercise the real native window on a disposable vault; needs Xvfb, xdotool, Pillow."""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ def main():
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
+    parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
@@ -158,7 +160,14 @@ def main():
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass
                 time.sleep(.05)
-            assert not required, f"No visible control: {name}"
+            if required:
+                capture("missing-control.png")
+                try:
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                except (FileNotFoundError, json.JSONDecodeError):
+                    controls = {}
+                focus = {key: value for key, value in controls.items() if "focus" in key}
+                raise AssertionError(f"No visible control: {name}; X focus={xdo('getwindowfocus')}; focus={focus}; visible={list(controls)}")
             return None
 
         def click_control(name, button="1"):
@@ -193,9 +202,10 @@ def main():
                 except (subprocess.CalledProcessError, IndexError):
                     time.sleep(0.1)
             assert window, "No native window appeared"
-            xdo("windowfocus", window)
             xdo("windowsize", window, "1440", "960")
             xdo("windowmove", window, "0", "0")
+            xdo("windowfocus", "--sync", window)
+            assert xdo("getwindowfocus") == window, "The private test window must own keyboard input"
             pause()
             return window
 
@@ -822,38 +832,59 @@ def main():
 
             def scrolling_checks():
                 path = fixture / "Notes/Scrolling check.md"
-                source = "# Scrolling check\n\n" + "\n\n".join(f"Paragraph {i}: read and move quickly." for i in range(180)) + "\n"
+                if args.scroll_document:
+                    source = args.scroll_document.read_text()
+                else:
+                    paragraph = "Long wrapped text remains responsive while navigating between headings, paragraphs and lists. "
+                    source = "# Scrolling check\n\n" + "\n".join(
+                        f"## Section {index}\n\n" + paragraph * 5 + "\n\n" +
+                        "\n".join(f"- Item {item}: " + paragraph * 2 for item in range(3)) + "\n"
+                        for index in range(18)
+                    )
                 path.write_text(source)
                 time.sleep(.7)
                 open_note("Scrolling check")
-                command("Reading view")
-                reference_y = control_bounds("reading-block:4")[1]
-                def position():
-                    controls = json.loads((base / "ui-probe.json").read_text())
-                    value = controls.get("document-scroll-y")
-                    return value[0] if value else reference_y-controls["reading-block:4"][1]
-                xdo("mousemove", "900", "500")
-                start_y = position()
-                assert start_y < 2, start_y
-                start = time.perf_counter()
-                xdo("click", "5")
-                while time.perf_counter()-start < .15 and position()-start_y < 95:
-                    time.sleep(.003)
-                immediate = position()
-                elapsed = (time.perf_counter()-start)*1000
-                assert 95 <= immediate-start_y <= 250, (start_y, immediate, elapsed)
-                time.sleep(.2)
-                assert abs(position()-immediate) < 1, "A smoothing tail kept moving after the wheel input"
-                xdo("click", "--repeat", "4", "--delay", "15", "5")
-                time.sleep(.1)
-                assert abs(position()-start_y-5*(immediate-start_y)) <= 10
-                xdo("click", "4")
-                time.sleep(.1)
-                assert abs(position()-start_y-4*(immediate-start_y)) <= 10
-                assert path.read_text() == source
-                capture("native-scrolling.png")
-                (reports / "scroll-latency.json").write_text(json.dumps({"dispatch_to_offset_ms":elapsed,"pixels_per_notch":immediate-start_y,"no_delayed_movement":True},indent=2)+"\n")
-                results.append("Wheel movement exceeds the old slow step immediately, repeated and reverse scrolling preserve distance/direction, and no delayed tail or edits occur")
+                measurements = {"source_sha256": hashlib.sha256(source.encode()).hexdigest(), "source_bytes": len(source.encode()), "views": {}}
+                failures = []
+                for view in ("Reading view", "Live preview"):
+                    command(view)
+                    if view == "Live preview":
+                        control_bounds("editor-focused")
+                        key("ctrl+Home")
+                    def position():
+                        return control_bounds("document-scroll-y")[0]
+                    xdo("mousemove", "900", "500")
+                    start_y = position()
+                    assert 0 <= start_y <= 200, (view, start_y)
+                    start = time.perf_counter()
+                    xdo("click", "--delay", "0", "5")
+                    while time.perf_counter()-start < 1 and position()-start_y < 1:
+                        time.sleep(.003)
+                    immediate = position()
+                    elapsed = (time.perf_counter()-start)*1000
+                    time.sleep(.2)
+                    stopped = position()
+                    xdo("click", "--repeat", "4", "--delay", "15", "5")
+                    time.sleep(.1)
+                    repeated = position()
+                    xdo("click", "--delay", "0", "4")
+                    time.sleep(.1)
+                    reversed_y = position()
+                    step = immediate-start_y
+                    measurements["views"][view] = {"dispatch_to_offset_ms": elapsed, "pixels_per_notch": step, "tail_pixels": stopped-immediate, "repeated_pixels": repeated-start_y, "reverse_pixels": reversed_y-start_y}
+                    (reports / "scroll-latency.json").write_text(json.dumps(measurements, indent=2)+"\n")
+                    capture("native-scrolling-" + ("live" if view == "Live preview" else "reading") + ".png")
+                    if elapsed >= 150:
+                        failures.append((view, "wheel response milliseconds", elapsed))
+                    if not (260 <= step <= 340):
+                        failures.append((view, "wheel distance", step))
+                    if abs(stopped-immediate) >= 1:
+                        failures.append((view, "smoothing tail", stopped-immediate))
+                    if abs(repeated-start_y-5*step) > 10 or abs(reversed_y-start_y-4*step) > 10:
+                        failures.append((view, "distance/direction", step, repeated, reversed_y))
+                    assert path.read_text() == source, "Scrolling changed the note"
+                assert not failures, failures
+                results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
             def diagram_checks():
                 path = fixture / "Notes/Diagram check.md"
@@ -885,6 +916,14 @@ def main():
                 assert abs((bounds[2]-bounds[0])-(reading_bounds[2]-reading_bounds[0])) <= 1
                 assert abs(bounds[0]-reading_bounds[0]) <= 1, "Live/Reading diagrams must share their note alignment"
                 capture("native-table-mermaid-live.png")
+                assert control_bounds("diagram-render-count")[0] == count
+                assert control_bounds("copy-code:0", required=False) is None
+                click_control("mermaid-live")
+                assert control_bounds("mermaid-live", required=False) is None
+                control_bounds("copy-code:0")
+                assert path.read_text() == source
+                key("ctrl+Home")
+                control_bounds("mermaid-live")
                 assert control_bounds("diagram-render-count")[0] == count
                 command("Source editing")
                 assert control_bounds("mermaid-live", required=False) is None

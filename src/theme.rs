@@ -82,7 +82,7 @@ pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
     ctx.options_mut(|options| {
-        options.input_options.line_scroll_speed = 100.0;
+        options.input_options.line_scroll_speed = 150.0;
         options.input_options.wheel_smoothing = false;
     });
     let mut visuals = if dark {
@@ -662,7 +662,7 @@ mod tests {
         assert!(smoothed.abs() < 40.0);
         let after = egui::Context::default();
         super::apply(&after, true);
-        assert_eq!(frame(&after, 1.0, vec![wheel()]), -100.0);
+        assert_eq!(frame(&after, 1.0, vec![wheel()]), -150.0);
         assert_eq!(frame(&after, 1.016, vec![]), 0.0);
         assert_eq!(frame(&after, 1.1, vec![]), 0.0);
     }

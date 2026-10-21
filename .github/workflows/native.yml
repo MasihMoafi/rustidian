@@ -53,26 +53,26 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
       - name: Rust behavior checks
         run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
-      - name: Build a focused GUI candidate
+      - name: Build the optimized GUI candidate
         run: |
-          cargo build --locked --bin rust-notes 2>&1 | tee reports/candidate-build.log
-          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault
-          sha256sum target/debug/rust-notes > reports/candidate.sha256
+          cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/candidate-build.log
+          sha256sum target/release/rust-notes > reports/candidate.sha256
+          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
       - name: Focused editing, bookmark, callout and vault behavior
         run: |
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section hover 2>&1 | tee reports/hover-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section title 2>&1 | tee reports/title-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section scrolling 2>&1 | tee reports/scrolling-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section essential 2>&1 | tee reports/essential-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section bookmarks 2>&1 | tee reports/bookmark-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section hover 2>&1 | tee reports/hover-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section title 2>&1 | tee reports/title-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section scrolling 2>&1 | tee reports/scrolling-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section essential 2>&1 | tee reports/essential-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section bookmarks 2>&1 | tee reports/bookmark-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
       - name: Keep the focused app available for review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -84,11 +84,6 @@ jobs:
             reports/*-gui.log
             reports/native-navigation.png
             reports/native-tasks.png
-      - name: Build the release application
-        run: |
-          cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/release-build.log
-          sha256sum target/release/rust-notes > reports/rust-notes.sha256
-          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
       - name: Native GUI and portable bundle checks
         run: |
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
