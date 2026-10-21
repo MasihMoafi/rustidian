@@ -1768,9 +1768,9 @@ def main():
                 results.append("Adding the current file persisted immediately outside the vault and repeated bookmarking created no duplicate")
                 click_control(f"bookmark:{relative}", "3")
                 click_control("bookmark-title")
-                type_text("Writing فارسی", delay=40)
+                type_text("Writing فارسی", delay=100)
                 key("Return")
-                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
                 open_note("Home")
                 command("Bookmark current file")
                 # Explorer context menu follows the same bookmark operation for images.
@@ -1821,7 +1821,7 @@ def main():
                 key("Return")
                 relative = "Bookmark folder/Bookmark renamed.md"
                 path = fixture / relative
-                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
                 xdo("mousemove", "70", "20", "click", "1")
                 pause()
                 click_control("file-collapse")
@@ -1838,13 +1838,13 @@ def main():
                 command("Show bookmarks")
                 click_control(f"bookmark:{relative}")
                 title_contains("Bookmark renamed")
-                key("ctrl+q")
+                xdo("key", "--clearmodifiers", "ctrl+q")
                 app.wait(timeout=5)
                 app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
                 window = ready_window()
                 title_contains("Bookmark renamed")
                 assert control_bounds(f"bookmark:{relative}")
-                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی"
+                assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
                 command("Switch appearance")
                 capture("native-bookmarks-light.png")
                 command("Switch appearance")

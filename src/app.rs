@@ -774,7 +774,7 @@ impl NotesApp {
             .is_some_and(|tab| !tab.document.is_blank());
         let add = ui.add_enabled(
             can_add,
-            egui::Button::new("Bookmark current file").frame(false),
+            egui::Button::new(RichText::new("Bookmark current file").size(13.0)).frame(false),
         );
         crate::ui_probe::record(ui.ctx(), "bookmark-add-current", add.rect);
         if add.clicked()
