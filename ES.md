@@ -11,7 +11,15 @@ Masih's latest instruction expands the destination to every Obsidian feature, ma
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
-## Current checkpoint — 21 October2026,22:20UTC
+## Current checkpoint — 21 October2026,22:27UTC
+
+Source63dc31a/normal Actions39686115803 completed FAILURE in Clippy at22:25:38UTC. Exact failed log reports/63dc31a-failed.log: tests/recovery_behavior.rs:412 used a four-item tuple as a for-loop iterable; app/library checking reached completion, but Rust behavior/native/optimized gates did not execute. Corrected only this tuple to an array; do not mark recovery compiled/verified or install. The source reference audit is independent working-tree work and is excluded from this repair commit. Preserve the failed run and all earlier accepted runtime paths. Next one normal build includes the narrow recovery test correction, with no gate removed.
+
+## Previous checkpoint — 21 October2026,22:24UTC
+
+Reviewed combined source63dc31a6924596f4d713473b521f9722406d613d is uploaded exactly through strict-direct gh. Its sole automatic normal Actions39686115803 began22:23:17UTC: https://github.com/MasihMoafi/rust-notes/actions/runs/39686115803 . It compiles the new recovery implementation and retains all37 full workflows,12 focused sections, Rust/Clippy, six CPU conditions and the normal Ferrite comparison. No concurrent build, local target or installation. Inspect the early existing-debug recovery diagnostics before waiting for optimized compilation; only install after every final gate and exact artifact/source/hash verification. Recovery is uncompiled until this run proves otherwise. Existing048fced app/receipt/rollback/companions and the user-owned a104 preview remain unchanged. Unrelated assets/app-icon remains untracked. Formatting/Python syntax/exact demo bytes/no target passed before commit;13 recovery behavior tests are still pending Actions.
+
+## Previous checkpoint — 21 October2026,22:20UTC
 
 Current HEAD/remote main61fbf5ad69d34145484b551882f18ead0988be15 has completed normal Actions39681679261 with failure. All10 focused sections pass. Full native completes129 check groups with35 successful named workflows; its ONLY failure is attachment_tab_checks at an intentional unavailable-command negative. Source editing and Save a copy correctly disappear for image tabs, but the newly strict command driver wrongly required a selectable result. It is a test-contract error, not a detected runtime failure. Six CPU conditions and normal observer-free Ferrite comparison pass; packaging is skipped. DO NOT INSTALL this run or execute reports/finish-current-release.py, which still targets its rejected gates. Installed048fced/receipt/rollback/launcher/default/icon/MIME remain unchanged.
 

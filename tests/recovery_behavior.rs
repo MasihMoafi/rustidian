@@ -409,7 +409,7 @@ fn concurrent_windows_preserve_each_others_files_and_versions() {
 fn invalid_paths_settings_and_corrupt_storage_preserve_existing_bytes() {
     let base = tempfile::tempdir().unwrap();
     let store = history(base.path());
-    for path in ("../Private.md", "/tmp/Private.md", "", "File.png") {
+    for path in ["../Private.md", "/tmp/Private.md", "", "File.png"] {
         assert!(
             store
                 .record(Path::new(path), "private", 0, &Config::default(), false)
