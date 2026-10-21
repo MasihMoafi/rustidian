@@ -27,6 +27,8 @@ Masih's latest resource restriction: builds and Rust checks move to the private 
 
 A new callout candidate adds parser-backed types/aliases, source-preserving type changes, Live folding/decorations and native nested Reading blocks. Thirteen generated/SVG Studio symbols are proved at source and native sizes; candidate source references44 artworks. Installed Obsidian's actual dark/light callout palettes, padding, radius and title gap were measured in a disposable profile and applied. The native before evaluation fails missing callout:0 after Source/prose controls pass. Candidate Rust, native behavior and visual acceptance are pending; do not treat source implementation as finished behavior. Serial CI editor CPU measurements are added for the next candidate; keep both raw results and host/source evidence.
 
+Latest callout evidence: commit3daa6c9 passes all107 Rust executions/102 unique and Clippy/fmt on Actions39521324012; its focused GUI fails the rich checkbox disk assertion. The exact downloaded candidate locally passes a stricter queued click/save check before autosave and the other callout flows, then reproduces an initial minus-fold-at-EOF bug. A narrow input-driven reveal fix and explicit queued-save native check are prepared for the next CI run. Full88-group release GUI and new serial CPU gates remain pending. See the dated ES.md checkpoint; do not resume the old Elpis repair or build locally.
+
 ## What this file is for
 
 Orient the next agent without repeating discovery. Keep implementation evidence in `ES.md` and product requirements in `docs/PLAN.md`.

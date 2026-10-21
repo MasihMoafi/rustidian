@@ -380,6 +380,10 @@ impl Editor {
             ui.ctx().request_repaint();
         }
         let live = tab.view == rust_notes::tab::View::Live;
+        let callout_input = ui.input(|input| input.events.iter().any(|event| matches!(
+            event,
+            egui::Event::Text(_) | egui::Event::Paste(_) | egui::Event::Cut | egui::Event::Ime(_)
+        ) || matches!(event, egui::Event::Key { key, pressed: true, .. } if !matches!(key, Key::S | Key::Escape))));
         self.tables.begin(ui, tab, id, live);
         let mut callout_change = None;
         let mut follow = None;
@@ -604,27 +608,14 @@ impl Editor {
             .ctx()
             .data(|data| data.get_temp::<HashMap<String, bool>>(callouts_id))
             .unwrap_or_default();
-        let reveal = jump
-            .or_else(|| find.restore.as_ref().map(|range| range.start))
-            .or_else(|| {
-                ui.memory(|memory| memory.has_focus(id))
-                    .then(|| {
-                        TextEditState::load(ui.ctx(), id)
-                            .and_then(|state| state.cursor.char_range())
-                            .map(|range| range.primary.index.0)
-                    })
-                    .flatten()
-            });
+        let reveal = jump.or_else(|| find.restore.as_ref().map(|range| range.start));
         if let Some(character) = reveal {
-            for (callout, key) in self.parsed.callouts.iter().zip(callout_keys(&self.parsed)) {
-                let start = tab.document.text[..callout.body.start].chars().count();
-                let end = start + tab.document.text[callout.body.clone()].chars().count();
-                if (start..end).contains(&character)
-                    || start < end && character == end && end == tab.document.text.chars().count()
-                {
-                    callout_folds.insert(key, false);
-                }
-            }
+            reveal_callouts(
+                &tab.document.text,
+                &self.parsed,
+                character,
+                &mut callout_folds,
+            );
         }
         let mut collapsed = ui.ctx().data(|data| {
             data.get_temp::<HashSet<String>>(folds_id)
@@ -907,6 +898,18 @@ impl Editor {
             tab.edited();
             ui.ctx().request_repaint();
         }
+        if callout_input
+            && output.response.has_focus()
+            && let Some(cursor) = output.cursor_range
+            && reveal_callouts(
+                &tab.document.text,
+                &self.parsed,
+                cursor.primary.index.0,
+                &mut callout_folds,
+            )
+        {
+            ui.ctx().request_repaint();
+        }
         let positioned = PositionedText::new(&output);
         paint_heading_folds(ui, &positioned, &self.sections, &mut collapsed);
         if live {
@@ -1169,6 +1172,30 @@ fn callout_keys(parsed: &Markdown) -> Vec<String> {
             key
         })
         .collect()
+}
+
+fn reveal_callouts(
+    source: &str,
+    parsed: &Markdown,
+    character: usize,
+    folded: &mut HashMap<String, bool>,
+) -> bool {
+    let mut changed = false;
+    for (callout, key) in parsed.callouts.iter().zip(callout_keys(parsed)) {
+        let start = source[..callout.body.start].chars().count();
+        let end = start + source[callout.body.clone()].chars().count();
+        if ((start..end).contains(&character)
+            || start < end && character == end && end == source.chars().count())
+            && folded
+                .get(&key)
+                .copied()
+                .unwrap_or(callout.folded.unwrap_or(false))
+        {
+            folded.insert(key, false);
+            changed = true;
+        }
+    }
+    changed
 }
 
 enum CalloutAction {

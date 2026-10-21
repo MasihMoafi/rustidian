@@ -268,9 +268,19 @@ def main():
                 control_bounds("task:0")
                 control_bounds("table:0")
                 control_bounds("copy-code:0")
-                click_control("task:0")
-                key("ctrl+s")
-                assert rich_note.read_text() == rich.replace("[ ] Callout task", "[x] Callout task")
+                left, top, right, bottom = control_bounds("task:0")
+                app.send_signal(signal.SIGSTOP)
+                try:
+                    xdo("mousemove", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+                    xdo("key", "--clearmodifiers", "ctrl+s")
+                finally:
+                    app.send_signal(signal.SIGCONT)
+                # An explicit save must finish before the 600ms autosave can run.
+                deadline = time.monotonic() + .5
+                checked = rich.replace("[ ] Callout task", "[x] Callout task")
+                while time.monotonic() < deadline and rich_note.read_text() != checked:
+                    time.sleep(.01)
+                assert rich_note.read_text() == checked, repr(rich_note.read_text())
                 capture("native-callouts-rich.png")
                 results.append("Reading callouts retain native tasks, tables, code controls and embedded images")
                 command("Live preview")
