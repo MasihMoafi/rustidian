@@ -996,6 +996,9 @@ def main():
                 key("ctrl+t")
                 open_note("Home")
                 command("Reading view")
+                # Earlier full-suite groups expand many nested fixture folders.
+                # Collapse them once so the root Home row is actually onscreen.
+                click_control("file-collapse")
                 originals = {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")}
                 timings = []
                 for name in ["new-tab", "close-tab:Home.md", "new-folder", "file-sort", "file-collapse", "bookmarks-tab", "folder:Notes", "file:Home.md"]:

@@ -314,3 +314,8 @@ When a custom TextEdit decoration escapes above the note, its full text rectangl
 A quick simulated click can hide a Live-preview bug. A real press changes the editing line before release; looking up the rendered link only on release loses the user's target. Capture that target on press and follow only the same tab's completed click. Require a150ms held click to open [Approved spec](spec.md); dragging must select without navigation. Likewise use event modifiers captured before consumption for queued Ctrl+Enter, since frame-current Control can already be released. Preserve the failing99 held-click and queued-chord logs.
 
 Check the actual daily executable before reporting delivery. Source fixes and a preview are insufficient while rust-note-editor still launches an old debug binary. Install only the optimized Actions release verified against release.sha256, keep the old exact executable for rollback, and preserve launcher/default-vault settings. Do not close a user's running document to perform installation.
+
+
+### Acknowledge UI setup before the next shortcut
+
+Settings Escape is handled before drawing its checkbox. If a simulator queues both in one frame, the dialog can close without applying the click. Observe the persisted setting after one actual click before sending Escape; fail if it did not change. Keep this setup outside performance timing. For a shared full-run hover fixture, collapse expanded file folders once before measuring a root file row; a deliberately virtualized offscreen row cannot be hovered. Do not replace a missed click with repeated toggles or lower the hover threshold.

@@ -140,6 +140,7 @@ def main():
                                 else:
                                     raise AssertionError(f"{name} window timeout")
                                 xdo("windowsize", window, 1440, 960)
+                                xdo("windowmove", window, 0, 0)
                                 time.sleep(2)
                                 xdo("windowfocus", "--sync", window)
                                 assert xdo("getwindowfocus") == window, f"{name} must own X keyboard input"
@@ -165,9 +166,19 @@ def main():
                                         palette("Open settings")
                                         probe = json.loads((profile / "probe.json").read_text())
                                         bounds = probe["settings-autosave"]
+                                        sessions = list((profile / "state/rust-notes").glob("*.json"))
+                                        assert len(sessions) == 1
+                                        session_path = sessions[0]
+                                        assert json.loads(session_path.read_text())["autosave_enabled"] is True
                                         x1, y1, x2, y2 = bounds
-                                        xdo("mousemove", "--window", window, int((x1 + x2) / 2), int((y1 + y2) / 2))
+                                        xdo("mousemove", "--sync", "--window", window, int((x1 + x2) / 2), int((y1 + y2) / 2))
                                         xdo("click", 1)
+                                        # Escape is handled before the settings UI. Queuing
+                                        # it with the click can close the dialog first.
+                                        deadline = time.monotonic() + 3
+                                        while json.loads(session_path.read_text())["autosave_enabled"] is not False and time.monotonic() < deadline:
+                                            time.sleep(.01)
+                                        assert json.loads(session_path.read_text())["autosave_enabled"] is False, "The single checkbox click must persist before closing settings"
                                         xdo("key", "Escape")
                                         time.sleep(.3)
                                         xdo("key", "--clearmodifiers", "ctrl+q")
