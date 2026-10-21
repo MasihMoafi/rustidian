@@ -447,10 +447,14 @@ impl NotesApp {
             self.ctx.open_url(egui::OpenUrl::new_tab(target));
             return;
         }
-        if self
-            .tabs
-            .get(self.active)
-            .is_some_and(|tab| tab.document.dirty())
+        let new_tab = self.ctx.input(|input| {
+            input.modifiers.command || input.pointer.button_clicked(egui::PointerButton::Middle)
+        });
+        if !new_tab
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.document.dirty())
             && !self.save(self.active)
         {
             return;
@@ -473,9 +477,11 @@ impl NotesApp {
                     self.files = rust_notes::search::FileMatcher::from_vault(vault);
                     self.search_cache.invalidate();
                 }
-                self.open_note(&document.path);
+                self.open_note_at(&document.path, new_tab);
                 if let Some((_, fragment)) = target.split_once('#') {
-                    self.jump_to_anchor(fragment.split('|').next().unwrap_or(fragment));
+                    let fragment = fragment.split('|').next().unwrap_or(fragment);
+                    let decoded = rust_notes::paths::decode(fragment);
+                    self.jump_to_anchor(decoded.as_deref().unwrap_or(fragment));
                 }
             }
             Some(Err(error)) => self.error = Some(error),

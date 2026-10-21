@@ -336,3 +336,27 @@ fn markdown_backlinks_include_references_and_embeds_but_exclude_code_and_externa
     );
     assert!(vault.backlinks(Path::new("Missing.md")).is_empty());
 }
+
+#[test]
+fn text_links_resolve_relative_encoded_paths_without_creating_markdown_copies() {
+    let dir = tempdir().unwrap();
+    fs::create_dir(dir.path().join("Notes")).unwrap();
+    fs::write(
+        dir.path().join("Notes/From.md"),
+        "[Text](../Plain%20text.txt)",
+    )
+    .unwrap();
+    fs::write(dir.path().join("Plain text.txt"), "Original text\r\n").unwrap();
+    let mut vault = Vault::open(dir.path()).unwrap();
+    let document = vault
+        .open_link(Path::new("Notes/From.md"), "../Plain%20text.txt")
+        .unwrap();
+    assert_eq!(document.path, Path::new("Plain text.txt"));
+    assert_eq!(document.text, "Original text\r\n");
+    assert!(!dir.path().join("Plain text.txt.md").exists());
+    assert!(
+        vault
+            .open_link(Path::new("Notes/From.md"), "../../Outside.txt")
+            .is_err()
+    );
+}

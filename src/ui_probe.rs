@@ -21,6 +21,10 @@ pub fn record(ctx: &egui::Context, name: impl Into<String>, rect: egui::Rect) {
     });
 }
 
+pub fn enabled() -> bool {
+    destination().is_some()
+}
+
 pub fn flush(ctx: &egui::Context) {
     let Some(path) = destination() else {
         return;

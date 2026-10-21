@@ -526,16 +526,53 @@ pub fn disclosure(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
 }
 
 pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
-    ui.scope(|ui| {
-        ui.spacing_mut().icon_width = 18.0;
-        ui.spacing_mut().icon_width_inner = 12.0;
-        ui.spacing_mut().interact_size.y = 18.0;
-        let colour = ui.visuals().weak_text_color();
-        ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, colour);
-        ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
-        ui.checkbox(checked, "")
-    })
-    .inner
+    let (rect, mut response) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+    if response.clicked() {
+        *checked = !*checked;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *checked, "")
+    });
+    if ui.is_rect_visible(rect) {
+        let color = if *checked {
+            accent(ui)
+        } else if response.hovered() {
+            ui.visuals().weak_text_color()
+        } else {
+            marker(ui)
+        };
+        ui.painter().rect(
+            rect,
+            5.0,
+            if *checked {
+                color
+            } else {
+                Color32::TRANSPARENT
+            },
+            Stroke::new(1.0, color),
+            egui::StrokeKind::Inside,
+        );
+        if *checked {
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    rect.min + egui::vec2(4.0, 9.0),
+                    rect.min + egui::vec2(7.5, 12.5),
+                    rect.min + egui::vec2(14.0, 5.0),
+                ],
+                Stroke::new(1.8, ui.visuals().window_fill),
+            ));
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.expand(2.0),
+                6.0,
+                ui.visuals().selection.stroke,
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+    response
 }
 
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {

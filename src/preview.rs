@@ -556,7 +556,7 @@ fn show_blocks(
                         let (header, link) =
                             crate::callout_ui::header(ui, &callout.model, callout.ordinal, folded);
                         if let Some(link) = link {
-                            clicked = follow_destination(ui, &link, native_links);
+                            clicked = follow_destination(&link, native_links);
                         } else if header.clicked() && callout.model.folded.is_some() {
                             folded = !folded;
                         }
@@ -793,7 +793,7 @@ fn show_blocks(
             {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 if response.clicked() {
-                    clicked = follow_destination(ui, destination, native_links);
+                    clicked = follow_destination(destination, native_links);
                 }
             }
         }
@@ -882,18 +882,11 @@ fn inline_format(
     }
 }
 
-fn follow_destination(
-    ui: &egui::Ui,
-    destination: &str,
-    native_links: &[(String, String)],
-) -> Option<String> {
+fn follow_destination(destination: &str, native_links: &[(String, String)]) -> Option<String> {
     if let Some((_, target)) = native_links.iter().find(|(hook, _)| hook == destination) {
         Some(target.clone())
-    } else if destination.ends_with(".md") {
-        Some(destination.to_owned())
     } else {
-        ui.ctx().open_url(egui::OpenUrl::new_tab(destination));
-        None
+        Some(destination.to_owned())
     }
 }
 
@@ -1044,7 +1037,7 @@ fn show_table(
                             rect,
                         );
                         if response.clicked() {
-                            follow = follow_destination(ui, destination, native_links);
+                            follow = follow_destination(destination, native_links);
                         }
                     }
                     x += cell_width;

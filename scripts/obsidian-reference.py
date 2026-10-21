@@ -14,12 +14,15 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation"], default="all")
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     base = Path(temporary)
     vault = base / "Reference Vault"
     shutil.copytree(ROOT / "demo-vault", vault)
+    if arguments.section == "navigation":
+        (vault / "Notes/Navigation check.md").write_text("# Navigation check\n\n- [ ] Open task\n- [x] Completed task\n  - [ ] Nested task\n\n[Open target](Linked%20target.md#Section)\n\n[[Notes/Linked target|Wiki target]]\n")
+        (vault / "Notes/Linked target.md").write_text("# Linked target\n\n## Section\n\nDestination text.\n")
     settings = vault / ".obsidian"
     settings.mkdir(exist_ok=True)
     original = Path("/home/masih/Desktop/o/Main Vault/.obsidian")
@@ -83,6 +86,42 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         target = next(target for target in targets if target["type"] == "page")
         query = "JSON.stringify(['.markdown-preview-view','.inline-title','h1','h2','.markdown-preview-view p','.markdown-preview-view li','.markdown-preview-view strong','.markdown-preview-view ul','.markdown-preview-view blockquote','.markdown-preview-sizer','.view-header','.workspace-tab-header-container','.nav-header','.nav-files-container','.status-bar','.nav-file-title','.workspace-tab-header'].map(selector => {const e=document.querySelector(selector);if(!e)return {selector};const s=getComputedStyle(e);return {selector,font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,marginTop:s.marginTop,marginBottom:s.marginBottom,rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height},padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderBottomWidth};}))"
         code = "const ws=new WebSocket(process.argv[1]);ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:process.argv[2],returnByValue:true}}));ws.onmessage=(e)=>{const r=JSON.parse(e.data);if(r.id===1){console.log(r.result.result.value);ws.close();}};setTimeout(()=>process.exit(1),5000).unref();"
+        if arguments.section == "navigation":
+            def evaluate(expression):
+                value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True)
+                return json.loads(value)
+
+            def open_reference(mode):
+                evaluate("(app.workspace.activeLeaf.setViewState({type:'markdown',state:{file:'Notes/Navigation check.md',mode:" + json.dumps(mode) + "}}),JSON.stringify('opening'))")
+                time.sleep(.8)
+                if mode == "source":
+                    xdo("key", "--clearmodifiers", "ctrl+Home")
+                    time.sleep(.3)
+
+            boxes = "JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active input[type=checkbox]')].filter(e=>e.getBoundingClientRect().width).map(e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e),t=getComputedStyle(e.parentElement),a=getComputedStyle(e,'::after');return {checked:e.checked,x:r.x,y:r.y,width:r.width,height:r.height,radius:s.borderRadius,border:s.border,background:s.backgroundColor,marker:a.backgroundColor,margin:s.margin,font:t.fontSize,lineHeight:t.lineHeight,textColor:t.color,decoration:t.textDecorationLine,variables:Object.fromEntries(['--checkbox-size','--checkbox-radius','--checkbox-color','--checkbox-marker-color','--checklist-done-color','--checklist-done-decoration'].map(k=>[k,s.getPropertyValue(k)]))}}))"
+            report = {"identity":evaluate("JSON.stringify({userAgent:navigator.userAgent})"), "cases":[]}
+            for mode in ("preview", "source"):
+                open_reference(mode)
+                report[mode + "_checkboxes"] = evaluate(boxes)
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports" / f"obsidian-navigation-{mode}.png")
+                for modified in (False, True):
+                    open_reference(mode)
+                    link = evaluate("JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active a.internal-link,.workspace-leaf.mod-active .cm-link')].filter(e=>e.textContent==='Open target'&&e.getBoundingClientRect().width).map(e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,html:e.outerHTML}}))")
+                    assert link, f"No rendered link in {mode}"
+                    bounds = link[0]
+                    if modified:
+                        xdo("keydown", "Control_L")
+                    try:
+                        xdo("mousemove", str(round(bounds["x"] + bounds["width"]/2)), str(round(bounds["y"] + bounds["height"]/2)), "click", "1")
+                        time.sleep(.7)
+                    finally:
+                        if modified:
+                            xdo("keyup", "Control_L")
+                    state = evaluate("JSON.stringify({file:app.workspace.activeLeaf.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').length})")
+                    report["cases"].append({"mode":mode,"ctrl":modified,"link":bounds,"result":state})
+            (ROOT / "reports/obsidian-navigation.json").write_text(json.dumps(report,indent=2)+"\n")
+            print(json.dumps(report))
+            raise SystemExit(0)
         if arguments.section == "callouts":
             kinds = ["note", "abstract", "info", "todo", "tip", "success", "question", "warning", "failure", "danger", "bug", "example", "quote"]
             sample = (ROOT / "tests/fixtures/callouts.md").read_text()

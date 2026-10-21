@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -70,6 +70,11 @@ def main():
             time.sleep(.1)
         assert display_ready, f"Private X server {display} did not accept a connection"
         log = (reports / "gui-smoke.log").open("w")
+        if args.section in ("navigation", "all"):
+            browser = base / "browser-stub"
+            browser.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nwith Path(" + repr(str(reports / "browser-requests.txt")) + ").open('a') as f: f.write(repr(sys.argv[1:])+'\\n')\n")
+            browser.chmod(0o700)
+            environment["BROWSER"] = str(browser)
         launch_command = [str(ROOT / args.binary), str(fixture)]
         if args.open_file:
             startup_path = fixture / f"Open me سلام.{args.open_file}"
@@ -713,6 +718,64 @@ def main():
                     assert note.read_text() == expected + " reopened", (name, "reopen")
                 results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
 
+            def navigation_checks():
+                source = "# Navigation UI\n\n[[Notes/Linked target|Wiki target]]\n\n[Open target](Linked%20target.md#Section%20two)\n"
+                note = fixture / "Notes/Navigation UI.md"
+                target = fixture / "Notes/Linked target.md"
+                note.write_text(source)
+                target_source = "# Linked target\n\n" + "Introduction paragraph.\n\n" * 45 + "## Section two\n\nDestination text.\n"
+                target.write_text(target_source)
+                time.sleep(.6)
+                open_note("Navigation UI")
+                command("Reading view")
+
+                def click_link(block, modified=False):
+                    left, top, right, bottom = control_bounds(f"reading-block:{block}")
+                    if modified:
+                        xdo("keydown", "Control_L")
+                    try:
+                        xdo("mousemove", str(round(left + min(25, (right-left)/2))), str(round((top+bottom)/2)), "click", "1")
+                        pause()
+                    finally:
+                        if modified:
+                            xdo("keyup", "Control_L")
+
+                def tab_count():
+                    return sum(name.startswith("tab:") for name in json.loads((base / "ui-probe.json").read_text()))
+
+                click_link(1)
+                title_contains("Linked target")
+                key("alt+Left")
+                title_contains("Navigation UI")
+                click_link(2)
+                title_contains("Linked target")
+                assert control_bounds("reading-block:46"), "The encoded heading target must scroll into view"
+                key("alt+Left")
+                title_contains("Navigation UI")
+                key("alt+Right")
+                title_contains("Linked target")
+                key("alt+Left")
+                title_contains("Navigation UI")
+                before = tab_count()
+                click_link(2, modified=True)
+                title_contains("Linked target")
+                deadline = time.monotonic() + 3
+                while tab_count() != before + 1 and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert tab_count() == before + 1, "Ctrl-click must retain the source tab"
+                key("ctrl+w")
+                title_contains("Navigation UI")
+                command("Live preview")
+                key("ctrl+Home")
+                click_control("editor-link:Linked%20target.md#Section%20two")
+                title_contains("Linked target")
+                key("alt+Left")
+                title_contains("Navigation UI")
+                assert note.read_text() == source
+                assert target.read_text() == target_source
+                capture("native-navigation.png")
+                results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, and all source bytes stay intact")
+
             def essential_checks():
                 nonlocal app, window
                 source = "# Highlight check\n\n==yellow **bold**==\n\n`==literal code==`\n\neditable"
@@ -724,9 +787,10 @@ def main():
                 open_note("Essential UI")
                 command("Source editing")
                 editor_end()
+                assert control_bounds("editor-focused"), "Source input must own focus after the palette closes"
                 type_text("control")
                 key("ctrl+s")
-                assert note.read_text() == source + "control"
+                assert note.read_text() == source + "control", repr(note.read_text())
                 key("ctrl+z")
                 key("ctrl+s")
                 assert note.read_text() == source
@@ -860,6 +924,9 @@ def main():
                 assert task_note.read_text() == source
                 command("Reading view")
                 capture("native-tasks.png")
+                box = tuple(round(value) for value in control_bounds("task:1"))
+                pixels = pixel_data(Image.open(ROOT / "reports/native-tasks.png").crop(box).convert("RGB"))
+                assert sum(abs(r-23) <= 3 and abs(g-127) <= 3 and abs(b-131) <= 3 for r, g, b in pixels) > 80, "Completed tasks must have Obsidian's solid accent fill"
                 click_control("task:0")
                 time.sleep(1)
                 checked = source.replace("- [ ] Native task", "- [x] Native task")
@@ -2296,6 +2363,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
+            if args.section == "navigation":
+                navigation_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "colors":
                 color_checks()
                 (reports / "gui-results.txt").write_text("\n".join(results) + "\n")
@@ -2555,6 +2627,7 @@ def main():
             task_checks()
             essential_checks()
             color_checks()
+            navigation_checks()
             large_search_checks()
             folder_checks()
             explorer_checks()
@@ -2578,6 +2651,9 @@ def main():
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))
         except BaseException:
             capture("gui-failure.png")
+            candidates = [path for path in fixture.rglob("*") if path.is_file() and path.suffix.lower() in (".md", ".txt")]
+            recent = sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True)[:5]
+            (reports / f"gui-{args.section}-failure-notes.json").write_text(json.dumps({str(path.relative_to(fixture)): path.read_text() for path in recent if path.stat().st_size <= 500_000}, ensure_ascii=False, indent=2)+"\n")
             (reports / "gui-results.json").write_text(json.dumps({"status": "failed", "checks": results}, indent=2)+"\n")
             raise
         finally:

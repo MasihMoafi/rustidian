@@ -933,6 +933,9 @@ impl Editor {
             save_undo(ui.ctx(), &tab.document.text);
         }
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
+        if output.response.has_focus() {
+            crate::ui_probe::record(ui.ctx(), "editor-focused", output.response.rect);
+        }
         if output.response.has_focus()
             && let Some(range) = output.cursor_range
         {
@@ -1148,18 +1151,61 @@ impl Editor {
                 .translate(output.galley_pos.to_vec2());
             ui.scroll_to_rect(rect, Some(egui::Align::Center));
         }
-        if ui.input(|i| i.modifiers.command)
-            && output.response.clicked()
-            && let Some(pointer) = output.response.interact_pointer_pos()
-        {
-            follow = link_at(
-                &tab.document.text,
-                output
-                    .galley
-                    .cursor_from_pos(pointer - output.galley_pos)
-                    .index
-                    .0,
-            );
+        if let Some(pointer) = output.response.hover_pos() {
+            let character = output
+                .galley
+                .cursor_from_pos(pointer - output.galley_pos)
+                .index
+                .0;
+            let byte = tab
+                .document
+                .text
+                .char_indices()
+                .nth(character)
+                .map_or(tab.document.text.len(), |(byte, _)| byte);
+            let index = self
+                .parsed
+                .spans
+                .partition_point(|span| span.range.end <= byte);
+            let link =
+                self.parsed.spans.get(index).is_some_and(|span| {
+                    span.style.link && !span.style.code && !span.style.property
+                });
+            let rendered = live
+                && !active_line
+                    .as_ref()
+                    .is_some_and(|line| line.contains(&byte));
+            if link && (rendered || ui.input(|input| input.modifiers.command)) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                if output.response.clicked()
+                    || output.response.clicked_by(egui::PointerButton::Middle)
+                {
+                    follow = link_at(&tab.document.text, character);
+                }
+            }
+        }
+        if live && crate::ui_probe::enabled() {
+            let mut character = 0;
+            for span in &self.parsed.spans {
+                let length = tab.document.text[span.range.clone()].chars().count();
+                if span.style.link
+                    && !span.style.hidden
+                    && !span.style.code
+                    && !span.style.property
+                    && let Some(target) = link_at(&tab.document.text, character)
+                {
+                    let first = output.galley.pos_from_cursor(CCursor::new(character));
+                    let last = output
+                        .galley
+                        .pos_from_cursor(CCursor::new(character + length.min(3)));
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("editor-link:{target}"),
+                        first.union(last).translate(output.galley_pos.to_vec2()),
+                    );
+                }
+                character += length;
+            }
         }
         if output.response.has_focus()
             && !self.completion_dismissed

@@ -216,3 +216,22 @@ service, startup or Elpis selector/activation changes belong to this work.
 The next agent should read the newest `ES.md` checkpoint, inspect `git status`,
 and perform the next unchecked step above. Do not restart discovery or silently
 restore the older goal of replicating every Obsidian feature.
+
+## Navigation and checklist fidelity checkpoint, 21 October
+
+Masih's latest feedback is decisive: the app must behave and look like Obsidian;
+passing feature tests is insufficient if ordinary links do nothing. Reproduce
+ordinary clicks in the default Live view as well as Reading, Ctrl-click into a
+tab, history, encoded relative paths and heading scrolls. Test a working wiki
+link before the failing Markdown link so coordinate errors cannot masquerade as
+a resolver bug. Route destinations through one application handler; a suffix
+check such as `ends_with(".md")` misroutes `note.md#heading` to a browser.
+
+`python3 scripts/obsidian-reference.py --section navigation` uses an isolated
+installed Obsidian/profile/sample vault and preserves raw checkbox CSS metrics,
+click results, version identity and screenshots. Current local executable is
+1.5.12; the user's screenshots are1.14.4, so keep that distinction explicit.
+The measured 18px boxes use a solid accent checked fill, not an outline-only
+check. Native pixel assertions must inspect the checked box, and click/save/undo
+must still preserve the exact note. Preserve concurrently committed standalone
+file/default-vault support while correcting these app interactions.

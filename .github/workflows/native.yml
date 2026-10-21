@@ -62,6 +62,7 @@ jobs:
         run: |
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section essential 2>&1 | tee reports/essential-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log

@@ -398,7 +398,11 @@ impl Vault {
     }
 
     fn resolve_path(&self, from: &Path, target: &str) -> Option<PathBuf> {
-        let target = crate::paths::markdown_name(Path::new(target));
+        let target = if is_text_document(Path::new(target)) {
+            PathBuf::from(target)
+        } else {
+            crate::paths::markdown_name(Path::new(target))
+        };
         let sibling =
             crate::paths::normalise(&from.parent().unwrap_or(Path::new("")).join(&target));
         if let Some(sibling) = sibling
