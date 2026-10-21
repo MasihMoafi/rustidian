@@ -4,10 +4,28 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Scope {
+    Global,
+    Tab,
+    File,
+    Document,
+    Editor,
+}
+
+impl Scope {
+    fn includes(self, required: Self) -> bool {
+        self >= required
+    }
+}
+
+pub const ADD_UNIQUE_LINK: &str = "Unique note creator: Add unique internal link";
+pub const DUPLICATE_FILE: &str = "Make a copy of the current file";
+
 pub struct Command {
     pub name: &'static str,
     pub shortcut: &'static str,
-    pub markdown_only: bool,
+    pub scope: Scope,
 }
 
 impl AsRef<str> for Command {
@@ -18,193 +36,238 @@ impl AsRef<str> for Command {
 
 pub const ALL: &[Command] = &[
     Command {
+        name: DUPLICATE_FILE,
+        shortcut: "",
+        scope: Scope::File,
+    },
+    Command {
+        name: "Toggle pin",
+        shortcut: "",
+        scope: Scope::Tab,
+    },
+    Command {
+        name: "New tab",
+        shortcut: "Ctrl+T",
+        scope: Scope::Global,
+    },
+    Command {
+        name: "Close current tab",
+        shortcut: "Ctrl+W",
+        scope: Scope::Tab,
+    },
+    Command {
+        name: "Go to next tab",
+        shortcut: "Ctrl+Tab",
+        scope: Scope::Tab,
+    },
+    Command {
+        name: "Go to previous tab",
+        shortcut: "Ctrl+Shift+Tab",
+        scope: Scope::Tab,
+    },
+    Command {
+        name: ADD_UNIQUE_LINK,
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
+        name: "Unique note creator: Create new unique note",
+        shortcut: "",
+        scope: Scope::Global,
+    },
+    Command {
+        name: "Random note: Open random note",
+        shortcut: "",
+        scope: Scope::Global,
+    },
+    Command {
         name: "File recovery: Open local history",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Workspaces: Manage workspace layouts",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Workspaces: Load workspace layout",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Workspaces: Save layout",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Workspaces: Save and load another layout",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "New note",
         shortcut: "Ctrl+N",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "New folder",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Daily notes: Open today's daily note",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Templates: Insert template",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Templates: Insert current date",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Templates: Insert current time",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Open a file",
         shortcut: "Ctrl+O",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Open vault",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Open another vault",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Create new vault",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Save note",
         shortcut: "Ctrl+S",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Save a copy",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Reading view",
         shortcut: "Ctrl+E",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Live preview",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Source editing",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Split source and preview",
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Add property",
         shortcut: "Ctrl+;",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Highlight selection",
         shortcut: "Ctrl+Shift+H",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: crate::highlight::Color::Cyan.command(),
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: crate::highlight::Color::Green.command(),
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: crate::highlight::Color::Orange.command(),
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: crate::highlight::Color::Red.command(),
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: crate::highlight::Color::Yellow.command(),
         shortcut: "",
-        markdown_only: true,
+        scope: Scope::Document,
     },
     Command {
         name: "Rename or move file",
         shortcut: "F2",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Move file to system Trash",
         shortcut: "Delete",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Bookmark current file",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Show bookmarks",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Toggle left sidebar",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Toggle right sidebar",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Switch appearance",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Refresh vault",
         shortcut: "",
-        markdown_only: false,
+        scope: Scope::Global,
     },
     Command {
         name: "Open settings",
         shortcut: "Ctrl+,",
-        markdown_only: false,
+        scope: Scope::Global,
     },
 ];
 
-pub fn ranked(query: &str, image: bool) -> Vec<&'static Command> {
+pub fn ranked(query: &str, scope: Scope) -> Vec<&'static Command> {
     Pattern::new(
         query,
         CaseMatching::Ignore,
@@ -212,8 +275,7 @@ pub fn ranked(query: &str, image: bool) -> Vec<&'static Command> {
         AtomKind::Fuzzy,
     )
     .match_list(
-        ALL.iter()
-            .filter(|command| !image || !command.markdown_only),
+        ALL.iter().filter(|command| scope.includes(command.scope)),
         &mut Matcher::new(Config::DEFAULT),
     )
     .into_iter()
@@ -225,15 +287,49 @@ pub fn ranked(query: &str, image: bool) -> Vec<&'static Command> {
 mod tests {
     use super::*;
     #[test]
-    fn fuzzy_commands_find_abbreviations_and_exclude_image_edits() {
-        assert_eq!(ranked("srcedt", false)[0].name, "Source editing");
+    fn unique_link_requires_an_editor_but_note_navigation_remains_global() {
         assert_eq!(
-            ranked("Highlight selection", false)[0].name,
+            ranked(ADD_UNIQUE_LINK, Scope::Editor)[0].name,
+            ADD_UNIQUE_LINK
+        );
+        assert!(ranked(ADD_UNIQUE_LINK, Scope::Document).is_empty());
+        assert!(ranked(ADD_UNIQUE_LINK, Scope::Tab).is_empty());
+        assert!(ranked(ADD_UNIQUE_LINK, Scope::File).is_empty());
+        assert!(ranked(ADD_UNIQUE_LINK, Scope::Global).is_empty());
+        for name in [
+            "Random note: Open random note",
+            "Unique note creator: Create new unique note",
+        ] {
+            assert_eq!(ranked(name, Scope::Global)[0].name, name);
+        }
+    }
+
+    #[test]
+    fn tab_actions_need_a_tab_but_creation_remains_available_without_one() {
+        for name in [
+            "Toggle pin",
+            "Close current tab",
+            "Go to next tab",
+            "Go to previous tab",
+        ] {
+            assert_eq!(ranked(name, Scope::Tab)[0].name, name);
+            assert!(ranked(name, Scope::Global).is_empty());
+        }
+        assert_eq!(ranked("New tab", Scope::Global)[0].name, "New tab");
+        assert_eq!(ranked(DUPLICATE_FILE, Scope::File)[0].name, DUPLICATE_FILE);
+        assert!(ranked(DUPLICATE_FILE, Scope::Tab).is_empty());
+    }
+
+    #[test]
+    fn fuzzy_commands_find_abbreviations_and_exclude_image_edits() {
+        assert_eq!(ranked("srcedt", Scope::Document)[0].name, "Source editing");
+        assert_eq!(
+            ranked("Highlight selection", Scope::Document)[0].name,
             "Highlight selection"
         );
-        assert!(ranked("Highlight", true).is_empty());
+        assert!(ranked("Highlight", Scope::File).is_empty());
         assert_eq!(
-            ranked("", true)
+            ranked("", Scope::File)
                 .iter()
                 .filter(|command| command.name == "Open settings")
                 .count(),

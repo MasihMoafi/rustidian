@@ -25,6 +25,7 @@ pub struct Manager {
     error: Option<String>,
     picker: Option<Child>,
     focus: bool,
+    parent_enter_observed: bool,
 }
 
 impl Default for Manager {
@@ -38,6 +39,7 @@ impl Default for Manager {
             error: None,
             picker: None,
             focus: false,
+            parent_enter_observed: false,
         }
     }
 }
@@ -58,6 +60,7 @@ impl Manager {
             .unwrap_or_default();
         self.name.clear();
         self.error = None;
+        self.parent_enter_observed = false;
     }
 
     pub fn remember(&mut self, root: &Path) -> Result<(), String> {
@@ -165,6 +168,16 @@ impl Manager {
     ) -> Option<PathBuf> {
         if !self.open {
             return None;
+        }
+        if ui_probe::enabled() {
+            if self.picker.is_some() && ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
+                self.parent_enter_observed = true;
+            }
+            ui_probe::metric(
+                ctx,
+                "vault-parent-enter-observed",
+                if self.parent_enter_observed { 1.0 } else { 0.0 },
+            );
         }
         let mut selected = self.poll_picker();
         let mut close = false;

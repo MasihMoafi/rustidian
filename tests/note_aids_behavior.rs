@@ -143,11 +143,17 @@ fn existing_obsidian_settings_are_imported_without_writing_to_the_vault() {
     fs::create_dir(base.path().join(".obsidian")).unwrap();
     let template = r#"{"folder":"Templates","dateFormat":"DD/MM/YYYY","timeFormat":"h:mm A"}"#;
     let daily = r#"{"folder":"Journal","format":"YYYY/MM/DD","template":"Templates/Daily","autorun":false}"#;
+    let unique =
+        r#"{"folder":"Unique","format":"[Pair-]YYYYMMDDHHmm","template":"Templates/Meeting.md"}"#;
     fs::write(base.path().join(".obsidian/templates.json"), template).unwrap();
     fs::write(base.path().join(".obsidian/daily-notes.json"), daily).unwrap();
+    fs::write(base.path().join(".obsidian/zk-prefixer.json"), unique).unwrap();
     let config = Config::from_obsidian(base.path()).unwrap();
     assert_eq!(config.templates.folder, "Templates");
     assert_eq!(config.daily.template, "Templates/Daily");
+    assert_eq!(config.unique.folder, "Unique");
+    assert_eq!(config.unique.format, "[Pair-]YYYYMMDDHHmm");
+    assert_eq!(config.unique.template, "Templates/Meeting.md");
     assert_eq!(
         config.expand("{{date}} {{time}}", "Home", clock()),
         "21/10/2026 1:05 PM"
@@ -160,8 +166,191 @@ fn existing_obsidian_settings_are_imported_without_writing_to_the_vault() {
         fs::read_to_string(base.path().join(".obsidian/daily-notes.json")).unwrap(),
         daily
     );
+    assert_eq!(
+        fs::read_to_string(base.path().join(".obsidian/zk-prefixer.json")).unwrap(),
+        unique
+    );
     fs::write(base.path().join(".obsidian/templates.json"), "broken").unwrap();
     assert!(Config::from_obsidian(base.path()).is_err());
+}
+
+#[test]
+fn unique_notes_preserve_collisions_and_advance_the_clock_across_year_end() {
+    let base = tempfile::tempdir().unwrap();
+    let mut vault = Vault::open(base.path()).unwrap();
+    let config = Config::default();
+    let now = DateTime::parse_from_rfc3339("2026-12-31T23:59:09+03:30").unwrap();
+    let first = config.create_unique(&mut vault, now).unwrap();
+    assert_eq!(first, Path::new("202612312359.md"));
+    fs::write(base.path().join(&first), "Keep the first note\n").unwrap();
+    let second = config.create_unique(&mut vault, now).unwrap();
+    assert_eq!(second, Path::new("202701010000.md"));
+    assert_eq!(fs::read(base.path().join(&second)).unwrap(), b"");
+    assert_eq!(
+        fs::read_to_string(base.path().join(first)).unwrap(),
+        "Keep the first note\n"
+    );
+}
+
+#[test]
+fn unique_notes_apply_a_template_and_reject_missing_folders_templates_and_constant_collisions() {
+    let base = tempfile::tempdir().unwrap();
+    fs::create_dir(base.path().join("Templates")).unwrap();
+    let source = "# {{title}}\r\n{{date}} {{time}}\r\n{{content}}\r\n";
+    fs::write(base.path().join("Templates/Unique.md"), source).unwrap();
+    let mut vault = Vault::open(base.path()).unwrap();
+    let mut config = Config::default();
+    config.unique.folder = "یادداشت‌ها".into();
+    config.unique.template = "Templates/Unique".into();
+    config.unique.format = "[Pair-]YYYYMMDDHHmm".into();
+    assert!(config.create_unique(&mut vault, clock()).is_err());
+    assert!(!base.path().join("یادداشت‌ها").exists());
+    fs::create_dir(base.path().join("یادداشت‌ها")).unwrap();
+    let path = config.create_unique(&mut vault, clock()).unwrap();
+    assert_eq!(path, Path::new("یادداشت‌ها/Pair-202610211305.md"));
+    assert_eq!(
+        fs::read_to_string(base.path().join(&path)).unwrap(),
+        "# Pair-202610211305\r\n2026-10-21 13:05\r\n{{content}}\r\n"
+    );
+    config.unique.template = "Templates/Missing".into();
+    assert!(config.create_unique(&mut vault, clock()).is_err());
+    assert!(!base.path().join("یادداشت‌ها/Pair-202610211306.md").exists());
+    assert_eq!(
+        fs::read_to_string(base.path().join("Templates/Unique.md")).unwrap(),
+        source
+    );
+    config.unique.template.clear();
+    config.unique.format = "[Literal]".into();
+    let literal = config.create_unique(&mut vault, clock()).unwrap();
+    fs::write(base.path().join(&literal), "Keep literal\n").unwrap();
+    assert!(
+        config
+            .create_unique(&mut vault, clock())
+            .unwrap_err()
+            .contains("Failed to generate")
+    );
+    assert_eq!(
+        fs::read_to_string(base.path().join(literal)).unwrap(),
+        "Keep literal\n"
+    );
+}
+
+#[test]
+fn unique_creation_rejects_hidden_traversal_and_linked_paths_without_writes() {
+    let base = tempfile::tempdir().unwrap();
+    let mut vault = Vault::open(base.path()).unwrap();
+    let mut config = Config::default();
+    for folder in ["../Outside", "/absolute", "__pycache__", ".hidden"] {
+        config.unique.folder = folder.into();
+        assert!(
+            config.create_unique(&mut vault, clock()).is_err(),
+            "{folder}"
+        );
+    }
+    config.unique.folder.clear();
+    for pattern in [
+        "[../Outside]",
+        "[/absolute]",
+        "[__pycache__/Hidden]",
+        "[.hidden]",
+    ] {
+        config.unique.format = pattern.into();
+        assert!(
+            config.create_unique(&mut vault, clock()).is_err(),
+            "{pattern}"
+        );
+    }
+    assert!(fs::read_dir(base.path()).unwrap().next().is_none());
+    #[cfg(unix)]
+    {
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), base.path().join("Linked")).unwrap();
+        config.unique.folder = "Linked".into();
+        config.unique.format = "YYYYMMDDHHmm".into();
+        assert!(config.create_unique(&mut vault, clock()).is_err());
+        assert!(fs::read_dir(outside.path()).unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn concurrent_unique_creations_keep_two_distinct_files() {
+    let base = tempfile::tempdir().unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let root = base.path().to_owned();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut vault = Vault::open(&root).unwrap();
+                barrier.wait();
+                Config::default()
+                    .create_unique(&mut vault, clock())
+                    .unwrap()
+            })
+        })
+        .collect();
+    let created: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    assert_ne!(created[0], created[1]);
+    for path in created {
+        assert_eq!(fs::read(base.path().join(path)).unwrap(), b"");
+    }
+}
+
+#[test]
+fn random_note_selects_only_markdown_even_after_saving_text_documents() {
+    use rust_notes::{note_aids::random_note, vault::Document};
+    let base = tempfile::tempdir().unwrap();
+    let mut vault = Vault::open(base.path()).unwrap();
+    assert!(random_note(&vault).is_none());
+    vault.save(&mut Document::new("Plain.txt".into())).unwrap();
+    assert!(random_note(&vault).is_none());
+    let mut note = Document::new("Only.md".into());
+    note.text = "Do not change this\r\nسلام\r\n".into();
+    vault.save(&mut note).unwrap();
+    fastrand::seed(7);
+    for _ in 0..32 {
+        assert_eq!(random_note(&vault).as_deref(), Some(Path::new("Only.md")));
+    }
+    assert_eq!(
+        fs::read_to_string(base.path().join("Only.md")).unwrap(),
+        note.text
+    );
+    assert_eq!(fs::read(base.path().join("Plain.txt")).unwrap(), b"");
+}
+
+#[test]
+fn unique_links_skip_existing_ids_and_ignore_creation_only_settings_without_creating_files() {
+    let base = tempfile::tempdir().unwrap();
+    let vault = Vault::open(base.path()).unwrap();
+    let mut config = Config::default();
+    config.unique.folder = "IDs".into();
+    config.unique.template = "Missing template".into();
+    assert_eq!(
+        config.unique_link(&vault, clock()).unwrap(),
+        "[[202610211305]]"
+    );
+    assert!(fs::read_dir(base.path()).unwrap().next().is_none());
+    fs::create_dir(base.path().join("IDs")).unwrap();
+    fs::write(base.path().join("IDs/202610211305.md"), "Keep original\n").unwrap();
+    assert_eq!(
+        config.unique_link(&vault, clock()).unwrap(),
+        "[[202610211306]]"
+    );
+    assert_eq!(fs::read_dir(base.path().join("IDs")).unwrap().count(), 1);
+    assert_eq!(
+        fs::read_to_string(base.path().join("IDs/202610211305.md")).unwrap(),
+        "Keep original\n"
+    );
+    config.unique.format = "[Literal]".into();
+    fs::write(base.path().join("IDs/Literal.md"), "Keep literal\n").unwrap();
+    assert!(config.unique_link(&vault, clock()).is_err());
+    assert_eq!(
+        fs::read_to_string(base.path().join("IDs/Literal.md")).unwrap(),
+        "Keep literal\n"
+    );
 }
 
 #[cfg(unix)]

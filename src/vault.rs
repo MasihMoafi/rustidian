@@ -340,22 +340,7 @@ impl Vault {
             }
             None
         };
-        let parent = absolute.parent().ok_or("Invalid note path")?;
-        let mut temporary =
-            NamedTempFile::new_in(parent).map_err(|e| format!("Cannot prepare save: {e}"))?;
-        temporary
-            .write_all(document.text.as_bytes())
-            .map_err(|e| format!("Cannot write note: {e}"))?;
-        if let Some(permissions) = permissions {
-            temporary
-                .as_file()
-                .set_permissions(permissions)
-                .map_err(|e| e.to_string())?;
-        }
-        temporary
-            .as_file()
-            .sync_all()
-            .map_err(|e| format!("Cannot flush note: {e}"))?;
+        let temporary = prepare_file(&absolute, document.text.as_bytes(), permissions)?;
         if document.original.is_none() {
             temporary
                 .persist_noclobber(&absolute)
@@ -374,12 +359,13 @@ impl Vault {
         }
         document.original = Some(document.text.clone());
         document.saved_revision = Document::next_revision();
-        let note = Note::new(document.path.clone(), document.text.clone());
-        if let Some(existing) = self
-            .notes
-            .iter_mut()
-            .find(|note| note.path == document.path)
-        {
+        self.index_note(document.path.clone(), document.text.clone());
+        Ok(())
+    }
+
+    fn index_note(&mut self, path: PathBuf, text: String) {
+        let note = Note::new(path.clone(), text);
+        if let Some(existing) = self.notes.iter_mut().find(|note| note.path == path) {
             *existing = note;
         } else {
             self.notes.push(note);
@@ -387,7 +373,55 @@ impl Vault {
                 .sort_by_key(|note| note.path.to_string_lossy().to_lowercase());
         }
         self.rebuild_lookup();
-        Ok(())
+    }
+
+    pub fn duplicate_file(&mut self, from: &Path) -> Result<PathBuf> {
+        if is_ignored_path(from) || !(is_text_document(from) || crate::assets::is_image(from)) {
+            return Err("Choose a visible note or supported image inside this vault.".into());
+        }
+        let source = self.safe_file_path(from, false)?;
+        let bytes =
+            fs::read(&source).map_err(|error| format!("Cannot read the file to copy: {error}"))?;
+        let text = is_text_document(from)
+            .then(|| {
+                std::str::from_utf8(&bytes)
+                    .map(str::to_owned)
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()?;
+        let stem = from
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .ok_or("Invalid file name.")?;
+        let extension = from
+            .extension()
+            .and_then(|value| value.to_str())
+            .ok_or("Invalid file extension.")?;
+        let parent = from.parent().unwrap_or(Path::new(""));
+        for counter in 1_u64.. {
+            let path = parent.join(format!("{stem} {counter}.{extension}"));
+            match fs::symlink_metadata(self.root.join(&path)) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            let absolute = self.safe_file_path(&path, false)?;
+            let prepared = prepare_file(&absolute, &bytes, None)?;
+            match prepared.persist_noclobber(&absolute) {
+                Ok(_) => {
+                    if let Some(text) = text {
+                        self.index_note(path.clone(), text);
+                    } else {
+                        self.attachments.push(path.clone());
+                        self.attachments.sort();
+                    }
+                    return Ok(path);
+                }
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(format!("Cannot create the copy: {}", error.error)),
+            }
+        }
+        Err("Cannot find an available copy name.".into())
     }
 
     pub fn search(&self, query: &str) -> Vec<&Note> {
@@ -543,6 +577,30 @@ impl Vault {
             .map(|&index| &self.notes[index])
             .collect()
     }
+}
+
+fn prepare_file(
+    absolute: &Path,
+    bytes: &[u8],
+    permissions: Option<fs::Permissions>,
+) -> Result<NamedTempFile> {
+    let parent = absolute.parent().ok_or("Invalid note path")?;
+    let mut temporary =
+        NamedTempFile::new_in(parent).map_err(|e| format!("Cannot prepare save: {e}"))?;
+    temporary
+        .write_all(bytes)
+        .map_err(|e| format!("Cannot write note: {e}"))?;
+    if let Some(permissions) = permissions {
+        temporary
+            .as_file()
+            .set_permissions(permissions)
+            .map_err(|e| e.to_string())?;
+    }
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("Cannot flush note: {e}"))?;
+    Ok(temporary)
 }
 
 pub fn is_markdown(path: &Path) -> bool {

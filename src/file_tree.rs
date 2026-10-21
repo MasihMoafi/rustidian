@@ -237,7 +237,7 @@ impl Tree {
                     ui.close();
                 }
                 ui.separator();
-                if theme::menu_item(ui, theme::Icon::Copy, "Make a copy…").clicked() {
+                if theme::menu_item(ui, theme::Icon::Copy, "Make a copy").clicked() {
                     open = Some(FileAction::Copy(path.clone()));
                     ui.close();
                 }

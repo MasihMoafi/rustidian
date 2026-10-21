@@ -11,6 +11,7 @@ fn layout(path: &str) -> Layout {
             path: path.into(),
             view: View::Read,
             editing_view: View::Source,
+            pinned: false,
         }],
         active: 0,
         left: false,
@@ -91,11 +92,13 @@ fn restoration_preserves_order_modes_active_identity_and_saved_missing_entries()
         path: "Home.md".into(),
         view: View::Read,
         editing_view: View::Source,
+        pinned: true,
     });
     saved.tabs.push(SavedTab {
         path: "Other.md".into(),
         view: View::Live,
         editing_view: View::Live,
+        pinned: false,
     });
     saved.active = 2;
     let restored = saved.restore(&vault).unwrap();
@@ -104,6 +107,21 @@ fn restoration_preserves_order_modes_active_identity_and_saved_missing_entries()
     assert_eq!(restored.tabs[0].document.path, Path::new("Home.md"));
     assert_eq!(restored.tabs[0].view, View::Read);
     assert_eq!(restored.tabs[0].editing_view(), View::Source);
+    assert!(restored.tabs[0].pinned);
+    assert!(!restored.tabs[1].pinned);
+    let mut legacy = serde_json::to_value(&saved).unwrap();
+    for tab in legacy["tabs"].as_array_mut().unwrap() {
+        tab.as_object_mut().unwrap().remove("pinned");
+    }
+    let legacy: Layout = serde_json::from_value(legacy).unwrap();
+    assert!(
+        legacy
+            .restore(&vault)
+            .unwrap()
+            .tabs
+            .iter()
+            .all(|tab| !tab.pinned)
+    );
     assert_eq!(restored.tabs[1].document.text, "other");
     assert_eq!(saved.tabs.len(), 3);
     assert!(layout("Missing.md").restore(&vault).is_err());

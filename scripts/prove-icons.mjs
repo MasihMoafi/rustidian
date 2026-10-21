@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
@@ -10,21 +10,26 @@ if (!modulePath) throw new Error('Set SVG_STUDIO_MODULE to the existing SVG Stud
 const sharp = createRequire(modulePath)('sharp');
 const iconsDir = resolve(root, 'assets/icons');
 const manifest = JSON.parse(await readFile(resolve(iconsDir, 'manifest.json'), 'utf8'));
+const selected = process.argv.slice(2);
+if (selected.some(name => !/^[a-z0-9-]+$/.test(name) || !manifest.icons.some(icon => icon.name === name))) throw new Error('Choose existing icon names.');
+if (selected.length) manifest.icons = manifest.icons.filter(icon => selected.includes(icon.name));
+const proofDir = resolve(iconsDir, selected.length ? `proof/selected-${selected.join('-')}` : 'proof');
+await mkdir(proofDir, {recursive: true});
 // The proof renderer uses 780px per mark; keep each SVG canvas below 32767px.
 const sheets = [], measurements = [], logs = [];
 for (let start = 0; start < manifest.icons.length; start += 30) {
   const icons = manifest.icons.slice(start, start + 30);
   const name = `source-vs-vector-${sheets.length + 1}`;
   const pairs = icons.flatMap(icon => [resolve(iconsDir, icon.source), resolve(iconsDir, icon.traced)]);
-  const proof = spawnSync(process.execPath, [resolve(root, '../skills/logo/scripts/proof.mjs'), resolve(iconsDir, `proof/${name}.png`), ...pairs], { env: process.env, encoding: 'utf8' });
+  const proof = spawnSync(process.execPath, [resolve(root, '../skills/logo/scripts/proof.mjs'), resolve(proofDir, `${name}.png`), ...pairs], { env: process.env, encoding: 'utf8' });
   logs.push(proof.stdout + proof.stderr);
-  await writeFile(resolve(iconsDir, 'proof/trace-proof.log'), logs.join('\n'));
+  await writeFile(resolve(proofDir, 'trace-proof.log'), logs.join('\n'));
   if (proof.status !== 0) throw new Error(proof.stderr || 'Logo proof failed');
   sheets.push(name);
-  measurements.push(...JSON.parse(await readFile(resolve(iconsDir, `proof/${name}.json`), 'utf8')));
+  measurements.push(...JSON.parse(await readFile(resolve(proofDir, `${name}.json`), 'utf8')));
 }
-await writeFile(resolve(iconsDir, 'proof/source-vs-vector.json'), JSON.stringify(measurements, null, 2) + '\n');
-await writeFile(resolve(iconsDir, 'proof/source-vs-vector.html'), `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Source and SVG proofs</title><style>body{margin:16px;background:#e6e8eb;font:16px sans-serif}img{display:block;max-width:100%;height:auto}</style><h1>Source and SVG proofs</h1><p>All ${manifest.icons.length} selected artworks, source left and SVG right at 24, 48, 128 and 512 pixels on both themes.</p>${sheets.map((name, index) => `<p><a href="${name}.html">Open proof sheet ${index + 1}</a></p><img src="${name}.png" alt="Source and vector comparison sheet ${index + 1}">`).join('')}</html>\n`);
+await writeFile(resolve(proofDir, 'source-vs-vector.json'), JSON.stringify(measurements, null, 2) + '\n');
+await writeFile(resolve(proofDir, 'source-vs-vector.html'), `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Source and SVG proofs</title><style>body{margin:16px;background:#e6e8eb;font:16px sans-serif}img{display:block;max-width:100%;height:auto}</style><h1>Source and SVG proofs</h1><p>All ${manifest.icons.length} selected artworks, source left and SVG right at 24, 48, 128 and 512 pixels on both themes.</p>${sheets.map((name, index) => `<p><a href="${name}.html">Open proof sheet ${index + 1}</a></p><img src="${name}.png" alt="Source and vector comparison sheet ${index + 1}">`).join('')}</html>\n`);
 
 const tileWidth = 360, tileHeight = 210;
 const layers = [];
@@ -49,5 +54,5 @@ for (const [index, icon] of manifest.icons.entries()) {
     }
   }
 }
-await sharp({ create: { width: tileWidth * 4, height: tileHeight * Math.ceil(manifest.icons.length / 4), channels: 4, background: '#eef0ee' } }).composite(layers).png().toFile(resolve(iconsDir, 'proof/native-tints.png'));
+await sharp({ create: { width: tileWidth * 4, height: tileHeight * Math.ceil(manifest.icons.length / 4), channels: 4, background: '#eef0ee' } }).composite(layers).png().toFile(resolve(proofDir, 'native-tints.png'));
 console.log('Generated original-vs-vector proof (24/48/128/512px) and native-tint proof (12/18/24/48px) on light/dark surfaces.');

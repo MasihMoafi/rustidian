@@ -12,6 +12,7 @@ const { vectorizeMulticolourImage, vectorizeImage } = await import(pathToFileURL
 const root = path.resolve('assets/icons');
 const artwork = path.join(root, 'artwork');
 const groups = {
+  pin: {key: 'pin', sheet: 'pin', columns: 1, rows: 1, names: ['pin'], scale: 3, monochrome: true},
   'trash': {key: 'trash', sheet: 'trash', columns: 1, rows: 1, names: ['trash'], scale: 3, monochrome: true},
   'window-controls': {key: 'windowControls', sheet: 'window-controls-sheet', columns: 3, rows: 1, names: ['minimize', 'maximize', 'restore'], scale: 3, monochrome: true},
   callouts: {key: 'callouts', sheet: 'callout-sheet', columns: 4, rows: 4, names: ['callout-note', 'callout-abstract', 'callout-info', 'callout-tip', 'callout-todo', 'callout-success', 'callout-question', 'callout-warning', 'callout-failure', 'callout-danger', 'callout-bug', 'callout-example', 'callout-quote'], scale: 3, monochrome: true},
@@ -23,7 +24,7 @@ const groups = {
   'file-toolbar': {key: 'fileToolbar', sheet: 'file-toolbar-sheet', columns: 3, rows: 1, names: ['new-folder', 'sort', 'collapse-all']},
 };
 const group = groups[process.argv[2] ?? 'properties'];
-if (!group) throw new Error('Choose properties, file-toolbar, files-tab, disclosure, code-controls, knowledge or callouts.');
+if (!group) throw new Error('Choose an icon group: ' + Object.keys(groups).join(', '));
 const original = path.join(artwork, `${group.sheet}-original.png`);
 const manifestPath = path.join(root, 'manifest.json');
 const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));

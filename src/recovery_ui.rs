@@ -544,8 +544,7 @@ impl Manager {
                                 "recovery-error",
                                 response.rect.intersect(ui.clip_rect()),
                             );
-                        }
-                        if let Some(notice) = &self.notice {
+                        } else if let Some(notice) = &self.notice {
                             ui.label(notice);
                         }
                     });

@@ -12,6 +12,7 @@ use std::{
 pub struct Config {
     pub templates: Templates,
     pub daily: Daily,
+    pub unique: Unique,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -50,6 +51,24 @@ impl Default for Daily {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Unique {
+    pub folder: String,
+    pub format: String,
+    pub template: String,
+}
+
+impl Default for Unique {
+    fn default() -> Self {
+        Self {
+            folder: String::new(),
+            format: "YYYYMMDDHHmm".into(),
+            template: String::new(),
+        }
+    }
+}
+
 fn relative(value: &str, empty: bool) -> Result<PathBuf> {
     let path = Path::new(value.trim());
     if (!empty && path.as_os_str().is_empty())
@@ -64,11 +83,12 @@ fn relative(value: &str, empty: bool) -> Result<PathBuf> {
 }
 
 impl Config {
-    /// Import only these two small settings files, without writing .obsidian.
+    /// Import only the small note-creation settings, without writing .obsidian.
     pub fn from_obsidian(root: &Path) -> Result<Self> {
         Ok(Self {
             templates: crate::paths::read_obsidian(root, "templates.json")?,
             daily: crate::paths::read_obsidian(root, "daily-notes.json")?,
+            unique: crate::paths::read_obsidian(root, "zk-prefixer.json")?,
         })
     }
 
@@ -147,6 +167,79 @@ impl Config {
         }
         vault.save(&mut document)?;
         Ok(path)
+    }
+
+    pub fn create_unique(&self, vault: &mut Vault, now: DateTime<FixedOffset>) -> Result<PathBuf> {
+        loop {
+            let path = self.unique_path(vault, now)?;
+            let absolute = vault.safe_path(&path, false)?;
+            if !absolute.parent().is_some_and(Path::is_dir) {
+                return Err("The unique-note folder does not exist in this vault.".into());
+            }
+            let mut document = Document::new(path.clone());
+            if !self.unique.template.trim().is_empty() {
+                let template =
+                    crate::paths::markdown_name(&relative(&self.unique.template, false)?);
+                document.text = self.render_template(vault, &template, &document.title(), now)?;
+            }
+            match vault.save(&mut document) {
+                Ok(()) => return Ok(path),
+                // A concurrent window may win this name after the check.
+                // Atomic create left its bytes intact; choose another name.
+                Err(_) if absolute.try_exists().unwrap_or(false) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    pub fn unique_link(&self, vault: &Vault, now: DateTime<FixedOffset>) -> Result<String> {
+        let path = self.unique_path(vault, now)?;
+        let name = Path::new(path.file_name().ok_or("Invalid unique-note name.")?);
+        Ok(format!("[[{}]]", crate::paths::wiki_destination(name)))
+    }
+
+    fn unique_path(&self, vault: &Vault, now: DateTime<FixedOffset>) -> Result<PathBuf> {
+        let folder = relative(&self.unique.folder, true)?;
+        let mut stamp = now;
+        let mut tried = std::collections::HashSet::new();
+        loop {
+            let name = moment_format(stamp, self.unique.format.trim(), "YYYYMMDDHHmm");
+            if !tried.insert(name.clone()) {
+                return Err(format!(
+                    "Failed to generate a unique note with the format “{}”.",
+                    self.unique.format
+                ));
+            }
+            let path = crate::paths::markdown_name(&folder.join(relative(&name, false)?));
+            let absolute = vault.safe_path(&path, false)?;
+            if !absolute.try_exists().map_err(|error| error.to_string())? {
+                return Ok(path);
+            }
+            stamp = stamp
+                .checked_add_signed(Duration::minutes(1))
+                .ok_or("Cannot advance the unique-note timestamp.")?;
+        }
+    }
+}
+
+pub fn random_note(vault: &Vault) -> Option<PathBuf> {
+    let first = fastrand::choice(&vault.notes)?;
+    if crate::vault::is_markdown(&first.path) {
+        return Some(first.path.clone());
+    }
+    // Directly opened text documents can share the index after a save. Keep
+    // selection uniform over Markdown when such documents are present.
+    let mut notes = vault
+        .notes
+        .iter()
+        .filter(|note| crate::vault::is_markdown(&note.path));
+    let count = notes.clone().count();
+    if count == 0 {
+        None
+    } else {
+        notes
+            .nth(fastrand::usize(..count))
+            .map(|note| note.path.clone())
     }
 }
 

@@ -12,6 +12,8 @@ struct Session {
     tabs: Vec<(PathBuf, View)>,
     #[serde(default)]
     editing_modes: Vec<View>,
+    #[serde(default)]
+    pinned: Vec<bool>,
     active: usize,
     left: bool,
     right: bool,
@@ -81,6 +83,7 @@ impl NotesApp {
                     vault.open_document(&path).ok()?
                 };
                 let mut tab = Tab::new(document);
+                tab.pinned = session.pinned.get(index).copied().unwrap_or(false);
                 tab.set_view(
                     session
                         .editing_modes
@@ -149,6 +152,7 @@ impl NotesApp {
         };
         let session = Session {
             editing_modes: self.tabs.iter().map(Tab::editing_view).collect(),
+            pinned: self.tabs.iter().map(|tab| tab.pinned).collect(),
             tabs: self
                 .tabs
                 .iter()
@@ -195,6 +199,7 @@ mod tests {
         assert!(state.bookmarks.items.is_empty());
         assert!(!state.bookmarks_open);
         assert!(state.note_aids.is_none());
+        assert!(state.pinned.is_empty());
         assert_eq!(state.sidebar_widths, [300.0, 234.0]);
         let restored: Session =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

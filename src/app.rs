@@ -7,6 +7,7 @@ use eframe::egui::{
     self, Align, Color32, FontId, Key, Layout, Margin, RichText, ScrollArea, Stroke, TextEdit,
 };
 use egui_commonmark::CommonMarkCache;
+use rust_notes::commands::Scope;
 use rust_notes::tab::{Tab, View};
 use rust_notes::vault::{Document, Vault, wiki_links};
 use std::{
@@ -593,6 +594,11 @@ impl NotesApp {
     }
 
     fn open_note_at(&mut self, path: &Path, new_tab: bool) {
+        let new_tab = new_tab
+            || self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.pinned && tab.document.path != path);
         if !new_tab
             && self
                 .tabs
@@ -683,6 +689,7 @@ impl NotesApp {
             return;
         }
         let new_tab = self.new_tab_gesture
+            || self.tabs.get(self.active).is_some_and(|tab| tab.pinned)
             || self.ctx.input(|input| {
                 input.modifiers.command || input.pointer.button_clicked(egui::PointerButton::Middle)
             });
@@ -787,6 +794,20 @@ impl NotesApp {
         self.editor.focus = false;
     }
 
+    fn step_tab(&mut self, back: bool) {
+        if !self.tabs.is_empty() {
+            let delta = if back { self.tabs.len() - 1 } else { 1 };
+            self.active = (self.active + delta) % self.tabs.len();
+            self.focus_editor();
+        }
+    }
+
+    fn toggle_pin(&mut self, index: usize) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.pinned = !tab.pinned;
+        }
+    }
+
     fn ask(&mut self, dialog: Dialog) {
         self.template_source = (dialog == Dialog::InsertTemplate)
             .then(|| {
@@ -871,6 +892,10 @@ impl NotesApp {
     }
 
     fn request_close_tab(&mut self, index: usize) {
+        if self.tabs[index].pinned {
+            self.toggle_pin(index);
+            return;
+        }
         if self.tabs[index].document.dirty() && !self.save(index) {
             self.pending = Some(Pending::CloseTab(index));
         } else {
@@ -964,13 +989,11 @@ impl NotesApp {
                 i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, Key::Tab)
             }) && !self.tabs.is_empty()
             {
-                self.active = (self.active + self.tabs.len() - 1) % self.tabs.len();
-                self.focus_editor();
+                self.step_tab(true);
             } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Tab))
                 && !self.tabs.is_empty()
             {
-                self.active = (self.active + 1) % self.tabs.len();
-                self.focus_editor();
+                self.step_tab(false);
             }
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Q)) {
@@ -1208,6 +1231,7 @@ impl NotesApp {
                     path: tab.document.path.clone(),
                     view: tab.view,
                     editing_view: tab.editing_view(),
+                    pinned: tab.pinned,
                 })
                 .collect(),
             active: self.active,
@@ -1565,14 +1589,7 @@ impl NotesApp {
                 ),
                 FileAction::OpenInNewTab(path) => self.open_note_at(&path, true),
                 FileAction::Copy(path) => {
-                    self.open_note(&path);
-                    if self
-                        .tabs
-                        .get(self.active)
-                        .is_some_and(|tab| tab.document.path == path)
-                    {
-                        self.ask(Dialog::SaveCopy);
-                    }
+                    self.duplicate_file(&path);
                 }
                 FileAction::CopyPath(path) => {
                     if let Some(vault) = &self.vault {
@@ -2067,6 +2084,7 @@ impl NotesApp {
 
     fn tab_strip(&mut self, ui: &mut egui::Ui) {
         let mut close = None;
+        let mut pin = None;
         egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 0))
@@ -2114,8 +2132,9 @@ impl NotesApp {
                                                 egui::Sense::click(),
                                             );
                                             let active = index == self.active;
-                                            let show_close =
-                                                active || ui.rect_contains_pointer(rect);
+                                            let show_close = tab.pinned
+                                                || active
+                                                || ui.rect_contains_pointer(rect);
                                             if active && reveal_active {
                                                 ui.scroll_to_rect_animation(
                                                     rect,
@@ -2182,13 +2201,23 @@ impl NotesApp {
                                                     ui.scope_id().with(("close-tab", tab.id())),
                                                     egui::Sense::click(),
                                                 )
-                                                .on_hover_text("Close tab · Ctrl+W");
+                                                .on_hover_text(if tab.pinned {
+                                                    "Unpin"
+                                                } else {
+                                                    "Close tab · Ctrl+W"
+                                                });
                                             if show_close {
                                                 theme::control_feedback(ui, &closing);
                                                 theme::icon_image(
-                                                    Icon::Close,
+                                                    if tab.pinned {
+                                                        Icon::Pin
+                                                    } else {
+                                                        Icon::Close
+                                                    },
                                                     if closing.hovered() {
                                                         ui.visuals().text_color()
+                                                    } else if tab.pinned {
+                                                        theme::accent(ui)
                                                     } else {
                                                         ui.visuals().weak_text_color()
                                                     },
@@ -2204,18 +2233,56 @@ impl NotesApp {
                                                 crate::ui_probe::record(
                                                     ui.ctx(),
                                                     format!(
-                                                        "close-tab:{}",
+                                                        "{}:{}",
+                                                        if tab.pinned {
+                                                            "unpin-tab"
+                                                        } else {
+                                                            "close-tab"
+                                                        },
                                                         tab.document.path.display()
                                                     ),
                                                     cross,
                                                 );
                                             }
                                             if closing.clicked() {
-                                                close = Some(index);
+                                                if tab.pinned {
+                                                    pin = Some(index);
+                                                } else {
+                                                    close = Some(index);
+                                                }
                                             } else if response.clicked() {
                                                 self.active = index;
                                                 self.editor.focus = tab.view != View::Read;
                                             }
+                                            response.context_menu(|ui| {
+                                                theme::menu_style(ui);
+                                                let action =
+                                                    theme::menu_item(ui, Icon::Close, "Close");
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-close",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    close = Some(index);
+                                                    ui.close();
+                                                }
+                                                ui.separator();
+                                                let action = theme::menu_item(
+                                                    ui,
+                                                    Icon::Pin,
+                                                    if tab.pinned { "Unpin" } else { "Pin" },
+                                                );
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-pin",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    pin = Some(index);
+                                                    ui.close();
+                                                }
+                                            });
                                             if active {
                                                 ui.painter().line_segment(
                                                     [rect.left_bottom(), rect.right_bottom()],
@@ -2240,6 +2307,9 @@ impl NotesApp {
             });
         if let Some(index) = close {
             self.request_close_tab(index);
+        }
+        if let Some(index) = pin {
+            self.toggle_pin(index);
         }
     }
 
@@ -2576,11 +2646,19 @@ impl NotesApp {
                     ui.weak("↑ ↓ navigate · Enter to insert template · Esc to dismiss");
                 }
                 Dialog::Commands => {
-                    let image = self
-                        .tabs
-                        .get(self.active)
-                        .is_some_and(|tab| tab.document.is_image());
-                    let matches = rust_notes::commands::ranked(&self.dialog_input, image);
+                    let tab = self.tabs.get(self.active);
+                    let scope = if tab.is_none() {
+                        Scope::Global
+                    } else if tab.is_some_and(|tab| tab.document.is_blank()) {
+                        Scope::Tab
+                    } else if tab.is_some_and(|tab| tab.document.is_image()) {
+                        Scope::File
+                    } else if self.can_edit_active() {
+                        Scope::Editor
+                    } else {
+                        Scope::Document
+                    };
+                    let matches = rust_notes::commands::ranked(&self.dialog_input, scope);
                     if input.changed() {
                         self.dialog_selected = 0;
                     }
@@ -2718,6 +2796,31 @@ impl NotesApp {
                                     "HH:mm",
                                 );
                             }
+                            if show("unique notes prefix format folder template") {
+                                ui.separator();
+                                ui.strong("Unique note creator");
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-unique-folder",
+                                    "New file location",
+                                    &mut self.note_aids.unique.folder,
+                                    "Vault folder",
+                                );
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-unique-template",
+                                    "Template file location",
+                                    &mut self.note_aids.unique.template,
+                                    "Optional template note",
+                                );
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-unique-format",
+                                    "Unique prefix format",
+                                    &mut self.note_aids.unique.format,
+                                    "YYYYMMDDHHmm",
+                                );
+                            }
                             if show("file recovery snapshots history interval length days") {
                                 ui.separator();
                                 ui.strong("File recovery");
@@ -2815,9 +2918,10 @@ impl NotesApp {
                                     .id_salt("settings-shortcuts")
                                     .max_height(280.0)
                                     .show(ui, |ui| {
-                                        for command in
-                                            rust_notes::commands::ranked(&self.dialog_input, false)
-                                        {
+                                        for command in rust_notes::commands::ranked(
+                                            &self.dialog_input,
+                                            Scope::Editor,
+                                        ) {
                                             if !command.shortcut.is_empty() {
                                                 ui.horizontal(|ui| {
                                                     ui.label(command.name);
@@ -3179,6 +3283,20 @@ impl NotesApp {
             return;
         }
         match command {
+            rust_notes::commands::DUPLICATE_FILE => {
+                if let Some(path) = self
+                    .tabs
+                    .get(self.active)
+                    .map(|tab| tab.document.path.clone())
+                {
+                    self.duplicate_file(&path);
+                }
+            }
+            "Toggle pin" => self.toggle_pin(self.active),
+            "New tab" => self.new_tab(),
+            "Close current tab" if !self.tabs.is_empty() => self.request_close_tab(self.active),
+            "Go to next tab" => self.step_tab(false),
+            "Go to previous tab" => self.step_tab(true),
             "File recovery: Open local history" => self.open_recovery(true),
             "Workspaces: Manage workspace layouts" => self.show_workspaces(false),
             "Workspaces: Load workspace layout" => self.show_workspaces(true),
@@ -3194,6 +3312,31 @@ impl NotesApp {
                 }
             }
             "Daily notes: Open today's daily note" => self.open_daily(),
+            "Unique note creator: Create new unique note" => {
+                self.open_created_note(rust_notes::note_aids::Config::create_unique);
+            }
+            rust_notes::commands::ADD_UNIQUE_LINK if self.editable_note() => {
+                if let Some(vault) = &self.vault {
+                    match self
+                        .note_aids
+                        .unique_link(vault, chrono::Local::now().fixed_offset())
+                    {
+                        Ok(text) => self.editor.insert_wiki_link(&self.tabs[self.active], text),
+                        Err(error) => self.error = Some(error),
+                    }
+                }
+            }
+            "Random note: Open random note" => {
+                if let Some(path) = self
+                    .vault
+                    .as_ref()
+                    .and_then(rust_notes::note_aids::random_note)
+                {
+                    self.open_note(&path);
+                } else {
+                    self.status = "No Markdown notes in this vault.".into();
+                }
+            }
             "Templates: Insert template" if self.editable_note() => {
                 self.ask(Dialog::InsertTemplate);
             }
@@ -3278,10 +3421,30 @@ impl NotesApp {
         }
     }
 
+    fn duplicate_file(&mut self, path: &Path) {
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.document.path == path && tab.document.dirty())
+            && !self.save(index)
+        {
+            return;
+        }
+        let Some(vault) = &mut self.vault else { return };
+        match vault.duplicate_file(path) {
+            Ok(copy) => {
+                self.tree = Tree::from_vault(vault);
+                self.files = rust_notes::search::FileMatcher::from_vault(vault);
+                self.search_cache.invalidate();
+                self.error = None;
+                self.open_note_at(&copy, true);
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
     fn editable_note(&mut self) -> bool {
-        if self.tabs.get(self.active).is_some_and(|tab| {
-            !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Read
-        }) {
+        if self.can_edit_active() {
             true
         } else {
             self.error = Some("Open a note in an editing view first.".into());
@@ -3289,7 +3452,24 @@ impl NotesApp {
         }
     }
 
+    fn can_edit_active(&self) -> bool {
+        self.tabs.get(self.active).is_some_and(|tab| {
+            !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Read
+        })
+    }
+
     fn open_daily(&mut self) {
+        self.open_created_note(rust_notes::note_aids::Config::create_daily);
+    }
+
+    fn open_created_note(
+        &mut self,
+        create: impl FnOnce(
+            &rust_notes::note_aids::Config,
+            &mut Vault,
+            chrono::DateTime<chrono::FixedOffset>,
+        ) -> rust_notes::vault::Result<PathBuf>,
+    ) {
         if self
             .tabs
             .get(self.active)
@@ -3301,10 +3481,7 @@ impl NotesApp {
         let Some(vault) = &mut self.vault else {
             return;
         };
-        match self
-            .note_aids
-            .create_daily(vault, chrono::Local::now().fixed_offset())
-        {
+        match create(&self.note_aids, vault, chrono::Local::now().fixed_offset()) {
             Ok(path) => {
                 self.tree = Tree::from_vault(vault);
                 self.files = rust_notes::search::FileMatcher::from_vault(vault);
@@ -3456,11 +3633,14 @@ impl eframe::App for NotesApp {
         {
             egui::Panel::top("error").show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(
+                    let message = ui.colored_label(
                         Color32::from_rgb(235, 157, 132),
                         RichText::new(error).size(13.0),
                     );
-                    if ui.button("Dismiss").clicked() {
+                    crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
+                    let dismiss = ui.button("Dismiss");
+                    crate::ui_probe::record(ui.ctx(), "error-dismiss", dismiss.rect);
+                    if dismiss.clicked() {
                         self.error = None;
                     }
                     if self

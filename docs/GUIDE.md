@@ -330,6 +330,14 @@ Copy the native location entry back and require the exact intended path before
 OK; this distinguishes a focused entry from file-list search or relative path
 input. Assert the exact opened root and retain a picker screenshot. Local positive/negative calibration must distinguish this
 input problem from a Rust vault failure.
+While a native picker is open, a global Enter can reach it even after attempting
+to focus its parent. For the busy-parent negative, temporarily unmap the picker,
+assert parent focus and require a native receipt of the physical key before
+asserting no submission. Remap/refocus the picker for its real selection flow.
+Direct XSendEvent keys are ignored by egui-winit and cannot prove this guard.
+A bounded clipboard wait must still match the exact expected path and retain
+failed targets/values; never accept a different root to make the check pass.
+
 
 Run the focused `--section vaults` and retained full regression through Actions.
 Require real picker selection, creation/collision/cancel, recent switching and
@@ -474,11 +482,34 @@ filenames while both sampled prefixes were identical, preserving the first file.
 Random-note checks should start from a blank tab so doing nothing cannot pass;
 an empty-vault negative must verify no note opens or is created. Retain observed
 reference errors separately from the safe empty outcome.
+Unique-note settings are read from zk-prefixer.json. In the observed1.13.7
+workflow, a missing output folder or template creates no file, and a repeated
+literal format reports failure rather than appending an invented numeric suffix.
+The internal-link command uses the same collision lookup but does not require
+the creation folder/template to exist; it inserts only the basename and positions
+the caret before the closing brackets. It is unavailable in Reading. Verify a
+single undo/redo and type an alias at the resulting caret. Wait for the reference
+editor's actual file bytes before treating an autosave delay as lost edits.
+
+Exercise pinned-tab close actions separately from ordinary close. In1.13.7,
+the first Ctrl+W unpins the active tab without closing it; the second closes it.
+Pinned navigation creates/chooses another tab, and Close all other tabs preserves
+pinned views. Retain per-vault/session/named-layout pin state and compare the
+actual independent groups; a source/preview split is a different workflow.
 
 Measure the actual menu rows, not just their parent container. The1.13.7 file
 menu container is15px, while its items are13px and about24.9px high. Match the
 ordered actions and test each action before mapping similarly named features;
 the menu's version history is not evidence of local snapshot recovery.
+Make a copy is immediate: append a space and the first available positive
+number to the complete basename, in the same folder. A numbered copy gets its
+own suffix (sample2 becomes sample2 1), and images are copied as bytes. Keep the
+explicit Save a copy recovery dialog separate. Use atomic create-without-replace
+and update the index without rereading the vault. The1.13.7 reference initially
+copies CRLF exactly but later normalizes the earlier copy after another opens;
+record those action-time bytes when testing Move cancellation. Native copies
+preserve their exact source bytes.
+
 
 ## Deliver the change
 

@@ -88,11 +88,15 @@ jobs:
           retention-days: 1
           path: ${{ runner.temp }}/rust-notes-functional/
           if-no-files-found: ignore
-      - name: Check recovery with the existing debug app before optimized compilation
+      - name: Check new workflows before optimized compilation
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
           if [ -x target/debug/rust-notes ]; then
+            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section vaults 2>&1 | tee reports/early-vaults-gui.log
             /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section recovery 2>&1 | tee reports/early-recovery-gui.log
+            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
+            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-actions 2>&1 | tee reports/early-tab-actions-gui.log
+            /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
           fi
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
@@ -103,7 +107,18 @@ jobs:
           if-no-files-found: ignore
           path: |
             reports/early-recovery-gui.log
+            reports/early-vaults-gui.log
+            reports/early-note-creators-gui.log
+            reports/early-tab-actions-gui.log
+            reports/early-file-copy-gui.log
+            reports/native-vault*.png
+            reports/native-vault-picker-entry.json
             reports/native-recovery-*.png
+            reports/native-unique-*.png
+            reports/native-random-*.png
+            reports/native-pinned-tabs.png
+            reports/native-tab-menu-*.png
+            reports/native-file-copy*.png
             reports/gui-*.json
             reports/gui-failure.png
             reports/missing-control*
@@ -155,6 +170,9 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vaults 2>&1 | tee reports/vaults-gui.log
           RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-creators 2>&1 | tee reports/note-creators-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tab-actions 2>&1 | tee reports/tab-actions-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-copy 2>&1 | tee reports/file-copy-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section recovery 2>&1 | tee reports/recovery-gui.log
           exit "$gui_status"
@@ -184,6 +202,11 @@ jobs:
             reports/native-daily-*.png
             reports/native-workspaces-*.png
             reports/native-recovery-*.png
+            reports/native-unique-*.png
+            reports/native-random-*.png
+            reports/native-pinned-tabs.png
+            reports/native-tab-menu-*.png
+            reports/native-file-copy*.png
             reports/native-image-tab-*.png
             reports/native-palette-queued.png
             reports/native-unicode-keyboard.png

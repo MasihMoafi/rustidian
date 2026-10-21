@@ -14,6 +14,8 @@ pub struct SavedTab {
     pub path: PathBuf,
     pub view: View,
     pub editing_view: View,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -74,6 +76,7 @@ impl Layout {
             let mut tab = Tab::new(document);
             tab.set_view(saved.editing_view);
             tab.set_view(saved.view);
+            tab.pinned = saved.pinned;
             tabs.push(tab);
         }
         if tabs.is_empty() && !self.tabs.is_empty() {

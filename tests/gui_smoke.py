@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "file-copy", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -893,6 +893,12 @@ def main():
                     assert note.read_text() == expected + " reopened", (name, "reopen")
                 results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
 
+            def file_menu(path):
+                if control_bounds("file:" + path, required=False) is None:
+                    click_control("folder:Notes")
+                click_control("file:" + path, "3")
+                control_bounds("menu:Open in new tab")
+
             def chrome_checks():
                 assert control_bounds("folder:__pycache__", required=False) is None
                 assert control_bounds("folder:.git", required=False) is None
@@ -915,14 +921,8 @@ def main():
                 capture("native-window-controls-hover.png")
                 results.append("All three generated window controls show immediate visible hover feedback")
 
-                def file_menu(path):
-                    if control_bounds("file:" + path, required=False) is None:
-                        click_control("folder:Notes")
-                    click_control("file:" + path, "3")
-                    control_bounds("menu:Open in new tab")
-
                 file_menu("Notes/First steps.md")
-                for label in ["Open in new tab", "Make a copy…", "Bookmark…", "Copy path", "Rename…", "Delete"]:
+                for label in ["Open in new tab", "Make a copy", "Bookmark…", "Copy path", "Rename…", "Delete"]:
                     left, top, right, bottom = control_bounds("menu:" + label)
                     assert 24 <= bottom-top <= 30 and 190 <= right-left <= 240, (label, right-left, bottom-top)
                 capture("native-file-context-menu.png")
@@ -967,21 +967,23 @@ def main():
                     owner.wait(timeout=5)
                 title_contains("First steps")
                 file_menu("Home.md")
-                click_control("menu:Make a copy…")
-                control_bounds("dialog-input-focused")
-                key("ctrl+a")
-                type_text("Menu copy.md")
-                key("Return")
-                title_contains("Menu copy")
-                assert (fixture / "Menu copy.md").read_bytes() == originals["Home.md"]
-                file_menu("Menu copy.md")
+                click_control("menu:Make a copy")
+                assert control_bounds("dialog-input",required=False) is None
+                created=set(str(p.relative_to(fixture)) for p in fixture.rglob("*.md"))-set(originals)
+                assert len(created)==1
+                copied=next(iter(created))
+                assert Path(copied).name.startswith("Home ")
+                title_contains(Path(copied).stem)
+                assert (fixture / copied).read_bytes() == originals["Home.md"]
+                assert control_bounds("tab-full:Notes/First steps.md")
+                file_menu(copied)
                 click_control("menu:Rename…")
                 control_bounds("dialog-input-focused")
                 key("ctrl+a")
                 type_text("Menu renamed.md")
                 key("Return")
                 title_contains("Menu renamed")
-                assert not (fixture / "Menu copy.md").exists()
+                assert not (fixture / copied).exists()
                 assert (fixture / "Menu renamed.md").read_bytes() == originals["Home.md"]
                 file_menu("Menu renamed.md")
                 click_control("menu:Delete")
@@ -2624,11 +2626,18 @@ def main():
                         break
                     time.sleep(.05)
                 assert picker, "Browse must launch the real native folder chooser"
+                # Hide the picker before giving the parent a physical key. GTK
+                # can otherwise reclaim focus and accept that Return itself.
+                xdo("windowunmap",picker)
                 xdo("windowfocus", "--sync", window)
+                pause()
+                assert xdo("getwindowfocus")==window
                 key("Return")
+                assert control_bounds("vault-parent-enter-observed")[0]==1
                 assert control_bounds("vault-manager")
                 assert xdo("getwindowname", picker) == "Open folder as vault", "A busy parent must not submit or close its picker"
                 title_contains(fixture.name)
+                xdo("windowmap","--sync",picker)
                 xdo("windowfocus", "--sync", picker)
                 pause()
                 modified_shortcut(xdo, "l")
@@ -2640,8 +2649,14 @@ def main():
                 modified_shortcut(xdo, "a")
                 modified_shortcut(xdo, "c")
                 pause()
-                entered = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, timeout=5).decode()
-                location = {"expected": str(opened), "actual": entered, "focus": xdo("getwindowfocus"), "picker": picker}
+                entered="";samples=[];deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    copied=subprocess.run(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,capture_output=True,timeout=2)
+                    entered=copied.stdout.decode()
+                    samples.append({"returncode":copied.returncode,"actual":entered,"error":copied.stderr.decode()})
+                    if copied.returncode==0 and entered.rstrip("/")==str(opened):break
+                    time.sleep(.05)
+                location = {"expected": str(opened), "actual": entered, "focus": xdo("getwindowfocus"), "picker": picker,"clipboard_samples":samples}
                 (reports / "native-vault-picker-entry.json").write_text(json.dumps(location, indent=2) + "\n")
                 if entered.rstrip("/") != str(opened):
                     (reports / "gui-vaults-failure-location.json").write_text(json.dumps(location, indent=2) + "\n")
@@ -3173,6 +3188,291 @@ def main():
                 assert path.read_text() == source
                 results.append("Two vaults with equal note names retained independent bookmark lists and original note bytes")
 
+            def setting(name, value):
+                click_control(name, hold=.15)
+                modified_shortcut(xdo, "a")
+                if value:
+                    paste_text(value, held=True)
+                else:
+                    key("BackSpace")
+
+            def file_copy_checks():
+                close_tabs()
+                originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
+                sample=fixture/"Copy source.md";source=b"# Copy source\r\n\r\nExact bytes stay here.\r\n";sample.write_bytes(source)
+                collision=fixture/"Copy source 1.md";collision.write_bytes(b"KEEP_COPY_COLLISION\n")
+                command("Refresh vault");pause();open_note("Home")
+                file_menu("Copy source.md");click_control("menu:Make a copy",hold=.15)
+                copied=fixture/"Copy source 2.md"
+                title_contains(copied.stem)
+                assert control_bounds("dialog-input",required=False) is None
+                assert copied.read_bytes()==source and sample.read_bytes()==source
+                assert collision.read_bytes()==b"KEEP_COPY_COLLISION\n"
+                assert control_bounds("tab-full:Home.md")
+                capture("native-file-copy.png")
+                results.append("The real Make a copy menu immediately opened the next numbered copy in a new tab, preserved CRLF/source bytes and skipped the occupied name without a filename dialog")
+
+                command("Toggle pin")
+                command("Make a copy of the current file")
+                twice=fixture/"Copy source 2 1.md";title_contains(twice.stem)
+                assert control_bounds("unpin-tab:Copy source 2.md")
+                assert twice.read_bytes()==source and copied.read_bytes()==source
+                assert control_bounds("tab-full:Copy source 2.md")
+                results.append("The palette command copied the numbered copy using its complete basename, matching the reference and retaining both source tabs")
+
+                image=fixture/"Copy image.png"
+                Image.new("RGB",(24,16),(47,157,212)).save(image)
+                image_bytes=image.read_bytes()
+                command("Refresh vault");pause();key("ctrl+t")
+                file_menu(image.name);click_control("menu:Make a copy",hold=.15)
+                image_copy=fixture/"Copy image 1.png";title_contains(image_copy.stem)
+                assert image_copy.read_bytes()==image_bytes and image.read_bytes()==image_bytes
+                assert control_bounds("attachment-image")
+                command("Make a copy of the current file")
+                image_twice=fixture/"Copy image 1 1.png";title_contains(image_twice.stem)
+                assert image_twice.read_bytes()==image_bytes
+                capture("native-file-copy-image.png")
+                results.append("Both the file menu and palette copied binary images exactly and opened the resulting real image views")
+
+                close_tabs();command("New tab")
+                command("Make a copy of the current file",available=False);key("Escape")
+                assert all((fixture/name).read_bytes()==data for name,data in originals.items())
+                assert sample.read_bytes()==source and copied.read_bytes()==source and twice.read_bytes()==source
+                assert collision.read_bytes()==b"KEEP_COPY_COLLISION\n" and image.read_bytes()==image_bytes
+                results.append("The copy command was unavailable without a file, while every original document and occupied destination kept its exact bytes")
+
+            def tab_action_checks():
+                nonlocal app, window
+                close_tabs()
+                originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
+                notes={"Pinned first.md":b"# Pinned first\n\n[[Pinned third]]\n", "Pinned second.md":b"# Pinned second\n\nKeep second.\n", "Pinned third.md":b"# Pinned third\n\nKeep third.\n", "Pinned fourth.md":b"# Pinned fourth\n\nKeep fourth.\n"}
+                for name,data in notes.items():(fixture/name).write_bytes(data)
+                command("Refresh vault");pause();open_note("Pinned first")
+                key("ctrl+p");type_text("Save note");assert control_bounds("command:Save note");key("Escape")
+                command("Toggle pin")
+                control_bounds("unpin-tab:Pinned first.md")
+                open_note("Pinned second")
+                assert control_bounds("tab-full:Pinned first.md")
+                assert control_bounds("tab-full:Pinned second.md")
+                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Pinned first.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(sessions)==1
+                session_path=sessions[0]
+                def pinned():
+                    state=json.loads(session_path.read_text())
+                    return {path:state["pinned"][index] for index,(path,_) in enumerate(state["tabs"])}
+                assert pinned()=={"Pinned first.md":True,"Pinned second.md":False}
+                capture("native-pinned-tabs.png")
+                results.append("Pinning through the palette protected the first tab while quick switching opened the second and persisted its real pin state")
+
+                click_control("tab-full:Pinned first.md");command("Reading view")
+                left,top,right,bottom=control_bounds("reading-block:1")
+                xdo("mousemove",str(round(left+min(20,(right-left)/2))),str(round((top+bottom)/2)),"mousedown","1")
+                time.sleep(.15);xdo("mouseup","1");pause();title_contains("Pinned third")
+                assert pinned()=={"Pinned first.md":True,"Pinned second.md":False,"Pinned third.md":False}
+                assert (fixture/"Pinned first.md").read_bytes()==notes["Pinned first.md"]
+                results.append("An ordinary held internal-link click from the pinned document opened the target while retaining the source tab and exact Markdown")
+
+                command("Go to previous tab");title_contains("Pinned second")
+                command("Go to next tab");title_contains("Pinned third")
+                command("New tab");title_contains("New tab")
+                command("Close current tab");title_contains("Pinned third")
+                app.terminate();app.wait(timeout=5);app=launch_app(launch_command);window=ready_window()
+                assert pinned()["Pinned first.md"]
+                control_bounds("unpin-tab:Pinned first.md")
+                results.append("Palette tab cycling/new/close reused the keyboard behavior, and a real restart restored the pinned document")
+
+                click_control("tab-full:Pinned first.md",button="3")
+                click_control("tab-menu-pin",hold=.15)
+                assert not pinned()["Pinned first.md"]
+                click_control("tab-full:Pinned first.md",button="3")
+                click_control("tab-menu-pin",hold=.15)
+                assert pinned()["Pinned first.md"]
+                click_control("unpin-tab:Pinned first.md",hold=.15)
+                assert not pinned()["Pinned first.md"]
+                click_control("tab-full:Pinned first.md");open_note("Pinned fourth")
+                assert "Pinned first.md" not in pinned() and len(pinned())==3
+                for dark in (False,True):
+                    state=json.loads(session_path.read_text())
+                    if state["dark"]!=dark:command("Switch appearance")
+                    command("Toggle pin")
+                    click_control("tab-full:Pinned fourth.md",button="3")
+                    capture("native-tab-menu-"+("dark" if dark else "light")+".png");key("Escape")
+                    command("Toggle pin")
+                results.append("The real tab menu and pin glyph both toggled pinning; unpinning restored ordinary navigation without creating files, with both-theme menu captures")
+
+                command("Toggle pin");key("ctrl+w")
+                title_contains("Pinned fourth")
+                assert not pinned()["Pinned fourth.md"]
+                key("ctrl+w")
+                assert "Pinned fourth.md" not in pinned()
+                other=base/"Pin other vault";other.mkdir();(other/"Pinned second.md").write_bytes(b"# Independent pin vault\n")
+                command("Toggle pin")
+                original_pin_state=pinned()
+                command("Open vault");modified_shortcut(xdo,"a");paste_text(str(other),held=True);key("Return");title_contains(other.name)
+                assert control_bounds("unpin-tab:Pinned second.md",required=False) is None
+                command("Open vault");modified_shortcut(xdo,"a");paste_text(str(fixture),held=True);key("Return");title_contains(fixture.name)
+                assert pinned()==original_pin_state
+                assert all((fixture/name).read_bytes()==data for name,data in originals.items())
+                assert all((fixture/name).read_bytes()==data for name,data in notes.items())
+                assert (other/"Pinned second.md").read_bytes()==b"# Independent pin vault\n"
+                results.append("Ctrl+W first unpinned then closed, matching the reference; separate vaults retained independent pin states and every original note byte")
+                close_tabs()
+                command("Toggle pin",available=False);key("Escape")
+                command("Close current tab",available=False);key("Escape")
+                command("New tab");command("Toggle pin")
+                control_bounds("unpin-tab:")
+                key("ctrl+w");title_contains("New tab")
+                assert control_bounds("unpin-tab:",required=False) is None
+                key("ctrl+w")
+                assert all((fixture/name).read_bytes()==data for name,data in notes.items())
+                results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
+
+            def note_creator_checks():
+                nonlocal app, window
+                close_tabs()
+                originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
+                origin=fixture/"Creator origin.md";origin.write_bytes(b"# Creator origin\n\nPreserve this note.\n")
+                templates=fixture/"Creator templates";templates.mkdir()
+                template=templates/"Unique template.md"
+                source=b"# {{title}}\r\n{{date:YYYY-MM-DD}}\r\n{{content}}\r\n- [ ] Keep\r\n"
+                template.write_bytes(source)
+                output=fixture/"Creator output";output.mkdir()
+                command("Refresh vault");pause();open_note("Creator origin");command("Source editing")
+                key("ctrl+p");type_text("Save note");assert control_bounds("command:Save note");key("Escape")
+
+                def configure(**values):
+                    command("Open settings");type_text("unique note")
+                    for name,value in values.items():setting("settings-unique-"+name,value)
+                    key("Escape")
+
+                configure(folder="Creator output",format="[Pair-]YYYYMMDDHHmm",template="Creator templates/Unique template.md")
+                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Creator origin.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(sessions)==1
+                session_path=sessions[0]
+                expected={"folder":"Creator output","format":"[Pair-]YYYYMMDDHHmm","template":"Creator templates/Unique template.md"}
+                assert json.loads(session_path.read_text())["note_aids"]["unique"]==expected
+                for dark in (True,False):
+                    if json.loads(session_path.read_text())["dark"]!=dark:command("Switch appearance")
+                    command("Open settings");type_text("unique note")
+                    capture("native-unique-settings-"+("dark" if dark else "light")+".png");key("Escape")
+                command("Switch appearance")
+                xdo("windowsize",window,"700","610");pause()
+                command("Open settings");type_text("unique note")
+                for name in ("folder","format","template"):
+                    rect=control_bounds("settings-unique-"+name)
+                    assert 0<=rect[0]<rect[2]<=700 and 0<=rect[1]<rect[3]<=610,(name,rect)
+                capture("native-unique-settings-compact.png");key("Escape")
+                xdo("windowsize",window,"1440","960");pause()
+                results.append("Unique-note settings persist exact folder/format/template values and remain visible in both themes and a compact window")
+
+                original_origin=origin.read_bytes()
+                before={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
+                editor_end();command("Unique note creator: Add unique internal link");key("ctrl+s")
+                inserted=origin.read_bytes()
+                assert inserted.startswith(original_origin+b"[[Pair-") and inserted.endswith(b"]]")
+                assert {p.relative_to(fixture).as_posix() for p in fixture.rglob("*.md")}==set(before)
+                key("ctrl+z");key("ctrl+s");assert origin.read_bytes()==original_origin
+                key("ctrl+y");key("ctrl+s");assert origin.read_bytes()==inserted
+                key("Escape");assert control_bounds("editor-focused")
+                type_text("|LABEL");key("ctrl+s")
+                assert origin.read_bytes()==inserted[:-2]+b"|LABEL]]",origin.read_bytes()
+                capture("native-unique-internal-link.png")
+                modified_shortcut(xdo,"a");paste_text(original_origin.decode(),held=True);key("ctrl+s")
+                assert origin.read_bytes()==original_origin
+                command("Reading view")
+                command("Unique note creator: Add unique internal link",available=False)
+                key("Escape");assert origin.read_bytes()==original_origin
+                command("Source editing")
+                assert {p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}==before
+                results.append("Unique internal link inserted without creating a file, preserved single undo/redo, positioned the caret inside its brackets and stayed unavailable in Reading")
+
+                while datetime.now().astimezone().second>45:time.sleep(.2)
+                prefix=datetime.now().astimezone().strftime("Pair-%Y%m%d%H%M")
+                command("Unique note creator: Create new unique note")
+                first=output/(prefix+".md")
+                today=datetime.now().astimezone().strftime("%Y-%m-%d")
+                expected_bytes=("# "+first.stem+"\r\n"+today+"\r\n{{content}}\r\n- [ ] Keep\r\n").encode()
+                assert first.read_bytes()==expected_bytes
+                title_contains(first.stem)
+                first.write_bytes(b"KEEP_UNIQUE_FIRST\n");time.sleep(.5)
+                key("ctrl+t")
+                assert datetime.now().astimezone().strftime("Pair-%Y%m%d%H%M")==prefix
+                command("Unique note creator: Create new unique note")
+                created=list(output.glob("*.md"));assert len(created)==2
+                second=next(p for p in created if p!=first)
+                assert first.read_bytes()==b"KEEP_UNIQUE_FIRST\n" and second.read_bytes().startswith(("# "+second.stem+"\r\n").encode())
+                assert template.read_bytes()==source
+                capture("native-unique-created.png")
+                results.append("Actual same-prefix unique creation used the configured template, retained CRLF/unknown tokens and preserved the first file on collision")
+
+                configure(format="[Literal]",template="")
+                command("Unique note creator: Create new unique note")
+                literal=output/"Literal.md";assert literal.read_bytes()==b""
+                literal.write_bytes(b"KEEP_LITERAL\n");time.sleep(.4);key("ctrl+t")
+                blank_title=xdo("getwindowname",window)
+                before={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
+                command("Unique note creator: Create new unique note")
+                assert control_bounds("error-notice")
+                assert xdo("getwindowname",window)==blank_title
+                assert {p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}==before
+                capture("native-unique-constant-error.png")
+                click_control("error-dismiss",hold=.15)
+                assert control_bounds("error-notice",required=False) is None
+                for values in ({"format":"[Missing-]YYYYMMDDHHmm","template":"Creator templates/Missing"},{"folder":"Missing creator folder","template":""}):
+                    configure(**values)
+                    command("Unique note creator: Create new unique note")
+                    assert control_bounds("error-notice")
+                    assert xdo("getwindowname",window)==blank_title
+                    assert {p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}==before
+                    click_control("error-dismiss",hold=.15)
+                    assert control_bounds("error-notice",required=False) is None
+                assert not (fixture/"Missing creator folder").exists()
+                results.append("Constant-name collisions and missing templates/folders gave visible errors without opening or overwriting a file")
+
+                configure(**expected)
+                other=base/"Creators other vault";other.mkdir();(other/"Home.md").write_bytes(b"# Other creator vault\n")
+                def switch(root):
+                    command("Open vault");modified_shortcut(xdo,"a");paste_text(str(root),held=True);key("Return");title_contains(root.name)
+                switch(other)
+                command("Unique note creator: Create new unique note")
+                other_notes=[p for p in other.glob("*.md") if p.name!="Home.md"]
+                assert len(other_notes)==1 and other_notes[0].read_bytes()==b""
+                assert not (other/"Creator output").exists()
+                switch(fixture)
+                assert json.loads(session_path.read_text())["note_aids"]["unique"]==expected
+                app.terminate();app.wait(timeout=5);app=launch_app(launch_command);window=ready_window()
+                assert json.loads(session_path.read_text())["note_aids"]["unique"]==expected
+                previous=set(output.glob("*.md"))
+                command("Unique note creator: Create new unique note")
+                added=set(output.glob("*.md"))-previous;assert len(added)==1
+                assert next(iter(added)).read_bytes().startswith(b"# Pair-")
+                assert (other/"Home.md").read_bytes()==b"# Other creator vault\n"
+                results.append("A native restart and vault switch retained the original unique-note preferences while a second vault used independent defaults")
+
+                random_vault=base/"Random creator vault";random_vault.mkdir()
+                for name in ("One.md","Two.md","Nested/Three.md","__pycache__/Skip.md",".hidden/Skip.md"):
+                    path=random_vault/name;path.parent.mkdir(exist_ok=True);path.write_bytes(("# "+name+"\nKeep this file.\n").encode())
+                switch(random_vault)
+                before={p.relative_to(random_vault).as_posix():p.read_bytes() for p in random_vault.rglob("*.md")}
+                valid={name+" — "+random_vault.name+" — Rust Notes" for name in ("One","Two","Three")}
+                for _ in range(3):
+                    key("ctrl+t");blank_title=xdo("getwindowname",window)
+                    command("Random note: Open random note")
+                    assert xdo("getwindowname",window)!=blank_title and xdo("getwindowname",window) in valid
+                assert {p.relative_to(random_vault).as_posix():p.read_bytes() for p in random_vault.rglob("*.md")}==before
+                capture("native-random-note.png")
+                results.append("Random note opened actual Markdown files from three blank-tab origins and left every document byte unchanged")
+
+                empty=base/"Empty creator vault";empty.mkdir();switch(empty)
+                blank_title=xdo("getwindowname",window)
+                command("Random note: Open random note")
+                assert xdo("getwindowname",window)==blank_title and not list(empty.iterdir())
+                switch(fixture)
+                assert all((fixture/name).read_bytes()==data for name,data in originals.items())
+                assert origin.read_bytes()==b"# Creator origin\n\nPreserve this note.\n" and template.read_bytes()==source
+                assert first.read_bytes()==b"KEEP_UNIQUE_FIRST\n" and literal.read_bytes()==b"KEEP_LITERAL\n"
+                results.append("An empty-vault random command created no files and opened no note; all original notes/templates and collision contents survived")
+
             def note_aids_checks():
                 open_note("Home")
                 command("Source editing")
@@ -3201,14 +3501,6 @@ def main():
                 target.write_text(original)
                 command("Refresh vault")
                 pause()
-
-                def setting(name, value):
-                    click_control(name, hold=.15)
-                    modified_shortcut(xdo, "a")
-                    if value:
-                        paste_text(value, held=True)
-                    else:
-                        key("BackSpace")
 
                 def settings_page(query):
                     command("Open settings")
@@ -3946,6 +4238,21 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "note-aids"}))
                 return
+            if args.section == "file-copy":
+                file_copy_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "file-copy"}))
+                return
+            if args.section == "tab-actions":
+                tab_action_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-actions"}))
+                return
+            if args.section == "note-creators":
+                note_creator_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "note-creators"}))
+                return
             if args.section == "chrome":
                 chrome_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -4360,6 +4667,7 @@ def main():
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,
+                file_copy_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,
@@ -4390,6 +4698,8 @@ def main():
                 bookmark_checks,
                 persian_checks,
                 note_aids_checks,
+                note_creator_checks,
+                tab_action_checks,
                 workspace_checks,
                 palette_queue_checks,
                 unicode_queue_checks,

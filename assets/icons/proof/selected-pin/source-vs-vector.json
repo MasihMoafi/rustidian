@@ -1,0 +1,98 @@
+[
+  {
+    "name": "traced-pin",
+    "theme": "light",
+    "size": 24,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.013178558460421206,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.036011651037226484,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 184
+  },
+  {
+    "name": "traced-pin",
+    "theme": "light",
+    "size": 48,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.00902323892519971,
+    "changedPixels": 0.004340277777777778,
+    "foregroundMeanDifference": 0.032192557219689846,
+    "foregroundChangedPixels": 0.01845018450184502,
+    "foregroundPixels": 542
+  },
+  {
+    "name": "traced-pin",
+    "theme": "light",
+    "size": 128,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.005690391390931373,
+    "changedPixels": 0.00213623046875,
+    "foregroundMeanDifference": 0.027115445108524695,
+    "foregroundChangedPixels": 0.01100975149418056,
+    "foregroundPixels": 3179
+  },
+  {
+    "name": "traced-pin",
+    "theme": "light",
+    "size": 512,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.004824031256382762,
+    "changedPixels": 0.007465362548828125,
+    "foregroundMeanDifference": 0.02720117670154045,
+    "foregroundChangedPixels": 0.04321996466431095,
+    "foregroundPixels": 45280
+  },
+  {
+    "name": "traced-pin",
+    "theme": "dark",
+    "size": 24,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.0017247639796659404,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.00273321449792038,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 132
+  },
+  {
+    "name": "traced-pin",
+    "theme": "dark",
+    "size": 48,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.0011715913217138706,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0023449145740167413,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 456
+  },
+  {
+    "name": "traced-pin",
+    "theme": "dark",
+    "size": 128,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.0004898769403594771,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.001182393861499402,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 2891
+  },
+  {
+    "name": "traced-pin",
+    "theme": "dark",
+    "size": 512,
+    "paths": 1,
+    "bytes": 2898,
+    "meanDifference": 0.00025928472381791254,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0009401387415346173,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 44189
+  }
+]

@@ -57,7 +57,7 @@ struct PendingEdit {
 
 enum Edit {
     Highlight(Color),
-    Insert(String),
+    Insert { text: String, caret_back: usize },
 }
 
 struct LiveImage {
@@ -419,7 +419,23 @@ impl Editor {
     }
 
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
-        self.edit(tab, Edit::Insert(text));
+        self.edit(
+            tab,
+            Edit::Insert {
+                text,
+                caret_back: 0,
+            },
+        );
+    }
+
+    pub fn insert_wiki_link(&mut self, tab: &Tab, text: String) {
+        self.edit(
+            tab,
+            Edit::Insert {
+                text,
+                caret_back: 2,
+            },
+        );
     }
 
     fn edit(&mut self, tab: &Tab, operation: Edit) {
@@ -676,10 +692,10 @@ impl Editor {
             let operation = pending.as_ref().map(|edit| &edit.operation);
             let markers = match operation {
                 Some(Edit::Highlight(color)) => Some(color.markers()),
-                Some(Edit::Insert(_)) => None,
+                Some(Edit::Insert { .. }) => None,
                 None => shortcut,
             };
-            if markers.is_some() || matches!(operation, Some(Edit::Insert(_))) {
+            if markers.is_some() || matches!(operation, Some(Edit::Insert { .. })) {
                 let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
                 if let Some(selection) = pending
                     .as_ref()
@@ -690,8 +706,9 @@ impl Editor {
                     undoer.add_undo(&(selection, tab.document.text.clone()));
                     let selection_range = selection.as_sorted_char_range();
                     let characters = selection_range.start.0..selection_range.end.0;
-                    let range = if let Some(Edit::Insert(text)) = operation {
-                        let caret = characters.start + text.chars().count();
+                    let range = if let Some(Edit::Insert { text, caret_back }) = operation {
+                        let caret =
+                            characters.start + text.chars().count().saturating_sub(*caret_back);
                         replace_chars(&mut tab.document.text, characters, text);
                         caret..caret
                     } else {

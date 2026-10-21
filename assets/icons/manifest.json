@@ -556,6 +556,17 @@
       "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
       "paths": 1,
       "bytes": 4527
+    },
+    {
+      "name": "pin",
+      "source": "artwork/source-pin.png",
+      "traced": "artwork/traced-pin.svg",
+      "native": "pin.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2898
     }
   ],
   "additionalArtwork": {
@@ -706,6 +717,24 @@
       "prompt": "artwork/trash-prompt.json",
       "generator": "Built-in image_gen.imagegen; backend model unidentified.",
       "selectedRationale": "A specified standard trash glyph, generated directly to make recoverable deletion recognizable in the compact file menu.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    },
+    "pin": {
+      "original": "artwork/pin-original.png",
+      "prompt": "artwork/pin-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "The third generated pin keeps clear counters and a broader rounded outline that remains legible at12–18px. Earlier transparent and thin versions were moved to recoverable Trash for noise and poor small-size legibility.",
       "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
       "preparedRaster": {
         "fit": 648,

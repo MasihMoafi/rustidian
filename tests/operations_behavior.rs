@@ -2,6 +2,145 @@ use rust_notes::vault::Vault;
 use std::{fs, path::Path};
 
 #[test]
+fn duplicate_preserves_note_bytes_skips_occupied_names_and_indexes_the_copy() {
+    let root = tempfile::tempdir().unwrap();
+    let original = "---\r\naliases: [Original]\r\n---\r\n# طرح\r\n[[Target]]\r\n";
+    fs::write(root.path().join("طرح 2026.MD"), original).unwrap();
+    fs::write(root.path().join("طرح 2026 1.MD"), "Keep collision\n").unwrap();
+    fs::create_dir(root.path().join("طرح 2026 2.MD")).unwrap();
+    let mut vault = Vault::open(root.path()).unwrap();
+    let copied = vault.duplicate_file(Path::new("طرح 2026.MD")).unwrap();
+    assert_eq!(copied, Path::new("طرح 2026 3.MD"));
+    assert_eq!(
+        fs::read_to_string(root.path().join(&copied)).unwrap(),
+        original
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("طرح 2026.MD")).unwrap(),
+        original
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("طرح 2026 1.MD")).unwrap(),
+        "Keep collision\n"
+    );
+    let note = vault.notes.iter().find(|note| note.path == copied).unwrap();
+    assert_eq!(note.aliases, ["Original"]);
+    assert_eq!(note.text, original);
+    let twice = vault.duplicate_file(&copied).unwrap();
+    assert_eq!(twice, Path::new("طرح 2026 3 1.MD"));
+    assert_eq!(
+        fs::read_to_string(root.path().join(twice)).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn duplicate_keeps_binary_images_out_of_the_text_index_and_supports_plain_text() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("Assets")).unwrap();
+    let bytes = [137, 80, 78, 71, 13, 10, 0, 255, 1];
+    fs::write(root.path().join("Assets/photo.PNG"), bytes).unwrap();
+    fs::write(root.path().join("Memo.txt"), "Keep plain text\r\nسلام\r\n").unwrap();
+    let mut vault = Vault::open(root.path()).unwrap();
+    let copied = vault.duplicate_file(Path::new("Assets/photo.PNG")).unwrap();
+    assert_eq!(copied, Path::new("Assets/photo 1.PNG"));
+    assert_eq!(fs::read(root.path().join(&copied)).unwrap(), bytes);
+    assert!(vault.attachments.contains(&copied));
+    assert!(vault.open_document(&copied).unwrap().is_image());
+    assert!(!vault.notes.iter().any(|note| note.path == copied));
+    let text = vault.duplicate_file(Path::new("Memo.txt")).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.path().join(&text)).unwrap(),
+        "Keep plain text\r\nسلام\r\n"
+    );
+    assert!(vault.notes.iter().any(|note| note.path == text));
+}
+
+#[test]
+fn simultaneous_duplicates_use_distinct_atomic_destinations() {
+    let root = tempfile::tempdir().unwrap();
+    let original = "# Do not overwrite\r\nسلام\r\n";
+    fs::write(root.path().join("Source.md"), original).unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let path = root.path().to_owned();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut vault = Vault::open(&path).unwrap();
+                barrier.wait();
+                vault.duplicate_file(Path::new("Source.md")).unwrap()
+            })
+        })
+        .collect();
+    let paths: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    assert_ne!(paths[0], paths[1]);
+    for path in paths {
+        assert_eq!(
+            fs::read_to_string(root.path().join(path)).unwrap(),
+            original
+        );
+    }
+    assert_eq!(
+        fs::read_to_string(root.path().join("Source.md")).unwrap(),
+        original
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 3);
+}
+
+#[test]
+fn invalid_and_linked_duplicate_sources_cannot_write_outside_the_vault() {
+    let root = tempfile::tempdir().unwrap();
+    let mut vault = Vault::open(root.path()).unwrap();
+    for path in [
+        "Missing.md",
+        "../Outside.md",
+        "/absolute.md",
+        "__pycache__/Source.md",
+        ".hidden.md",
+        "Unsupported.bin",
+    ] {
+        assert!(vault.duplicate_file(Path::new(path)).is_err(), "{path}");
+    }
+    assert!(fs::read_dir(root.path()).unwrap().next().is_none());
+    #[cfg(unix)]
+    {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("Secret.md"), "Keep outside\n").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("Secret.md"),
+            root.path().join("Linked.md"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.path().join("Linked folder")).unwrap();
+        assert!(vault.duplicate_file(Path::new("Linked.md")).is_err());
+        assert!(
+            vault
+                .duplicate_file(Path::new("Linked folder/Secret.md"))
+                .is_err()
+        );
+        fs::write(root.path().join("Source.md"), "Keep source\n").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("Secret.md"),
+            root.path().join("Source 1.md"),
+        )
+        .unwrap();
+        assert_eq!(
+            vault.duplicate_file(Path::new("Source.md")).unwrap(),
+            Path::new("Source 2.md")
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path().join("Secret.md")).unwrap(),
+            "Keep outside\n"
+        );
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 1);
+    }
+}
+
+#[test]
 fn table_wiki_aliases_resolve_and_moves_preserve_their_escaped_delimiters() {
     let dir = tempfile::tempdir().unwrap();
     let source = "| Note | Example |\n| --- | --- |\n| [[Home\\|Home note]] | `[[Home\\|Literal]]` |\n\n~~~md\n[[Home\\|In code]]\n~~~\n";

@@ -2727,6 +2727,7 @@ dependencies = [
  "eframe",
  "egui_commonmark",
  "egui_extras",
+ "fastrand",
  "image",
  "imara-diff",
  "mermaid-rs-renderer",

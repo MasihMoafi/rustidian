@@ -258,6 +258,7 @@ pub enum Icon {
     CollapseAll,
     Disclosure,
     NewTab,
+    Pin,
     SidebarLeft,
     SidebarRight,
     Back,
@@ -301,7 +302,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 52] = [
+    pub const ALL: [Self; 53] = [
         Self::Files,
         Self::Search,
         Self::Bookmark,
@@ -314,6 +315,7 @@ impl Icon {
         Self::CollapseAll,
         Self::Disclosure,
         Self::NewTab,
+        Self::Pin,
         Self::SidebarLeft,
         Self::SidebarRight,
         Self::Back,
@@ -377,6 +379,10 @@ impl Icon {
             Self::Bookmark => (
                 "bytes://icons/bookmark.svg",
                 include_bytes!("../assets/icons/bookmark.svg"),
+            ),
+            Self::Pin => (
+                "bytes://icons/pin.svg",
+                include_bytes!("../assets/icons/pin.svg"),
             ),
             Self::DailyNote => (
                 "bytes://icons/daily-note.svg",

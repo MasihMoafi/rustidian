@@ -30,6 +30,7 @@ mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 usvg = { version = "=0.45.1", default-features = false, features = ["text"] }
 redb = "=4.4.0"
 imara-diff = { version = "=0.2.0", default-features = false }
+fastrand = "=2.5.0"
 
 [profile.release]
 opt-level = 3
