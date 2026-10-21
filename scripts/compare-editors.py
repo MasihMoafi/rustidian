@@ -134,8 +134,10 @@ def main():
                                     else:
                                         raise AssertionError(f"{name} window timeout")
                                     xdo("windowsize", window, 1440, 960)
-                                    xdo("windowfocus", "--sync", window)
                                     time.sleep(2)
+                                    xdo("windowfocus", "--sync", window)
+                                    assert xdo("getwindowfocus") == window, f"{name} must own X keyboard input"
+                                    time.sleep(.1)
                                     if name == "rust-notes":
                                         def palette(text):
                                             xdo("key", "--clearmodifiers", "ctrl+p")
@@ -164,7 +166,22 @@ def main():
                                         start = time.perf_counter_ns()
                                         xdo("type", "--clearmodifiers", "--delay", 0, inserted)
                                         xdo("key", "--clearmodifiers", "ctrl+s")
-                                        wait_bytes(note, expected)
+                                        try:
+                                            wait_bytes(note, expected)
+                                        except Exception:
+                                            actual = note.read_bytes()
+                                            diagnostic = {"app": name, "round": round_number, "sample": sample,
+                                                "expected_bytes": len(expected), "actual_bytes": len(actual),
+                                                "actual_tail": repr(actual[-80:]), "expected_tail": repr(expected[-80:]),
+                                                "window_title": xdo("getwindowname", window),
+                                                "pointer": xdo("getmouselocation", "--shell"), "input_focus": xdo("getwindowfocus")}
+                                            probe = profile / "probe.json"
+                                            if probe.exists():
+                                                diagnostic["controls"] = json.loads(probe.read_text())
+                                            report["failed_input"] = diagnostic
+                                            ImageGrab.grab(xdisplay=display).save(reports / f"{round_number}-{name}-failure.png")
+                                            print(json.dumps(diagnostic), flush=True)
+                                            raise
                                         elapsed = (time.perf_counter_ns() - start) / 1_000_000
                                         if sample >= 5:
                                             samples.append(elapsed)

@@ -2971,7 +2971,9 @@ def main():
             deleted_bytes = (fixture / "Moved/Renamed note.md").read_bytes()
             command("Move file to system Trash")
             key("Return")
-            title_contains("First steps")
+            title_contains("New tab")
+            assert control_bounds("tab-full:Notes/First steps.md")
+            assert control_bounds("editor", required=False) is None
             assert control_bounds("close-tab:Moved/Renamed note.md", required=False) is None
             assert home.read_text() == before_collision
             assert not (fixture / "Moved/Renamed note.md").exists()
