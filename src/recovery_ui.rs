@@ -17,9 +17,9 @@ pub struct Restore {
 }
 
 struct Loaded {
-    files: Vec<PathBuf>,
+    files: Option<Vec<PathBuf>>,
     path: Option<PathBuf>,
-    versions: Vec<Version>,
+    versions: Option<Vec<Version>>,
     selected: Option<u64>,
     text: Option<String>,
     changes: Vec<(Change, String)>,
@@ -96,7 +96,7 @@ impl Manager {
         self.expected = Some(document);
         self.error = None;
         self.notice = Some("Snapshot restored".into());
-        self.reload(ctx);
+        self.reload(ctx, false);
     }
 
     fn select_file(&mut self, path: Option<PathBuf>, vault: &Vault, ctx: &egui::Context) {
@@ -119,10 +119,10 @@ impl Manager {
         self.selected_file = 0;
         self.choosing_file = self.path.is_none();
         self.show_changes = false;
-        self.reload(ctx);
+        self.reload(ctx, true);
     }
 
-    fn reload(&mut self, ctx: &egui::Context) {
+    fn reload(&mut self, ctx: &egui::Context, refresh_list: bool) {
         let Some(history) = self.history.clone() else {
             return;
         };
@@ -138,15 +138,24 @@ impl Manager {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
-                let files = history.files()?;
-                let versions = path
-                    .as_ref()
-                    .map(|path| history.versions(path))
-                    .transpose()?
-                    .unwrap_or_default();
-                let selected = selected
-                    .filter(|id| versions.iter().any(|version| version.id == *id))
-                    .or_else(|| versions.first().map(|version| version.id));
+                let files = refresh_list.then(|| history.files()).transpose()?;
+                let versions = if refresh_list {
+                    Some(
+                        path.as_ref()
+                            .map(|path| history.versions(path))
+                            .transpose()?
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    None
+                };
+                let selected = if let Some(versions) = &versions {
+                    selected
+                        .filter(|id| versions.iter().any(|version| version.id == *id))
+                        .or_else(|| versions.first().map(|version| version.id))
+                } else {
+                    selected
+                };
                 let text = match (&path, selected) {
                     (Some(path), Some(id)) => Some(history.content(path, id)?),
                     _ => None,
@@ -175,10 +184,14 @@ impl Manager {
         if let Some(receiver) = &self.loading {
             match receiver.try_recv() {
                 Ok(Ok(loaded)) => {
-                    self.matcher = Some(rust_notes::search::FileMatcher::new(loaded.files.clone()));
-                    self.files = loaded.files;
+                    if let Some(files) = loaded.files {
+                        self.matcher = Some(rust_notes::search::FileMatcher::new(files.clone()));
+                        self.files = files;
+                    }
                     self.path = loaded.path;
-                    self.versions = loaded.versions;
+                    if let Some(versions) = loaded.versions {
+                        self.versions = versions;
+                    }
                     self.selected = loaded.selected;
                     self.text = loaded.text;
                     self.changes = loaded.changes;
@@ -219,13 +232,16 @@ impl Manager {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
+        // Like the reference, keep displayed versions fixed while browsing.
+        // File selection/reopening reads new metadata; version clicks read text.
         if self.refresh_due
+            && self.choosing_file
             && self.loading.is_none()
             && self.clearing.is_none()
             && !self.confirm_clear
         {
             self.refresh_due = false;
-            self.reload(ctx);
+            self.reload(ctx, true);
         }
         if self.loading.is_some() || self.clearing.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -576,7 +592,7 @@ impl Manager {
         if let Some(id) = select_version {
             self.selected = Some(id);
             self.error = None;
-            self.reload(ctx);
+            self.reload(ctx, false);
         }
         restore
     }

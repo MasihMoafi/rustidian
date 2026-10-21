@@ -460,6 +460,12 @@ The b4e0d5c candidate preserved an external replacement but its next automatic
 reload erased the warning. Clear it on an explicit file/version selection or
 successful restore, rather than on every reload. Verify both preserved disk
 bytes and the still-visible warning; neither alone proves usable conflict handling.
+Keep a displayed history list stable while snapshots arrive. The isolated
+1.13.7 live-update check held two displayed versions unchanged and exposed the
+third captured version after reopening; Copy still returned the selected text.
+Load only content/diff on a version click, and refresh metadata when choosing a
+file or reopening. After Save-and-restore, reopen before enumerating newly
+recorded versions. Assert an existing row's bounds survive a background capture.
 
 For unique-note collision checks, sample the reference's current time prefix
 before each command and avoid the minute boundary. Two different timestamps do

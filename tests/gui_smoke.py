@@ -3739,9 +3739,11 @@ def main():
                 assert sum(color==(70,33,35) for color in pixel_data(picture))>5
                 assert sum(color==(29,65,46) for color in pixel_data(picture))>5
                 assert copy_snapshot()==original and target.read_bytes()==changed
+                version_rect=control_bounds("recovery-version:"+str(initial))
                 click_control("recovery-restore",hold=.15)
                 assert target.read_bytes()==original
-                versions(2)
+                versions(2);time.sleep(.6)
+                assert control_bounds("recovery-version:"+str(initial))==version_rect, "Background captures must not move a displayed history version"
                 choose_version(ids[-1])
                 assert copy_snapshot()==changed
                 key("Escape")
@@ -3786,6 +3788,7 @@ def main():
                 history(2);choose_version(initial);control_bounds("recovery-ready")
                 click_control("recovery-restore",hold=.15);click_control("pending-save",hold=.15)
                 assert target.read_bytes()==original
+                key("Escape");history(3)
                 preserved=[]
                 for version in versions(3):
                     choose_version(version)
