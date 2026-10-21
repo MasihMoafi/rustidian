@@ -40,6 +40,7 @@ The included sample is deliberately separate from the real vault. Opening a vaul
 - Cached native syntax colors match the measured dark/light editing palettes; reading/editing code panels share a generated Copy control, with measured reader padding and mode-specific colors.
 - Native tables with aligned columns, inline formatting, wiki links and horizontal scrolling. Live cells support Tab/Shift+Tab/Enter, shared undo, row/column changes, alignment and sorting while preserving Markdown.
 - Thirteen callout types and their aliases, formatted titles, nested folding and source-preserving type changes. Reading callouts retain native links, tasks, code, tables and images; long nested titles wrap in both themes.
+- File bookmarks with custom titles and ordering, immediate per-vault persistence, guarded rename tracking, and removable missing targets. Bookmarking and removing shortcuts preserve file content.
 - Paste and selection edits have independent undo boundaries; Ctrl+S includes text received in the same frame. Wiki completion uses text queued before Tab/Enter and preserves Enter after a closing delimiter or an unmatched query.
 - Embedded Inter prose, Noto Arabic fallback and DejaVu Sans Mono code fonts; their licenses are retained under assets/fonts. The pinned text-backend changes and remaining bidi limits are documented in [vendor provenance](vendor/UPSTREAM.md).
 - Plain UTF-8 `.md` files; hidden/dependency folders and child symlinks are not indexed.
@@ -66,7 +67,7 @@ If another program changes a note, save refuses to overwrite it and retains your
 
 ## Remaining work
 
-Exact full-product parity remains in progress. Remaining areas include complex-document folding, math/diagrams, graph/canvas, file recovery, bookmarks/daily notes/templates, plugin equivalents, and optional sync/mobile. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Existing Obsidian JavaScript plugins do not execute here.
+Exact full-product parity remains in progress. Remaining areas include complex-document folding, math/diagrams, graph/canvas, file recovery, bookmark groups and non-file targets, daily notes/templates, plugin equivalents, and optional sync/mobile. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Existing Obsidian JavaScript plugins do not execute here.
 
 Indexing runs outside rendering, with native file notifications. Release measurements, declared method and limits are in [the plan](docs/PLAN.md) and [desktop benchmark](reports/desktop-benchmark.json). The local comparison uses installed Obsidian 1.5.12 with a different feature set; it does not establish equal-feature performance. The deterministic 5,000-note run is in [vault benchmark](reports/vault-benchmark.json). GUI verification currently covers Linux/X11.
 
@@ -77,4 +78,4 @@ gh workflow run native.yml --repo MasihMoafi/rust-notes
 gh run list --repo MasihMoafi/rust-notes --workflow native.yml --limit 3
 ```
 
-Actions runs formatting, Clippy, Rust checks, release builds, native GUI checks and serial editor CPU gates. It tests a copied executable beside a disposable sample vault, including launch without a vault argument, and saves screenshots, logs and raw measurements in the short-lived artifact. It never modifies the real vault. [Run39527354572](https://github.com/MasihMoafi/rust-notes/actions/runs/39527354572) passes107 Rust executions/102 unique,89 full native GUI groups and all six CPU conditions for source7e2a903. The exact downloaded release also passes10 local callout groups without rebuilding.
+Actions runs formatting, Clippy, Rust checks, release builds, native GUI checks and serial editor CPU gates. It tests a copied executable beside a disposable sample vault, including launch without a vault argument, and saves screenshots, logs and raw measurements in the short-lived artifact. It never modifies the real vault. [Run 39540024536](https://github.com/MasihMoafi/rust-notes/actions/runs/39540024536) passes 113 Rust executions/108 unique, 96 full native GUI groups and all six CPU conditions for source `21a1271`. The exact downloaded release also passes eight local bookmark groups without rebuilding.
