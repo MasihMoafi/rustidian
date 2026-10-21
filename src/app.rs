@@ -440,10 +440,16 @@ impl NotesApp {
     }
 
     fn follow_link(&mut self, target: &str) {
-        if target.starts_with("https://")
-            || target.starts_with("http://")
-            || target.starts_with("mailto:")
-        {
+        let uri = target.split_once(':').is_some_and(|(scheme, _)| {
+            let mut characters = scheme.chars();
+            characters
+                .next()
+                .is_some_and(|character| character.is_ascii_alphabetic())
+                && characters.all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+                })
+        });
+        if uri {
             self.ctx.open_url(egui::OpenUrl::new_tab(target));
             return;
         }

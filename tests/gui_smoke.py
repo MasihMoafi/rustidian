@@ -719,9 +719,10 @@ def main():
                 results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
 
             def navigation_checks():
-                source = "# Navigation UI\n\n[[Notes/Linked target|Wiki target]]\n\n[Open target](Linked%20target.md#Section%20two)\n"
                 note = fixture / "Notes/Navigation UI.md"
                 target = fixture / "Notes/Linked target.md"
+                file_uri = target.as_uri()
+                source = "# Navigation UI\n\n[[Notes/Linked target|Wiki target]]\n\n[Open target](Linked%20target.md#Section%20two)\n\n[Open file](" + file_uri + ")\n"
                 note.write_text(source)
                 target_source = "# Linked target\n\n" + "Introduction paragraph.\n\n" * 45 + "## Section two\n\nDestination text.\n"
                 target.write_text(target_source)
@@ -771,6 +772,16 @@ def main():
                 title_contains("Linked target")
                 key("alt+Left")
                 title_contains("Navigation UI")
+                command("Reading view")
+                requests = reports / "browser-requests.txt"
+                before_requests = requests.read_text() if requests.exists() else ""
+                click_link(3)
+                deadline = time.monotonic() + 3
+                while (not requests.exists() or requests.read_text() == before_requests) and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert requests.exists() and file_uri in requests.read_text()[len(before_requests):], "File URIs must reach the desktop file handler"
+                title_contains("Navigation UI")
+                assert not fixture.joinpath("file:").exists(), "A URI must not create spurious notes"
                 assert note.read_text() == source
                 assert target.read_text() == target_source
                 capture("native-navigation.png")
