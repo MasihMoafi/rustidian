@@ -443,6 +443,16 @@ loaded version's identity, not just a generic ready flag, before inspecting it.
 Inspect the reference's actual size labels: short snapshots use bytes, so looking
 for a decimal KB label can falsely report a missing version. Preserve the failed
 driver evidence instead of attributing that selector failure to snapshot loss.
+Treat modal geometry as behavior too: loading a file or showing a Copy notice
+must not move controls beneath the pointer. Reserve the dialog's height before
+asynchronous content arrives, and assert the file field stays at the same bounds
+after copying. This assertion fails on the first compiled recovery candidate;
+the negative receipt is in reports/recovery-layout-6b4b34a-before. A multiline
+version label needs wrapping: single-line truncation hid its file-size line.
+Check both lines in the native screenshots, as well as exact clipboard bytes.
+Before local GUI checks, verify the actual interpreter can import PIL,
+Xlib.display and six. Different installed Python versions have different module
+paths. Always stop the owned private X server if keyboard initialization fails.
 
 For unique-note collision checks, sample the reference's current time prefix
 before each command and avoid the minute boundary. Two different timestamps do

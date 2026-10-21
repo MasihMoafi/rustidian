@@ -109,8 +109,15 @@ def main():
             (fixture / "Cache notes.md").write_text("Keep this ordinary note.\n")
         window_manager = None
         unicode_keyboard = None
-        if os.environ.get("RUST_NOTES_STABLE_UNICODE", "1") == "1":
-            unicode_keyboard = UnicodeKeyboard(environment, Path(__file__).read_text())
+        try:
+            if os.environ.get("RUST_NOTES_STABLE_UNICODE", "1") == "1":
+                unicode_keyboard = UnicodeKeyboard(environment, Path(__file__).read_text())
+        except Exception:
+            server.terminate()
+            server.wait(timeout=5)
+            log.close()
+            xvfb_log.close()
+            raise
         environment.pop("RUST_NOTES_DEFAULT_VAULT",None)
         if args.section == "chrome" and shutil.which("openbox"):
             window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
@@ -3667,8 +3674,12 @@ def main():
 
                 def copy_snapshot():
                     control_bounds("recovery-ready")
+                    before = control_bounds("recovery-files")
                     click_control("recovery-copy",hold=.15)
-                    return subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)
+                    copied = subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)
+                    time.sleep(.15)
+                    assert control_bounds("recovery-files") == before, "Copy acknowledgement must not move the recovery controls"
+                    return copied
 
                 def choose_version(version):
                     click_control("recovery-version:"+str(version),hold=.15)

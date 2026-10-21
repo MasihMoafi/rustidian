@@ -247,6 +247,9 @@ impl Manager {
                 theme::dialog_style(ui);
                 ui.set_width(786.0_f32.min((ctx.content_rect().width() - 48.0).max(280.0)));
                 let height = (ctx.content_rect().height() - 190.0).clamp(220.0, 580.0);
+                // Keep controls stationary while async content and clipboard
+                // notices arrive, including the first version's sizing pass.
+                ui.set_height(height + 48.0);
                 let busy = self.loading.is_some() || self.clearing.is_some();
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
@@ -277,6 +280,7 @@ impl Manager {
                             ui.add_space(8.0);
                             let scroll = ScrollArea::vertical()
                                 .id_salt(("recovery-versions", &self.path, self.choosing_file))
+                                .auto_shrink([false, false])
                                 .max_height(height - 50.0)
                                 .min_scrolled_height(height - 50.0);
                             if !self.choosing_file && !self.versions.is_empty() {
@@ -300,10 +304,10 @@ impl Manager {
                                             !busy,
                                             egui::Button::selectable(
                                                 self.selected == Some(version.id),
-                                                format!("{time}\n{size}"),
+                                                RichText::new(format!("{time}\n{size}")).size(13.0),
                                             )
                                             .min_size(egui::vec2(ui.available_width(), 46.0))
-                                            .truncate(),
+                                            .wrap(),
                                         );
                                         ui_probe::record(
                                             ctx,
@@ -454,6 +458,7 @@ impl Manager {
                         ui.separator();
                         ScrollArea::both()
                             .id_salt(("recovery-text", self.selected))
+                            .auto_shrink([false, false])
                             .max_height(height - 48.0)
                             .min_scrolled_height(height - 48.0)
                             .show(ui, |ui| {
