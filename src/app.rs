@@ -1585,7 +1585,7 @@ impl NotesApp {
                     });
                 }
             });
-        crate::ui_probe::metric(ui.ctx(), "document-scroll-y", scroll.state.offset.y);
+        crate::ui_probe::metric(ui.ctx(), "document-scroll-y", scroll.state.offset().y);
         if let Some((source, name)) = renamed_title {
             if name.is_empty() || name.contains(['/', '\\']) || matches!(name.as_str(), "." | "..")
             {
@@ -1598,10 +1598,13 @@ impl NotesApp {
                     .unwrap_or("md");
                 let target = source.with_file_name(format!("{name}.{extension}"));
                 let previous = self.dialog_path.replace(source);
-                if !self.submit_dialog(Dialog::RenameNote, target.display().to_string()) {
+                let previous_input =
+                    std::mem::replace(&mut self.dialog_input, target.display().to_string());
+                if !self.submit_dialog(Dialog::RenameNote) {
                     self.title.reject();
                 }
                 self.dialog_path = previous;
+                self.dialog_input = previous_input;
             }
         }
         if add_property {

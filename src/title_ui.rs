@@ -52,7 +52,7 @@ impl Title {
         let mut output = TextEdit::singleline(&mut self.draft)
             .id(id)
             .font(font)
-            .frame(false)
+            .frame(egui::Frame::NONE)
             .margin(egui::Vec2::ZERO)
             .desired_width(f32::INFINITY)
             .show(ui);
