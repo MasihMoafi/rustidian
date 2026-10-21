@@ -25,14 +25,16 @@ pub fn file_row(ui: &mut egui::Ui, path: &Path, title: &str, selected: bool) -> 
     rect.max.x -= 6.0;
     let response = ui.interact(rect, ui.make_persistent_id(path), egui::Sense::click());
     if selected || response.hovered() {
-        let fill = if selected {
+        let fill = if response.hovered() {
+            theme::hover_fill(ui)
+        } else if selected {
             Color32::from_rgba_unmultiplied(23, 127, 131, 40)
         } else {
-            ui.visuals().widgets.hovered.weak_bg_fill
+            theme::hover_fill(ui)
         };
         ui.painter().rect_filled(rect, 6, fill);
     }
-    let color = if selected {
+    let color = if selected || response.hovered() {
         ui.visuals().text_color()
     } else {
         ui.visuals().weak_text_color()
@@ -137,6 +139,12 @@ impl Tree {
                         && active.is_some_and(|path| path.starts_with(id.trim_start_matches('/'))))
                     .then_some(true)
                 };
+            let framed = ui.visuals().collapsing_header_frame;
+            let idle_fill = ui.visuals().widgets.inactive.bg_fill;
+            let idle_stroke = ui.visuals().widgets.inactive.bg_stroke;
+            ui.visuals_mut().collapsing_header_frame = true;
+            ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
                     .size(13.0)
@@ -155,6 +163,9 @@ impl Tree {
                 }
                 revealed |= visible;
             });
+            ui.visuals_mut().collapsing_header_frame = framed;
+            ui.visuals_mut().widgets.inactive.bg_fill = idle_fill;
+            ui.visuals_mut().widgets.inactive.bg_stroke = idle_stroke;
             header.header_response.context_menu(|ui| {
                 let path = PathBuf::from(id.trim_start_matches('/'));
                 let response = ui.button("Rename or move…");

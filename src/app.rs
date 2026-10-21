@@ -71,6 +71,7 @@ pub struct NotesApp {
     startup_document: Option<PathBuf>,
     find: crate::editor_ui::Find,
     editor: crate::editor_ui::Editor,
+    title: crate::title_ui::Title,
     pending_anchor: Option<String>,
     properties: crate::properties_ui::Properties,
     pub(crate) sort_descending: bool,
@@ -129,6 +130,7 @@ impl NotesApp {
             startup_document,
             find: Default::default(),
             editor: Default::default(),
+            title: Default::default(),
             pending_anchor: None,
             properties: Default::default(),
             sort_descending: false,
@@ -819,7 +821,8 @@ impl NotesApp {
             .is_some_and(|tab| !tab.document.is_blank());
         let add = ui.add_enabled(
             can_add,
-            egui::Button::new(RichText::new("Bookmark current file").size(13.0)).frame(false),
+            egui::Button::new(RichText::new("Bookmark current file").size(13.0))
+                .frame_when_inactive(false),
         );
         crate::ui_probe::record(ui.ctx(), "bookmark-add-current", add.rect);
         if add.clicked()
@@ -1057,7 +1060,7 @@ impl NotesApp {
                                                     )
                                                     .size(14.0),
                                                 )
-                                                .frame(false),
+                                                .frame_when_inactive(false),
                                             );
                                             crate::ui_probe::record(
                                                 ui.ctx(),
@@ -1232,7 +1235,7 @@ impl NotesApp {
                                 egui::Button::new(
                                     RichText::new(title).size(13.0).color(theme::accent(ui)),
                                 )
-                                .frame(false),
+                                .frame_when_inactive(false),
                             );
                             crate::ui_probe::record(
                                 ui.ctx(),
@@ -1263,7 +1266,7 @@ impl NotesApp {
                                 egui::Button::new(
                                     RichText::new(label).size(13.0).color(theme::accent(ui)),
                                 )
-                                .frame(false),
+                                .frame_when_inactive(false),
                             );
                             crate::ui_probe::record(
                                 ui.ctx(),
@@ -1512,8 +1515,9 @@ impl NotesApp {
         ui.spacing_mut().scroll.bar_inner_margin = 4.0;
         ui.spacing_mut().scroll.bar_outer_margin = 2.0;
         let mut add_property = false;
+        let mut renamed_title = None;
         let title = tab.document.title();
-        ScrollArea::vertical()
+        let scroll = ScrollArea::vertical()
             .id_salt(("document", tab.id(), &tab.document.path))
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .auto_shrink([false, false])
@@ -1549,18 +1553,10 @@ impl NotesApp {
                             |ui| {
                                 ui.set_width(content_width);
                                 ui.add_space(32.0);
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(title)
-                                            .color(theme::heading(ui, 1))
-                                            .font(FontId::new(
-                                                32.436,
-                                                egui::FontFamily::Name("bold".into()),
-                                            ))
-                                            .line_height(Some(38.9232)),
-                                    )
-                                    .selectable(false),
-                                );
+                                if let Some(name) = self.title.show(ui, &tab.document.path, &title)
+                                {
+                                    renamed_title = Some((tab.document.path.clone(), name));
+                                }
                                 ui.add_space(16.218);
                                 if matches!(view, View::Live | View::Read) {
                                     add_property = self.properties.show(ui, tab);
@@ -1589,6 +1585,25 @@ impl NotesApp {
                     });
                 }
             });
+        crate::ui_probe::metric(ui.ctx(), "document-scroll-y", scroll.state.offset.y);
+        if let Some((source, name)) = renamed_title {
+            if name.is_empty() || name.contains(['/', '\\']) || matches!(name.as_str(), "." | "..")
+            {
+                self.error = Some("Enter a file name without folder separators.".into());
+                self.title.reject();
+            } else {
+                let extension = source
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("md");
+                let target = source.with_file_name(format!("{name}.{extension}"));
+                let previous = self.dialog_path.replace(source);
+                if !self.submit_dialog(Dialog::RenameNote, target.display().to_string()) {
+                    self.title.reject();
+                }
+                self.dialog_path = previous;
+            }
+        }
         if add_property {
             self.ask(Dialog::AddProperty);
         }
@@ -1716,9 +1731,14 @@ impl NotesApp {
                                                 )
                                                 .on_hover_text("Close tab · Ctrl+W");
                                             if show_close {
+                                                theme::control_feedback(ui, &closing);
                                                 theme::icon_image(
                                                     Icon::Close,
-                                                    ui.visuals().weak_text_color(),
+                                                    if closing.hovered() {
+                                                        ui.visuals().text_color()
+                                                    } else {
+                                                        ui.visuals().weak_text_color()
+                                                    },
                                                 )
                                                 .fit_to_exact_size(egui::vec2(12.0, 12.0))
                                                 .paint_at(
@@ -1944,7 +1964,7 @@ impl NotesApp {
                                     RichText::new(rust_notes::paths::display_path(path)).size(15.0),
                                 )
                                 .selected(index == self.dialog_selected)
-                                .frame(false)
+                                .frame_when_inactive(false)
                                 .min_size(egui::vec2(ui.available_width(), 34.0)),
                             );
                             if row.clicked() {
@@ -1993,7 +2013,7 @@ impl NotesApp {
                                 egui::Button::new(command.name)
                                     .shortcut_text(command.shortcut)
                                     .selected(index == self.dialog_selected)
-                                    .frame(false)
+                                    .frame_when_inactive(false)
                                     .min_size(egui::vec2(ui.available_width(), 34.0)),
                             );
                             crate::ui_probe::record(
@@ -2309,6 +2329,7 @@ impl NotesApp {
             if let Err(error) = self.write_session() {
                 self.error = Some(error);
             }
+            self.ctx.request_repaint();
             return true;
         }
         if input.is_empty() {

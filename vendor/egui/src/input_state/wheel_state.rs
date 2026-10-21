@@ -166,7 +166,7 @@ impl WheelState {
                 // So we smooth it out over several frames for a nicer user experience when scrolling in egui.
                 // BUT: if the user is using a nice smooth mac trackpad, we don't add smoothing,
                 // because it adds latency.
-                let is_smooth = self.status == Status::InTouch
+                let is_smooth = !options.wheel_smoothing || self.status == Status::InTouch
                     || match unit {
                         MouseWheelUnit::Point => delta.length() < 8.0, // a bit arbitrary here
                         MouseWheelUnit::Line | MouseWheelUnit::Page => false,

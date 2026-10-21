@@ -14,7 +14,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover"], default="all")
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     base = Path(temporary)
@@ -86,6 +86,27 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         target = next(target for target in targets if target["type"] == "page")
         query = "JSON.stringify(['.markdown-preview-view','.inline-title','h1','h2','.markdown-preview-view p','.markdown-preview-view li','.markdown-preview-view strong','.markdown-preview-view ul','.markdown-preview-view blockquote','.markdown-preview-sizer','.view-header','.workspace-tab-header-container','.nav-header','.nav-files-container','.status-bar','.nav-file-title','.workspace-tab-header'].map(selector => {const e=document.querySelector(selector);if(!e)return {selector};const s=getComputedStyle(e);return {selector,font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,marginTop:s.marginTop,marginBottom:s.marginBottom,rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height},padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderBottomWidth};}))"
         code = "const ws=new WebSocket(process.argv[1]);ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:process.argv[2],returnByValue:true}}));ws.onmessage=(e)=>{const r=JSON.parse(e.data);if(r.id===1){console.log(r.result.result.value);ws.close();}};setTimeout(()=>process.exit(1),5000).unref();"
+        if arguments.section == "hover":
+            def evaluate(expression):
+                value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True)
+                return json.loads(value)
+
+            report = {}
+            for name, selector in [("icon", ".side-dock-ribbon-action"), ("close", ".workspace-tab-header.is-active .workspace-tab-header-inner-close-button"), ("folder", ".nav-folder-title"), ("file", ".nav-file-title"), ("tab", ".workspace-tab-header.is-active")]:
+                expression = "JSON.stringify((()=>{const e=[...document.querySelectorAll(" + json.dumps(selector) + ")].find(e=>e.getBoundingClientRect().width);if(!e)return null;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return {rect:[r.x,r.y,r.right,r.bottom],background:s.backgroundColor,color:s.color,radius:s.borderRadius,opacity:s.opacity,cursor:s.cursor,transition:s.transition}})())"
+                xdo("mousemove", "1000", "900")
+                time.sleep(.2)
+                normal = evaluate(expression)
+                if not normal:
+                    continue
+                left, top, right, bottom = normal["rect"]
+                xdo("mousemove", str(round((left+right)/2)), str(round((top+bottom)/2)))
+                time.sleep(.3)
+                report[name] = {"normal":normal, "hover":evaluate(expression)}
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports" / f"obsidian-hover-{name}.png")
+            (ROOT / "reports/obsidian-hover.json").write_text(json.dumps(report, indent=2)+"\n")
+            print(json.dumps(report))
+            raise SystemExit(0)
         if arguments.section == "navigation":
             def evaluate(expression):
                 value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True)

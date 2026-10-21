@@ -25,6 +25,15 @@ pub fn enabled() -> bool {
     destination().is_some()
 }
 
+pub fn metric(ctx: &egui::Context, name: &str, value: f32) {
+    if destination().is_some() {
+        ctx.data_mut(|data| {
+            data.get_temp_mut_or_default::<Bounds>(egui::Id::unique("ui-probe"))
+                .insert(name.to_owned(), [value; 4]);
+        });
+    }
+}
+
 pub fn flush(ctx: &egui::Context) {
     let Some(path) = destination() else {
         return;

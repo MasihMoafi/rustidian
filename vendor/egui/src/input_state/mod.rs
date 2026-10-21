@@ -59,6 +59,9 @@ pub struct InputOptions {
     /// Multiplier for the scroll speed when reported in [`crate::MouseWheelUnit::Line`]s.
     pub line_scroll_speed: f32,
 
+    /// Spread discrete wheel steps across frames. Disable for immediate scrolling.
+    pub wheel_smoothing: bool,
+
     /// Controls the speed at which we zoom in when doing ctrl/cmd + scroll.
     pub scroll_zoom_speed: f32,
 
@@ -110,6 +113,7 @@ impl Default for InputOptions {
 
         Self {
             line_scroll_speed,
+            wheel_smoothing: true,
             scroll_zoom_speed: 1.0 / 200.0,
             max_click_dist: 6.0,
             max_click_duration: 0.8,
@@ -127,6 +131,7 @@ impl InputOptions {
     pub fn ui(&mut self, ui: &mut crate::Ui) {
         let Self {
             line_scroll_speed,
+            wheel_smoothing,
             scroll_zoom_speed,
             max_click_dist,
             max_click_duration,
@@ -145,6 +150,9 @@ impl InputOptions {
                     .on_hover_text(
                         "How many lines to scroll with each tick of the mouse wheel",
                     );
+                ui.end_row();
+
+                ui.checkbox(wheel_smoothing, "Smooth wheel steps");
                 ui.end_row();
 
                 ui.label("Scroll zoom speed");

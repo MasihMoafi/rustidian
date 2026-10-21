@@ -153,7 +153,10 @@ impl Properties {
         let heading = ui
             .scope(|ui| {
                 ui.spacing_mut().button_padding = egui::Vec2::ZERO;
-                ui.add(egui::Button::new(RichText::new("Properties").size(18.0)).frame(false))
+                ui.add(
+                    egui::Button::new(RichText::new("Properties").size(18.0))
+                        .frame_when_inactive(false),
+                )
             })
             .inner;
         crate::ui_probe::record(ui.ctx(), "properties:toggle", heading.rect);
@@ -319,7 +322,7 @@ impl Properties {
                                                         egui::Button::new(
                                                             RichText::new("×").size(14.0).weak(),
                                                         )
-                                                        .frame(false),
+                                                        .frame_when_inactive(false),
                                                     )
                                                     .clicked()
                                                 {

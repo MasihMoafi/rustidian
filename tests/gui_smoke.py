@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -717,6 +717,169 @@ def main():
                     key("ctrl+s")
                     assert note.read_text() == expected + " reopened", (name, "reopen")
                 results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
+
+            def hover_checks():
+                key("ctrl+t")
+                open_note("Home")
+                command("Reading view")
+                originals = {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")}
+                timings = []
+                for name in ["new-tab", "close-tab:Home.md", "new-folder", "file-sort", "file-collapse", "bookmarks-tab", "folder:Notes", "file:Home.md"]:
+                    xdo("mousemove", "1000", "880")
+                    time.sleep(.07)
+                    bounds = tuple(round(value) for value in control_bounds(name))
+                    baseline = ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB")
+                    left, top, right, bottom = bounds
+                    start = time.perf_counter()
+                    xdo("mousemove", str((left+right)//2), str((top+bottom)//2))
+                    changed = False
+                    while time.perf_counter() - start < .15:
+                        picture = ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB")
+                        changed = sum(abs(r-34) <= 2 and abs(g-41) <= 2 and abs(b-44) <= 2 for r,g,b in pixel_data(picture)) > 50
+                        if changed: break
+                        time.sleep(.003)
+                    elapsed = (time.perf_counter()-start)*1000
+                    timings.append({"control":name,"dispatch_to_visible_ms":elapsed})
+                    assert changed and picture.tobytes() != baseline.tobytes(), f"No immediate Obsidian hover feedback on {name}: {elapsed:.1f}ms"
+                    if name.startswith("close-tab:"): capture("native-hover-close.png")
+                    if name.startswith("folder:"): capture("native-hover-folder.png")
+                # A disabled history control must neither highlight nor navigate.
+                name = "button:Navigate back · Alt+Left"
+                left, top, right, bottom = control_bounds(name)
+                xdo("mousemove", "1000", "880")
+                time.sleep(.07)
+                bounds = tuple(round(v) for v in (left,top,right,bottom))
+                before = ImageGrab.grab(xdisplay=display).crop(bounds).tobytes()
+                xdo("mousemove", str(round((left+right)/2)), str(round((top+bottom)/2)))
+                time.sleep(.07)
+                assert ImageGrab.grab(xdisplay=display).crop(bounds).tobytes() == before
+                xdo("click", "1")
+                title_contains("Home")
+                assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
+                ordered = sorted(item["dispatch_to_visible_ms"] for item in timings)
+                (reports / "hover-latency.json").write_text(json.dumps({"boundary":"xdotool dispatch plus polling for changed screen pixels; not internal CPU time", "samples":timings,"median_ms":ordered[len(ordered)//2],"max_ms":ordered[-1]}, indent=2)+"\n")
+                results.append("Pointer hover visibly changes icons, tab close, folders and selected files; disabled history stays inert and every note byte is unchanged")
+
+            def title_checks():
+                path = fixture / "Notes/Title edit.md"
+                source = "# Body heading stays independent\n\nExact body فارسی.\n"
+                path.write_text(source)
+                linked = fixture / "Notes/Title backlinks.md"
+                linked.write_text("[[Title edit]] and [read](Title%20edit.md)\n")
+                conflict = fixture / "Notes/Title conflict.md"
+                conflict.write_text("Do not replace this note.\n")
+                time.sleep(.7)
+                open_note("Title edit")
+                command("Reading view")
+                title_bounds = control_bounds("note-title", required=False)
+                if title_bounds:
+                    click_control("note-title")
+                else:
+                    # Before the fix the visible title had no interaction probe.
+                    # Click its measured position and prove the rename itself fails.
+                    left, top, _, _ = control_bounds("reading-block:0")
+                    xdo("mousemove", str(round(left+70)), str(round(top-35)), "click", "1")
+                    pause()
+                key("ctrl+a")
+                type_text("Title renamed")
+                key("Return")
+                renamed = fixture / "Notes/Title renamed.md"
+                assert renamed.exists() and renamed.read_text() == source and not path.exists(), "Clicking the visible title did not rename the file"
+                title_contains("Title renamed")
+                assert "[[Title renamed]]" in linked.read_text() and "Title%20renamed.md" in linked.read_text()
+                capture("native-title-renamed.png")
+                click_control("note-title")
+                key("ctrl+a")
+                type_text("Cancelled title")
+                key("Escape")
+                assert renamed.read_text() == source and not (fixture / "Notes/Cancelled title.md").exists()
+                click_control("note-title")
+                key("ctrl+a")
+                type_text("Title conflict")
+                key("Return")
+                assert renamed.read_text() == source and conflict.read_text() == "Do not replace this note.\n"
+                key("Escape")
+                click_control("note-title")
+                key("ctrl+a")
+                type_text("Title blur")
+                click_control("new-folder")
+                key("Escape")
+                assert (fixture / "Notes/Title blur.md").read_text() == source and not renamed.exists()
+                results.append("Clicking the inline title renames on Enter or blur, updates links and tabs, cancels on Escape and refuses to overwrite an existing note")
+
+            def scrolling_checks():
+                path = fixture / "Notes/Scrolling check.md"
+                source = "# Scrolling check\n\n" + "\n\n".join(f"Paragraph {i}: read and move quickly." for i in range(180)) + "\n"
+                path.write_text(source)
+                time.sleep(.7)
+                open_note("Scrolling check")
+                command("Reading view")
+                reference_y = control_bounds("reading-block:4")[1]
+                def position():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    value = controls.get("document-scroll-y")
+                    return value[0] if value else reference_y-controls["reading-block:4"][1]
+                xdo("mousemove", "900", "500")
+                start_y = position()
+                assert start_y < 2, start_y
+                start = time.perf_counter()
+                xdo("click", "5")
+                while time.perf_counter()-start < .15 and position()-start_y < 95:
+                    time.sleep(.003)
+                immediate = position()
+                elapsed = (time.perf_counter()-start)*1000
+                assert 95 <= immediate-start_y <= 250, (start_y, immediate, elapsed)
+                time.sleep(.2)
+                assert abs(position()-immediate) < 1, "A smoothing tail kept moving after the wheel input"
+                xdo("click", "--repeat", "4", "--delay", "15", "5")
+                time.sleep(.1)
+                assert abs(position()-start_y-5*(immediate-start_y)) <= 10
+                xdo("click", "4")
+                time.sleep(.1)
+                assert abs(position()-start_y-4*(immediate-start_y)) <= 10
+                assert path.read_text() == source
+                capture("native-scrolling.png")
+                (reports / "scroll-latency.json").write_text(json.dumps({"dispatch_to_offset_ms":elapsed,"pixels_per_notch":immediate-start_y,"no_delayed_movement":True},indent=2)+"\n")
+                results.append("Wheel movement exceeds the old slow step immediately, repeated and reverse scrolling preserve distance/direction, and no delayed tail or edits occur")
+
+            def diagram_checks():
+                path = fixture / "Notes/Diagram check.md"
+                source = "# Diagram check\n\n| Note | State |\n| --- | --- |\n| One | Ready |\n\n```mermaid\nflowchart LR\n A[Write] --> B[Read]\n```\n\nEnd.\n"
+                path.write_text(source)
+                time.sleep(.7)
+                open_note("Diagram check")
+                command("Reading view")
+                control_bounds("table:0")
+                bounds = control_bounds("mermaid-diagram")
+                assert bounds[2]-bounds[0] > 100 and bounds[3]-bounds[1] > 30
+                count = control_bounds("diagram-render-count")[0]
+                capture("native-table-mermaid-reading.png")
+                for _ in range(4):
+                    xdo("mousemove", "800", "500")
+                    xdo("click", "5")
+                    xdo("click", "4")
+                time.sleep(.15)
+                assert control_bounds("diagram-render-count")[0] == count, "Hover/scroll regenerated a cached diagram"
+                command("Live preview")
+                key("ctrl+Home")
+                control_bounds("edit-table:0")
+                bounds = control_bounds("mermaid-live")
+                assert bounds[2]-bounds[0] > 100 and bounds[3]-bounds[1] > 30
+                capture("native-table-mermaid-live.png")
+                assert control_bounds("diagram-render-count")[0] == count
+                command("Source editing")
+                assert control_bounds("mermaid-live", required=False) is None
+                assert control_bounds("edit-table:0", required=False) is None
+                assert path.read_text() == source
+                # Invalid syntax remains readable and editable instead of blank output.
+                invalid = fixture / "Notes/Invalid diagram.md"
+                invalid.write_text("```mermaid\nnot a diagram\n```\n")
+                time.sleep(.7)
+                open_note("Invalid diagram")
+                command("Reading view")
+                control_bounds("mermaid-error")
+                assert invalid.read_text() == "```mermaid\nnot a diagram\n```\n"
+                results.append("Tables and native Mermaid render in Reading and Live, stay literal in Source, reuse the same diagram through hover/scroll, and invalid syntax retains its source")
 
             def navigation_checks():
                 note = fixture / "Notes/Navigation UI.md"
@@ -2374,6 +2537,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
+            if args.section in ("hover", "title", "scrolling", "diagrams"):
+                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks}[args.section]()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
             if args.section == "navigation":
                 navigation_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -2639,6 +2807,10 @@ def main():
             essential_checks()
             color_checks()
             navigation_checks()
+            hover_checks()
+            title_checks()
+            scrolling_checks()
+            diagram_checks()
             large_search_checks()
             folder_checks()
             explorer_checks()

@@ -54,6 +54,7 @@ struct Format {
 
 struct LiveImage {
     range: Range<usize>,
+    block: Option<Range<usize>>,
     uri: String,
     size: egui::Vec2,
 }
@@ -120,7 +121,7 @@ impl<'a> PositionedText<'a> {
     }
 }
 
-fn live_images(
+fn embedded_images(
     ui: &egui::Ui,
     text: &str,
     vault: Option<&rust_notes::vault::Vault>,
@@ -153,11 +154,45 @@ fn live_images(
                 .unwrap_or(natural.y * width / natural.x.max(1.0));
             Some(LiveImage {
                 range: image.range,
+                block: None,
                 uri,
                 size: egui::vec2(width, height),
             })
         })
         .collect()
+}
+
+fn live_images(
+    ui: &egui::Ui,
+    text: &str,
+    vault: Option<&rust_notes::vault::Vault>,
+    from: &std::path::Path,
+    parsed: &Markdown,
+    active_line: Option<&Range<usize>>,
+) -> Vec<LiveImage> {
+    let mut images = embedded_images(ui, text, vault, from);
+    for block in &parsed.code_blocks {
+        if !block.language.eq_ignore_ascii_case("mermaid")
+            || active_line
+                .is_some_and(|line| line.start < block.range.end && line.end >= block.range.start)
+        {
+            continue;
+        }
+        let Some(closing) = &block.closing else {
+            continue;
+        };
+        let body = &text[(block.opening.end + 1).min(closing.start)..closing.start];
+        if let Ok(Some((uri, size))) = crate::diagrams::image(ui, body) {
+            images.push(LiveImage {
+                range: block.opening.clone(),
+                block: Some(block.range.clone()),
+                uri,
+                size,
+            });
+        }
+    }
+    images.sort_by_key(|image| image.range.start);
+    images
 }
 
 pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id) {
@@ -715,7 +750,7 @@ impl Editor {
         let mut table_placements = Vec::new();
         let from = &tab.document.path;
         let mut images = if live {
-            live_images(ui, source, vault, from)
+            live_images(ui, source, vault, from, parsed, active_line.as_ref())
         } else {
             Vec::new()
         };
@@ -731,7 +766,7 @@ impl Editor {
             |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| -> Arc<egui::Galley> {
                 let text = buffer.as_str();
                 if text == source && updated_parsed.take().is_some() && live {
-                    images = live_images(ui, source, vault, from);
+                    images = live_images(ui, source, vault, from, parsed, active_line.as_ref());
                     retain_visible_images(&mut images, sections, &collapsed);
                 }
                 if let Some((previous_width, galley)) = &cached_layout
@@ -745,7 +780,14 @@ impl Editor {
                 } else {
                     updated_parsed = Some(Markdown::parse(text));
                     if live {
-                        images = live_images(ui, text, vault, from);
+                        images = live_images(
+                            ui,
+                            text,
+                            vault,
+                            from,
+                            updated_parsed.as_ref().unwrap(),
+                            active_line.as_ref(),
+                        );
                     }
                     updated_parsed.as_ref().unwrap()
                 };
@@ -774,6 +816,14 @@ impl Editor {
                         {
                             let start = text[..callout.body.start].chars().count();
                             hidden.push(start..start + text[callout.body.clone()].chars().count());
+                        }
+                    }
+                    for image in &images {
+                        if let Some(block) = &image.block {
+                            let start = (image.range.end + 1).min(block.end);
+                            hidden.push(
+                                text[..start].chars().count()..text[..block.end].chars().count(),
+                            );
                         }
                     }
                     hidden.sort_by_key(|range| range.start);
@@ -1081,6 +1131,9 @@ impl Editor {
                     .sense(egui::Sense::click()),
             );
             crate::ui_probe::record(ui.ctx(), format!("embed:{ordinal}"), response.rect);
+            if image.block.is_some() {
+                crate::ui_probe::record(ui.ctx(), "mermaid-live", response.rect);
+            }
             if active {
                 crate::ui_probe::record(
                     ui.ctx(),
@@ -1089,10 +1142,12 @@ impl Editor {
                 );
             }
             if response.clicked() {
-                let end = tab.document.text[..image.range.end].chars().count();
+                let source_range = image.block.as_ref().unwrap_or(&image.range);
+                let start = tab.document.text[..source_range.start].chars().count();
+                let end = tab.document.text[..source_range.end].chars().count();
                 self.focus_range = Some((
                     id,
-                    CCursorRange::two(CCursor::new(end), CCursor::new(character)),
+                    CCursorRange::two(CCursor::new(end), CCursor::new(start)),
                 ));
                 ui.ctx().request_repaint();
             }
@@ -1240,7 +1295,7 @@ impl Editor {
                                     RichText::new(rust_notes::paths::display_path(path)).size(14.0),
                                 )
                                 .selected(index == self.completion_selected)
-                                .frame(false)
+                                .frame_when_inactive(false)
                                 .min_size(egui::vec2(330.0, 30.0)),
                             );
                             if response.clicked() {
@@ -2088,10 +2143,10 @@ fn layout(
                         .map_or(29.16, |(_, height)| *height)
                 } else if live && style.property {
                     0.01
-                } else if style.block_code {
-                    crate::code_ui::LINE_HEIGHT
                 } else if let Some(image) = image.filter(|_| !active) {
                     image.size.y + 16.0
+                } else if style.block_code {
+                    crate::code_ui::LINE_HEIGHT
                 } else if section == "\n" {
                     29.16
                 } else if style.heading > 0 {

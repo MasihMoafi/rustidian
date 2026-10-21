@@ -603,7 +603,11 @@ fn show_blocks(
                     ..Default::default()
                 })
                 .show(ui, |ui| {
-                    crate::code_ui::reading(ui, &code.body, &code.language, ordinal)
+                    if code.language.eq_ignore_ascii_case("mermaid") {
+                        crate::diagrams::show(ui, &code.body, ordinal)
+                    } else {
+                        crate::code_ui::reading(ui, &code.body, &code.language, ordinal)
+                    }
                 })
                 .inner;
             crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);

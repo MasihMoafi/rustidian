@@ -8,6 +8,29 @@ pub const DARK_MUTED: Color32 = Color32::from_rgb(155, 165, 165);
 pub const LIGHT_MUTED: Color32 = Color32::from_rgb(101, 112, 113);
 pub const DARK_FAINT: Color32 = Color32::from_rgb(104, 115, 117);
 
+pub fn hover_fill(ui: &egui::Ui) -> Color32 {
+    if ui.visuals().dark_mode {
+        Color32::from_rgb(34, 41, 44)
+    } else {
+        Color32::from_rgb(220, 224, 219)
+    }
+}
+
+/// Paint the current response without waiting for another layout pass.
+pub fn control_feedback(ui: &egui::Ui, response: &egui::Response) {
+    if response.enabled() && (response.hovered() || response.is_pointer_button_down_on()) {
+        ui.painter().rect_filled(response.rect, 7, hover_fill(ui));
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            response.rect,
+            7,
+            Stroke::new(1.0, interactive(ui)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
 /// Keep CSS-like fractional row spacing after egui's per-row pixel rounding.
 pub fn set_line_height(galley: &mut std::sync::Arc<egui::Galley>, line_height: f32) {
     let shaped = std::sync::Arc::make_mut(galley);
@@ -58,6 +81,10 @@ pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
 }
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    ctx.options_mut(|options| {
+        options.input_options.line_scroll_speed = 100.0;
+        options.input_options.wheel_smoothing = false;
+    });
     let mut visuals = if dark {
         Visuals::dark()
     } else {
@@ -114,8 +141,14 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         Color32::from_rgb(220, 230, 225)
     };
     visuals.widgets.active.weak_bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 55);
+    visuals.widgets.hovered.bg_fill = visuals.widgets.hovered.weak_bg_fill;
+    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(7);
+    visuals.widgets.hovered.bg_stroke = Stroke::NONE;
+    visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
     ctx.set_visuals(visuals);
     ctx.all_styles_mut(|style| {
+        style.animation_time = 0.0;
+        style.scroll_animation = egui::style::ScrollAnimation::none();
         style
             .text_styles
             .insert(TextStyle::Body, FontId::new(18.0, FontFamily::Proportional));
@@ -536,7 +569,7 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     });
     if ui.is_rect_visible(rect) {
         let color = if *checked {
-            accent(ui)
+            Color32::from_rgb(23, 127, 131)
         } else if response.hovered() {
             ui.visuals().weak_text_color()
         } else {
@@ -576,19 +609,64 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
 }
 
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
-    let image = icon_image(icon, ui.visuals().text_color().gamma_multiply(0.8));
-    let response = ui.add(
-        egui::Button::image(image)
-            .frame(false)
-            .min_size(egui::vec2(30.0, 30.0)),
-    );
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+    crate::ui_probe::record(ui.ctx(), format!("button:{tooltip}"), rect);
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tooltip));
+    if ui.is_rect_visible(rect) {
+        control_feedback(ui, &response);
+        let color = if response.hovered() && response.enabled() {
+            ui.visuals().text_color()
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        icon_image(icon, color).paint_at(
+            ui,
+            egui::Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0)),
+        );
+    }
     response.on_hover_text(tooltip)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn wheel_steps_are_immediate_and_leave_no_smoothing_tail() {
+        use eframe::egui::{self, Event, Modifiers, MouseWheelSource, MouseWheelUnit, TouchPhase};
+        fn frame(ctx: &egui::Context, time: f64, events: Vec<Event>) -> f32 {
+            let mut delta = None;
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    if delta.is_none() {
+                        delta = Some(ui.input(|input| input.smooth_scroll_delta().y));
+                    }
+                },
+            )
+            .drop_without_applying_deltas();
+            delta.unwrap()
+        }
+        let wheel = || Event::MouseWheel {
+            unit: MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -1.0),
+            phase: TouchPhase::Move,
+            source: MouseWheelSource::Unknown,
+            modifiers: Modifiers::NONE,
+        };
+        let before = egui::Context::default();
+        let smoothed = frame(&before, 1.0, vec![wheel()]);
+        assert!(smoothed.abs() < 40.0);
+        let after = egui::Context::default();
+        super::apply(&after, true);
+        assert_eq!(frame(&after, 1.0, vec![wheel()]), -100.0);
+        assert_eq!(frame(&after, 1.016, vec![]), 0.0);
+        assert_eq!(frame(&after, 1.1, vec![]), 0.0);
+    }
+
     #[test]
     fn bidi_paragraphs_keep_the_editors_left_to_right_base_direction() {
         use eframe::egui::{self, Color32, FontId};

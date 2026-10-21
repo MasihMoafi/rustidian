@@ -1,6 +1,7 @@
 mod app;
 mod callout_ui;
 mod code_ui;
+mod diagrams;
 mod editor_ui;
 mod file_tree;
 mod image_view;
@@ -10,6 +11,7 @@ mod session;
 mod syntax;
 mod table_ui;
 mod theme;
+mod title_ui;
 mod ui_probe;
 
 use std::{

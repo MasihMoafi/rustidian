@@ -235,3 +235,18 @@ The measured 18px boxes use a solid accent checked fill, not an outline-only
 check. Native pixel assertions must inspect the checked box, and click/save/undo
 must still preserve the exact note. Preserve concurrently committed standalone
 file/default-vault support while correcting these app interactions.
+
+
+### Interaction feedback and native diagrams — 21 October
+
+The next candidate targets Masih's direct feedback: every button (including tab close), folder/file and palette row needs visible pointer feedback; wheel navigation needs immediate movement; the inline title must be editable; tables and Mermaid must render in Reading and Live without altering Markdown. A built app must prove each interaction; a source search or a new probe alone is not acceptance.
+
+`reports/obsidian-hover.json` measures installed Obsidian 1.5.12 in a disposable profile: dark icon/close/file hover uses RGB 34/41/44 and a 7px radius; close text becomes 233/229/220. Its folder measurement selected the root row and is not evidence for regular folder hover. User screenshots show Rust Notes tab close and collapsed folder rows lacking feedback.
+
+The old `b9d68d2` executable fails actual pointer-hover pixels and actual inline-title rename in the new native evaluations. Its navigation checks pass; its checkbox check catches an accent mismatch (101/183/182 instead of measured 23/127/131). Source changes correct that control independently of link colors.
+
+Scrolling uses an explicit app option: 100 pixels per line-wheel event, no smoothing tail and no animated programmatic scrolling. The vendored egui default stays smoothed at 40 pixels; a focused test checks both paths. Native scrolling must verify actual offset, direction, repeated input and unchanged note bytes. Hover timings include xdotool dispatch and screen-pixel polling, so do not call them internal frame times.
+
+Mermaid uses [`mermaid-rs-renderer` 0.3.1](https://github.com/1jehuang/mermaid-rs-renderer) with CLI/PNG features disabled. One lazy worker renders SVG away from the UI thread. A bounded 16-entry source/theme cache serves Reading and Live; hover and scrolling must not increase its render count. Invalid syntax keeps the literal source available. `Source editing` always shows Markdown. No browser or JavaScript renderer is introduced.
+
+New native sections: `hover`, `title`, `scrolling`, `diagrams`. They run in Actions before the full regression/CPU/comparison gates. These changes remain unverified until the exact candidate passes and its screenshots are inspected.
