@@ -92,6 +92,17 @@ jobs:
           timeout 25s gh run view "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha > "$RUNNER_TEMP/source-run.json"
           timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
+      - name: Make the optimized app available before the long GUI checks
+        if: ${{ !inputs.diagnostic_only && inputs.reuse_run_id == '' && steps.build_candidate.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: application-native-${{ github.sha }}
+          retention-days: 1
+          path: |
+            reports/rust-notes-candidate-linux-x86_64.tar.gz
+            reports/candidate.sha256
+            reports/binary-source-commit.txt
+            reports/candidate-build.log
       - name: Focused link, window, diagram, checklist, table and vault regressions
         if: ${{ !inputs.diagnostic_only }}
         run: |
@@ -114,7 +125,7 @@ jobs:
           name: focused-native-${{ github.sha }}
           retention-days: 1
           path: |
-            ${{ inputs.reuse_run_id == '' && 'reports/rust-notes-candidate-linux-x86_64.tar.gz' || 'reports/binary-source-commit.txt' }}
+            reports/binary-source-commit.txt
             reports/candidate.sha256
             reports/*-gui.log
             reports/gui-*-results.json

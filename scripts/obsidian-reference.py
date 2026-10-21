@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
@@ -34,7 +34,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     (settings / "appearance.json").write_text(json.dumps(appearance))
     shutil.copytree(original / "snippets", settings / "snippets", dirs_exist_ok=True)
     (settings / "app.json").write_text(json.dumps({"defaultViewMode": "preview"}))
-    if arguments.section in ("inventory", "workspaces"):
+    if arguments.section in ("inventory", "workspaces", "recovery"):
         (vault / "Templates").mkdir(exist_ok=True)
         (vault / "Daily").mkdir(exist_ok=True)
         (vault / "Template target.md").write_text("# Before\n\n")
@@ -102,6 +102,86 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         def evaluate(expression):
             value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True, timeout=8)
             return json.loads(value)
+
+        if arguments.section == "recovery":
+            report = {"appimage":str(arguments.appimage), "profile":"disposable", "status":"observed"}
+            original_target = target
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            def pages():
+                with opener.open(f"http://127.0.0.1:{debug_port}/json/list",timeout=2) as response:
+                    return [page for page in json.load(response) if page['type']=='page']
+            def palette(name):
+                xdo('key','--clearmodifiers','ctrl+p');time.sleep(.2)
+                xdo('type','--clearmodifiers','--delay','4',name);time.sleep(.2)
+                xdo('key','Return');time.sleep(.4)
+            def controls():
+                return evaluate("JSON.stringify({body:document.body.innerText,controls:[...document.querySelectorAll('input,button,[aria-label]')].filter(e=>e.getBoundingClientRect().height).map(e=>{const r=e.getBoundingClientRect();return {tag:e.tagName,text:e.innerText,value:e.value,type:e.type,placeholder:e.placeholder,label:e.getAttribute('aria-label'),min:e.min,max:e.max,rect:[r.x,r.y,r.width,r.height]}})})")
+            def click_dom(expression):
+                rect=evaluate("JSON.stringify((()=>{const e="+expression+";if(!e)return null;const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                assert rect, 'Missing recovery control: '+expression
+                xdo('mousemove',*[str(round(value)) for value in rect],'click','1');time.sleep(.3)
+            def wait(predicate,message):
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    if predicate():return
+                    time.sleep(.1)
+                raise AssertionError(message)
+            try:
+                report['commands'] = evaluate("JSON.stringify(Object.entries(app.commands.commands).filter(([id])=>id.startsWith('file-recovery')).map(([id,c])=>({id,name:c.name})))")
+                assert len(report['commands'])==1
+                palette(report['commands'][0]['name'])
+                current_pages=pages()
+                target=next((page for page in current_pages if page['id']!=original_target['id']),original_target)
+                report['history_initial']=controls()
+                assert {'Copy','Restore'} <= {c.get('text','') for c in report['history_initial']['controls']}, 'Actual history controls did not appear'
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-initial.png')
+                home=vault/'Home.md'
+                original=home.read_bytes()
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Copy')")
+                copied=subprocess.check_output(['xclip','-selection','clipboard','-out'],env=environment)
+                assert copied==original, 'History Copy changed the original Markdown bytes'
+                click_dom("document.querySelector('input[type=checkbox]')")
+                assert evaluate("JSON.stringify(document.querySelector('input[type=checkbox]').checked)") is True
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-changes.png')
+                home.write_text('# External version for recovery\n')
+                time.sleep(.4)
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Restore')")
+                report['restore_ui']=controls()
+                wait(lambda:home.read_bytes()==original,'Restore did not recover the exact snapshot bytes')
+                report['copy_restore']={'copy_exact_bytes':True,'restored_exact_bytes':True,'show_changes_toggled':True,'source_sha256':hashlib.sha256(original).hexdigest()}
+                xdo('key','Escape');time.sleep(.3)
+                target=original_target
+                palette('Open settings')
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    settings_pages=[page for page in pages() if page['id']!=original_target['id']]
+                    if settings_pages:break
+                    time.sleep(.1)
+                assert settings_pages, 'Recovery audit settings window did not open'
+                target=settings_pages[0]
+                rect=evaluate("JSON.stringify((()=>{const e=[...document.querySelectorAll('.vertical-tab-nav-item')].find(e=>e.textContent.trim()==='File recovery');if(!e)return null;e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                assert rect, 'File recovery settings category missing'
+                xdo('mousemove',*[str(round(value)) for value in rect],'click','1');time.sleep(.4)
+                report['settings']=controls()
+                report['settings_items']=evaluate("JSON.stringify([...document.querySelectorAll('.setting-item')].map(e=>({name:e.querySelector('.setting-item-name')?.innerText,description:e.querySelector('.setting-item-description')?.innerText,controls:[...e.querySelectorAll('input,button')].map(i=>({type:i.type,value:i.value,text:i.innerText,min:i.min,max:i.max}))})))")
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-settings.png')
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Clear history')?.querySelector('button')")
+                report['clear_confirmation']=controls()
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-clear-confirm.png')
+                xdo('key','Escape');time.sleep(.2)
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                report['after_clear_cancel']=controls()
+                assert any(c.get('text')=='Restore' for c in report['after_clear_cancel']['controls'])
+                assert home.read_bytes()==original
+                report['status']='passed-copy-restore-and-clear-cancel'
+            except Exception as error:
+                report.update(status='failed',error=str(error))
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-failure.png')
+                raise
+            finally:
+                (ROOT/'reports/obsidian-recovery-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+            print(json.dumps({'section':'recovery','status':report['status']}))
+            raise SystemExit(0)
 
         if arguments.section == "workspaces":
             report = {"appimage": str(arguments.appimage), "profile": "disposable", "status": "observed"}

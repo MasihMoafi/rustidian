@@ -85,7 +85,7 @@ impl Manager {
                     );
                     ui_probe::record(ctx, "workspace-save", button.rect);
                     save = button.clicked()
-                        || (input.has_focus()
+                        || ((input.has_focus() || input.lost_focus())
                             && ui.input_mut(|i| {
                                 i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
                             })

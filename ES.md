@@ -11,7 +11,11 @@ Masih's latest instruction expands the destination to every Obsidian feature, ma
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
-## Current checkpoint — 21 October20:06UTC
+## Current checkpoint — 21 October20:10UTC
+
+Source05fb9e04d23b5e594751244d947b0ef8818d1719 / Actions39667306843 passed Clippy and reached Rust behavior checks. A necessary source review correction supersedes it before further heavy work: egui single-line TextEdit surrenders focus on Enter, so the new workspace Save handler must accept lost_focus as well as has_focus. The explicit workspaces flow now saves its first layout through Return, then exercises the actual Save button on later layouts. Cancellation was requested. The same follow-up moves the exact optimized app into application-native-$SHA immediately after compilation, ahead of long GUI checks; focused evidence no longer duplicates its archive, and the final verified bundle remains available. Do not install either unverified source. Recovery reference work is local/read-only toward originals and remains independent; current installed048fced is unchanged.
+
+## Earlier checkpoint — 21 October20:06UTC
 
 Source696938b02ec4cbd4c965cbe02a0e936d5037b85c / Actions39663915685 passed Clippy, Rust, optimized compilation and all seven focused sections, including8 note-aids groups. Exact CRC/SHA-checked candidate is reports/github-696938b/runtime/rust-notes, SHA2b4f0c00fd983bc858301ad9fe3401bf23c81949686c40fe36052d193694fc4b; bundle ca9b837b1996dae49a8a520db6424dee7c4cbd4747a90f9a9dff63856e2335b0. Chooser/settings/daily screenshots were visually inspected. It is NOT installed: an extra real Escape→paste→save check reproduced lost editor focus (unchanged target instead of typed text), retained in reports/note-aids-696938b-cancel-before and note-aids-696938b-cancel-focus.log. Cancellation was requested20:03UTC for this necessary runtime correction. Current installed048fced and its verified receipt/rollback remain untouched.
 

@@ -3343,11 +3343,14 @@ def main():
                     assert 0 <= bounds[0] < bounds[2] <= 1440 and 0 <= bounds[1] < bounds[3] <= 960, bounds
                     return bounds
 
-                def save_layout(name):
+                def save_layout(name, keyboard=False):
                     click_control("workspace-name", hold=.15)
                     modified_shortcut(xdo, "a")
                     paste_text(name, held=True)
-                    click_control("workspace-save", hold=.15)
+                    if keyboard:
+                        key("Return")
+                    else:
+                        click_control("workspace-save", hold=.15)
                     assert control_bounds("workspace-load:" + name)
 
                 def stored():
@@ -3400,7 +3403,7 @@ def main():
                 assert abs((resized[2]-resized[0]) - (left[2]-left[0])) >= 20, (left,resized)
                 command("Reading view")
                 manager()
-                save_layout("Writing")
+                save_layout("Writing", keyboard=True)
                 new_paths = set(storage.glob("*.json")) - before_paths
                 assert len(new_paths) == 1
                 layout_path = new_paths.pop()
