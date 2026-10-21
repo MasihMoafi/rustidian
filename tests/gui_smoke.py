@@ -939,13 +939,13 @@ def main():
                 originals = {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")}
                 timings = []
                 for name in ["new-tab", "close-tab:Home.md", "new-folder", "file-sort", "file-collapse", "bookmarks-tab", "folder:Notes", "file:Home.md"]:
-                    xdo("mousemove", "1000", "880")
+                    xdo("mousemove", "--sync", "1000", "880")
                     time.sleep(.07)
                     bounds = tuple(round(value) for value in control_bounds(name))
                     baseline = ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB")
                     left, top, right, bottom = bounds
                     start = time.perf_counter()
-                    xdo("mousemove", str((left+right)//2), str((top+bottom)//2))
+                    xdo("mousemove", "--sync", str((left+right)//2), str((top+bottom)//2))
                     changed = False
                     while time.perf_counter() - start < .15:
                         picture = ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB")
@@ -953,7 +953,12 @@ def main():
                         if changed: break
                         time.sleep(.003)
                     elapsed = (time.perf_counter()-start)*1000
-                    timings.append({"control":name,"dispatch_to_visible_ms":elapsed})
+                    current_bounds = control_bounds(name)
+                    sample = {"control":name,"dispatch_to_visible_ms":elapsed,
+                              "bounds_before":list(bounds),"bounds_after":current_bounds,
+                              "pointer":xdo("getmouselocation", "--shell")}
+                    timings.append(sample)
+                    (reports / "hover-samples.json").write_text(json.dumps(timings,indent=2)+"\n")
                     assert changed and picture.tobytes() != baseline.tobytes(), f"No immediate Obsidian hover feedback on {name}: {elapsed:.1f}ms"
                     if name.startswith("close-tab:"): capture("native-hover-close.png")
                     if name.startswith("folder:"): capture("native-hover-folder.png")

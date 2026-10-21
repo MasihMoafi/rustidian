@@ -184,6 +184,12 @@ service, startup or Elpis selector/activation changes belong to this work.
 - **Modal input:** request stable input focus before processing events, retain it
   until settled, then stop reclaiming it. Test fast F2/name/Enter and a title
   dialog opened through a menu. Avoid interrupting composition to claim focus.
+  Returning from an unsaved-work guard needs the same deferred editor focus:
+  the old `633bb9b` release kept the buffer but lost Undo after Escape. Disable
+  autosave through real settings, type, cancel Close, require editor focus,
+  then Undo/save and compare exact original bytes. Let modal layers finish
+  closing; do not hide the failure by clicking the editor. Keep ordinary and
+  unsaved dialogs on the shared interface typography.
 - **Changed rows:** a state mutation after painting can leave stale interactive
   bounds. Request repaint and test the actual rendered order before clicking;
   retaining the correct model alone does not prove correct navigation.
