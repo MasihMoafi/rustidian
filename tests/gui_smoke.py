@@ -19,7 +19,7 @@ from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from native_input import modified_shortcut, save_shortcut, wait_autosave
+from native_input import UnicodeKeyboard, modified_shortcut, save_shortcut, wait_autosave
 
 
 def pixel_data(picture):
@@ -28,11 +28,17 @@ def pixel_data(picture):
     return modern() if modern else picture.getdata()
 
 
-def run_checks(checks, on_failure):
+def run_checks(checks, on_failure, *, count_checks=None, on_success=None):
     failures = []
     for check in checks:
+        before=count_checks() if count_checks is not None else 0
         try:
             check()
+            completed=count_checks()-before if count_checks is not None else 0
+            if count_checks is not None:
+                assert completed>0,f"No behavioral checks completed: {check.__name__}"
+            if on_success is not None:
+                on_success(check.__name__,completed)
         except Exception as error:
             failures.append(check.__name__)
             on_failure(check.__name__, error)
@@ -45,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "workspaces", "recovery"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -102,6 +108,10 @@ def main():
             (fixture / ".gitignore.md").write_text("Hidden file.\n")
             (fixture / "Cache notes.md").write_text("Keep this ordinary note.\n")
         window_manager = None
+        unicode_keyboard = None
+        if os.environ.get("RUST_NOTES_STABLE_UNICODE", "1") == "1":
+            unicode_keyboard = UnicodeKeyboard(environment, Path(__file__).read_text())
+        environment.pop("RUST_NOTES_DEFAULT_VAULT",None)
         if args.section == "chrome" and shutil.which("openbox"):
             window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
                 stdout=log, stderr=log)
@@ -336,9 +346,33 @@ def main():
             results.append("Native window opened; three-pane home captured")
 
             def command(value):
+                def trace(stage):
+                    if os.environ.get("RUST_NOTES_TRACE_COMMANDS") == "1":
+                        with (reports/"command-sequence.jsonl").open("a") as output:
+                            controls=json.loads((base/"ui-probe.json").read_text())
+                            relevant={name:bounds for name,bounds in controls.items() if name.startswith(("command:","dialog","workspace","pending-","editor","tab-full:"))}
+                            output.write(json.dumps({"command":value,"stage":stage,"section":args.section,"pid":app.pid,"time":time.monotonic(),"controls":relevant,"x_focus":xdo("getwindowfocus")})+"\n")
+                trace("before")
                 key("ctrl+p")
+                control_bounds("dialog-input-focused")
+                trace("palette")
                 type_text(value)
+                expected={"srcedt":"Source editing","Split source":"Split source and preview"}.get(value,value)
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline:
+                    controls=json.loads((base/"ui-probe.json").read_text())
+                    matches={name:bounds for name,bounds in controls.items() if name.startswith("command:")}
+                    wanted=matches.get("command:"+expected)
+                    if wanted is not None and wanted[1] == min(bounds[1] for bounds in matches.values()):
+                        break
+                    time.sleep(.05)
+                else:
+                    trace("query-not-selected")
+                    capture("command-query-not-selected.png")
+                    raise AssertionError(("Requested command was not the first result",value,matches))
+                trace("query")
                 key("Return")
+                trace("result")
 
             def close_tabs():
                 for _ in range(32):
@@ -3580,6 +3614,65 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other workspace vault\n"
                 results.append("Deleting saved layouts removed only metadata and preserved every original workspace document")
 
+            def palette_queue_checks():
+                sources={p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
+                before=control_bounds("sidebar:details",required=False) is not None
+                def queued(query):
+                    os.kill(app.pid,signal.SIGSTOP)
+                    try:
+                        xdo("key","--clearmodifiers","ctrl+p")
+                        xdo("type","--clearmodifiers","--delay","1","--",query)
+                        xdo("key","--clearmodifiers","Return")
+                    finally:
+                        os.kill(app.pid,signal.SIGCONT)
+                    pause();pause()
+                queued("Toggle right sidebar")
+                capture("native-palette-queued.png")
+                after=control_bounds("sidebar:details",required=False) is not None
+                assert after != before,("Queued palette did not execute the typed command",before,after)
+                assert control_bounds("workspace-manager",required=False) is None
+                results.append("The palette received shortcut, full query and Enter together and executed the requested sidebar action")
+                queued("NoSuchNativeCommandInvalid123456")
+                assert control_bounds("dialog-input")
+                assert control_bounds("workspace-manager",required=False) is None
+                assert (control_bounds("sidebar:details",required=False) is not None)==after
+                key("Escape")
+                queued("Toggle right sidebar")
+                assert (control_bounds("sidebar:details",required=False) is not None)==before
+                for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
+                results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+
+            if args.section == "palette-queued":
+                palette_queue_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"palette-queued"}))
+                return
+
+            def unicode_queue_checks():
+                note=fixture/"Keyboard calibration.md";original="# Keyboard calibration\n\n"
+                note.write_text(original);command("Refresh vault");pause();open_note("Keyboard calibration");command("Source editing");editor_end()
+                type_text("ASCII_BASE");key("ctrl+s")
+                assert note.read_text()==original+"ASCII_BASE"
+                note.write_text(original);time.sleep(.6);command("Refresh vault");pause();editor_end()
+                suffix="سلام π صفحه‌کلید"
+                os.kill(app.pid,signal.SIGSTOP)
+                try:
+                    xdo("type","--clearmodifiers","--delay","100","--",suffix)
+                finally:
+                    os.kill(app.pid,signal.SIGCONT)
+                pause();pause();key("ctrl+s")
+                actual=note.read_text()
+                (reports/"unicode-keyboard-calibration.json").write_text(json.dumps({"stable_keymap":os.environ.get("RUST_NOTES_STABLE_UNICODE","1")=="1","expected":original+suffix,"actual":actual,"exact":actual==original+suffix},ensure_ascii=False,indent=2)+"\n")
+                capture("native-unicode-keyboard.png")
+                assert actual==original+suffix,repr(actual)
+                results.append("ASCII typing and queued Persian, Greek and ZWNJ key events saved exact bytes through the same native editor")
+
+            if args.section == "unicode-queued":
+                unicode_queue_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"unicode-queued"}))
+                return
+
             if args.section == "recovery":
                 command("Source editing")
                 key("ctrl+p");type_text("Save note")
@@ -4007,6 +4100,11 @@ def main():
                 xdo("key", "--clearmodifiers", "Escape", "Escape")
                 pause()
 
+            workflow_results=[]
+            (reports/"gui-all-workflows.json").write_text("[]\n")
+            def retain_success(name,completed):
+                workflow_results.append({"workflow":name,"checks":completed,"status":"passed"})
+                (reports/"gui-all-workflows.json").write_text(json.dumps(workflow_results,indent=2)+"\n")
             run_checks([
                 properties_checks,
                 image_checks,
@@ -4042,7 +4140,9 @@ def main():
                 persian_checks,
                 note_aids_checks,
                 workspace_checks,
-            ], retain_failure)
+                palette_queue_checks,
+                unicode_queue_checks,
+            ], retain_failure,count_checks=lambda:len(results),on_success=retain_success)
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))
         except BaseException:
@@ -4064,6 +4164,8 @@ def main():
             if window_manager is not None:
                 window_manager.terminate()
                 window_manager.wait(timeout=5)
+            if unicode_keyboard is not None:
+                unicode_keyboard.close()
             server.terminate()
             server.wait(timeout=5)
             xvfb_log.close()

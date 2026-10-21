@@ -126,13 +126,15 @@ jobs:
           gui_status=0
           trap 'gui_status=1' ERR
           set +e
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section palette-queued 2>&1 | tee reports/palette-queued-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section unicode-queued 2>&1 | tee reports/unicode-queued-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vaults 2>&1 | tee reports/vaults-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
+          RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
           exit "$gui_status"
       - name: Keep the focused candidate and native evidence available
@@ -160,6 +162,10 @@ jobs:
             reports/native-template-*.png
             reports/native-daily-*.png
             reports/native-workspaces-*.png
+            reports/native-palette-queued.png
+            reports/native-unicode-keyboard.png
+            reports/unicode-keyboard-calibration.json
+            reports/command-sequence.jsonl
       - name: Native GUI and portable bundle checks
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
@@ -169,7 +175,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-release-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
+          RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
           exit "$gui_status"
       - name: Serial editor CPU measurements
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}

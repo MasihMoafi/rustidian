@@ -4,6 +4,42 @@ from pathlib import Path
 import subprocess
 import time
 
+
+class UnicodeKeyboard:
+    """Keep test symbols mapped for the lifetime of our private Xvfb app.
+
+    xdotool's temporary per-character mapping can disappear before the native
+    event loop decodes a queued key. Never change the real desktop's keymap.
+    """
+    def __init__(self, environment, text):
+        import ctypes
+        import os
+        from Xlib import display, X
+        assert environment["DISPLAY"] != os.environ.get("DISPLAY"), "Use the private Xvfb display only"
+        self.connection = display.Display(environment["DISPLAY"])
+        modifiers = {code for row in self.connection.get_modifier_mapping() for code in row if code}
+        maximum = self.connection.display.info.max_keycode
+        rows = self.connection.get_keyboard_mapping(160, maximum-159)
+        candidates = [(160+index, tuple(row)) for index, row in enumerate(rows)
+                      if 160+index not in modifiers and not any(32 <= symbol <= 126 for symbol in row)]
+        characters = sorted({character for character in text if ord(character) > 127})
+        assert len(candidates) >= len(characters), "Insufficient private test keycodes"
+        library = ctypes.CDLL("libxkbcommon.so.0")
+        library.xkb_utf32_to_keysym.argtypes = [ctypes.c_uint32]
+        library.xkb_utf32_to_keysym.restype = ctypes.c_uint32
+        self.original = candidates[:len(characters)]
+        for (code, original), character in zip(self.original, characters):
+            symbol = library.xkb_utf32_to_keysym(ord(character))
+            assert symbol, repr(character)
+            self.connection.change_keyboard_mapping(code, [(symbol,)+(X.NoSymbol,)*(len(original)-1)])
+        self.connection.sync()
+
+    def close(self):
+        for code, original in self.original:
+            self.connection.change_keyboard_mapping(code, [original])
+        self.connection.sync()
+        self.connection.close()
+
 SAVE_KEY_INTERVAL_MS = 40
 SAVE_CHORD = ("keydown", "ctrl", "key", "--delay", str(SAVE_KEY_INTERVAL_MS), "s", "keyup", "ctrl")
 
