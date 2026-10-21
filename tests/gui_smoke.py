@@ -1861,6 +1861,7 @@ def main():
                 try:
                     click_control("bookmark-add-current")
                     assert control_bounds(f"bookmark:{relative}", required=False) is None
+                    assert control_bounds("error-save-copy", required=False) is None
                     capture("native-bookmark-state-error.png")
                 finally:
                     state_path.rmdir()
@@ -2184,6 +2185,7 @@ def main():
             time.sleep(1.1)
             assert note.read_text() == "# External version\nKeep the disk version.\n"
             capture("external-conflict.png")
+            assert control_bounds("error-save-copy")
             open_before = xdo("getwindowname", window)
             key("ctrl+o")
             type_text("Connected thinking")

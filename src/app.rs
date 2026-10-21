@@ -740,7 +740,8 @@ impl NotesApp {
     fn save_bookmarks(&mut self, before: rust_notes::bookmarks::Bookmarks) -> bool {
         if let Err(error) = self.write_session() {
             self.bookmarks = before;
-            self.error = Some(error);
+            self.status = "Bookmarks not saved".into();
+            self.error = Some(format!("Bookmark changes weren't saved. {error}"));
             return false;
         }
         self.status = "Bookmarks saved".into();
@@ -2353,8 +2354,16 @@ impl eframe::App for NotesApp {
                     if ui.button("Dismiss").clicked() {
                         self.error = None;
                     }
-                    if !self.tabs.is_empty() && ui.button("Save a copy…").clicked() {
-                        self.ask(Dialog::SaveCopy);
+                    if self
+                        .tabs
+                        .get(self.active)
+                        .is_some_and(|tab| tab.document.dirty())
+                    {
+                        let copy = ui.button("Save a copy…");
+                        crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
+                        if copy.clicked() {
+                            self.ask(Dialog::SaveCopy);
+                        }
                     }
                 });
             });
