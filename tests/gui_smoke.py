@@ -87,7 +87,11 @@ def main():
             bundled_binary = base / "rust-notes"
             shutil.copy2(ROOT / args.binary, bundled_binary)
             launch_command = [str(bundled_binary)]
-        app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+        def launch_app(command):
+            (base / "ui-probe.json").unlink(missing_ok=True)
+            return subprocess.Popen(command, cwd=base, env=environment, stdout=log, stderr=log)
+
+        app = launch_app(launch_command)
         results = []
         (reports / "gui-results.json").write_text(json.dumps({"status": "running", "checks": []}, indent=2)+"\n")
 
@@ -204,6 +208,24 @@ def main():
             assert window, "No native window appeared"
             xdo("windowsize", window, "1440", "960")
             xdo("windowmove", window, "0", "0")
+            # A mapped GL window can precede egui-winit's input state. Activating
+            # it then loses FocusIn, since no window manager delivers a later
+            # transition in Xvfb. Wait for the first actual UI, then activate once.
+            probe = base / "ui-probe.json"
+            while not probe.exists() and time.monotonic() < deadline:
+                assert app.poll() is None, "App exited before preparing its first UI"
+                time.sleep(.02)
+            assert probe.exists(), "The native window never prepared its first UI"
+            xdo("windowfocus", "0")
+            time.sleep(.1)
+            if args.open_file:
+                control_bounds("editor")
+                unfocused_deadline = time.monotonic() + 3
+                while control_bounds("window-focused")[0] != 0 and time.monotonic() < unfocused_deadline:
+                    time.sleep(.02)
+                assert control_bounds("window-focused")[0] == 0, "The negative startup case must be unfocused"
+                assert control_bounds("editor-memory-focus")[0] == 1, "Opening a file must select its editor for input"
+                assert control_bounds("editor-focus-request")[0] == 0, "Unfocused startup must finish its focus request without continuously reclaiming input"
             xdo("windowfocus", "--sync", window)
             assert xdo("getwindowfocus") == window, "The private test window must own keyboard input"
             pause()
@@ -218,7 +240,7 @@ def main():
                 type_text("Saved from the editor")
                 key("ctrl+s")
                 expected = startup_text + "Saved from the editor"
-                assert startup_path.read_text() == expected
+                assert startup_path.read_text() == expected, repr(startup_path.read_text())
                 assert (fixture / "Home.md").read_text() == (ROOT / "demo-vault/Home.md").read_text()
                 capture(f"file-open-{args.open_file}.png")
                 xdo("key", "--clearmodifiers", "ctrl+q")
@@ -226,8 +248,7 @@ def main():
                 second_path = fixture / f"Another file.{args.open_file}"
                 second_text = "A different document\n"
                 second_path.write_text(second_text)
-                (base / "ui-probe.json").unlink(missing_ok=True)
-                app = subprocess.Popen([str(ROOT / args.binary), str(second_path)], cwd=base, env=environment, stdout=log, stderr=log)
+                app = launch_app([str(ROOT / args.binary), str(second_path)])
                 window = ready_window()
                 title_contains(second_path.stem)
                 control_bounds("editor-focused")
@@ -657,7 +678,7 @@ def main():
                 app.wait(timeout=10)
                 state = json.loads(next((base / "state/rust-notes").glob("*.json")).read_text())
                 assert ["Assets/Renamed viewer[1].png", "Read"] in state["tabs"], state
-                app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+                app = launch_app(launch_command)
                 window = ready_window()
                 title_contains("Renamed viewer[1].png")
                 assert control_bounds("attachment-image")
@@ -1088,7 +1109,7 @@ def main():
                 assert note.read_text() == expected
                 xdo("key", "--clearmodifiers", "ctrl+q")
                 app.wait(timeout=5)
-                app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+                app = launch_app(launch_command)
                 window = ready_window()
                 title_contains("Essential UI")
                 editor_end()
@@ -1926,7 +1947,7 @@ def main():
                 assert control_bounds("folder:Toolbar folder")[1] < control_bounds("folder:Notes")[1]
                 xdo("key", "--clearmodifiers", "ctrl+q")
                 app.wait(timeout=10)
-                app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+                app = launch_app(launch_command)
                 window = ready_window()
                 assert control_bounds("folder:Toolbar folder")[1] < control_bounds("folder:Notes")[1]
                 click_control("file-sort")
@@ -2433,7 +2454,7 @@ def main():
                 title_contains("Bookmark renamed")
                 xdo("key", "--clearmodifiers", "ctrl+q")
                 app.wait(timeout=5)
-                app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+                app = launch_app(launch_command)
                 window = ready_window()
                 title_contains("Bookmark renamed")
                 assert control_bounds(f"bookmark:{relative}")
@@ -2845,7 +2866,7 @@ def main():
             # Restart once without the deliberately conflicted buffer, then test a clean exit.
             app.terminate()
             app.wait(timeout=5)
-            app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+            app = launch_app(launch_command)
             window = ready_window()
             open_note("Home")
             command("Reading view")
@@ -2859,7 +2880,7 @@ def main():
             session = json.loads(session_files[0].read_text())
             assert len(session["tabs"]) == 2 and session["active"] == 1
             assert [view for path, view in session["tabs"]] == ["Read", "Source"]
-            app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+            app = launch_app(launch_command)
             window = ready_window()
             title_contains("Created in GUI")
             key("ctrl+Tab")

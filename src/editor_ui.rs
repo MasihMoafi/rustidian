@@ -987,7 +987,9 @@ impl Editor {
             && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
         {
             output.response.request_focus();
-            self.focus = !output.response.has_focus();
+            // Window activation can follow later. Once the real editor owns
+            // keyboard input, repeated requests would steal it from other fields.
+            self.focus = !ui.memory(|memory| memory.has_focus(id));
             ui.ctx().request_repaint();
         }
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
