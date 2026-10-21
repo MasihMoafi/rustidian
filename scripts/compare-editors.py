@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from PIL import ImageGrab
-from native_input import SAVE_KEY_INTERVAL_MS, save_shortcut
+from native_input import SAVE_KEY_INTERVAL_MS, begin_save_shortcut
 
 
 def wait_bytes(path, expected, timeout=3):
@@ -77,6 +77,8 @@ def main():
     report = {
         "status": "running", "metric": "synthetic insertion + explicit held-Control Save chord until exact bytes are observed",
         "save_key_interval_ms": SAVE_KEY_INTERVAL_MS,
+        "input_gap_ms": 50,
+        "save_release_after_measurement": True,
         "keyboard_diagnostic": args.trace_keys,
         "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
         "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
@@ -86,7 +88,8 @@ def main():
         "cpu": subprocess.check_output(["lscpu"], text=True),
         "limitations": ["Combined edit/save response, not display latency or internal CPU time.",
                         "Includes common xdotool subprocess and 1ms file polling overhead.",
-                        "Includes the same 40ms Save key interval and Control-held-through-S-release gesture for both apps; rejected combined-chord failures remain separate evidence.",
+                        "Both apps receive the same Control-held-through-S-release gesture with a 40ms key interval; the timer stops at exact bytes, then waits for key release before another sample.",
+                        "The common 50ms typing-to-Save gap is included; it prevents frame-current shortcut matching from treating an earlier ordinary letter as Ctrl+letter.",
                         "Same source size, wrapping, 18px text and software Xvfb host; font families, UI features and save durability differ.",
                         "Two alternating rounds are a bounded observation, not proof of the world's fastest editor."],
         "rounds": [],
@@ -182,9 +185,11 @@ def main():
                                         expected += inserted.encode()
                                         start = time.perf_counter_ns()
                                         xdo("type", "--clearmodifiers", "--delay", 0, inserted)
-                                        save_shortcut(xdo)
+                                        time.sleep(report["input_gap_ms"] / 1000)
+                                        save = begin_save_shortcut(env)
                                         try:
                                             wait_bytes(note, expected)
+                                            elapsed = (time.perf_counter_ns() - start) / 1_000_000
                                         except Exception:
                                             actual = note.read_bytes()
                                             diagnostic = {"app": name, "round": round_number, "sample": sample,
@@ -201,7 +206,9 @@ def main():
                                             ImageGrab.grab(xdisplay=display).save(reports / f"{round_number}-{name}-failure.png")
                                             print(json.dumps(diagnostic), flush=True)
                                             raise
-                                        elapsed = (time.perf_counter_ns() - start) / 1_000_000
+                                        finally:
+                                            _, error = save.communicate(timeout=5)
+                                            assert save.returncode == 0, error.decode()
                                         if sample >= 5:
                                             samples.append(elapsed)
                                         time.sleep(.04)
