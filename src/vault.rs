@@ -174,7 +174,7 @@ impl Vault {
             if !entry.file_type().is_file() {
                 continue;
             }
-            if !is_text_document(entry.path()) {
+            if !is_markdown(entry.path()) {
                 if crate::assets::is_image(entry.path()) {
                     attachments.push(entry.path().strip_prefix(&self.root).unwrap().into());
                 }

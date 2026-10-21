@@ -3,13 +3,15 @@ use std::{fs, path::Path};
 use tempfile::tempdir;
 
 #[test]
-fn plain_text_documents_can_be_indexed_edited_and_saved_without_overwriting_external_changes() {
+fn plain_text_documents_open_and_save_without_bulk_indexing_or_overwriting_external_changes() {
     let folder = tempdir().unwrap();
     let filename = Path::new("Notes سلام.TXT");
     let path = folder.path().join(filename);
     fs::write(&path, "# Literal text\n\nسلام\n").unwrap();
+    fs::write(folder.path().join("Home.md"), "# Home\n").unwrap();
     let mut vault = Vault::open(folder.path()).unwrap();
     assert_eq!(vault.notes.len(), 1);
+    assert_eq!(vault.notes[0].path, Path::new("Home.md"));
     let mut document = vault.open_document(filename).unwrap();
     assert!(document.is_plain_text());
     document.text.push_str("Saved text\n");
