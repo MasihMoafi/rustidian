@@ -72,7 +72,8 @@ def main():
     reports = root / "reports" / "editor-comparison"
     reports.mkdir(parents=True, exist_ok=True)
     report = {
-        "status": "running", "metric": "synthetic insertion + explicit save until exact bytes are observed",
+        "status": "running", "metric": "synthetic insertion + common 50ms input gap + explicit save until exact bytes are observed",
+        "input_gap_ms": 50,
         "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
         "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
         "versions": {"ferrite": "v0.3.0", "rust-notes": source_commit},
@@ -81,6 +82,7 @@ def main():
         "cpu": subprocess.check_output(["lscpu"], text=True),
         "limitations": ["Combined edit/save response, not display latency or internal CPU time.",
                         "Includes common xdotool subprocess and 1ms file polling overhead.",
+                        "Includes the same 50ms input-to-Save gap for both apps; immediate-sequence failures remain separate rejected evidence.",
                         "Same source size, wrapping, 18px text and software Xvfb host; font families, UI features and save durability differ.",
                         "Two alternating rounds are a bounded observation, not proof of the world's fastest editor."],
         "rounds": [],
@@ -165,6 +167,7 @@ def main():
                                         expected += inserted.encode()
                                         start = time.perf_counter_ns()
                                         xdo("type", "--clearmodifiers", "--delay", 0, inserted)
+                                        time.sleep(report["input_gap_ms"] / 1000)
                                         xdo("key", "--clearmodifiers", "ctrl+s")
                                         try:
                                             wait_bytes(note, expected)

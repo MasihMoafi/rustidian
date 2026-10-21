@@ -306,6 +306,17 @@ def main():
                 type_text(value)
                 key("Return")
 
+            def close_tabs():
+                for _ in range(32):
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    tabs = [name for name in controls if name.startswith("tab-full:")]
+                    if not tabs:
+                        break
+                    click_control(tabs[0])
+                    key("ctrl+w")
+                controls = json.loads((base / "ui-probe.json").read_text())
+                assert not any(name.startswith("tab-full:") for name in controls)
+
             def editor_end():
                 bounds = control_bounds("editor", required=False)
                 if bounds:
@@ -2988,7 +2999,8 @@ def main():
             # Ctrl+Enter opens another tab; finish that scenario before the
             # independent two-tab history and view-mode checks.
             key("ctrl+w")
-            title_contains("Home")
+            assert control_bounds("tab-full:Notes/Connected thinking.md", required=False) is None
+            close_tabs()
             open_note("Home")
             command("Reading view")
             key("ctrl+t")
@@ -3100,15 +3112,7 @@ def main():
             window = ready_window()
             # Rename/bookmark actions may already have persisted an older layout.
             # Arrange the two-tab restart case through real close actions.
-            for _ in range(32):
-                controls = json.loads((base / "ui-probe.json").read_text())
-                tabs = [name for name in controls if name.startswith("tab-full:")]
-                if not tabs:
-                    break
-                click_control(tabs[0])
-                key("ctrl+w")
-            controls = json.loads((base / "ui-probe.json").read_text())
-            assert not any(name.startswith("tab-full:") for name in controls)
+            close_tabs()
             open_note("Home")
             command("Reading view")
             key("ctrl+t")

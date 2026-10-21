@@ -89,7 +89,6 @@ jobs:
           timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
       - name: Focused editing, bookmark, callout and vault behavior
-        if: ${{ inputs.reuse_run_id == '' }}
         run: |
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log

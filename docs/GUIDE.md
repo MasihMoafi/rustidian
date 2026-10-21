@@ -122,8 +122,8 @@ Record CPU, OS, toolchain, versions, source/binary hashes and configuration.
 Use the existing 103,300-byte diverse note as the first representative input;
 keep startup, indexing, source editing and live rendering separate.
 
-For a common external measure, time synthetic insertion followed by explicit
-save until the exact expected bytes reach the disposable file. Warm up five
+For a common external measure, time synthetic insertion, a fixed50ms gap, and explicit
+save until the exact expected bytes reach the disposable file. Include that same gap in both apps' measured interval; do not subtract it or label the result pure editing latency. Warm up five
 times and retain 25 individual samples per app, median and p95. Alternate app
 order in two rounds and retain failures rather than replacing them with faster
 runs. Save completion is a combined edit/save measure, not display latency;
@@ -297,3 +297,5 @@ Harness-only Actions verification can restore the exact optimized application an
 Actions39596948260 passes all six CPU conditions on EPYC7763 (103,300-byte edited medians8.5565ms unfolded/10.036ms folded), but remains rejected: one older full-suite deletion assertion expected a neighboring note instead of the current blank-tab policy, and Ferrite failed its first saved input after Rust Notes completed30. Preserve both failures. Require the blank workspace, retained neighboring tab and exact Trash bytes. Establish X keyboard focus after startup/resize settles for both comparison apps, and retain failed input identity, source bytes, focus, pointer and screenshot before destroying profiles. A local one-input Ferrite setup succeeds; it does not replace the failed CI round or establish a speed result.
 
 For a real Xwayland preview, capture its own client drawable with python-xlib `window.get_image(..., X.ZPixmap, 0xffffffff)` and Pillow's BGRX decoder when full-root ImageGrab fails. On this desktop the1380×900 logical window has2760×1800 physical pixels; preserve the native screenshot and account for scale before any input automation. Capture only this app. Leave the disposable review window available to Masih and never automate edits while he is trying it.
+
+Actions39598261220 retains a second immediate-sequence Ferrite failure: the native title was dirty, X focus correct, but the original103,300 file bytes remained after input+Save. Do not count lost saves as fast or claim this proves the cause. The next declared comparison uses the same fixed50ms input gap for both applications, includes it in measured time, keeps the original corpus/alternating order/5warm+25sample protocol and preserves the immediate failures as rejected evidence. Native Rust Notes queued-input save checks remain strict and unchanged. Restore focused interaction checks on reuse too: the original99 run stopped at hover, so later title/scroll/diagram/task/highlight groups still need exact release verification.
