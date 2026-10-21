@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the real native window on a disposable vault; needs Xvfb, xdotool, Pillow."""
 import argparse
+from datetime import datetime
 import fcntl
 import hashlib
 import json
@@ -44,7 +45,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -3127,6 +3128,194 @@ def main():
                 assert path.read_text() == source
                 results.append("Two vaults with equal note names retained independent bookmark lists and original note bytes")
 
+            def note_aids_checks():
+                open_note("Home")
+                command("Source editing")
+                key("ctrl+p")
+                type_text("Save note")
+                assert control_bounds("command:Save note"), "The existing-command positive control must work"
+                key("Escape")
+                key("ctrl+p")
+                type_text("Daily notes: Open today's daily note")
+                click_control("command:Daily notes: Open today's daily note", hold=.15)
+                today = datetime.now().astimezone().strftime("%Y-%m-%d")
+                title_contains(today)
+                daily = fixture / (today + ".md")
+                assert daily.read_bytes() == b"", "Unconfigured daily notes must start empty, as in Obsidian"
+                command("Daily notes: Open today's daily note")
+                assert daily.read_bytes() == b"" and len(list(fixture.glob(today + "*.md"))) == 1
+                results.append("Default daily note opened from a real command and reopened without duplication or content changes")
+
+                templates = fixture / "Templates"
+                templates.mkdir(exist_ok=True)
+                meeting_source = "Hello {{title}}\n{{date:YYYY-MM-DD}} {{time:HH:mm}}\n{{content}}\n"
+                (templates / "Meeting.md").write_text(meeting_source)
+                (templates / "Daily.md").write_text("# {{title}}\n\n- [ ] Review {{date}}\n")
+                target = fixture / "Notes/Template target.md"
+                original = "# Before\n\n"
+                target.write_text(original)
+                command("Refresh vault")
+                pause()
+
+                def setting(name, value):
+                    click_control(name, hold=.15)
+                    modified_shortcut(xdo, "a")
+                    if value:
+                        paste_text(value, held=True)
+                    else:
+                        key("BackSpace")
+
+                def settings_page(query):
+                    command("Open settings")
+                    type_text(query)
+
+                def wait_text(path, expected):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.read_text() == expected:
+                            return
+                        pause()
+                    raise AssertionError((path.name, path.read_text(), expected))
+
+                settings_page("templates")
+                setting("settings-template-folder", "Templates")
+                setting("settings-template-date", "DD/MM/YYYY")
+                setting("settings-template-time", "HH:mm")
+                capture("native-note-aids-settings.png")
+                key("Escape")
+                states = [(p, json.loads(p.read_text())) for p in (base / "state/rust-notes").glob("*.json")]
+                matching = [(p, state) for p, state in states if state.get("note_aids", {}).get("templates", {}).get("folder") == "Templates" and any(path == today + ".md" for path, _ in state["tabs"])]
+                assert len(matching) == 1, "Identify the actual vault's saved settings before checking persistence"
+                session_path = matching[0][0]
+                assert matching[0][1]["note_aids"]["templates"]["dateFormat"] == "DD/MM/YYYY"
+
+                open_note("Template target")
+                command("Source editing")
+                editor_end()
+                command("Templates: Insert template")
+                assert control_bounds("template:Templates/Meeting.md")
+                capture("native-template-chooser.png")
+                key("Escape")
+                assert target.read_text() == original
+                editor_end()
+                command("Templates: Insert template")
+                type_text("Mtg")
+                assert control_bounds("template:Templates/Daily.md", required=False) is None
+                click_control("template:Templates/Meeting.md", hold=.15)
+                key("ctrl+s")
+                inserted = target.read_text()
+                assert inserted.startswith(original + "Hello Template target\n"), inserted
+                assert "{{content}}" in inserted and "{{date" not in inserted and "{{time" not in inserted
+                key("ctrl+z")
+                key("ctrl+s")
+                wait_text(target, original)
+                key("ctrl+shift+z")
+                key("ctrl+s")
+                wait_text(target, inserted)
+                assert (templates / "Meeting.md").read_text() == meeting_source
+                capture("native-template-insert.png")
+                results.append("Template chooser cancellation preserved bytes; selected title/date/time expanded at the caret with single undo/redo and unchanged template source")
+
+                editor_end()
+                paste_text("\nDATE=", held=True)
+                command("Templates: Insert current date")
+                key("ctrl+s")
+                assert target.read_text().endswith("DATE=" + datetime.now().astimezone().strftime("%d/%m/%Y"))
+                editor_end()
+                paste_text(" TIME=", held=True)
+                command("Templates: Insert current time")
+                key("ctrl+s")
+                tail = target.read_text().rsplit(" TIME=", 1)[1]
+                assert len(tail) == 5 and tail[2] == ":" and tail.replace(":", "").isdigit(), tail
+                results.append("Date and time commands used the persisted template formats and the real editor insertion point")
+
+                settings_page("daily")
+                setting("settings-daily-folder", "Journal")
+                setting("settings-daily-format", "YYYY/MMMM/YYYY-MMM-DD")
+                setting("settings-daily-template", "Templates/Daily")
+                capture("native-daily-settings.png")
+                key("Escape")
+                now = datetime.now().astimezone()
+                relative = "Journal/" + now.strftime("%Y/%B/%Y-%b-%d") + ".md"
+                command("Daily notes: Open today's daily note")
+                title_contains(now.strftime("%Y-%b-%d"))
+                journal = fixture / relative
+                assert journal.read_text() == "# " + journal.stem + "\n\n- [ ] Review " + now.strftime("%d/%m/%Y") + "\n"
+                command("Source editing")
+                editor_end()
+                paste_text("\nKept daily text", held=True)
+                key("ctrl+s")
+                kept = journal.read_text()
+                command("Daily notes: Open today's daily note")
+                assert journal.read_text() == kept
+                capture("native-daily-note.png")
+                results.append("Configured daily notes created nested folders and expanded the selected template once; reopening preserved edited content")
+
+                settings_page("daily")
+                setting("settings-daily-folder", "Missing daily")
+                setting("settings-daily-template", "Templates/Missing")
+                key("Escape")
+                previous_title = xdo("getwindowname", window)
+                command("Daily notes: Open today's daily note")
+                assert xdo("getwindowname", window) == previous_title and not (fixture / "Missing daily").exists()
+                assert journal.read_text() == kept
+                settings_page("templates")
+                setting("settings-template-folder", "Missing templates")
+                key("Escape")
+                command("Templates: Insert template")
+                assert control_bounds("template-error")
+                key("Return")
+                assert control_bounds("template-error") and journal.read_text() == kept
+                key("Escape")
+                settings_page("templates")
+                setting("settings-template-folder", "Templates")
+                key("Escape")
+                results.append("Missing daily/template files reported errors, retained the active note and did not create empty directories or insert unrelated text")
+
+                open_note("Template target")
+                command("Source editing")
+                editor_end()
+                command("Templates: Insert template")
+                target.write_text("# External replacement\nKeep this source.\n")
+                time.sleep(1)
+                click_control("template:Templates/Meeting.md", hold=.15)
+                assert control_bounds("dialog-error")
+                assert target.read_text() == "# External replacement\nKeep this source.\n"
+                capture("native-template-changed-note.png")
+                key("Escape")
+                results.append("A note changed externally while the chooser was open rejected the stale insertion point and preserved the replacement")
+
+                other = base / "Aids other vault"
+                other.mkdir(exist_ok=True)
+                (other / "Home.md").write_text("# Other vault\n")
+                command("Open vault")
+                key("ctrl+a")
+                type_text(str(other))
+                key("Return")
+                title_contains(other.name)
+                settings_page("templates")
+                setting("settings-template-folder", "Other templates")
+                key("Escape")
+                command("Open vault")
+                key("ctrl+a")
+                type_text(str(fixture))
+                key("Return")
+                title_contains(fixture.name)
+                settings_page("templates")
+                assert json.loads(session_path.read_text())["note_aids"]["templates"]["folder"] == "Templates"
+                key("Escape")
+                command("Templates: Insert template")
+                assert control_bounds("template:Templates/Meeting.md")
+                key("Escape")
+                assert (other / "Home.md").read_text() == "# Other vault\n"
+                assert (templates / "Meeting.md").read_text() == meeting_source
+                results.append("Switching vaults restored independent template settings and left both vaults' source notes unchanged")
+
+            if args.section == "note-aids":
+                note_aids_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "note-aids"}))
+                return
             if args.section == "chrome":
                 chrome_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -3565,6 +3754,7 @@ def main():
                 callout_checks,
                 bookmark_checks,
                 persian_checks,
+                note_aids_checks,
             ], retain_failure)
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))

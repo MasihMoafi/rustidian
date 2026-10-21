@@ -39,6 +39,7 @@ The included sample is deliberately separate from the real vault. Opening a vaul
 - Native YAML properties, aliases/tags and advanced vault search; local/remote images in reading and live views, width hints, attachment refresh, and two-way task checkboxes.
 - Read-only image tabs from the explorer, quick switcher and wiki/Markdown links, with Fit/100% zoom, refresh, history, restart restoration, guarded rename/link updates and recoverable Trash.
 - Filename/content search, quick switcher, command palette, new notes, and vault switching; keyboard opening and switching accept immediate typing.
+- Bottom-left vault chooser with recent vaults, native folder browsing, safe named creation and list removal. Registered files open with their containing vault; each vault retains its workspace and unsaved-work guards.
 - Empty tabs, current-tab file opening, independent tab histories/modes and active-tab reveal through overflow. The header has one mode button and a three-dot menu.
 - Background indexing, native file watching, clean-buffer reload, and tab/layout restoration after a clean exit.
 - Wiki links such as `[[Home]]` and `[[Notes/Idea|label]]`. Ambiguous names require paths.
@@ -75,7 +76,7 @@ If another program changes a note, save refuses to overwrite it and retains your
 
 ## Remaining work
 
-Exact full-product parity remains in progress. Remaining areas include complex-document folding, math, graph/canvas, file recovery UI, bookmark groups and non-file targets, daily notes/templates, plugin equivalents, and optional sync/mobile. Persian rendering and exact text editing have focused checks; full visual arrow navigation and desktop IME composition remain unverified. Existing Obsidian JavaScript plugins do not execute here.
+Full Obsidian parity is the target and remains unfinished. The single [coverage ledger](docs/PARITY.md) records every core plugin and other feature gaps. Daily notes/templates source is written but awaiting its Actions build. Math, graph/canvas, recovery, broader bookmarks, extensions/services/platforms and full visual bidi/desktop IME still need work. Existing Obsidian JavaScript plugins do not execute here.
 
 Indexing runs outside rendering, with native file notifications. Release measurements, declared method and limits are in [the plan](docs/PLAN.md) and [desktop benchmark](reports/desktop-benchmark.json). The local comparison uses installed Obsidian 1.5.12 with a different feature set; it does not establish equal-feature performance. The deterministic 5,000-note run is in [vault benchmark](reports/vault-benchmark.json). GUI verification currently covers Linux/X11.
 
@@ -86,4 +87,4 @@ gh workflow run native.yml --repo MasihMoafi/rust-notes
 gh run list --repo MasihMoafi/rust-notes --workflow native.yml --limit 3
 ```
 
-Actions runs formatting, Clippy, Rust checks, release builds, native GUI checks and serial editor CPU gates. It tests a copied executable beside a disposable sample vault, including launch without a vault argument, and saves screenshots, logs and raw measurements in the short-lived artifact. It never modifies the real vault. [Run 39540024536](https://github.com/MasihMoafi/rust-notes/actions/runs/39540024536) passes 113 Rust executions/108 unique, 96 full native GUI groups and all six CPU conditions for source `21a1271`. The exact downloaded release also passes eight local bookmark groups without rebuilding.
+Actions runs formatting, Clippy, Rust checks, release builds, native GUI checks and serial editor CPU gates on disposable notes. [Run39658870633](https://github.com/MasihMoafi/rust-notes/actions/runs/39658870633) fully verifies optimized source048fced:133 Rust executions/127 unique,115 full native GUI groups, all32 workflow sections, six CPU conditions and the observer-free Ferrite comparison. That exact executable is installed. Its same-host synthetic edit/save median is90.3ms versus524.3ms for Ferrite0.3.0; this measures that task and configuration, not display latency or full-product superiority. Raw evidence and hashes are in reports/release-verification.json and reports/github-e326f14/.

@@ -1,6 +1,14 @@
 # Native Rust notebook plan
 
-Current scope, implementation order and reproducible route: [GUIDE.md](GUIDE.md). Masih narrowed the goal on21October2026 to fast essential editing, tasks, highlighting, commands, panels and settings. The broad parity stages below are retained history; optional graph/drawings/plugin replication are deferred.
+Current scope and reproducible route: [GUIDE.md](GUIDE.md). Masih's latest instruction on21October2026 expands the destination to every Obsidian feature with equivalent behavior and appearance, and faster interaction. This supersedes the earlier optional graph/drawings/plugin scope. [PARITY.md](PARITY.md) is the single feature-coverage ledger; the contracts below remain applicable unless explicitly superseded.
+
+## Current delivery loop
+
+Finish the already-built vault candidate first, including the complete regression and performance gates. Independently inventory the installed reference's commands, core plugins and settings on synthetic notes in a disposable profile. Then implement one coherent workflow at a time, beginning with ordinary note creation aids and saved layouts/recovery; update the ledger when direct behavior is checked. Keep advanced views, attachments, plugin compatibility, services and platform coverage visible until verified.
+
+A feature is complete only when the same positive and failure/cancellation flows work in both applications, saved Markdown remains correct, its real controls and visual states have been inspected, and the change preserves relevant speed and safety checks. Preserve raw evidence with exact executable/version identity. A passing aggregate suite does not establish full parity or Masih's acceptance. No visible control may imply an unavailable feature.
+
+Keep native Rust UI/editor/rendering and existing data/resource restrictions. Existing JavaScript plugins and proprietary Sync/Publish require compatibility/integration evidence; merely displaying their names is not support. Resolve any concrete architecture conflict before adding a browser/JavaScript runtime or publishing private content. Native equivalents and safe local workflows can proceed under the current authorization.
 
 ## Current vault workflow — 21 October
 
@@ -15,6 +23,18 @@ Before delivery, Actions must exercise actual chooser controls, native Browse, c
 Requested by Masih, 20 October 2026. Implementation begins now; full Obsidian equivalence is a staged product, not a first-build claim.
 
 ## Goal and users
+
+### Daily notes and templates increment — 21 October
+
+Reference: actual isolated Obsidian1.13.7, native command-palette actions and its separate settings window; reports/obsidian-parity-reference.json records203 commands,31 plugin entries,20 settings tabs, both workflows and51 English date-format observations. Screenshot1.14.4 differences remain visible. The old optimized048fced app fails the daily-command check after passing an existing-command positive control; reports/note-aids-048fced-before retains the reproduction.
+
+- Today's command opens an existing note unchanged or creates one empty file with default YYYY-MM-DD. Configured folder/date format/template supports nested folders and portable Markdown. Validate containment and read the template before creating directories; missing/invalid inputs leave the active note and existing bytes intact.
+- Template chooser uses only the configured folder, actual selection/caret, title/date/time variables and optional per-token date formats. Unknown tokens and CRLF/Unicode remain unchanged. Insertion is one undo/redo action through the existing editor; cancellation changes nothing. Reject a stale insertion point when the note changes while the chooser is open.
+- Date/time insertion commands use the saved template formats. Match the observed English Moment-format matrix, including literal brackets, offsets, fractions, leap dates and week years; record unsupported locale/format cases instead of substituting a different format.
+- Read only the two ordinary .obsidian settings files for initial defaults; reject linked/oversized/malformed files. Persist native settings separately per vault, preserve old sessions and roll back failed settings writes. Switching vaults restores its own configuration. Keep settings scrollable inside compact windows.
+- Actions builds the single candidate, runs meaningful filesystem/date tests plus actual native create/insert/undo/cancel/error/switch flows, all33 retained workflow sections and applicable performance gates. No local Rust compile or heavy matrix.
+
+This increment does not establish complete Daily notes/Templates parity: startup opening, previous/next day, date-property links, template frontmatter merging, localization, ribbon controls and the full settings-window match remain in PARITY.md. Continue those cases after this tested foundation; do not drop them from the overall target.
 
 Masih wants his familiar Obsidian note workflow and appearance, implemented in Rust, with faster startup and interaction. The app runs on his Ubuntu desktop; changing distributions is unnecessary. Other desktop platforms follow once Linux behavior is established.
 

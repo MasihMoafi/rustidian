@@ -1,0 +1,228 @@
+{
+  "reference": "1.13.7",
+  "locale": "en",
+  "samples": [
+    {
+      "source": "2026-10-21T13:05:09.123+03:30",
+      "input": "2026-10-21T13:05:09.123+03:30",
+      "formats": [
+        {
+          "pattern": "YYYY-MM-DD",
+          "expected": "2026-10-21"
+        },
+        {
+          "pattern": "YYYY/MMMM/YYYY-MMM-DD",
+          "expected": "2026/October/2026-Oct-21"
+        },
+        {
+          "pattern": "YY Y YYYYYY",
+          "expected": "26 2026 +002026"
+        },
+        {
+          "pattern": "M MM MMM MMMM Mo",
+          "expected": "10 10 Oct October 10th"
+        },
+        {
+          "pattern": "D DD Do DDD DDDD DDDo",
+          "expected": "21 21 21st 294 294 294th"
+        },
+        {
+          "pattern": "d dd ddd dddd do e E",
+          "expected": "3 We Wed Wednesday 3rd 3 3"
+        },
+        {
+          "pattern": "H HH h hh k kk",
+          "expected": "13 13 1 01 13 13"
+        },
+        {
+          "pattern": "m mm s ss",
+          "expected": "5 05 9 09"
+        },
+        {
+          "pattern": "S SS SSS SSSS SSSSSSSSS",
+          "expected": "1 12 123 1230 123000000"
+        },
+        {
+          "pattern": "A a Z ZZ z zz",
+          "expected": "PM pm +03:30 +0330  "
+        },
+        {
+          "pattern": "Q Qo",
+          "expected": "4 4th"
+        },
+        {
+          "pattern": "X x",
+          "expected": "1792575309 1792575309123"
+        },
+        {
+          "pattern": "w ww wo gg gggg W WW Wo GG GGGG",
+          "expected": "43 43 43rd 26 2026 43 43 43rd 26 2026"
+        },
+        {
+          "pattern": "L LT LTS LL LLL LLLL",
+          "expected": "10/21/2026 1:05 PM 1:05:09 PM October 21, 2026 October 21, 2026 1:05 PM Wednesday, October 21, 2026 1:05 PM"
+        },
+        {
+          "pattern": "l ll lll llll",
+          "expected": "10/21/2026 Oct 21, 2026 Oct 21, 2026 1:05 PM Wed, Oct 21, 2026 1:05 PM"
+        },
+        {
+          "pattern": "[Journal] YYYY [week] WW [مرحبا]",
+          "expected": "Journal 2026 week 43 مرحبا"
+        },
+        {
+          "pattern": "\\Y YYYY [{{title}}]",
+          "expected": "Y 2026 {{title}}"
+        }
+      ]
+    },
+    {
+      "source": "2024-02-29T00:00:00.007-05:00",
+      "input": "2024-02-29T08:30:00.007+03:30",
+      "formats": [
+        {
+          "pattern": "YYYY-MM-DD",
+          "expected": "2024-02-29"
+        },
+        {
+          "pattern": "YYYY/MMMM/YYYY-MMM-DD",
+          "expected": "2024/February/2024-Feb-29"
+        },
+        {
+          "pattern": "YY Y YYYYYY",
+          "expected": "24 2024 +002024"
+        },
+        {
+          "pattern": "M MM MMM MMMM Mo",
+          "expected": "2 02 Feb February 2nd"
+        },
+        {
+          "pattern": "D DD Do DDD DDDD DDDo",
+          "expected": "29 29 29th 60 060 60th"
+        },
+        {
+          "pattern": "d dd ddd dddd do e E",
+          "expected": "4 Th Thu Thursday 4th 4 4"
+        },
+        {
+          "pattern": "H HH h hh k kk",
+          "expected": "8 08 8 08 8 08"
+        },
+        {
+          "pattern": "m mm s ss",
+          "expected": "30 30 0 00"
+        },
+        {
+          "pattern": "S SS SSS SSSS SSSSSSSSS",
+          "expected": "0 00 007 0070 007000000"
+        },
+        {
+          "pattern": "A a Z ZZ z zz",
+          "expected": "AM am +03:30 +0330  "
+        },
+        {
+          "pattern": "Q Qo",
+          "expected": "1 1st"
+        },
+        {
+          "pattern": "X x",
+          "expected": "1709182800 1709182800007"
+        },
+        {
+          "pattern": "w ww wo gg gggg W WW Wo GG GGGG",
+          "expected": "9 09 9th 24 2024 9 09 9th 24 2024"
+        },
+        {
+          "pattern": "L LT LTS LL LLL LLLL",
+          "expected": "02/29/2024 8:30 AM 8:30:00 AM February 29, 2024 February 29, 2024 8:30 AM Thursday, February 29, 2024 8:30 AM"
+        },
+        {
+          "pattern": "l ll lll llll",
+          "expected": "2/29/2024 Feb 29, 2024 Feb 29, 2024 8:30 AM Thu, Feb 29, 2024 8:30 AM"
+        },
+        {
+          "pattern": "[Journal] YYYY [week] WW [مرحبا]",
+          "expected": "Journal 2024 week 09 مرحبا"
+        },
+        {
+          "pattern": "\\Y YYYY [{{title}}]",
+          "expected": "Y 2024 {{title}}"
+        }
+      ]
+    },
+    {
+      "source": "2023-12-31T23:59:59.999+00:00",
+      "input": "2024-01-01T03:29:59.999+03:30",
+      "formats": [
+        {
+          "pattern": "YYYY-MM-DD",
+          "expected": "2024-01-01"
+        },
+        {
+          "pattern": "YYYY/MMMM/YYYY-MMM-DD",
+          "expected": "2024/January/2024-Jan-01"
+        },
+        {
+          "pattern": "YY Y YYYYYY",
+          "expected": "24 2024 +002024"
+        },
+        {
+          "pattern": "M MM MMM MMMM Mo",
+          "expected": "1 01 Jan January 1st"
+        },
+        {
+          "pattern": "D DD Do DDD DDDD DDDo",
+          "expected": "1 01 1st 1 001 1st"
+        },
+        {
+          "pattern": "d dd ddd dddd do e E",
+          "expected": "1 Mo Mon Monday 1st 1 1"
+        },
+        {
+          "pattern": "H HH h hh k kk",
+          "expected": "3 03 3 03 3 03"
+        },
+        {
+          "pattern": "m mm s ss",
+          "expected": "29 29 59 59"
+        },
+        {
+          "pattern": "S SS SSS SSSS SSSSSSSSS",
+          "expected": "9 99 999 9990 999000000"
+        },
+        {
+          "pattern": "A a Z ZZ z zz",
+          "expected": "AM am +03:30 +0330  "
+        },
+        {
+          "pattern": "Q Qo",
+          "expected": "1 1st"
+        },
+        {
+          "pattern": "X x",
+          "expected": "1704067199 1704067199999"
+        },
+        {
+          "pattern": "w ww wo gg gggg W WW Wo GG GGGG",
+          "expected": "1 01 1st 24 2024 1 01 1st 24 2024"
+        },
+        {
+          "pattern": "L LT LTS LL LLL LLLL",
+          "expected": "01/01/2024 3:29 AM 3:29:59 AM January 1, 2024 January 1, 2024 3:29 AM Monday, January 1, 2024 3:29 AM"
+        },
+        {
+          "pattern": "l ll lll llll",
+          "expected": "1/1/2024 Jan 1, 2024 Jan 1, 2024 3:29 AM Mon, Jan 1, 2024 3:29 AM"
+        },
+        {
+          "pattern": "[Journal] YYYY [week] WW [مرحبا]",
+          "expected": "Journal 2024 week 01 مرحبا"
+        },
+        {
+          "pattern": "\\Y YYYY [{{title}}]",
+          "expected": "Y 2024 {{title}}"
+        }
+      ]
+    }
+  ]
+}

@@ -30,7 +30,8 @@ pub struct Find {
 pub struct Editor {
     pub jump: Option<usize>,
     pub focus: bool,
-    format: Option<Format>,
+    pub error: Option<String>,
+    pending_edit: Option<PendingEdit>,
     selection: Option<(u64, CCursorRange)>,
     source: String,
     parsed: Markdown,
@@ -46,11 +47,17 @@ pub struct Editor {
     pressed_link: Option<(u64, egui::PointerButton, String)>,
 }
 
-struct Format {
+struct PendingEdit {
     tab: u64,
     path: std::path::PathBuf,
-    color: Color,
+    source: String,
+    operation: Edit,
     selection: Option<CCursorRange>,
+}
+
+enum Edit {
+    Highlight(Color),
+    Insert(String),
 }
 
 struct LiveImage {
@@ -408,10 +415,19 @@ fn consume_action(ui: &egui::Ui, modifiers: egui::Modifiers, keys: &[Key]) -> bo
 
 impl Editor {
     pub fn highlight(&mut self, tab: &Tab, color: Color) {
-        self.format = Some(Format {
+        self.edit(tab, Edit::Highlight(color));
+    }
+
+    pub fn insert_text(&mut self, tab: &Tab, text: String) {
+        self.edit(tab, Edit::Insert(text));
+    }
+
+    fn edit(&mut self, tab: &Tab, operation: Edit) {
+        self.pending_edit = Some(PendingEdit {
             tab: tab.id(),
             path: tab.document.path.clone(),
-            color,
+            source: tab.document.text.clone(),
+            operation,
             selection: self
                 .selection
                 .filter(|(id, _)| *id == tab.id())
@@ -429,12 +445,14 @@ impl Editor {
         files: &mut FileMatcher,
         vault: Option<&rust_notes::vault::Vault>,
     ) -> Option<String> {
-        if self
-            .format
-            .as_ref()
-            .is_some_and(|format| format.tab != tab.id() || format.path != tab.document.path)
-        {
-            self.format = None;
+        if self.pending_edit.as_ref().is_some_and(|edit| {
+            edit.tab != tab.id()
+                || edit.path != tab.document.path
+                || edit.source != tab.document.text
+        }) {
+            self.pending_edit = None;
+            self.error = Some("This note changed before the edit was applied. Select the text or insertion point again.".into());
+            ui.ctx().request_repaint();
         }
         if self.focus {
             // A closing modal remains the top interaction layer for one pass.
@@ -640,7 +658,7 @@ impl Editor {
             }
         }
         if ui.memory(|m| m.has_focus(id)) {
-            let pending = self.format.take();
+            let pending = self.pending_edit.take();
             let shortcut = [
                 (Key::B, egui::Modifiers::COMMAND, "**"),
                 (Key::I, egui::Modifiers::COMMAND, "*"),
@@ -655,25 +673,31 @@ impl Editor {
                 ui.input_mut(|i| i.consume_key(modifiers, key))
                     .then_some((marker, marker))
             });
-            let markers = pending
-                .as_ref()
-                .map(|format| format.color.markers())
-                .or(shortcut);
-            if let Some((opening, closing)) = markers {
+            let operation = pending.as_ref().map(|edit| &edit.operation);
+            let markers = match operation {
+                Some(Edit::Highlight(color)) => Some(color.markers()),
+                Some(Edit::Insert(_)) => None,
+                None => shortcut,
+            };
+            if markers.is_some() || matches!(operation, Some(Edit::Insert(_))) {
                 let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
                 if let Some(selection) = pending
-                    .and_then(|format| format.selection)
+                    .as_ref()
+                    .and_then(|edit| edit.selection)
                     .or_else(|| state.cursor.char_range())
                 {
                     let mut undoer = state.undoer();
                     undoer.add_undo(&(selection, tab.document.text.clone()));
-                    let range = wrap(
-                        &mut tab.document.text,
-                        selection.as_sorted_char_range().start.0
-                            ..selection.as_sorted_char_range().end.0,
-                        opening,
-                        closing,
-                    );
+                    let selection_range = selection.as_sorted_char_range();
+                    let characters = selection_range.start.0..selection_range.end.0;
+                    let range = if let Some(Edit::Insert(text)) = operation {
+                        let caret = characters.start + text.chars().count();
+                        replace_chars(&mut tab.document.text, characters, text);
+                        caret..caret
+                    } else {
+                        let (opening, closing) = markers.unwrap();
+                        wrap(&mut tab.document.text, characters, opening, closing)
+                    };
                     let cursor =
                         CCursorRange::two(CCursor::new(range.start), CCursor::new(range.end));
                     state.cursor.set_char_range(Some(cursor));

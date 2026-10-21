@@ -12,22 +12,26 @@ Obsidian workflows Masih uses: files, tabs, links, checklists, highlighting,
 search, Ctrl+P, editable titles and useful settings. Every visible action must
 work. Prioritize safe, fast everyday editing over adding more panels.
 
-Graph exploration, drawings such as Excalidraw, daily notes/templates and broad
-plugin/settings replication are optional. Existing Obsidian JavaScript plugins
-do not execute in this application. Masih decides whether the result is good
-enough; CI alone does not establish an identical Obsidian or the fastest editor.
+Masih's latest21October instruction expands the target to every Obsidian feature,
+with matching behavior and appearance and faster interaction. This supersedes the
+earlier optional-feature scope. Follow the single [coverage ledger](PARITY.md):
+open the reference on disposable data, exercise one workflow, reproduce it here,
+check correctness/appearance/speed, then repeat. Existing Obsidian JavaScript
+plugins do not execute here yet. Masih decides acceptance; CI alone establishes
+neither full parity nor the fastest editor.
 
-The combined source adds the vault chooser and keeps the pending link-probe
-snapshot correction. Follow [the Actions workflow](https://github.com/MasihMoafi/rust-notes/actions/workflows/native.yml)
-and the exact active run in `ES.md`; this combined source is awaiting compilation and complete native
-verification. Require all release gates and exact checksums before installing.
-The default executable remains older b9 debug, with a matching rollback retained.
+Optimized source048fced is installed after complete verification in
+[Actions39658870633](https://github.com/MasihMoafi/rust-notes/actions/runs/39658870633)
+with harness e326f14:133 Rust executions/127 unique,115 full native GUI groups,
+all32 sections, six CPU conditions and the normal Ferrite comparison pass.
+The exact executable/bundle hashes, raw evidence and preserved b9 rollback are
+in reports/release-verification.json. No local Rust compilation was performed.
 
 Masih accepted the copied-plan link and scrolled checkbox fixes in preview4dbb842.
-That candidate's full suite later exposed a table-edit probe crash; preserve its
-failing evidence. The previous fully verified release is `21a1271`;
-`reports/release-verification.json` records verified checks, with user acceptance
-scoped separately. Reports are ignored: download Actions evidence when starting
+That older candidate's full suite exposed a now-fixed table-edit probe crash;
+preserve its failing evidence. The prior21a1271 receipt is retained in
+reports/github-21a1271/release-verification.json. User acceptance stays scoped
+separately from CI. Reports are ignored: download Actions evidence when starting
 from a fresh clone.
 
 ## Protect the user's work and machine
@@ -108,6 +112,26 @@ assets with the same meaning, never hand-draw replacement paths. Inspect the
 actual tinted icon in the app, not only its black source proof.
 
 ## Implement and verify in this order
+
+For the expanded target, follow PARITY.md after preserving each accepted slice.
+Daily notes/Templates use src/note_aids.rs and the existing safe file/editor path.
+Reproduce their reference with `python3 scripts/obsidian-reference.py --section
+inventory --appimage /home/masih/.local/opt/Obsidian/Obsidian-1.13.7.AppImage`.
+This reference disables automatic updates, uses a private profile/X server and
+in-process software GPU, and writes reports/obsidian-parity-reference.json.
+Its settings are a separate Electron page/window: inspect that new debug target,
+not the document page. Normalize the palette's split category punctuation when
+checking its selected command. Inspect getMode() before toggling into editing.
+Keep the local-clock RFC3339 inputs alongside Moment outputs; parseZone timezone
+names differ from normal local template variables. Retain the fixed-offset
+failure evidence, not an unexplained special case in the Rust implementation.
+
+The current note-aids source is uncompiled. Its focused native check uses
+`--section note-aids`; the full collector retains all prior32 sections and adds
+this one. Require exact saved source, undo/redo, cancellation, missing-template
+errors, external-change rejection and per-vault settings. The fixture
+tests/fixtures/obsidian-date-formats.json contains51 observed English cases.
+Do not call full template/daily parity complete while PARITY.md still lists gaps.
 
 | Slice | Required user flow and failure controls |
 | --- | --- |

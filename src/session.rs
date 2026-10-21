@@ -32,6 +32,8 @@ struct Session {
     ui_zoom: f32,
     #[serde(default = "default_autosave")]
     autosave_enabled: bool,
+    #[serde(default)]
+    note_aids: Option<rust_notes::note_aids::Config>,
 }
 
 fn default_zoom() -> f32 {
@@ -109,6 +111,9 @@ impl NotesApp {
             1.0
         };
         self.autosave_enabled = session.autosave_enabled;
+        if let Some(config) = session.note_aids {
+            self.note_aids = config;
+        }
         ctx.set_zoom_factor(self.ui_zoom);
         self.sort_descending = session.sort_descending;
         self.bookmarks = session.bookmarks;
@@ -151,6 +156,7 @@ impl NotesApp {
             right_tab: self.right_tab,
             ui_zoom: self.ui_zoom,
             autosave_enabled: self.autosave_enabled,
+            note_aids: Some(self.note_aids.clone()),
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {
@@ -178,6 +184,7 @@ mod tests {
         let state: Session = serde_json::from_str(old).unwrap();
         assert!(state.bookmarks.items.is_empty());
         assert!(!state.bookmarks_open);
+        assert!(state.note_aids.is_none());
         let restored: Session =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(restored.tabs.len(), 1);

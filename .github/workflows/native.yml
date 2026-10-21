@@ -104,6 +104,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vaults 2>&1 | tee reports/vaults-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
           exit "$gui_status"
       - name: Keep the focused candidate and native evidence available
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
@@ -125,6 +126,10 @@ jobs:
             reports/native-task-clipping.png
             reports/native-edit-table-*.png
             reports/native-vault*.png
+            reports/native-vault-picker-entry.json
+            reports/native-note-aids-*.png
+            reports/native-template-*.png
+            reports/native-daily-*.png
       - name: Native GUI and portable bundle checks
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |

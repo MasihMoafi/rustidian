@@ -7,6 +7,7 @@ pub mod folding;
 pub mod highlight;
 pub mod metadata;
 pub mod navigation;
+pub mod note_aids;
 pub mod operations;
 pub mod paths;
 pub mod query;

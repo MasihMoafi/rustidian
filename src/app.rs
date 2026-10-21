@@ -27,6 +27,7 @@ enum Dialog {
     TrashNote,
     AddProperty,
     BookmarkTitle,
+    InsertTemplate,
     Settings,
 }
 #[derive(Clone)]
@@ -87,6 +88,9 @@ pub struct NotesApp {
     pub(crate) ui_zoom: f32,
     pub(crate) autosave_enabled: bool,
     vault_manager: crate::vault_manager::Manager,
+    pub(crate) note_aids: rust_notes::note_aids::Config,
+    template_source: Option<(u64, String)>,
+    template_choices: Result<rust_notes::search::FileMatcher, String>,
 }
 
 impl NotesApp {
@@ -149,6 +153,9 @@ impl NotesApp {
             ui_zoom: 1.0,
             autosave_enabled: true,
             vault_manager: Default::default(),
+            note_aids: Default::default(),
+            template_source: None,
+            template_choices: Err(String::new()),
         };
         app.load_vault(root);
         app
@@ -266,6 +273,11 @@ impl NotesApp {
                         self.collapse_epoch = 0;
                         self.reveal_folder = None;
                         self.reset_tree_scroll = true;
+                        self.note_aids = rust_notes::note_aids::Config::from_obsidian(&vault.root)
+                            .unwrap_or_else(|error| {
+                                self.error = Some(error);
+                                Default::default()
+                            });
                         let first = vault
                             .notes
                             .iter()
@@ -582,6 +594,24 @@ impl NotesApp {
     }
 
     fn ask(&mut self, dialog: Dialog) {
+        self.template_source = (dialog == Dialog::InsertTemplate)
+            .then(|| {
+                self.tabs
+                    .get(self.active)
+                    .map(|tab| (tab.id(), tab.document.text.clone()))
+            })
+            .flatten();
+        if dialog == Dialog::InsertTemplate {
+            self.template_choices = self
+                .vault
+                .as_ref()
+                .map(|vault| {
+                    self.note_aids
+                        .template_paths(vault)
+                        .map(rust_notes::search::FileMatcher::new)
+                })
+                .unwrap_or_else(|| Err("Open a vault first.".into()));
+        }
         if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty)
             && self
                 .tabs
@@ -1938,6 +1968,7 @@ impl NotesApp {
             Dialog::AddProperty => "Add property",
             Dialog::BookmarkTitle => "Edit bookmark title",
             Dialog::Settings => "Settings",
+            Dialog::InsertTemplate => "Insert template",
         };
         let mut close = false;
         let mut submit = false;
@@ -1954,10 +1985,16 @@ impl NotesApp {
             })
         });
         let open_in_new_tab = ctx.input(|i| i.events.iter().any(|event| matches!(event, egui::Event::Key { key: Key::Enter, pressed: true, modifiers, .. } if modifiers.command)));
-        let navigate_down = matches!(dialog, Dialog::QuickOpen | Dialog::Commands)
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
-        let navigate_up = matches!(dialog, Dialog::QuickOpen | Dialog::Commands)
-            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
+        let navigate_down = matches!(
+            dialog,
+            Dialog::QuickOpen | Dialog::Commands | Dialog::InsertTemplate
+        ) && ctx
+            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
+        let navigate_up = matches!(
+            dialog,
+            Dialog::QuickOpen | Dialog::Commands | Dialog::InsertTemplate
+        ) && ctx
+            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
         let mut select = None;
         let mut run_command = None;
         let response = egui::Modal::new(egui::Id::unique("main-dialog")).show(ctx, |ui| {
@@ -1978,6 +2015,7 @@ impl NotesApp {
                 Dialog::OpenVault => "/path/to/your/vault",
                 Dialog::Commands => "Select a command…",
                 Dialog::Settings => "Search settings and shortcuts…",
+                Dialog::InsertTemplate => "Search templates…",
                 Dialog::BookmarkTitle => "Leave blank to use the file name",
                 Dialog::RenameNote
                     if self.vault.as_ref().is_some_and(|vault| {
@@ -2048,11 +2086,12 @@ impl NotesApp {
             let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
             ui.add_space(12.0);
             if let Some(error) = &self.error {
-                ui.label(
+                let label = ui.label(
                     RichText::new(error)
                         .size(13.0)
                         .color(Color32::from_rgb(235, 157, 132)),
                 );
+                crate::ui_probe::record(ctx, "dialog-error", label.rect);
             }
             match dialog {
                 Dialog::QuickOpen => {
@@ -2104,6 +2143,62 @@ impl NotesApp {
                             .size(11.0)
                             .weak(),
                     );
+                }
+                Dialog::InsertTemplate => {
+                    match &mut self.template_choices {
+                        Err(error) => {
+                            let label = ui.label(error.as_str());
+                            crate::ui_probe::record(ctx, "template-error", label.rect);
+                        }
+                        Ok(matcher) => {
+                            let folder = Path::new(self.note_aids.templates.folder.trim());
+                            let matches = matcher.rank(&self.dialog_input, 100);
+                            if input.changed() {
+                                self.dialog_selected = 0;
+                            }
+                            if navigate_down {
+                                self.dialog_selected =
+                                    (self.dialog_selected + 1).min(matches.len().saturating_sub(1));
+                            }
+                            if navigate_up {
+                                self.dialog_selected = self.dialog_selected.saturating_sub(1);
+                            }
+                            self.dialog_selected =
+                                self.dialog_selected.min(matches.len().saturating_sub(1));
+                            ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                                for (index, path) in matches.iter().enumerate() {
+                                    let label = rust_notes::paths::display_path(
+                                        path.strip_prefix(folder).unwrap_or(path),
+                                    );
+                                    let row = ui.add(
+                                        egui::Button::new(label)
+                                            .selected(index == self.dialog_selected)
+                                            .frame_when_inactive(false)
+                                            .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                    );
+                                    crate::ui_probe::record(
+                                        ctx,
+                                        format!("template:{}", path.display()),
+                                        row.rect,
+                                    );
+                                    if row.clicked()
+                                        || submit_enter && index == self.dialog_selected
+                                    {
+                                        select = Some(path.clone());
+                                    }
+                                    if index == self.dialog_selected
+                                        && (navigate_down || navigate_up)
+                                    {
+                                        row.scroll_to_me(Some(Align::Center));
+                                    }
+                                }
+                            });
+                            if matches.is_empty() {
+                                ui.weak("No matching templates");
+                            }
+                        }
+                    }
+                    ui.weak("↑ ↓ navigate · Enter to insert template · Esc to dismiss");
                 }
                 Dialog::Commands => {
                     let image = self
@@ -2160,69 +2255,139 @@ impl NotesApp {
                     }
                 }
                 Dialog::Settings => {
-                    let before = (self.dark, self.ui_zoom, self.autosave_enabled);
-                    let query = self.dialog_input.to_lowercase();
-                    let show = |terms: &str| query.is_empty() || terms.contains(query.as_str());
-                    let mut changed = false;
-                    if show("appearance theme dark light interface zoom text size") {
-                        ui.strong("Appearance");
-                        let dark = ui.checkbox(&mut self.dark, "Dark theme");
-                        crate::ui_probe::record(ctx, "settings-dark", dark.rect);
-                        changed |= dark.changed();
-                        ui.horizontal(|ui| {
-                            ui.label("Interface zoom");
-                            let zoom = ui.add(
-                                egui::Slider::new(&mut self.ui_zoom, 0.75..=1.5).step_by(0.05),
+                    ScrollArea::vertical()
+                        .id_salt("settings-content")
+                        .max_height((ctx.content_rect().height() - 210.0).max(140.0))
+                        .show(ui, |ui| {
+                            let before = (
+                                self.dark,
+                                self.ui_zoom,
+                                self.autosave_enabled,
+                                self.note_aids.clone(),
                             );
-                            crate::ui_probe::record(ctx, "settings-zoom", zoom.rect);
-                            changed |= zoom.changed();
-                        });
-                    }
-                    if show("editor editing files save autosave") {
-                        ui.separator();
-                        ui.strong("Editor");
-                        let autosave =
-                            ui.checkbox(&mut self.autosave_enabled, "Autosave after 600 ms");
-                        crate::ui_probe::record(ctx, "settings-autosave", autosave.rect);
-                        changed |= autosave.changed();
-                    }
-                    if changed {
-                        if let Err(error) = self.write_session() {
-                            (self.dark, self.ui_zoom, self.autosave_enabled) = before;
-                            self.error = Some(format!("Settings weren’t saved: {error}"));
-                        } else {
-                            self.status = "Settings saved".into();
-                            if self
-                                .error
-                                .as_deref()
-                                .is_some_and(|error| error.starts_with("Settings weren’t saved:"))
-                            {
-                                self.error = None;
+                            let query = self.dialog_input.to_lowercase();
+                            let show =
+                                |terms: &str| query.is_empty() || terms.contains(query.as_str());
+                            let mut changed = false;
+                            if show("appearance theme dark light interface zoom text size") {
+                                ui.strong("Appearance");
+                                let dark = ui.checkbox(&mut self.dark, "Dark theme");
+                                crate::ui_probe::record(ctx, "settings-dark", dark.rect);
+                                changed |= dark.changed();
+                                ui.horizontal(|ui| {
+                                    ui.label("Interface zoom");
+                                    let zoom = ui.add(
+                                        egui::Slider::new(&mut self.ui_zoom, 0.75..=1.5)
+                                            .step_by(0.05),
+                                    );
+                                    crate::ui_probe::record(ctx, "settings-zoom", zoom.rect);
+                                    changed |= zoom.changed();
+                                });
                             }
-                        }
-                        theme::apply(ctx, self.dark);
-                        ctx.set_zoom_factor(self.ui_zoom);
-                        ctx.request_repaint();
-                    }
-                    if show("hotkeys shortcuts commands") || !query.is_empty() {
-                        ui.separator();
-                        ui.strong("Keyboard shortcuts");
-                        ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
-                            for command in rust_notes::commands::ranked(&self.dialog_input, false) {
-                                if !command.shortcut.is_empty() {
-                                    ui.horizontal(|ui| {
-                                        ui.label(command.name);
-                                        ui.with_layout(
-                                            Layout::right_to_left(Align::Center),
-                                            |ui| {
-                                                ui.weak(command.shortcut);
-                                            },
-                                        );
-                                    });
+                            if show("editor editing files save autosave") {
+                                ui.separator();
+                                ui.strong("Editor");
+                                let autosave = ui
+                                    .checkbox(&mut self.autosave_enabled, "Autosave after 600 ms");
+                                crate::ui_probe::record(ctx, "settings-autosave", autosave.rect);
+                                changed |= autosave.changed();
+                            }
+                            if show("daily notes date format folder template") {
+                                ui.separator();
+                                ui.strong("Daily notes");
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-daily-format",
+                                    "Date format",
+                                    &mut self.note_aids.daily.format,
+                                    "YYYY-MM-DD",
+                                );
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-daily-folder",
+                                    "New file location",
+                                    &mut self.note_aids.daily.folder,
+                                    "Vault folder",
+                                );
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-daily-template",
+                                    "Template file location",
+                                    &mut self.note_aids.daily.template,
+                                    "Optional template note",
+                                );
+                            }
+                            if show("templates date time format folder") {
+                                ui.separator();
+                                ui.strong("Templates");
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-template-folder",
+                                    "Template folder location",
+                                    &mut self.note_aids.templates.folder,
+                                    "Choose a vault folder",
+                                );
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-template-date",
+                                    "Date format",
+                                    &mut self.note_aids.templates.date_format,
+                                    "YYYY-MM-DD",
+                                );
+                                changed |= setting_text(
+                                    ui,
+                                    "settings-template-time",
+                                    "Time format",
+                                    &mut self.note_aids.templates.time_format,
+                                    "HH:mm",
+                                );
+                            }
+                            if changed {
+                                if let Err(error) = self.write_session() {
+                                    (
+                                        self.dark,
+                                        self.ui_zoom,
+                                        self.autosave_enabled,
+                                        self.note_aids,
+                                    ) = before;
+                                    self.error = Some(format!("Settings weren’t saved: {error}"));
+                                } else {
+                                    self.status = "Settings saved".into();
+                                    if self.error.as_deref().is_some_and(|error| {
+                                        error.starts_with("Settings weren’t saved:")
+                                    }) {
+                                        self.error = None;
+                                    }
                                 }
+                                theme::apply(ctx, self.dark);
+                                ctx.set_zoom_factor(self.ui_zoom);
+                                ctx.request_repaint();
+                            }
+                            if show("hotkeys shortcuts commands") || !query.is_empty() {
+                                ui.separator();
+                                ui.strong("Keyboard shortcuts");
+                                ScrollArea::vertical()
+                                    .id_salt("settings-shortcuts")
+                                    .max_height(280.0)
+                                    .show(ui, |ui| {
+                                        for command in
+                                            rust_notes::commands::ranked(&self.dialog_input, false)
+                                        {
+                                            if !command.shortcut.is_empty() {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(command.name);
+                                                    ui.with_layout(
+                                                        Layout::right_to_left(Align::Center),
+                                                        |ui| {
+                                                            ui.weak(command.shortcut);
+                                                        },
+                                                    );
+                                                });
+                                            }
+                                        }
+                                    });
                             }
                         });
-                    }
                     if ui.button("Close").clicked() {
                         close = true;
                     }
@@ -2271,7 +2436,13 @@ impl NotesApp {
             return;
         }
         if let Some(path) = select {
-            self.open_note_at(&path, open_in_new_tab || ctx.input(|i| i.modifiers.command));
+            if dialog == Dialog::InsertTemplate {
+                if !self.insert_template(&path) {
+                    return;
+                }
+            } else {
+                self.open_note_at(&path, open_in_new_tab || ctx.input(|i| i.modifiers.command));
+            }
             close = true;
         }
         if submit {
@@ -2279,6 +2450,7 @@ impl NotesApp {
         }
         if close {
             self.dialog = None;
+            self.template_source = None;
             if matches!(dialog, Dialog::RenameNote | Dialog::TrashNote) {
                 if !submit && self.tabs.iter().all(|tab| !tab.document.dirty()) {
                     self.error = None;
@@ -2539,6 +2711,28 @@ impl NotesApp {
             return;
         }
         match command {
+            "Daily notes: Open today's daily note" => self.open_daily(),
+            "Templates: Insert template" => {
+                if self.editable_note() {
+                    self.ask(Dialog::InsertTemplate);
+                }
+            }
+            "Templates: Insert current date" | "Templates: Insert current time" => {
+                if self.editable_note() {
+                    let variable = if command.ends_with("date") {
+                        "{{date}}"
+                    } else {
+                        "{{time}}"
+                    };
+                    let tab = &self.tabs[self.active];
+                    let text = self.note_aids.expand(
+                        variable,
+                        &tab.document.title(),
+                        chrono::Local::now().fixed_offset(),
+                    );
+                    self.editor.insert_text(tab, text);
+                }
+            }
             "Open settings" => self.ask(Dialog::Settings),
             "New note" => self.ask(Dialog::NewNote),
             "New folder" => self.ask(Dialog::NewFolder),
@@ -2603,6 +2797,94 @@ impl NotesApp {
             _ => {}
         }
     }
+
+    fn editable_note(&mut self) -> bool {
+        if self.tabs.get(self.active).is_some_and(|tab| {
+            !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Read
+        }) {
+            true
+        } else {
+            self.error = Some("Open a note in an editing view first.".into());
+            false
+        }
+    }
+
+    fn open_daily(&mut self) {
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| tab.document.dirty())
+            && !self.save(self.active)
+        {
+            return;
+        }
+        let Some(vault) = &mut self.vault else {
+            return;
+        };
+        match self
+            .note_aids
+            .create_daily(vault, chrono::Local::now().fixed_offset())
+        {
+            Ok(path) => {
+                self.tree = Tree::from_vault(vault);
+                self.files = rust_notes::search::FileMatcher::from_vault(vault);
+                self.search_cache.invalidate();
+                self.error = None;
+                self.open_note(&path);
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn insert_template(&mut self, path: &Path) -> bool {
+        if !self.editable_note() {
+            return false;
+        }
+        let tab = &self.tabs[self.active];
+        if !self
+            .template_source
+            .as_ref()
+            .is_some_and(|(id, source)| *id == tab.id() && source == &tab.document.text)
+        {
+            self.error = Some("This note changed while the template chooser was open. Close and reopen the chooser to choose an insertion point.".into());
+            return false;
+        }
+        let Some(vault) = &self.vault else {
+            return false;
+        };
+        match self.note_aids.render_template(
+            vault,
+            path,
+            &tab.document.title(),
+            chrono::Local::now().fixed_offset(),
+        ) {
+            Ok(text) => {
+                self.editor.insert_text(tab, text);
+                self.error = None;
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
+        }
+    }
+}
+
+fn setting_text(ui: &mut egui::Ui, id: &str, label: &str, value: &mut String, hint: &str) -> bool {
+    ui.horizontal(|ui| {
+        ui.add_sized([210.0, 24.0], egui::Label::new(label));
+        let response = ui.add(
+            TextEdit::singleline(value)
+                .id_salt(id)
+                .hint_text(hint)
+                .desired_width(ui.available_width())
+                .font(FontId::proportional(14.0)),
+        );
+        crate::ui_probe::record(ui.ctx(), id, response.rect);
+        response.changed()
+    })
+    .inner
 }
 
 impl eframe::App for NotesApp {
@@ -2720,6 +3002,9 @@ impl eframe::App for NotesApp {
         self.details(ui);
         self.content(ui);
         self.dialogs(&ctx);
+        if let Some(error) = self.editor.error.take() {
+            self.error = Some(error);
+        }
         // Apply this frame's text events before saving. Ctrl+S can arrive in
         // the same frame as the final characters of a fast typing burst.
         if self.pending.is_none()

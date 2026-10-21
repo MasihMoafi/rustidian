@@ -28,6 +28,26 @@ pub const ALL: &[Command] = &[
         markdown_only: false,
     },
     Command {
+        name: "Daily notes: Open today's daily note",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
+        name: "Templates: Insert template",
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
+        name: "Templates: Insert current date",
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
+        name: "Templates: Insert current time",
+        shortcut: "",
+        markdown_only: true,
+    },
+    Command {
         name: "Open a file",
         shortcut: "Ctrl+O",
         markdown_only: false,

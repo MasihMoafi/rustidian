@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -14,7 +15,8 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory"], default="all")
+parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     base = Path(temporary)
@@ -31,9 +33,19 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     (settings / "appearance.json").write_text(json.dumps(appearance))
     shutil.copytree(original / "snippets", settings / "snippets", dirs_exist_ok=True)
     (settings / "app.json").write_text(json.dumps({"defaultViewMode": "preview"}))
+    if arguments.section == "inventory":
+        (vault / "Templates").mkdir(exist_ok=True)
+        (vault / "Daily").mkdir(exist_ok=True)
+        (vault / "Template target.md").write_text("# Before\n\n")
+        (vault / "Templates/Daily.md").write_text("# {{title}}\n\n{{date:YYYY-MM-DD}} {{time:HH:mm}}\n\n- [ ] Review\n")
+        (vault / "Templates/Meeting.md").write_text("# Meeting {{title}}\n\nOn {{date:YYYY-MM-DD}}\n\n{{content}}\n")
+        (settings / "templates.json").write_text(json.dumps({"folder": "Templates", "dateFormat": "YYYY-MM-DD", "timeFormat": "HH:mm"}))
+        (settings / "daily-notes.json").write_text(json.dumps({"folder": "Daily", "template": "Templates/Daily", "format": "YYYY-MM-DD", "autorun": False}))
+        plugins = "file-explorer global-search switcher graph backlink canvas outgoing-link tag-pane properties page-preview daily-notes templates note-composer command-palette slash-command editor-status bookmarks zk-prefixer random-note outline word-count slides workspaces file-recovery footnotes bases"
+        (settings / "core-plugins.json").write_text(json.dumps({name: True for name in plugins.split()}))
     profile = base / "profile"
     profile.mkdir()
-    (profile / "obsidian.json").write_text(json.dumps({"vaults": {"0123456789abcdef": {"path": str(vault), "ts": 1, "open": True}}}))
+    (profile / "obsidian.json").write_text(json.dumps({"updateDisabled": True, "vaults": {"0123456789abcdef": {"path": str(vault), "ts": 1, "open": True}}}))
     read_fd, write_fd = os.pipe()
     server = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1440x960x24", "-nolisten", "tcp", "-ac"], pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     os.close(write_fd)
@@ -54,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     with socket.socket() as available:
         available.bind(("127.0.0.1", 0))
         debug_port = available.getsockname()[1]
-    app = subprocess.Popen(["/home/masih/Desktop/o/Obsidian.AppImage", "--no-sandbox", f"--user-data-dir={profile}", "--ozone-platform=x11", f"--remote-debugging-port={debug_port}"], env=environment, stdout=log, stderr=log, start_new_session=True)
+    app = subprocess.Popen([str(arguments.appimage), "--no-sandbox", "--disable-gpu", "--in-process-gpu", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1", f"--user-data-dir={profile}", "--ozone-platform=x11", f"--remote-debugging-port={debug_port}"], env=environment, stdout=log, stderr=log, start_new_session=True)
     def xdo(*arguments):
         return subprocess.check_output(["xdotool", *arguments], env=environment, text=True, stderr=subprocess.DEVNULL).strip()
     try:
@@ -86,6 +98,125 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         target = next(target for target in targets if target["type"] == "page")
         query = "JSON.stringify(['.markdown-preview-view','.inline-title','h1','h2','.markdown-preview-view p','.markdown-preview-view li','.markdown-preview-view strong','.markdown-preview-view ul','.markdown-preview-view blockquote','.markdown-preview-sizer','.view-header','.workspace-tab-header-container','.nav-header','.nav-files-container','.status-bar','.nav-file-title','.workspace-tab-header'].map(selector => {const e=document.querySelector(selector);if(!e)return {selector};const s=getComputedStyle(e);return {selector,font:s.fontFamily,size:s.fontSize,weight:s.fontWeight,lineHeight:s.lineHeight,marginTop:s.marginTop,marginBottom:s.marginBottom,rect:{x:e.getBoundingClientRect().x,y:e.getBoundingClientRect().y,width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height},padding:[s.paddingTop,s.paddingRight,s.paddingBottom,s.paddingLeft],border:s.borderBottomWidth};}))"
         code = "const ws=new WebSocket(process.argv[1]);ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{expression:process.argv[2],returnByValue:true}}));ws.onmessage=(e)=>{const r=JSON.parse(e.data);if(r.id===1){console.log(r.result.result.value);ws.close();}};setTimeout(()=>process.exit(1),5000).unref();"
+        if arguments.section == "inventory":
+            def evaluate(expression):
+                value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True, timeout=8)
+                return json.loads(value)
+
+            report = evaluate("JSON.stringify({version:app.appVersion||app.version||null,plugins:Object.entries(app.internalPlugins.plugins).map(([id,p])=>({id,enabled:p.enabled,name:p.instance?.name})),commands:Object.entries(app.commands.commands).map(([id,c])=>({id,name:c.name,hotkeys:c.hotkeys})),settings:app.setting.settingTabs.map(t=>({id:t.id,name:t.name}))})")
+            report.update({"appimage": str(arguments.appimage), "profile": "disposable", "actions": [], "status": "in_progress"})
+            date_patterns = ["YYYY-MM-DD", "YYYY/MMMM/YYYY-MMM-DD", "YY Y YYYYYY", "M MM MMM MMMM Mo", "D DD Do DDD DDDD DDDo", "d dd ddd dddd do e E", "H HH h hh k kk", "m mm s ss", "S SS SSS SSSS SSSSSSSSS", "A a Z ZZ z zz", "Q Qo", "X x", "w ww wo gg gggg W WW Wo GG GGGG", "L LT LTS LL LLL LLLL", "l ll lll llll", "[Journal] YYYY [week] WW [مرحبا]", r"\Y YYYY [{{title}}]"]
+            date_inputs = ["2026-10-21T13:05:09.123+03:30", "2024-02-29T00:00:00.007-05:00", "2023-12-31T23:59:59.999+00:00"]
+            report["date_formats"] = evaluate("JSON.stringify(" + json.dumps(date_inputs) + ".map(source=>{const date=window.moment.parseZone(source).local().locale('en');return {source,input:date.format('YYYY-MM-DD[T]HH:mm:ss.SSSZ'),formats:" + json.dumps(date_patterns) + ".map(pattern=>({pattern,expected:date.format(pattern)}))}}))")
+            output = ROOT / "reports/obsidian-parity-reference.json"
+
+            def persist():
+                output.write_text(json.dumps(report, indent=2) + "\n")
+
+            def wait_until(predicate, description):
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    if predicate():
+                        return
+                    time.sleep(.1)
+                raise AssertionError(description)
+
+            def command(prefix, text):
+                entry = next(c for c in report["commands"] if c["name"].startswith(prefix) and text in c["name"].lower())
+                xdo("key", "--clearmodifiers", "ctrl+p")
+                time.sleep(.3)
+                xdo("type", "--clearmodifiers", "--delay", "4", entry["name"])
+                time.sleep(.25)
+                assert evaluate("JSON.stringify(Boolean(document.querySelector('.prompt-input')))"), "Real command palette did not open"
+                selected = evaluate("JSON.stringify(document.querySelector('.suggestion-item.is-selected')?.innerText||'')")
+                normalized = lambda text: ''.join(c for c in text if c.isalnum()).casefold()
+                assert normalized(entry["name"]) in normalized(selected), f"Command is unavailable in this state: {entry['name']}; selected {selected!r}"
+                xdo("key", "Return")
+                time.sleep(.35)
+                return entry
+
+            persist()
+            try:
+                entry = command("Daily notes:", "today")
+                wait_until(lambda: len(list((vault / "Daily").glob("*.md"))) == 1, "Daily-note command did not create a dated file")
+                daily = next((vault / "Daily").glob("*.md"))
+                daily_text = daily.read_text()
+                assert daily_text.startswith("# " + daily.stem + "\n") and "- [ ] Review" in daily_text and "{{date" not in daily_text
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-parity-daily.png")
+                entry = command("Daily notes:", "today")
+                assert daily.read_text() == daily_text and len(list((vault / "Daily").glob("*.md"))) == 1
+                report["actions"].append({"workflow": "daily", "command": entry, "path": daily.relative_to(vault).as_posix(), "text": daily_text, "existing_note_preserved": True})
+                persist()
+                xdo("key", "--clearmodifiers", "ctrl+o")
+                time.sleep(.2)
+                xdo("type", "--clearmodifiers", "Template target")
+                time.sleep(.2)
+                xdo("key", "Return")
+                time.sleep(.3)
+                mode = evaluate("JSON.stringify(app.workspace.activeLeaf.view.getMode())")
+                if mode == "preview":
+                    xdo("key", "--clearmodifiers", "ctrl+e")
+                    time.sleep(.2)
+                assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.getMode())") == "source", "Template target is not editable"
+                editor_rect = evaluate("JSON.stringify((()=>{const r=document.querySelector('.cm-content').getBoundingClientRect();return [r.x+10,r.y+10]})())")
+                xdo("mousemove", *[str(round(value)) for value in editor_rect], "click", "1")
+                xdo("key", "--clearmodifiers", "ctrl+End")
+                entry = command("Templates:", "insert template")
+                xdo("type", "--clearmodifiers", "Meeting")
+                time.sleep(.2)
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-parity-template-chooser.png")
+                xdo("key", "Return")
+                note = vault / "Template target.md"
+                wait_until(lambda: "# Meeting Template target" in note.read_text(), "Template selection did not insert into the active document")
+                inserted = note.read_text()
+                assert inserted.startswith("# Before\n") and "{{content}}" in inserted and "{{date" not in inserted
+                xdo("key", "--clearmodifiers", "ctrl+z")
+                wait_until(lambda: note.read_text() == "# Before\n\n", "Template insertion did not undo as one operation")
+                xdo("key", "--clearmodifiers", "ctrl+shift+z")
+                wait_until(lambda: note.read_text() == inserted, "Template redo did not restore the exact inserted source")
+                xdo("key", "--clearmodifiers", "ctrl+Home")
+                time.sleep(.3)
+                xdo("key", "--clearmodifiers", "ctrl+e")
+                time.sleep(.4)
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-parity-template-insert.png")
+                report["actions"].append({"workflow": "templates", "command": entry, "text": inserted, "unknown_token_preserved": True, "single_undo_redo": True})
+                command("", "open settings")
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                def settings_page():
+                    with opener.open(f"http://127.0.0.1:{debug_port}/json/list", timeout=2) as response:
+                        pages = json.load(response)
+                    return next((page for page in pages if page["type"] == "page" and page["id"] != target["id"]), None)
+                wait_until(settings_page, "Separate settings window did not appear")
+                target = settings_page()
+                time.sleep(.3)
+                report["settings_ui"] = evaluate("JSON.stringify([...document.querySelectorAll('.vertical-tab-nav-item')].map(e=>({text:e.innerText,active:e.classList.contains('is-active')})))")
+                report["settings_text"] = evaluate("JSON.stringify(document.querySelector('.modal.mod-settings')?.innerText||document.body.innerText)")
+                assert len(report["settings_ui"]) >= 9, "Settings categories did not appear"
+                version = re.search(r'(?:current\s+)?version\s*:?\s*(\d+\.\d+\.\d+)', report["settings_text"], re.I)
+                if version:
+                    report["version"] = version.group(1)
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-parity-settings.png")
+                report["settings_sections"] = {}
+                for tab in ("Daily notes", "Templates"):
+                    rect = evaluate("JSON.stringify((()=>{const e=[...document.querySelectorAll('.vertical-tab-nav-item')].find(e=>e.textContent.trim()===" + json.dumps(tab) + ");e.scrollIntoView({block:'nearest'});const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                    xdo("mousemove", *[str(round(value)) for value in rect], "click", "1")
+                    time.sleep(.3)
+                    section = evaluate("JSON.stringify({active:document.querySelector('.vertical-tab-nav-item.is-active')?.innerText,items:[...document.querySelectorAll('.setting-item')].filter(e=>e.getBoundingClientRect().height).map(e=>({name:e.querySelector('.setting-item-name')?.innerText,description:e.querySelector('.setting-item-description')?.innerText,inputs:[...e.querySelectorAll('input')].map(i=>({type:i.type,value:i.value}))}))})")
+                    assert section["active"] == tab, f"Wrong settings page after clicking {tab}: {section['active']}"
+                    report["settings_sections"][tab] = section
+                    ImageGrab.grab(xdisplay=display).save(ROOT / ("reports/obsidian-parity-settings-" + tab.lower().replace(' ', '-') + ".png"))
+                report["status"] = "passed"
+            except Exception as error:
+                report["status"] = "failed"
+                report["error"] = str(error)
+                report["target_text"] = (vault / "Template target.md").read_text()
+                report["failure_ui"] = evaluate("JSON.stringify({body:document.body.innerText,mode:app.workspace.activeLeaf?.view?.getMode?.()})")
+                ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-parity-failure.png")
+                raise
+            finally:
+                persist()
+            print(json.dumps({"version": report.get("version"), "plugins": len(report["plugins"]), "commands": len(report["commands"]), "actions": [a["workflow"] for a in report["actions"]], "status": report["status"]}))
+            raise SystemExit(0)
         if arguments.section == "menus":
             def evaluate(expression):
                 value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True)
