@@ -455,6 +455,11 @@ Check both lines in the native screenshots, as well as exact clipboard bytes.
 Before local GUI checks, verify the actual interpreter can import PIL,
 Xlib.display and six. Different installed Python versions have different module
 paths. Always stop the owned private X server if keyboard initialization fails.
+Keep a failed Restore warning visible across background history refreshes.
+The b4e0d5c candidate preserved an external replacement but its next automatic
+reload erased the warning. Clear it on an explicit file/version selection or
+successful restore, rather than on every reload. Verify both preserved disk
+bytes and the still-visible warning; neither alone proves usable conflict handling.
 
 For unique-note collision checks, sample the reference's current time prefix
 before each command and avoid the minute boundary. Two different timestamps do

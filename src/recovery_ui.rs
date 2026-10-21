@@ -94,11 +94,13 @@ impl Manager {
 
     pub fn restored(&mut self, document: Document, ctx: &egui::Context) {
         self.expected = Some(document);
+        self.error = None;
         self.notice = Some("Snapshot restored".into());
         self.reload(ctx);
     }
 
     fn select_file(&mut self, path: Option<PathBuf>, vault: &Vault, ctx: &egui::Context) {
+        self.error = None;
         self.expected = path.as_ref().and_then(|path| {
             vault.read(path).ok().or_else(|| {
                 matches!(vault.root.join(path).try_exists(), Ok(false))
@@ -129,7 +131,6 @@ impl Manager {
         let current = self.expected.as_ref().map(|document| document.text.clone());
         let (sender, receiver) = mpsc::channel();
         self.loading = Some(receiver);
-        self.error = None;
         // A failed version query must never leave another version's preview
         // copyable or present it as the newly selected snapshot.
         self.text = None;
@@ -574,6 +575,7 @@ impl Manager {
         }
         if let Some(id) = select_version {
             self.selected = Some(id);
+            self.error = None;
             self.reload(ctx);
         }
         restore
