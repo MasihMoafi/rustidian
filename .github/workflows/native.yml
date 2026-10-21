@@ -92,39 +92,35 @@ jobs:
           timeout 25s gh run view "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha > "$RUNNER_TEMP/source-run.json"
           timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
-      - name: Focused editing, bookmark, callout and vault behavior
+      - name: Focused link, window, diagram and checklist regressions
         if: ${{ !inputs.diagnostic_only }}
         run: |
           gui_status=0
           trap 'gui_status=1' ERR
           set +e
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section hover 2>&1 | tee reports/hover-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section title 2>&1 | tee reports/title-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section scrolling 2>&1 | tee reports/scrolling-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section essential 2>&1 | tee reports/essential-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section bookmarks 2>&1 | tee reports/bookmark-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
           exit "$gui_status"
-      - name: Keep the focused app available for review
-        if: ${{ inputs.reuse_run_id == '' }}
+      - name: Keep the focused candidate and native evidence available
+        if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: focused-native-${{ github.sha }}
           retention-days: 1
           path: |
-            reports/rust-notes-candidate-linux-x86_64.tar.gz
+            ${{ inputs.reuse_run_id == '' && 'reports/rust-notes-candidate-linux-x86_64.tar.gz' || 'reports/binary-source-commit.txt' }}
             reports/candidate.sha256
             reports/*-gui.log
+            reports/gui-*-results.json
+            reports/gui-*-failure*
+            reports/hover-samples.json
+            reports/hover-latency.json
+            reports/task-clipping.json
             reports/native-navigation.png
             reports/native-tasks.png
+            reports/native-task-clipping.png
       - name: Native GUI and portable bundle checks
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |

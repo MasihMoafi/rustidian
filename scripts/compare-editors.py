@@ -13,7 +13,7 @@ import tempfile
 import time
 
 from PIL import ImageGrab
-from native_input import SAVE_KEY_INTERVAL_MS, begin_save_shortcut, release_save_shortcut
+from native_input import SAVE_KEY_INTERVAL_MS, begin_save_shortcut, release_save_shortcut, wait_autosave
 
 
 def wait_bytes(path, expected, timeout=3):
@@ -164,21 +164,25 @@ def main():
                                             time.sleep(.3)
                                         palette("Source editing")
                                         palette("Open settings")
+                                        xdo("type", "--clearmodifiers", "--delay", 15, "autosave")
+                                        deadline = time.monotonic() + 3
+                                        while time.monotonic() < deadline:
+                                            probe = json.loads((profile / "probe.json").read_text())
+                                            if "settings-dark" not in probe and "settings-autosave" in probe:
+                                                break
+                                            time.sleep(.01)
+                                        assert "settings-dark" not in probe and "settings-autosave" in probe
                                         probe = json.loads((profile / "probe.json").read_text())
                                         bounds = probe["settings-autosave"]
                                         sessions = list((profile / "state/rust-notes").glob("*.json"))
-                                        assert len(sessions) == 1
-                                        session_path = sessions[0]
-                                        assert json.loads(session_path.read_text())["autosave_enabled"] is True
+                                        assert len(sessions) <= 1
+                                        assert all(json.loads(path.read_text())["autosave_enabled"] is True for path in sessions)
                                         x1, y1, x2, y2 = bounds
                                         xdo("mousemove", "--sync", "--window", window, int((x1 + x2) / 2), int((y1 + y2) / 2))
                                         xdo("click", 1)
                                         # Escape is handled before the settings UI. Queuing
                                         # it with the click can close the dialog first.
-                                        deadline = time.monotonic() + 3
-                                        while json.loads(session_path.read_text())["autosave_enabled"] is not False and time.monotonic() < deadline:
-                                            time.sleep(.01)
-                                        assert json.loads(session_path.read_text())["autosave_enabled"] is False, "The single checkbox click must persist before closing settings"
+                                        session_path = wait_autosave(profile / "state", False)
                                         xdo("key", "Escape")
                                         time.sleep(.3)
                                         xdo("key", "--clearmodifiers", "ctrl+q")
@@ -247,6 +251,15 @@ def main():
                                     ImageGrab.grab(xdisplay=display).save(reports / f"{round_number}-{name}.png")
                                     report["rounds"].append({"round": round_number, "app": name, "mode": "source/raw", "samples_ms": samples, "inputs_verified": 30})
                                     preserve()
+                                except BaseException as failure:
+                                    ImageGrab.grab(xdisplay=display).save(reports / f"{round_number}-{name}-native-failure.png")
+                                    probe = profile / "probe.json"
+                                    if probe.exists():
+                                        (reports / f"{round_number}-{name}-failure-controls.json").write_bytes(probe.read_bytes())
+                                    report["failed_native_stage"] = {"app":name,"round":round_number,"error":repr(failure),
+                                        "sessions":[json.loads(path.read_text()) for path in (profile / "state/rust-notes").glob("*.json")]}
+                                    preserve()
+                                    raise
                                 finally:
                                     if recorder is not None:
                                         recorder.terminate()

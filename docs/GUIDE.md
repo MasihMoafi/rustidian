@@ -1,159 +1,140 @@
 # Build a fast, familiar Markdown notebook
 
-This is the route to Masih's product, including what we would do differently if
-starting again with only this guide. It is the current execution guide; older
-feature contracts and measurements remain in [PLAN.md](PLAN.md). Current work
-and exact evidence are recorded in [ES.md](../ES.md).
+This guide is the route from a clean checkout to Masih's working Rust Notes.
+Use `ES.md` for the current handoff and `docs/PLAN.md` for detailed contracts and
+historical experiments. Keep this guide about decisions and reproducible work;
+keep chronological observations in the evidence log.
 
-## Destination, as clarified on 21 October 2026
+## Destination and current evidence
 
-Make editing ordinary Markdown files fast, safe and comfortable. Preserve the
-parts of Obsidian that help Masih work: a familiar file/sidebar/tab layout,
-proper checklists, readable text, highlighting, links, search, a useful Ctrl+P
-palette, and essential settings. The starting point is useful; Masih has not
-accepted the result as finished.
+Build a native Rust desktop editor for ordinary Markdown folders. Preserve the
+Obsidian workflows Masih uses: files, tabs, links, checklists, highlighting,
+search, Ctrl+P, editable titles and useful settings. Every visible action must
+work. Prioritize safe, fast everyday editing over adding more panels.
 
-Graph exploration, drawings such as Excalidraw, broad plugin compatibility,
-daily notes/templates and replication of every settings page can wait. Revisit
-them when they improve a real workflow. Existing Obsidian JavaScript plugins
-do not execute in this native Rust application.
+Graph exploration, drawings such as Excalidraw, daily notes/templates and broad
+plugin/settings replication are optional. Existing Obsidian JavaScript plugins
+do not execute in this application. Masih decides whether the result is good
+enough; CI alone does not establish an identical Obsidian or the fastest editor.
 
-## Begin from the evidence
+Runtime candidate `4dbb842a013f8400fbaab8c831d6c7e38ba445cd`, built by
+[Actions39608458012](https://github.com/MasihMoafi/rust-notes/actions/runs/39608458012),
+passes128 Rust executions, Clippy, all focused UI sections and six CPU
+conditions. Its exact copied-plan link and scrolled checklist also pass locally.
+Binary SHA256 is `8bd8663257d5cc8a9c17a45af66c68edc8a203654eca44e06a40c573d7304e4e`.
+[Actions39621264420](https://github.com/MasihMoafi/rust-notes/actions/runs/39621264420)
+reuses that app to finish full regressions and the comparison. Installation is
+pending those gates. The previous fully verified release is `21a1271`;
+`reports/release-verification.json` records accepted checks, not user acceptance.
+Reports are ignored: download Actions evidence when starting from a fresh clone.
 
-1. Read `VISION.md`, `AGENTS.md` and this guide. Check `git status` before editing;
-   other work may be in progress. Read the current checkpoint instead of starting
-   another implementation from an old chat title or summary.
-2. View all eleven screenshots supplied on 21 October, under
-   `/home/masih/Pictures/Screenshots/Screenshot From 2026-10-21 08-13-12.png`
-   through `08-14-46.png`: 08-13-12, 20, 22, 25, 27, 29, 31, 38, 50, 55 and 08-14-46. The settings screenshot identifies Obsidian 1.14.4; older installed 1.5.12 benchmarks remain historical. They show the note surface, command palette, explorer
-   controls, file menu and settings. The palette is a primary workflow; optional
-   plugin commands visible there are not automatically requirements.
-3. Exercise the same task in the currently built app, using a disposable vault
-   and isolated XDG state/data. Compare the same mode, theme, window size, zoom
-   and display scale. Never infer matching font sizes from screenshots at
-   different scale factors.
-4. Write the observable gap and acceptance check before changing code. Show a
-   small real improvement early, then apply Masih's feedback before expanding.
+## Protect the user's work and machine
 
-The last verified app source is `21a1271`, built by
-[Actions run 39540024536](https://github.com/MasihMoafi/rust-notes/actions/runs/39540024536).
-It passes 113 Rust test executions/108 unique, 96 GUI groups, and six CPU
-conditions. Those are evidence, not user acceptance or a competitor speed result.
-`reports/release-verification.json` identifies the exact local executable and
-checksums; `reports/github-21a1271/` retains the raw evidence.
+- Never automate writes to `/home/masih/Desktop/o/Main Vault`, original project
+  documents or the real Obsidian profile. Test disposable copies with isolated
+  `XDG_STATE_HOME`, `XDG_DATA_HOME` and `XDG_CONFIG_HOME`; keep private copies out
+  of GitHub uploads. Do not automate a preview while Masih is using it.
+- Preserve `demo-vault/Home.md` byte for byte, including `How are you?! ` and its
+  trailing space. Preserve unrelated changes and concurrent `assets/app-icon/`.
+  Withdrawn Downloads images and agent-icon work from another chat are excluded.
+- Run Rust compilation, tests, Clippy, the full GUI suite and performance matrices
+  in GitHub Actions. Never recreate local `target/`. Local formatting, source
+  checks and small focused checks on a downloaded executable are allowed.
+- Keep the workstation disk guard enabled. Check actual free space on home and
+  temporary filesystems. Use an owned temporary directory on a healthy filesystem
+  when `/tmp` has a quota; never override reserves. Move obsolete owned output to
+  recoverable Trash, preserve selected artifacts and raw evidence, and report
+  actual `df` space rather than claiming Trash reclaimed it.
+- Reserve1,000,000,000 bytes of provider allowance. Local network counters do not
+  prove remaining provider quota. Prefer direct GitHub access and preserve shared
+  routing; unsetting proxy variables does not bypass an enabled TUN. Stop our VPN
+  transfers at the reserve. Connection changes require the user's existing
+  conditional authorization to apply, not merely a wish for faster downloads.
+- Use the authorized private `MasihMoafi/rust-notes` repository and `gh` for remote
+  operations. Upload reviewed sources/assets only. No force pushes, arbitrary
+  publication, services/autostart, OS migration or Elpis activation changes.
 
-## Learn from Rust editors before adding machinery
+## Establish the reference and the failing behavior
 
-Use primary repositories and pinned releases. The initial shortlist is:
+Read `VISION.md`, `AGENTS.md`, this guide, the newest `ES.md` checkpoint and
+`git status` before editing. Verify the actual running executable and its SHA;
+a source commit or old chat title can identify the wrong app.
 
-| Project | Why inspect it | Limitation of the comparison |
-| --- | --- | --- |
-| [Ferrite](https://github.com/OlaProeis/Ferrite), v0.3.0 | Native Rust/egui Markdown editor; closest initial comparison for source editing, wrapping and large documents; repository MIT license | Its speed is not independently established here. Published Linux release is about 18 MB compressed. Check the exact release's source, modes and configuration. |
-| [Zed](https://github.com/zed-industries/zed) | Rust/GPUI editor; useful input, text-buffer and rendering architecture | A general editor with a different feature set. Check component licenses before reuse. |
-| [Helix](https://github.com/helix-editor/helix) | Rust text editing and incremental syntax techniques | Terminal interaction is not equivalent to a graphical Markdown notebook. |
-| [Markion](https://github.com/willmove/markion) | Native Rust/GPUI source-backed Markdown workflows; repository MIT license | Packaging, maturity and measured performance need verification. |
+Masih supplied eleven Obsidian screenshots under
+`/home/masih/Pictures/Screenshots/`, dated21 October08:13:12 through08:14:46.
+They identify Obsidian1.14.4. The isolated installed reference used by
+`scripts/obsidian-reference.py` is1.5.12: retain that distinction. Its `navigation`
+and `menus` sections record real interactions, CSS geometry and screenshots on
+sample data. Never use the user's real Obsidian profile for automation.
 
-Ferrite’s [version 0.3.0 changelog](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/CHANGELOG.md) describes a rope-backed buffer, virtual scrolling, viewport-aware syntax highlighting and a bounded line cache. Treat those as candidate techniques, not independently verified speed results. Start by measuring the editor core before selecting or replacing a text widget; preserve Unicode, undo and safe-save behavior if adopting a technique.
+Compare the same task, mode, theme, window, zoom and display scale. The desktop
+preview has2760x1800 physical pixels for1380x900 logical pixels; probe coordinates
+are logical. View the actual output before claiming a visual match. If root
+ImageGrab fails under Xwayland, capture only the app's own client drawable with
+python-xlib `get_image(..., X.ZPixmap, 0xffffffff)` and decode BGRX with Pillow.
 
-The inspected [buffer](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/src/editor/ferrite/buffer.rs) wraps Ropey and exposes character/line operations. The [line cache](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/src/editor/ferrite/line_cache.rs) retains content-based galley entries, adjusts capacity to the visible line count, and invalidates edited ranges while preserving unchanged lines. If large-note edits miss the target, measure parsing/layout work first; consider these techniques with Unicode and undo checks before changing frameworks.
+Write the observable failure and a meaningful positive/negative evaluation first.
+Prove that the evaluation rejects the old executable. Do not substitute a model
+assertion for a real click, saved file, screenshot, undo or restart.
 
-Do not call one the fastest because of its language, popularity or README.
-Inspect a small relevant implementation and measure the actual workflow. Prefer
-adapting a proven local technique to replacing the application framework. Record
-the exact source and license for any code copied or adapted, and retain notices.
+## Keep the smallest useful architecture
 
-## Smallest architecture that serves the work
+| Responsibility | Existing implementation and reason |
+| --- | --- |
+| Native shell and commands | `src/app.rs`, `src/window.rs`, `src/commands.rs`; eframe/egui0.37, one available-command registry, real custom window controls |
+| File safety and navigation | `vault`, `document`, `operations`, `paths` and `tab`; ordinary UTF-8 files, guarded writes/renames, independent tab history/undo |
+| Editing and reading | `editor_ui`, `editor`, `preview`, `table_ui`; one source-preserving edit path, cached parsing/layout, native interactive decorations |
+| Properties, search and panels | `metadata`, `properties_ui`, `query`, `search`, `file_tree`; background indexing and virtualized visible rows |
+| Appearance and artwork | `theme` plus embedded fonts and `assets/icons`; shared typography, hover and generated/SVG Studio icons |
+| Diagrams and syntax | `diagrams`, `syntax`, `code_ui`; native workers/caches without browser or JavaScript runtime |
+| State and observation | per-vault session outside the vault; `ui_probe` only in explicit checks, disabled during normal use and timed comparisons |
 
-- Keep UTF-8 `.md` files as the canonical document. Preserve byte content,
-  frontmatter, links, CRLF and Unicode when a command changes unrelated syntax.
-- Use the existing `eframe`/`egui` interface and native renderer. The pinned
-  `vendor/egui` and `vendor/epaint` changes are explained in `vendor/UPSTREAM.md`.
-  Do not replace this stack before a measured bottleneck justifies it.
-- Keep parsing and decorations cached by document changes. Render the visible
-  portion efficiently; do not add a parser scan to every idle frame.
-- Route formatting, checklist changes, completion and highlighting through the
-  existing TextEdit selection, undo and save behavior. Reading interactions may
-  update their own Markdown marker; Source always retains literal syntax.
-- Use the existing per-vault session outside the vault for settings and layout.
-  Do not write app state or test data into the user's notes or Obsidian profile.
-- Keep safe atomic saves, permission checks, stale-file rejection and retained
-  dirty buffers. Speed improvements must preserve these protections.
-- Use image generation followed by SVG Studio for new icons. Reuse existing
-  selected assets with the same meaning; do not redraw icons in code.
+Use stable private tab IDs plus document paths for editing/scroll state. Index
+row ends once and binary-search decoration positions; do not repeatedly scan
+from the first line. Cache parsing by document changes and render visible rows.
+Keep code/quote/task/image offsets synchronized with the edited source in the
+same frame. See `vendor/UPSTREAM.md` before changing vendored behavior.
 
-## Implementation order and evidence
+Share the vault exclusion policy between index and watcher: dotfiles/directories,
+`node_modules`, `__pycache__`, `target`, `vendor`, `dist` and `build`. Hide these
+without deleting them; an ordinary `Cache notes.md` must remain available.
 
-1. **Essential editing surface.** Fix Live checklist display and toggling,
-   including nested tasks, code/YAML negative controls, save and undo. Make
-   creation dialogs use interface typography rather than document-heading
-   typography. Keep the Markdown text size independent from dialog sizing.
-2. **Ctrl+P and essential settings.** Centralize real available commands, enable
-   fuzzy discovery, show shortcuts, preserve keyboard selection and scrolling,
-   and keep unavailable actions out. Expose useful settings through working
-   controls; do not fill a window with nonfunctional plugin/theme options.
-3. **Highlighting and Markdown commands.** Preserve the exact source around a
-   selection, render standard `==highlight==` in Live and Reading, retain literal
-   Source/code content, and verify undo/redo and persisted text. Masih selected
-   Cyan, Green, Orange, Red and Yellow. Use portable hex-background `<mark>`
-   tags for colored highlights and `==` for yellow; preserve selection through
-   Ctrl+P, native rendering, save/reopen and undo/redo. These are native commands,
-   not a claim that arbitrary Obsidian community plugins execute.
-4. **Familiar panels.** Make the existing files, search, bookmarks, outline,
-   backlinks and outgoing links easy to find. Prefer actual working panels to
-   extra toolbar symbols. Review the result against the supplied screenshots.
-5. **Measure and optimize.** Run the comparison below, inspect the cause of a
-   failed speed target, change the specific bottleneck and repeat with evidence.
-6. **Review a usable build.** Open only a verified executable with a disposable
-   vault. Show its screenshots and identify unverified behavior. Apply feedback.
+Use built-in image generation followed by SVG Studio for new artwork. Preserve
+selected raster originals, prompts, genuine SVG paths and proofs. Reuse selected
+assets with the same meaning, never hand-draw replacement paths. Inspect the
+actual tinted icon in the app, not only its black source proof.
 
-For each behavior, establish a failing evaluation before the fix where possible,
-plus a valid positive and an invalid/irrelevant negative case. Verify the actual
-native click/typing path, not just a helper function or source assertion.
+## Implement and verify in this order
 
-## Performance protocol
+| Slice | Required user flow and failure controls |
+| --- | --- |
+| Safe notes and tabs | Open a file, type, save exact UTF-8, undo, restart; refuse stale external overwrite, retain dirty text, keep undo isolated across vaults and preceding-tab closure |
+| Familiar shell | One action per icon, compact tabs/dialogs, visible hover, file menu, real minimize/maximize/restore/drag/resize; Close and Trash must respect cancellation and recovery |
+| Navigation and titles | Ordinary wiki/Markdown clicks in Reading and Live,150ms held click, drag-selection negative, encoded paths/anchors, Back/Forward, Ctrl-click and queued Ctrl+Enter; title rename must update links safely |
+| Markdown and checklists | Nested/Unicode tasks, checked fill/strike, click/save/undo in Live and Reading, literal code/YAML/Source negatives, visible tables and Mermaid, scrolled decoration clipping |
+| Commands and settings | Useful fuzzy Ctrl+P, preserved text selection through a modal,14px interface dialogs, real persisted settings, empty/error states; unavailable actions stay unavailable |
+| Highlighting and panels | Yellow `==...==` plus Cyan/Green/Orange/Red/Yellow portable mark colors; save/reopen, Source/code negatives, undo/redo, working outline/backlinks/outgoing/bookmarks |
+| Speed and delivery | Keep Masih's approved300px wheel notch with no smoothing tail; measure the exact optimized app, then show it early and install only the verified release |
 
-Question: does Rust Notes complete the same Markdown editing workflow at least
-as quickly as the closest usable Rust editor without losing correctness?
-Use the [experiment workflow](../../skills/experiment-workflow/SKILL.md).
+Reference geometry includes18px prose,18px task boxes,9px task-label gap and3px
+spacing between tight task rows. Loose lists retain paragraph spacing. Explorer
+text is13px; notes and dialog typography stay independent. Preserve the actual
+measured values in `theme` and layout code rather than compensating for unknown
+DPI by changing global zoom.
 
-Compare exact release binaries serially on one Actions runner with the same
-Xvfb resolution, software renderer, corpus, editing mode and isolated profiles.
-Record CPU, OS, toolchain, versions, source/binary hashes and configuration.
-Use the existing 103,300-byte diverse note as the first representative input;
-keep startup, indexing, source editing and live rendering separate.
+Mermaid uses [mermaid-rs-renderer0.3.1](https://github.com/1jehuang/mermaid-rs-renderer),
+without CLI/PNG features. A lazy worker converts SVG labels to paths using bundled
+fonts and keeps a bounded16-entry source/theme cache. Preserve natural dimensions
+and block placement; hovering/scrolling must not increase the render count.
+Invalid syntax retains source access. Source mode remains editable Markdown.
 
-For a common external measure, time synthetic insertion and an explicit Save chord
-until the exact expected bytes reach the disposable file. Include the same50ms typing-to-Save gap and one S press/release with a40ms key interval. Hold Control until exact bytes are acknowledged, then release it in finally before the next sample. Start the shared gesture asynchronously so the timer stops as soon as exact bytes are available. Configure Rust Notes through its UI, quit cleanly, verify the saved Source/autosave settings, and relaunch without the control-probe environment variable before measuring. Include the typing gap and dispatch time; do not subtract them or label the result pure editing latency. Warm up five
-times and retain 25 individual samples per app, median and p95. Alternate app
-order in two rounds and retain failures rather than replacing them with faster
-runs. Save completion is a combined edit/save measure, not display latency;
-record differences in durability and save behavior. A completed window alone
-does not prove the editor is ready, and an internal CPU timer is not comparable
-to another app's external response timer.
+## Build and inspect the exact executable
 
-Aim for Rust Notes median and p95 no higher than the comparator in this declared
-workflow; report the observed ratio and uncertainty instead of rounding a loss
-into a win. If the comparator cannot run correctly, record the reason and leave
-the comparative result unverified. Do not remove safety checks to win a timing.
-Measure broader "fastest editor" claims only with a broader equivalent study.
-
-The exact comparison procedure is `scripts/compare-editors.py`; its `--self-check` verifies rejection of unchanged text. The workflow downloads the pinned archive into runner temporary storage, verifies the published SHA-256, and retains only logs, screenshots and raw measurements in `reports/editor-comparison/`, not the third-party executable.
-
-Continue the existing internal CPU checks independently: 20/200/500-block
-corpora, five warmups, 20 idle and 20 edited samples, 25 verified insertions,
-unfolded and mostly folded modes, idle median <=5 ms and edited <=16.7 ms.
-Historical releases used different CPUs; they cannot establish a speedup.
-
-## Build, verify and keep the machine usable
-
-Use the private repository `MasihMoafi/rust-notes`. No local Rust builds, tests,
-Clippy or new `target/`. Local source editing, formatting and small Python/Node
-checks are allowed. Use `gh` for remote GitHub operations and only upload this
-project's reviewed sources/assets. Do not upload real vaults or local reports.
-
-From a clean machine, clone the authorized private repository with `gh repo clone MasihMoafi/rust-notes`, then work in that checkout. The checked-in workflow declares the runner/toolchain/dependencies; do not install a local Rust build tree to reproduce the CI result.
+From a clean authorized machine:
 
 ```sh
+gh repo clone MasihMoafi/rust-notes
+cd rust-notes
 git status --short
 cargo fmt --all -- --check
 gh workflow run native.yml --repo MasihMoafi/rust-notes
@@ -161,161 +142,123 @@ gh run list --repo MasihMoafi/rust-notes --workflow native.yml --limit 3
 gh run view RUN_ID --repo MasihMoafi/rust-notes --log
 ```
 
-Inspect the actual step logs, exact test counts and native evidence; a green
-shell step can hide a failed process behind `tee` unless pipefail is enabled.
-Download one needed passing artifact after the quota/storage check, validate
-paths and SHA-256, and verify the exact release with disposable files. See the
-local `reports/check-provider-quota.py`, when available, and release verification
-metadata. Reports are ignored and will not exist in a fresh clone; use the
-configured provider's allowance information to apply the same reserve policy.
-Never store provider URLs or credentials in the guide, logs or repository.
+The workflow pins Rust1.95.0 and Linux dependencies, uses two build jobs, no
+persistent Rust cache and one-day artifacts. It runs formatting, Clippy, behavior
+checks, one optimized app/benchmark build, focused/full native checks, CPU and
+external comparison gates. Independent GUI failures are collected serially;
+pipefail and the final status must still reject any failed case.
+Publish focused logs and failed screenshots before the long full suite, even
+when a focused check fails. On reuse, retain source identity/checksums rather
+than uploading another copy of the same executable.
 
-Keep Actions artifacts one day and avoid persistent Rust caches. Preserve at
-least 1 GB of provider allowance; that is a transfer policy, not a provider-side
-cap. Keep only the needed local executable/bundle and raw verification evidence.
-Move obsolete rebuildable output to recoverable Trash, then check `df`: Trash
-retention can delay physical reclamation. Do not delete a directory merely named
-`target`; crate source trees can legitimately contain that name. Preserve selected
-app artifacts and never clean outputs during an active build. No VPN routing,
-service, startup or Elpis selector/activation changes belong to this work.
+For a harness-only correction, reuse the already compiled app and benchmark:
 
-## Lessons that change the route
+```sh
+python3 scripts/reuse-actions-candidate.py --source-commit SOURCE_SHA --check-source
+gh workflow run native.yml --repo MasihMoafi/rust-notes   -f reuse_run_id=SOURCE_RUN -f reuse_commit=SOURCE_SHA
+```
 
-- **Modal input:** request stable input focus before processing events, retain it
-  until settled, then stop reclaiming it. Test fast F2/name/Enter and a title
-  dialog opened through a menu. Avoid interrupting composition to claim focus.
-  Returning from an unsaved-work guard needs the same deferred editor focus:
-  the old `633bb9b` release kept the buffer but lost Undo after Escape. Disable
-  autosave through real settings, type, cancel Close, require editor focus,
-  then Undo/save and compare exact original bytes. Let modal layers finish
-  closing; do not hide the failure by clicking the editor. Keep ordinary and
-  unsaved dialogs on the shared interface typography.
-- **Changed rows:** a state mutation after painting can leave stale interactive
-  bounds. Request repaint and test the actual rendered order before clicking;
-  retaining the correct model alone does not prove correct navigation.
-- **UI typography:** document heading metrics belong to notes. Do not let them
-  become the default size of dialog titles or filename input.
-- **Checklist completeness:** Reading tests did not cover Live Preview. Verify
-  every mode the user actually uses, with code/frontmatter negatives.
-- **Native overlay positions:** galley cursor rectangles are local to the text.
-  Translate them by the painted galley position before clipping or placing
-  checkboxes. A parsed task alone does not prove a checkbox is on screen.
-- **Formatting through a modal:** keep the note's selection while it owns focus,
-  carry it through Ctrl+P with the target tab/path, and use the normal undo path.
-  The direct shortcut can work while the palette loses the selection; test both.
-- **Multiline input fixtures:** simulated Return invokes Markdown editing rules.
-  Write literal Markdown fixtures to a disposable vault, then prove native edit,
-  save and undo before testing the feature; do not weaken assertions around
-  unintended list continuation.
-- **Unicode simulation:** use the verified native input delay for Persian when
-  testing the simulator, and preserve exact bytes. A passing glyph-count test
-  does not establish visual bidi affinity or desktop IME composition.
-  [xdotool temporarily remaps scratch keys](https://github.com/jordansissel/xdotool/blob/main/xdo.c)
-  for unmapped Unicode; a CI bookmark entry lost letters even at100ms while the
-  same exact app passed locally. Use verified UTF-8 clipboard content plus real
-  Ctrl+V for the bookmark persistence check, retaining ordinary typed input and
-  the exact saved/reopened Persian assertion. Do not call this an IME test.
-- **Evidence and acceptance:** show the built app early. Keep one accepted release
-  until its replacement passes checks; do not spend a long feature build before
-  asking the user to assess the important visible changes.
+The guard permits only declared harness/docs changes. Never restore locally:
+restore mode creates `target/release` and belongs on the runner. A runtime change
+needs a fresh optimized Actions build. Keep one candidate active at a time.
 
-The next agent should read the newest `ES.md` checkpoint, inspect `git status`,
-and perform the next unchecked step above. Do not restart discovery or silently
-restore the older goal of replicating every Obsidian feature.
+After checking route, quota and storage, download one needed artifact with `gh`.
+If its downloader stalls, `gh api repos/MasihMoafi/rust-notes/actions/artifacts/ARTIFACT_ID/zip`
+can write a checked ZIP into ignored `reports/` on the healthy home filesystem.
+Validate ZIP/tar member paths, reject links/escapes, verify candidate/release and
+bundle SHA256, and retain source-run identity. A candidate may be previewed on
+copies; it is not an accepted installation while release gates are failing.
 
-## Navigation and checklist fidelity checkpoint, 21 October
+Use focused native checks locally only when they resolve a real remaining doubt:
 
-Masih's latest feedback is decisive: the app must behave and look like Obsidian;
-passing feature tests is insufficient if ordinary links do nothing. Reproduce
-ordinary clicks in the default Live view as well as Reading, Ctrl-click into a
-tab, history, encoded relative paths and heading scrolls. Test a working wiki
-link before the failing Markdown link so coordinate errors cannot masquerade as
-a resolver bug. Route destinations through one application handler; a suffix
-check such as `ends_with(".md")` misroutes `note.md#heading` to a browser.
+```sh
+python3 tests/gui_smoke.py --binary reports/VERIFIED/runtime/rust-notes --section navigation
+python3 tests/gui_smoke.py --binary reports/VERIFIED/runtime/rust-notes --section task-clipping
+```
 
-`python3 scripts/obsidian-reference.py --section navigation` uses an isolated
-installed Obsidian/profile/sample vault and preserves raw checkbox CSS metrics,
-click results, version identity and screenshots. Current local executable is
-1.5.12; the user's screenshots are1.14.4, so keep that distinction explicit.
-The measured 18px boxes use a solid accent checked fill, not an outline-only
-check. Native pixel assertions must inspect the checked box, and click/save/undo
-must still preserve the exact note. Preserve concurrently committed standalone
-file/default-vault support while correcting these app interactions.
+Use `--section scrolling --scroll-document COPY.md` for the user's dense wrapped
+note. The script reads/copies it into a private fixture; keep its content local.
+Preserve every failed log, screenshot, input and exact binary identity. Do not
+repeat a passed matrix merely to select a faster sample.
 
+## Measure equivalent work and preserve failures
 
-### Interaction feedback and native diagrams — 21 October
+Use the [experiment workflow](../../skills/experiment-workflow/SKILL.md).
+Inspect primary Rust implementations, licenses and pinned releases. The initial
+relevant comparator is [Ferrite v0.3.0](https://github.com/OlaProeis/Ferrite), a native
+Rust/egui Markdown editor under MIT. Zed/GPUI and Helix are useful architecture
+references with different interaction/features, not equivalent speed baselines.
+Ferrite's [line cache](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/src/editor/ferrite/line_cache.rs)
+retains unchanged visible-line layouts; consider that technique only after a
+measured local bottleneck justifies it, with attribution for adapted code.
 
-The next candidate targets Masih's direct feedback: every button (including tab close), folder/file and palette row needs visible pointer feedback; wheel navigation needs immediate movement; the inline title must be editable; tables and Mermaid must render in Reading and Live without altering Markdown. A built app must prove each interaction; a source search or a new probe alone is not acceptance.
+`scripts/compare-editors.py` compares exact optimized binaries serially on one
+runner:103,300-byte corpus, Source/raw editing, wrapping,18px text, identical
+software-Xvfb viewport, isolated profiles, autosave off. Verify settings through
+the UI, quit/relaunch, and disable the Rust Notes probe before timing. Fonts,
+feature work and save durability differ and must remain explicit limitations.
 
-`reports/obsidian-hover.json` measures installed Obsidian 1.5.12 in a disposable profile: dark icon/close/file hover uses RGB 34/41/44 and a 7px radius; close text becomes 233/229/220. The corrected selector excludes the root row; regular folders use the same hover background and brighter text. User screenshots show Rust Notes tab close and collapsed folder rows lacking feedback.
+Time insertion through exact expected disk bytes, including the common50ms
+input gap and subprocess/polling overhead. Send one S press/release with40ms
+interval while Control remains held through byte acknowledgement; release it in
+finally before another input. Keep five warmups and25 samples per app in each
+of two alternating rounds; retain all samples, failures, median and p95. A lost
+save is failure, not a fast result. Both median and p95 must meet the comparison
+gate. This measures combined edit/save response, not display latency or the
+world's fastest editor. Diagnostic tracing cannot produce an accepted release.
 
-The old `b9d68d2` executable fails actual pointer-hover pixels and actual inline-title rename in the new native evaluations. Its navigation checks pass; its checkbox check catches an accent mismatch (101/183/182 instead of measured 23/127/131). Source changes correct that control independently of link colors.
+Keep internal CPU work separate:20/200/500-block corpora, five warmups,20 idle
+and20 edited samples,25 verified insertions, unfolded/mostly folded conditions.
+Targets are idle median<=5ms and edited median<=16.7ms. Different runner CPUs
+cannot establish before/after speedups. Hover's150ms gate includes native input
+and screenshot polling; scrolling checks distance, direction and no delayed tail.
 
-Scrolling uses an explicit app option: 150 pixels per line-wheel event (300 pixels per physical X11 wheel notch), no smoothing tail and no animated programmatic scrolling. The vendored egui default stays smoothed at 40 pixels; a focused test checks both paths. Native scrolling must verify actual offset, direction, repeated input and unchanged note bytes. Hover timings include xdotool dispatch and screen-pixel polling, so do not call them internal frame times.
+## Failure lessons to apply before shipping
 
-Mermaid uses [`mermaid-rs-renderer` 0.3.1](https://github.com/1jehuang/mermaid-rs-renderer) with CLI/PNG features disabled. One lazy worker renders SVG and converts its labels to paths using bundled Inter/Arabic fonts, away from the UI thread; it does not add system-font scanning to startup. A bounded 16-entry source/theme cache serves Reading and Live; hover and scrolling must not increase its render count. Invalid syntax keeps the literal source available. `Source editing` always shows Markdown. No browser or JavaScript renderer is introduced.
+- **Scrolled tasks:** TextEdit's full text clip is not the parent scroll clip.
+  Intersect both for checkbox culling and painting. The99 baseline painted822
+  accent pixels over chrome;4dbb842 paints0. Require remaining visible tasks and
+  unchanged Markdown, not merely a correct parsed marker.
+- **Held Live links:** pressing a rendered link changes the editing line before
+  release. Capture its target on press; follow only a completed click in the same
+  tab. A150ms held click must open the file, while dragging selects text without
+  navigation. A quick click alone missed the real failure.
+- **Queued modifiers:** snapshot event modifiers before the editor consumes
+  Ctrl+Enter; frame-current Control can already be released. Retain strict
+  same-frame typing/save and completion checks rather than adding input retries.
+- **Focus and undo:** request focus after widget registration/modal closure, then
+  stop reclaiming it. Window activation is separate from editor memory focus.
+  Cancel dirty Close, require automatic editor focus, undo/save exact original
+  bytes; never click the editor to conceal lost focus. Fresh probes belong to
+  one process. Preserve stable tab IDs across neighboring-tab deletion.
+- **Input simulation:** xdotool's combined Ctrl+S releases Control before S;
+  frame-current shortcut matchers can miss it. Retain private-X11 RECORD evidence
+  and plain-S negative control. A verified UTF-8 clipboard plus Ctrl+V avoids
+  scratch-key remapping losses in Persian fixtures; it does not prove IME/bidi.
+- **UI acknowledgement:** Escape runs before settings rendering. Observe one
+  checkbox click's persisted value before closing the modal. Collapse expanded
+  full-suite explorer folders once before timing a root-file hover. No repeated
+  toggles, weakened thresholds or save retries.
+- **Native placement:** use painted galley coordinates for overlays and natural
+  dimensions for diagrams. Inspect the complete image; an offscreen sliver or
+  parser/probe success is not successful rendering.
+- **Recovery:** confirmed active-file Trash opens a blank workspace; deleting a
+  background note preserves the active tab. Reset restart fixtures through real
+  Close actions and require exact tab order/modes plus recoverable deleted bytes.
 
-New native sections: `hover`, `title`, `scrolling`, `diagrams`. They run in Actions before the full regression/CPU/comparison gates. These changes remain unverified until the exact candidate passes and its screenshots are inspected.
+## Deliver the change
 
-Native inspection of `c6aa9e1` (Actions 39565788794) passes hover, safe title rename with actual rewritten-link clicks, and immediate scrolling (200 actual pixels per physical Xvfb notch, no delayed tail). It passes initial diagram plumbing but visual inspection rejects its Live placement (off-screen to the left) and Reading size (upscaled to full width). Preserve native SVG dimensions and exempt block diagrams from the inline-image x-offset; require visible bounds and natural size in the native evaluation. Do not confuse a visible sliver with rendered diagram acceptance.
+Show a preview of the exact optimized executable on disposable copies early.
+Keep it available for feedback with probe I/O disabled. Verify the user's actual
+link form and scrolled checklist, inspect screenshots, and preserve originals.
 
-The installed executable matched a debug candidate SHA, explaining why debug results must not be presented as release speed. Install only optimized `release.sha256` artifacts after verification. The next candidate also aligns Reading checkboxes to the first text line, restores the measured 9px label gap and 3px tight-list spacing, while keeping blank-line paragraph spacing in loose lists. All those changes remain pending exact native validation.
-
-The exact `88c55b6` debug binary locally passes md/txt open-and-reopen, the corrected checklist geometry (including loose-list paragraphs), essential editing/settings/panels, all five highlight colors and bookmarks. Its isolated diagram screenshot verifies native readable labels at natural size; use an explicit block x-coordinate, not an inline glyph caret plus width, and omit the code background when the block is rendered. Startup focus must persist through widget registration/sizing passes; tests must wait for real focus and clear stale probe files on process restart, while keeping saved-byte checks. The CI second-launch failure remains unaccepted until a replacement passes.
-
-For a release comparison without a local build: `/usr/bin/python3 scripts/benchmark-desktop.py --binary reports/<verified-run>/runtime/rust-notes --build-label release`. It requires the exact downloaded executable, checks visible Home content, uses private vaults/profiles and three interleaved warm samples per app, and records source corpus, binary SHA and process-tree PSS. Do not report debug results as release measurements.
-
-### Dense documents and optimized candidates — 21 October
-
-The user's live-preview complaint is a 21,319-byte,127-line document with long wrapped paragraphs and lists. Do not replace this case with a short Reading-only sample. `tests/gui_smoke.py --section scrolling --scroll-document <path>` reads that path and copies its contents into the disposable vault; never automate edits in the original project or upload its private content. CI generates a mixed Markdown corpus. Record both views, first wheel response, distance, repeat/reverse behavior and unchanged bytes. Ctrl+Home in Live aligns the first editor row and can leave the inline title above the viewport; measure relative wheel offset. Use xdotool `click --delay 0` for latency, since its default adds100ms.
-
-The88c55b6 debug baseline on the real document moves200px/notch in both views, without a tail; first response was232.6ms Reading and15.7ms Live on this local software renderer. These are single observed dispatch-to-probe samples, not internal frame times or an optimized release comparison. The new evaluation demonstrably rejects that payload. Actions now builds one optimized GUI candidate and applies all focused/full UI gates to that exact executable; compilation, tests and Clippy stay remote. Keep candidate SHA and failing diagnostics; only select/install the optimized payload after verification.
-
-In private Xvfb, resize/move the window before assigning focus, verify X input focus, then verify editor focus without clicking it. A missing-control error must retain native/window/widget focus metrics and the screenshot; never turn a startup-byte mismatch into a passing check with a retry.
-
-### Focus request completion
-
-The optimizedaac91d3 candidate built correctly (binarySHA53ebc31ef762279b6e43a8978a28ddae7dd0a57eaa10298c4802c1cc23781931) but failed real startup typing/focus both in Actions39573001852 and locally. Probe showed native focus0, editor memory focus1, pending request1; bypassing the native-focus wait still failed exact saved bytes, so that gate must remain.88c55b6 passes the same harness. Complete the request after the actual TextEdit registers and owns memory focus; global window activation is separate and can follow later. Never keep requesting because `Response::has_focus()` includes global activation. Fresh probe files belong to one process. Native tests first prepare the UI, explicitly deactivate once, verify logical editor focus with no pending request, then activate and require actual focus and saved/reopened bytes. This is a real focus transition, with no editor click or retry.
-
-
-### File menus, window controls and development clutter
-
-Use the same visible row in the reference and Rust Notes. `scripts/obsidian-reference.py --section menus` records native Obsidian menu labels, grouping, icon geometry, 13px text, approximately25px rows, hover colors and recoverable deletion; retain its identity because installed1.5.12 differs from the user's1.14.4 screenshots. The current increment implements the essential file actions (new tab, copy, bookmark, copy path, rename and Trash) with compact icon rows and a red destructive action. It is not full pane/merge/OS menu parity; do not label it an identical product. No inactive imitation controls.
-
-Share one `vault::is_ignored_path` policy between indexing and watcher refreshes: dotfiles/directories, node_modules, __pycache__, target, vendor, dist and build. Ordinary notes mentioning caches remain accessible. The native before check on94b21bc fails on the actual visible __pycache__ folder; model discovery checks preserve Unicode Markdown as a positive control. Never delete source/cache directories merely to hide them.
-
-Window minimize/maximize/restore icons and Trash artwork follow built-in image generation then SVG Studio tracing. Retain prompts, source/traces and proof. A client title bar uses the same hover treatment as app controls; Close routes through the existing unsaved-change guard. Exercise actual Openbox maximize/restore, minimize/reopen, dragging and edge resizing in private Xvfb, as well as the saved-byte close negative. Check native theme-tinted controls, not only black SVGs on a proof sheet.
-
-Deletion must keep the user in a blank workspace when the active file is removed; deleting a background tab must preserve the active tab identity. CI39577542515 caught the old unexpected First-steps fallback. The full native restart fixture must explicitly close tabs through real controls before arranging exactly Home/Read and Created-in-GUI/Source: rename/bookmark operations can already have persisted earlier layouts. Do not relax final exact path/order/mode/selection or reopened-byte checks to accommodate a dirty fixture. Raw local94b21bc run reached this strict session setup failure.
-
-Native editor coordinates must stay within visible content. In Actions39595171306 the scrolled galley began at y81, so the old `top + 20` helper clicked y101 inside the header ending at y108 and removed editor focus. The unchanged99d60be binary reproduces the failure locally; checking automatic focus after the neighboring tab closes, then sending Undo/Redo without another click, passes exact source recovery. Clamp other deliberate editor clicks below the current note header. Keep the failed evidence; do not "fix" undo history or add a focus retry for a misdirected test click.
-
-Clipboard checks must request `UTF8_STRING`, seed a different value first, click the real command once, and wait for the exact replacement bytes within a bounded deadline. Preserve query errors and the actual pointer on failure. Actions39595862642 stopped on the default xclip request (`target STRING not available`); this is not evidence that legacy STRING and UTF-8 clipboard targets are interchangeable. Local99 passes the explicit UTF-8 replacement check. Its recorded elapsed time includes the standard click helper waits and is not a response benchmark.
-
-Harness-only Actions verification can restore the exact optimized application and CPU benchmark after checking source ancestry, unchanged runtime/build files, optimized build logs, hashes and demo bytes. Record the original binary source separately from the verification-harness commit. Run independent CPU and Ferrite measurements even if a GUI check fails, retaining every failure; packaging still requires all gates. A completed comparison with a slower median or p95 must fail the speed gate, not silently produce an accepted release.
-
-Actions39596948260 passes all six CPU conditions on EPYC7763 (103,300-byte edited medians8.5565ms unfolded/10.036ms folded), but remains rejected: one older full-suite deletion assertion expected a neighboring note instead of the current blank-tab policy, and Ferrite failed its first saved input after Rust Notes completed30. Preserve both failures. Require the blank workspace, retained neighboring tab and exact Trash bytes. Establish X keyboard focus after startup/resize settles for both comparison apps, and retain failed input identity, source bytes, focus, pointer and screenshot before destroying profiles. A local one-input Ferrite setup succeeds; it does not replace the failed CI round or establish a speed result.
-
-For a real Xwayland preview, capture its own client drawable with python-xlib `window.get_image(..., X.ZPixmap, 0xffffffff)` and Pillow's BGRX decoder when full-root ImageGrab fails. On this desktop the1380×900 logical window has2760×1800 physical pixels; preserve the native screenshot and account for scale before any input automation. Capture only this app. Leave the disposable review window available to Masih and never automate edits while he is trying it.
-
-Actions39598261220 retains a second immediate-sequence Ferrite failure: the native title was dirty, X focus correct, but the original103,300 file bytes remained after input+Save. Do not count lost saves as fast or claim this proves the cause. The next declared comparison uses the same fixed50ms input gap for both applications, includes it in measured time, keeps the original corpus/alternating order/5warm+25sample protocol and preserves the immediate failures as rejected evidence. Native Rust Notes queued-input save checks remain strict and unchanged. Restore focused interaction checks on reuse too: the original99 run stopped at hover, so later title/scroll/diagram/task/highlight groups still need exact release verification.
-
-The50ms gap did not resolve the Ferrite failure in Actions39599399184. That run also catches an intermittent Rust Notes second-launch explicit save: its screenshot proves the text is present and editor/native focus valid, but the tab remains dirty and disk original. Do not misdiagnose this as missing typing/focus or keep increasing waits. `scripts/record-keyboard.py` observes only S/Control/Shift events on the private Xvfb server, retaining actual key codes and modifier states. Its local calibration distinguishes genuine Ctrl+S (state4) from plain S (state0), with no input replay. The workflow's diagnostic-only mode runs the comparison observer without packaging or claiming a verified release; ordinary release gates remain required.
-
-Actions39601381455 confirms xdotool's combined `ctrl+s` releases Control before S (Control up208830, S up208838). Ferrite v0.3.0's [`KeyBinding::matches`](https://github.com/OlaProeis/Ferrite/blob/v0.3.0/src/config/settings.rs) checks frame-current modifiers, explaining why a short released modifier can hide this gesture. Use the shared explicit physical Save sequence instead of increasing the typing pause: local RECORD verifies Control-down/S-down/S-up/Control-up, both S events with state4. Local Rust Notes.txt open/reopen passes that gesture. The strict paused-process same-frame save cases remain unchanged. Both apps use the same gesture in the declared comparison; retain all rejected earlier protocols. Diagnostic tracing is labeled separately from the ordinary comparison. Native stages collect independent failures serially and still return failure if any case fails; the collector's positive/negative pipeline checks pass.
-
-Diagnostic39602495305 gets Ferrite through three correct saves, then sample d saves103,299 bytes instead of103,304, removing the final typed line. Its default Ctrl+D deletes a line and shortcut matching uses all pressed keys with current modifiers; coalescing ordinary d and the following Ctrl-down therefore explains this observation. The declared normal protocol combines the fixed50ms typing gap with the corrected held-Control chord for both apps. Preserve both earlier failed variants. Observe exact disk bytes while the chord runs, then join key release after stopping the timer so a fixed release wait cannot conceal editor response. Diagnostic runs cannot create release receipts, regardless of their conclusion.
-
-
-### Keep scrolled tasks and held link clicks correct
-
-When a custom TextEdit decoration escapes above the note, its full text rectangle is not the visible scroll boundary. Intersect that rectangle with the parent UI clip for both culling and painting. Keep a long checked checklist in the native evaluation: scroll one approved300px notch and require unchanged toolbar pixels, no offscreen checkbox hit target, visible remaining tasks and exact original Markdown. The99 baseline painted822 checkbox pixels over the chrome; preserve reports/task-clipping-99-before.* as the failing control.
-
-A quick simulated click can hide a Live-preview bug. A real press changes the editing line before release; looking up the rendered link only on release loses the user's target. Capture that target on press and follow only the same tab's completed click. Require a150ms held click to open [Approved spec](spec.md); dragging must select without navigation. Likewise use event modifiers captured before consumption for queued Ctrl+Enter, since frame-current Control can already be released. Preserve the failing99 held-click and queued-chord logs.
-
-Check the actual daily executable before reporting delivery. Source fixes and a preview are insufficient while rust-note-editor still launches an old debug binary. Install only the optimized Actions release verified against release.sha256, keep the old exact executable for rollback, and preserve launcher/default-vault settings. Do not close a user's running document to perform installation.
-
-
-### Acknowledge UI setup before the next shortcut
-
-Settings Escape is handled before drawing its checkbox. If a simulator queues both in one frame, the dialog can close without applying the click. Observe the persisted setting after one actual click before sending Escape; fail if it did not change. Keep this setup outside performance timing. For a shared full-run hover fixture, collapse expanded file folders once before measuring a root file row; a deliberately virtualized offscreen row cannot be hovered. Do not replace a missed click with repeated toggles or lower the hover threshold.
+When all required gates pass, verify `release.sha256`, source commit, bundle and
+runtime hash. Preserve a rollback executable, atomically replace the default app,
+and retain the existing launcher, MIME associations, default vault and concurrent
+launcher artwork. Never close the user's running document to install. Verify the
+next launcher path resolves to the exact new bytes; an already running old
+process remains old until reopened. Record the installation and practical limits
+in `VISION.md`, `ES.md` and release metadata, then remove obsolete owned rebuildable
+output while retaining selected artifacts and raw evidence. Check actual disk
+space. Full visual bidi/desktop IME and complex folding remain unresolved; do not
+convert an essential-workflow release into a claim of complete Obsidian parity.

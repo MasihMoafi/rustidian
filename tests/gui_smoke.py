@@ -17,7 +17,7 @@ from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from native_input import save_shortcut
+from native_input import save_shortcut, wait_autosave
 
 
 def pixel_data(picture):
@@ -969,7 +969,10 @@ def main():
                     results.append("Real window manager confirmed maximize/restore, minimize/reopen, title-bar dragging and edge resizing")
                 # The close guard is meaningful when the source cannot autosave.
                 command("Open settings")
+                type_text("autosave")
+                assert control_bounds("settings-dark", required=False) is None
                 click_control("settings-autosave")
+                wait_autosave(base / "state", False)
                 key("Escape")
                 open_note("First steps")
                 command("Source editing")
@@ -1185,12 +1188,24 @@ def main():
                 capture("native-table-mermaid-live.png")
                 assert control_bounds("diagram-render-count")[0] == count
                 assert control_bounds("copy-code:0", required=False) is None
-                click_control("mermaid-live")
-                assert control_bounds("mermaid-live", required=False) is None
-                control_bounds("copy-code:0")
-                assert path.read_text() == source
-                key("ctrl+Home")
-                control_bounds("mermaid-live")
+                for queued in (True, False):
+                    left, top, right, bottom = control_bounds("mermaid-live")
+                    if queued:
+                        app.send_signal(signal.SIGSTOP)
+                        try:
+                            xdo("mousemove", "--sync", str(round((left+right)/2)), str(round((top+bottom)/2)), "click", "1")
+                        finally:
+                            app.send_signal(signal.SIGCONT)
+                    else:
+                        xdo("mousemove", "--sync", str(round((left+right)/2)), str(round((top+bottom)/2)), "mousedown", "1")
+                        time.sleep(.15)
+                        xdo("mouseup", "1")
+                    pause()
+                    assert control_bounds("mermaid-live", required=False) is None
+                    control_bounds("copy-code:0")
+                    assert path.read_text() == source
+                    key("ctrl+Home")
+                    control_bounds("mermaid-live")
                 assert control_bounds("diagram-render-count")[0] == count
                 command("Source editing")
                 assert control_bounds("mermaid-live", required=False) is None
@@ -2513,8 +2528,7 @@ def main():
             def folder_checks():
                 click_control("button:File explorer")
                 pause()
-                if control_bounds("folder:Bulk", required=False):
-                    click_control("folder:Bulk")
+                click_control("file-collapse")
                 original_notes = sorted(str(path.relative_to(fixture)) for path in fixture.rglob("*.md"))
                 command("New folder")
                 key("ctrl+a")
