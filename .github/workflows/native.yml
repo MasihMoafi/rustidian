@@ -3,9 +3,9 @@ name: Native Rust
 on:
   push:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', '.github/workflows/native.yml']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', '.github/workflows/native.yml']
   pull_request:
-    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', '.github/workflows/native.yml']
+    paths-ignore: ['docs/**', 'README.md', 'ES.md', 'VISION.md', 'assets/icons/README.md', 'tests/gui_smoke.py', 'scripts/obsidian-reference.py', 'scripts/reuse-actions-candidate.py', 'scripts/compare-editors.py', '.github/workflows/native.yml']
   workflow_dispatch:
     inputs:
       reuse_run_id:
@@ -68,6 +68,7 @@ jobs:
         if: ${{ inputs.reuse_run_id == '' }}
         run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
       - name: Build the optimized GUI candidate
+        id: build_candidate
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
           cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/candidate-build.log
@@ -75,6 +76,7 @@ jobs:
           git rev-parse HEAD > reports/binary-source-commit.txt
           tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
       - name: Restore an unchanged optimized candidate
+        id: restore_candidate
         if: ${{ inputs.reuse_run_id != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,6 +124,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
       - name: Serial editor CPU measurements
+        if: ${{ !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
           if [ ! -x target/release/examples/editor_benchmark ]; then
             cargo build --locked --release --example editor_benchmark 2>&1 | tee reports/benchmark-build.log
@@ -150,6 +153,7 @@ jobs:
             sha256sum target/release/examples/editor_benchmark > reports/editor-benchmark.sha256
           fi
       - name: Compare serial source editing and saving with Ferrite
+        if: ${{ !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -171,7 +175,7 @@ jobs:
           (root / 'binary-path').write_text(str(binaries[0]))
           PY
           /usr/bin/python3 scripts/compare-editors.py --self-check
-          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rust-notes --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" | tee reports/editor-comparison.log
+          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rust-notes --ours-source-commit "$(cat reports/binary-source-commit.txt)" --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" | tee reports/editor-comparison.log
       - name: Package the verified Linux application
         run: |
           sha256sum target/release/rust-notes > reports/release.sha256

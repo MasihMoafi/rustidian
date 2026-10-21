@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import statistics
 import subprocess
 import tempfile
@@ -56,6 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ours", type=Path)
     parser.add_argument("--ferrite", type=Path)
+    parser.add_argument("--ours-source-commit")
     parser.add_argument("--self-check", action="store_true")
     args = parser.parse_args()
     self_check()
@@ -64,13 +66,17 @@ def main():
         return
     assert args.ours and args.ferrite
     root = Path(__file__).resolve().parents[1]
+    harness_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    source_commit = args.ours_source_commit or harness_commit
+    assert re.fullmatch("[0-9a-f]{40}", source_commit), "Expected the full application source SHA"
     reports = root / "reports" / "editor-comparison"
     reports.mkdir(parents=True, exist_ok=True)
     report = {
         "status": "running", "metric": "synthetic insertion + explicit save until exact bytes are observed",
         "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
         "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
-        "versions": {"ferrite": "v0.3.0", "rust-notes": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()},
+        "versions": {"ferrite": "v0.3.0", "rust-notes": source_commit},
+        "harness_commit": harness_commit,
         "binary_sha256": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in [("rust-notes", args.ours), ("ferrite", args.ferrite)]},
         "cpu": subprocess.check_output(["lscpu"], text=True),
         "limitations": ["Combined edit/save response, not display latency or internal CPU time.",
@@ -185,6 +191,8 @@ def main():
         report["meets_observed_target"] = all(summaries["rust-notes"][metric] <= summaries["ferrite"][metric] for metric in ["median_ms", "p95_ms"])
         report["status"] = "completed"
         print(json.dumps({"summary": summaries, "meets_observed_target": report["meets_observed_target"]}))
+        if not report["meets_observed_target"]:
+            raise SystemExit("Rust Notes missed the observed median/p95 edit-and-save target; retain measurements and investigate.")
     except Exception as error:
         report["status"] = "failed"
         report["error"] = str(error)

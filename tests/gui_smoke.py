@@ -834,10 +834,37 @@ def main():
                 title_contains("First steps")
                 assert control_bounds("tab-full:Home.md")
                 assert control_bounds("tab-full:Notes/First steps.md")
-                file_menu("Home.md")
-                click_control("menu:Copy path")
-                clipboard = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, timeout=5).decode()
-                assert clipboard == str(fixture / "Home.md"), repr(clipboard)
+                stale = "STALE_PATH_π"
+                owner = subprocess.Popen(["xclip", "-selection", "clipboard", "-in", "-quiet"],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
+                samples = []
+                try:
+                    owner.stdin.write(stale.encode())
+                    owner.stdin.close()
+                    pause()
+                    assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, timeout=2).decode() == stale
+                    file_menu("Home.md")
+                    started = time.monotonic()
+                    click_control("menu:Copy path")
+                    expected = str(fixture / "Home.md")
+                    clipboard = stale
+                    deadline = started + 2
+                    while time.monotonic() < deadline:
+                        result = subprocess.run(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+                            env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1)
+                        clipboard = result.stdout.decode()
+                        samples.append({"elapsed_ms": (time.monotonic()-started)*1000, "returncode": result.returncode,
+                            "text": clipboard, "error": result.stderr.decode()})
+                        if result.returncode == 0 and clipboard == expected:
+                            break
+                        time.sleep(.02)
+                    assert clipboard == expected, (expected, samples)
+                finally:
+                    (reports / "copy-path-clipboard.json").write_text(json.dumps({"metric": "clipboard correctness; elapsed includes click helper waits, not a latency benchmark", "samples": samples,
+                        "pointer": xdo("getmouselocation", "--shell")}, indent=2)+"\n")
+                    if owner.poll() is None:
+                        owner.terminate()
+                    owner.wait(timeout=5)
                 title_contains("First steps")
                 file_menu("Home.md")
                 click_control("menu:Make a copy…")
