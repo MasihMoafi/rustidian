@@ -44,8 +44,11 @@ pub fn title_bar(ui: &mut egui::Ui, title: &str) {
                     ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
                 }
                 let rect = ui.available_rect_before_wrap();
-                let response =
-                    ui.interact(rect, ui.id().with("title-drag"), Sense::click_and_drag());
+                let response = ui.interact(
+                    rect,
+                    ui.scope_id().with("title-drag"),
+                    Sense::click_and_drag(),
+                );
                 crate::ui_probe::record(ui.ctx(), "window-title-drag", rect);
                 let galley = egui::WidgetText::from(egui::RichText::new(title).size(12.0).weak())
                     .into_galley(

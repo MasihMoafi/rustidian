@@ -347,3 +347,9 @@ Intent: preserve accepted immediate scrolling and essential Markdown work; finis
 Latest steering: agent-logo request belonged to another chat; focus Rust Notes and Obsidian controls. Generated drafts and the recovered local transcript stay ignored under reports; no Elpis app/state/selector was changed and nothing from those drafts is included in this source candidate.
 
 Candidate completes existing compact file menu / generated client-window controls / development-clutter exclusion work. Active-file Trash now opens a blank tab and background removal preserves active identity; strict full-suite restart case explicitly arranges two tabs after persistent earlier layouts. CI94 failed delete fallback; local94 full native progressed to and exposed stale-layout setup failure. All exact-byte/title/session assertions retained. fmt, Python/Node syntax and diff checks pass locally, target absent. Next one combined source candidate runs Actions, preserving all previously approved scroll/highlight/title/task/diagram changes; full parity/user acceptance remain pending.
+
+
+Active Actions39588903614 for086b36be98db038a3be9b966678426059b7dc69c (remote exact push through gh). fmt and runner setup passed, Clippy compiling at11:04UTC. Source frozen pending native/CPU/Ferrite gates. Local pipeline six pass, no target. Raw baseline94 all-native run failed strict final two-tab session fixture (stale persisted layout), not the earlier CI delete fallback; both failures preserved. New harness clears clean restored tabs with actual Ctrl+W before exact two-tab arrangement and retains order/view/active/input assertions.
+
+
+086b36b Actions39588903614 failed Clippy on one deprecated `Ui::id` call in the new title drag area (no binary built). Replace with `scope_id`; retain all strict gates. Final package now emits `release.sha256` only after verification, matching the optimized-install rule. No local compilation, unchanged real vault and approved scrolling.
