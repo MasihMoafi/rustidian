@@ -76,7 +76,7 @@ still needs the expanded paired reference audit before a parity claim.
 | Unique note creator | Missing; configured time title/template, repeated-instant collisions and error paths. |
 | Web viewer | Missing; browser content conflicts with the current native-only runtime constraint and needs a concrete design decision. |
 | Word count | Existing document counts; selection, CJK/Unicode and settings parity unverified. |
-| Workspaces | Only automatic session restore exists; named layouts/save/load/delete and safe dirty documents missing. |
+| Workspaces | Paired1.13.7 reference passes save/load/overwrite/delete/cancel, order/modes/sidebar widths and actual restored-tab clicks with unchanged notes. Native named storage/manager, four commands, dirty-load guards and sidebar width restoration are now written with behavioral checks; they remain uncompiled/unverified. |
 
 ## Community extensions, services and platforms
 

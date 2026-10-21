@@ -34,6 +34,12 @@ struct Session {
     autosave_enabled: bool,
     #[serde(default)]
     note_aids: Option<rust_notes::note_aids::Config>,
+    #[serde(default = "default_sidebars")]
+    sidebar_widths: [f32; 2],
+}
+
+fn default_sidebars() -> [f32; 2] {
+    [300.0, 234.0]
 }
 
 fn default_zoom() -> f32 {
@@ -103,6 +109,15 @@ impl NotesApp {
             .unwrap_or(0);
         self.show_left = session.left;
         self.show_right = session.right;
+        self.sidebar_widths = if session.sidebar_widths.iter().all(|width| width.is_finite()) {
+            [
+                session.sidebar_widths[0].clamp(180.0, 450.0),
+                session.sidebar_widths[1].clamp(170.0, 420.0),
+            ]
+        } else {
+            default_sidebars()
+        };
+        self.restore_sidebars = [true; 2];
         self.right_tab = session.right_tab.min(2);
         self.dark = session.dark;
         self.ui_zoom = if session.ui_zoom.is_finite() {
@@ -157,6 +172,7 @@ impl NotesApp {
             ui_zoom: self.ui_zoom,
             autosave_enabled: self.autosave_enabled,
             note_aids: Some(self.note_aids.clone()),
+            sidebar_widths: self.sidebar_widths,
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {
@@ -185,6 +201,7 @@ mod tests {
         assert!(state.bookmarks.items.is_empty());
         assert!(!state.bookmarks_open);
         assert!(state.note_aids.is_none());
+        assert_eq!(state.sidebar_widths, [300.0, 234.0]);
         let restored: Session =
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(restored.tabs.len(), 1);

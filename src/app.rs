@@ -36,6 +36,7 @@ enum Pending {
     Quit,
     ChangeVault,
     OpenVault(PathBuf),
+    LoadWorkspace(String),
 }
 
 pub struct NotesApp {
@@ -91,6 +92,9 @@ pub struct NotesApp {
     pub(crate) note_aids: rust_notes::note_aids::Config,
     template_source: Option<(u64, String)>,
     template_choices: Result<rust_notes::search::FileMatcher, String>,
+    workspace_manager: crate::workspace_ui::Manager,
+    pub(crate) sidebar_widths: [f32; 2],
+    pub(crate) restore_sidebars: [bool; 2],
 }
 
 impl NotesApp {
@@ -156,6 +160,9 @@ impl NotesApp {
             note_aids: Default::default(),
             template_source: None,
             template_choices: Err(String::new()),
+            workspace_manager: Default::default(),
+            sidebar_widths: [300.0, 234.0],
+            restore_sidebars: [false; 2],
         };
         app.load_vault(root);
         app
@@ -263,6 +270,9 @@ impl NotesApp {
                 Ok(vault) => {
                     let opening = self.loading_root.take().is_some();
                     if opening {
+                        self.workspace_manager.open = false;
+                        self.sidebar_widths = [300.0, 234.0];
+                        self.restore_sidebars = [true; 2];
                         self.bookmarks = Default::default();
                         self.right_tab = 0;
                         self.ui_zoom = 1.0;
@@ -703,6 +713,7 @@ impl NotesApp {
             }
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
             Pending::OpenVault(root) => self.load_vault(&root),
+            Pending::LoadWorkspace(name) => self.load_workspace(&name),
         }
     }
 
@@ -717,7 +728,7 @@ impl NotesApp {
         if self.pending.is_some() {
             return;
         }
-        if self.loading_root.is_some() || self.vault_manager.open {
+        if self.loading_root.is_some() || self.vault_manager.open || self.workspace_manager.open {
             return;
         }
         if self.dialog.is_none() {
@@ -996,11 +1007,140 @@ impl NotesApp {
         }
     }
 
+    pub(crate) fn workspace_layout(&self) -> rust_notes::workspaces::Layout {
+        rust_notes::workspaces::Layout {
+            tabs: self
+                .tabs
+                .iter()
+                .map(|tab| rust_notes::workspaces::SavedTab {
+                    path: tab.document.path.clone(),
+                    view: tab.view,
+                    editing_view: tab.editing_view(),
+                })
+                .collect(),
+            active: self.active,
+            left: self.show_left,
+            right: self.show_right,
+            left_width: self.sidebar_widths[0],
+            right_width: self.sidebar_widths[1],
+            right_tab: self.right_tab,
+        }
+    }
+
+    fn show_workspaces(&mut self, load_only: bool) {
+        let Some(vault) = &self.vault else {
+            self.error = Some("Open a vault first.".into());
+            return;
+        };
+        self.workspace_manager.show_manager(&vault.root, load_only);
+        self.dialog = None;
+        self.editor.focus = false;
+        self.ctx.memory_mut(|memory| {
+            if let Some(id) = memory.focused() {
+                memory.surrender_focus(id);
+            }
+        });
+    }
+
+    fn save_named_workspace(&mut self) -> Result<bool, String> {
+        let vault = self.vault.as_ref().ok_or("Open a vault first.")?;
+        let mut list = rust_notes::workspaces::Workspaces::open(&vault.root)?;
+        let Some(name) = list.active().map(str::to_owned) else {
+            return Ok(false);
+        };
+        list.save(
+            &name,
+            self.workspace_layout(),
+            chrono::Local::now().timestamp_millis(),
+        )?;
+        self.status = format!("Workspace saved: {name}");
+        Ok(true)
+    }
+
+    fn request_workspace(&mut self, name: String) {
+        if self.dirty() {
+            self.workspace_manager.open = false;
+            self.pending = Some(Pending::LoadWorkspace(name));
+        } else {
+            self.load_workspace(&name);
+        }
+    }
+
+    fn load_workspace(&mut self, name: &str) {
+        let load = || -> Result<_, String> {
+            let vault = self.vault.as_ref().ok_or("Open a vault first.")?;
+            let mut list = rust_notes::workspaces::Workspaces::open(&vault.root)?;
+            let layout = list
+                .entries()
+                .iter()
+                .find(|entry| entry.name == name)
+                .ok_or("This workspace no longer exists.")?
+                .layout
+                .clone();
+            let restored = layout.restore(vault)?;
+            list.activate(name)?;
+            Ok((layout, restored))
+        };
+        match load() {
+            Ok((layout, restored)) => {
+                self.tabs = restored.tabs;
+                self.active = restored.active;
+                self.show_left = layout.left;
+                self.show_right = layout.right;
+                self.right_tab = layout.right_tab.min(2);
+                self.sidebar_widths = [
+                    layout.left_width.clamp(180.0, 450.0),
+                    layout.right_width.clamp(170.0, 420.0),
+                ];
+                self.restore_sidebars = [true; 2];
+                self.workspace_manager.open = false;
+                self.error = None;
+                self.find = Default::default();
+                self.title = Default::default();
+                self.properties = Default::default();
+                self.pending_anchor = None;
+                self.status = format!("Workspace loaded: {name}");
+                self.focus_editor();
+            }
+            Err(error) => {
+                if self.workspace_manager.open {
+                    self.workspace_manager.show_error(error);
+                } else {
+                    self.error = Some(error);
+                }
+            }
+        }
+    }
+
+    fn prepare_sidebar(&mut self, ui: &egui::Ui, salt: &str, index: usize) {
+        if self.restore_sidebars[index] {
+            let state = egui::containers::panel::PanelState {
+                outer_rect: egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(self.sidebar_widths[index], 1.0),
+                ),
+            };
+            ui.ctx()
+                .data_mut(|data| data.insert_persisted(ui.scope_id().with(salt), state));
+            self.restore_sidebars[index] = false;
+        }
+    }
+
+    fn capture_sidebar(&mut self, ui: &egui::Ui, salt: &str, index: usize) {
+        if let Some(state) =
+            egui::containers::panel::PanelState::load(ui.ctx(), ui.scope_id().with(salt))
+        {
+            self.sidebar_widths[index] = state.size().x;
+            crate::ui_probe::record(ui.ctx(), format!("sidebar:{salt}"), state.outer_rect);
+        }
+    }
+
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         if !self.show_left {
             return;
         }
         let mut selected = None;
+        self.prepare_sidebar(ui, "explorer", 0);
         egui::Panel::left("explorer")
             .default_size(300.0)
             .min_size(180.0)
@@ -1224,6 +1364,7 @@ impl NotesApp {
                     },
                 );
             });
+        self.capture_sidebar(ui, "explorer", 0);
         if let Some(action) = selected {
             match action {
                 FileAction::Open(path) => self.open_note_at(
@@ -1277,6 +1418,7 @@ impl NotesApp {
         let mut selected = None;
         let mut follow = None;
         let mut jump = None;
+        self.prepare_sidebar(ui, "details", 1);
         egui::Panel::right("details")
             .default_size(234.0)
             .min_size(170.0)
@@ -1390,6 +1532,7 @@ impl NotesApp {
                     }
                 });
             });
+        self.capture_sidebar(ui, "details", 1);
         if let Some(fragment) = jump {
             self.jump_to_anchor(&fragment);
         }
@@ -1961,6 +2104,15 @@ impl NotesApp {
             }
             return;
         }
+        if self.workspace_manager.open {
+            let layout = self.workspace_layout();
+            if let Some(name) = self.workspace_manager.show(ctx, &layout) {
+                self.request_workspace(name);
+            } else if !self.workspace_manager.open {
+                self.focus_editor();
+            }
+            return;
+        }
         let Some(dialog) = self.dialog else {
             return;
         };
@@ -2465,6 +2617,9 @@ impl NotesApp {
                 }
                 self.focus_editor();
             }
+            if dialog == Dialog::InsertTemplate {
+                self.focus_editor();
+            }
         }
     }
 
@@ -2719,6 +2874,19 @@ impl NotesApp {
             return;
         }
         match command {
+            "Workspaces: Manage workspace layouts" => self.show_workspaces(false),
+            "Workspaces: Load workspace layout" => self.show_workspaces(true),
+            "Workspaces: Save layout" | "Workspaces: Save and load another layout" => {
+                match self.save_named_workspace() {
+                    Ok(true) => {
+                        if command == "Workspaces: Save and load another layout" {
+                            self.show_workspaces(true);
+                        }
+                    }
+                    Ok(false) => self.show_workspaces(false),
+                    Err(error) => self.error = Some(error),
+                }
+            }
             "Daily notes: Open today's daily note" => self.open_daily(),
             "Templates: Insert template" if self.editable_note() => {
                 self.ask(Dialog::InsertTemplate);
@@ -3016,6 +3184,7 @@ impl eframe::App for NotesApp {
         if self.pending.is_none()
             && self.loading_root.is_none()
             && !self.vault_manager.open
+            && !self.workspace_manager.open
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::S))
         {
             self.save(self.active);

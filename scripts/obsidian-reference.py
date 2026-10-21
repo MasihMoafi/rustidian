@@ -1,5 +1,6 @@
 """Capture the installed Obsidian using a disposable profile and sample vault."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -118,8 +119,122 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             report["pages"] = [{key:page.get(key) for key in ("id","title","url")} for page in pages]
             target = next((page for page in pages if page["id"] != target["id"]), target)
             report["ui"] = evaluate("JSON.stringify({body:document.body.innerText,origin:[screenX,screenY],controls:[...document.querySelectorAll('input,button,[aria-label]')].filter(e=>e.getBoundingClientRect().height).map(e=>{const r=e.getBoundingClientRect();return {tag:e.tagName,text:e.innerText,value:e.value,placeholder:e.placeholder,label:e.getAttribute('aria-label'),classes:e.className,rect:[r.x,r.y,r.width,r.height]}})})")
-            (ROOT / "reports/obsidian-workspaces-reference.json").write_text(json.dumps(report,indent=2)+"\n")
             ImageGrab.grab(xdisplay=display).save(ROOT / "reports/obsidian-workspaces-manager.png")
+            report["actions"] = []
+            def notes_hashes():
+                return {p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
+            before_notes = notes_hashes()
+            workspace_file = settings / "workspaces.json"
+            def wait(predicate, message):
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if predicate(): return
+                    time.sleep(.1)
+                raise AssertionError(message)
+            def click_dom(expression):
+                rect = evaluate("JSON.stringify((()=>{const e=" + expression + ";if(!e)return null;const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                assert rect, f"Missing reference control: {expression}"
+                xdo('mousemove', *[str(round(value)) for value in rect], 'click', '1')
+                time.sleep(.2)
+            def palette(name):
+                xdo('key','--clearmodifiers','ctrl+p');time.sleep(.2)
+                xdo('type','--clearmodifiers','--delay','4',name);time.sleep(.2)
+                xdo('key','Return');time.sleep(.3)
+            def manager():
+                palette(manage['name'])
+                wait(lambda:evaluate("JSON.stringify(Boolean(document.querySelector('input[placeholder^=\"Save current workspace\"]')))"), 'Workspace manager did not open')
+            def save_layout(name):
+                click_dom("document.querySelector('input[placeholder^=\"Save current workspace\"]')")
+                xdo('key','--clearmodifiers','ctrl+a')
+                xdo('type','--clearmodifiers',name)
+                click_dom("[...document.querySelectorAll('.modal button')].find(e=>e.textContent.trim()==='Save')")
+                wait(lambda:workspace_file.exists() and name in json.loads(workspace_file.read_text()).get('workspaces',{}), 'Saved layout did not persist')
+                report.setdefault('saved',{})[name] = json.loads(workspace_file.read_text())
+                report['rows'] = evaluate("JSON.stringify([...document.querySelectorAll('.modal .list-item')].map(e=>({text:e.innerText,html:e.outerHTML})))")
+                xdo('key','Escape');time.sleep(.2)
+            def row_action(name, action):
+                row = "[...document.querySelectorAll('.modal .list-item')].find(e=>e.textContent.startsWith(" + json.dumps(name) + "))"
+                control = "(()=>{const row=" + row + ";if(!row)return null;return [...row.querySelectorAll('button,[aria-label]')].find(e=>" + ("e.textContent.trim()==='Load'" if action=='load' else "(e.getAttribute('aria-label')||'').includes('Delete')") + ")})()"
+                click_dom(control)
+            def state():
+                return evaluate("JSON.stringify({active:app.workspace.getActiveFile()?.path,files:app.workspace.getLeavesOfType('markdown').map(leaf=>leaf.getViewState().state?.file).filter(Boolean),views:app.workspace.getLeavesOfType('markdown').map(leaf=>leaf.getViewState().state),loaded_files:app.workspace.getLeavesOfType('markdown').map(leaf=>leaf.view.file?.path).filter(Boolean),layout:app.workspace.getLayout()})")
+            def open_first_steps(new_tab=True):
+                if new_tab:xdo('key','--clearmodifiers','ctrl+t');time.sleep(.2)
+                xdo('key','--clearmodifiers','ctrl+o');time.sleep(.2)
+                xdo('type','--clearmodifiers','First steps');time.sleep(.2)
+                xdo('key','Return');time.sleep(.3)
+                wait(lambda:state().get('active')=='Notes/First steps.md', 'Quick switcher did not open the reference file')
+            def compare_layout(expected):
+                current = state()
+                assert current['active']==expected['active'] and current['files']==expected['files'] and current['views']==expected['views'], (current['active'],current['files'],current['views'],expected['active'],expected['files'],expected['views'])
+                for side in ('left','right'):
+                    assert current['layout'][side].get('collapsed',False)==expected['layout'][side].get('collapsed',False)
+                    assert current['layout'][side].get('width')==expected['layout'][side].get('width')
+            try:
+                writing = state()
+                save_layout('Writing')
+                report['actions'].append('Saved Writing from one Home tab and its sidebar state')
+                manager()
+                unchanged = workspace_file.read_bytes()
+                click_dom("document.querySelector('input[placeholder^=\"Save current workspace\"]')")
+                xdo('type','--clearmodifiers','Cancelled layout')
+                xdo('key','Escape');time.sleep(.2)
+                assert workspace_file.read_bytes()==unchanged
+                report['actions'].append('Dismissed an unsaved layout name without changing the saved layouts')
+                open_first_steps()
+                if evaluate("JSON.stringify(app.workspace.activeLeaf.view.getMode())")=='preview':
+                    xdo('key','--clearmodifiers','ctrl+e');time.sleep(.3)
+                palette('Toggle left sidebar')
+                reading = state()
+                assert len(reading['files'])==2
+                assert reading['layout']['left'].get('collapsed',False)!=writing['layout']['left'].get('collapsed',False)
+                manager();save_layout('Reading')
+                manager();row_action('Writing','load')
+                wait(lambda:state().get('active')==writing['active'],'Writing did not restore its active note')
+                compare_layout(writing)
+                manager();row_action('Reading','load')
+                wait(lambda:state().get('active')==reading['active'],'Reading did not restore its active note')
+                compare_layout(reading)
+                report['deferred_restore'] = state()
+                click_dom("[...document.querySelectorAll('.workspace-split.mod-root .workspace-tab-header')].find(e=>e.querySelector('.workspace-tab-header-inner-title')?.textContent==='Home')")
+                wait(lambda:state().get('active')=='Home.md','Restored inactive Home tab did not open')
+                assert evaluate("JSON.stringify(document.querySelector('.markdown-preview-view')?.innerText||'')").find('A little room to think.')>=0
+                click_dom("[...document.querySelectorAll('.workspace-split.mod-root .workspace-tab-header')].find(e=>e.querySelector('.workspace-tab-header-inner-title')?.textContent==='First steps')")
+                wait(lambda:state().get('active')==reading['active'],'Restored second tab did not open')
+                report['actions'].append('Loaded both named layouts with exact note order, active note, sidebar visibility and widths')
+                report['command_flows'] = []
+                for command_id in ('workspaces:save', 'workspaces:load', 'workspaces:save-and-load'):
+                    entry = next(c for c in report['commands'] if c['id'] == command_id)
+                    palette(entry['name'])
+                    observed = evaluate("JSON.stringify({modal:document.querySelector('.modal')?.innerText||null,inputs:[...document.querySelectorAll('.modal input')].map(e=>({value:e.value,placeholder:e.placeholder})),suggestions:[...document.querySelectorAll('.suggestion-item')].map(e=>e.innerText)})")
+                    report['command_flows'].append({'command':entry, 'ui':observed, 'stored':json.loads(workspace_file.read_text())})
+                    ImageGrab.grab(xdisplay=display).save(ROOT / ('reports/obsidian-workspaces-' + command_id.split(':')[1] + '.png'))
+                    xdo('key','Escape');time.sleep(.2)
+                    compare_layout(reading)
+                manager();row_action('Writing','delete')
+                wait(lambda:'Writing' not in json.loads(workspace_file.read_text())['workspaces'],'Delete layout did not remove only its saved entry')
+                xdo('key','Escape');time.sleep(.2)
+                xdo('key','--clearmodifiers','ctrl+w');time.sleep(.3)
+                palette('Toggle left sidebar')
+                overwritten = state()
+                manager();save_layout('Reading')
+                assert list(json.loads(workspace_file.read_text())['workspaces'])==['Reading']
+                open_first_steps()
+                manager();row_action('Reading','load')
+                wait(lambda:state().get('active')==overwritten['active'],'Overwritten layout did not restore the new active note')
+                compare_layout(overwritten)
+                manager();row_action('Reading','delete')
+                wait(lambda:json.loads(workspace_file.read_text())['workspaces']=={},'Final layout deletion did not persist')
+                assert notes_hashes()==before_notes
+                report['actions'].append('Overwrote a named layout without duplicate entries and deleted layouts without changing any Markdown file')
+                report.update(status='passed',writing=writing,reading=reading,overwritten=overwritten,notes_unchanged=True)
+                ImageGrab.grab(xdisplay=display).save(ROOT / 'reports/obsidian-workspaces-complete.png')
+            except Exception as error:
+                report.update(status='failed',error=str(error),failure_ui=evaluate('JSON.stringify(document.body.innerText)'))
+                ImageGrab.grab(xdisplay=display).save(ROOT / 'reports/obsidian-workspaces-failure.png')
+                raise
+            finally:
+                (ROOT / "reports/obsidian-workspaces-reference.json").write_text(json.dumps(report,indent=2)+"\n")
             print(json.dumps({"section":"workspaces","commands":len(report["commands"]),"status":report["status"]}))
             raise SystemExit(0)
         if arguments.section == "inventory":

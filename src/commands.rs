@@ -18,6 +18,26 @@ impl AsRef<str> for Command {
 
 pub const ALL: &[Command] = &[
     Command {
+        name: "Workspaces: Manage workspace layouts",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
+        name: "Workspaces: Load workspace layout",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
+        name: "Workspaces: Save layout",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
+        name: "Workspaces: Save and load another layout",
+        shortcut: "",
+        markdown_only: false,
+    },
+    Command {
         name: "New note",
         shortcut: "Ctrl+N",
         markdown_only: false,

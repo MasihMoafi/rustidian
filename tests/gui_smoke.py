@@ -45,7 +45,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "workspaces"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -3197,6 +3197,12 @@ def main():
                 capture("native-template-chooser.png")
                 key("Escape")
                 assert target.read_text() == original
+                paste_text("Cancelled chooser typing", held=True)
+                key("ctrl+s")
+                wait_text(target, original + "Cancelled chooser typing")
+                key("ctrl+z")
+                key("ctrl+s")
+                wait_text(target, original)
                 editor_end()
                 click_control("button:Insert template", hold=.15)
                 type_text("Mtg")
@@ -3311,6 +3317,256 @@ def main():
                 assert (templates / "Meeting.md").read_text() == meeting_source
                 results.append("Switching vaults restored independent template settings and left both vaults' source notes unchanged")
 
+            def workspace_checks():
+                nonlocal app, window
+                close_tabs()
+                first = fixture / "Workspace A.md"
+                second = fixture / "Workspace B.md"
+                first_source = "# Workspace A\n\nFirst saved layout.\n"
+                second_source = "# Workspace B\n\nSecond saved layout.\n"
+                first.write_text(first_source)
+                second.write_text(second_source)
+                command("Refresh vault")
+                pause()
+                open_note("Workspace A")
+                command("Source editing")
+                key("ctrl+p")
+                type_text("Save note")
+                assert control_bounds("command:Save note"), "The existing-command positive control must work"
+                key("Escape")
+                storage = base / "state/rust-notes/workspaces"
+                before_paths = set(storage.glob("*.json"))
+
+                def manager():
+                    command("Workspaces: Manage workspace layouts")
+                    bounds = control_bounds("workspace-name")
+                    assert 0 <= bounds[0] < bounds[2] <= 1440 and 0 <= bounds[1] < bounds[3] <= 960, bounds
+                    return bounds
+
+                def save_layout(name):
+                    click_control("workspace-name", hold=.15)
+                    modified_shortcut(xdo, "a")
+                    paste_text(name, held=True)
+                    click_control("workspace-save", hold=.15)
+                    assert control_bounds("workspace-load:" + name)
+
+                def stored():
+                    return json.loads(layout_path.read_text())
+
+                def saved(name):
+                    return next(entry["layout"] for entry in stored()["entries"] if entry["name"] == name)
+
+                def tab_order():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return [name[len("tab-full:"):] for name, _ in sorted(((name, rect) for name, rect in controls.items() if name.startswith("tab-full:")), key=lambda item:item[1][0])]
+
+                def assert_layout(expected):
+                    names = [tab["path"] for tab in expected["tabs"]]
+                    assert tab_order() == names, (tab_order(), names)
+                    title_contains(Path(names[expected["active"]]).stem)
+                    for side, key_name, width in (("left", "explorer", "left_width"), ("right", "details", "right_width")):
+                        bounds = control_bounds("sidebar:" + key_name, required=False)
+                        assert (bounds is not None) == expected[side], (side, bounds, expected)
+                        if bounds:
+                            assert abs((bounds[2] - bounds[0]) - expected[width]) <= 2.5, (bounds, expected[width])
+                    is_read = expected["tabs"][expected["active"]]["view"] == "Read"
+                    assert (control_bounds("editor", required=False) is None) == is_read
+
+                def load(name):
+                    manager()
+                    click_control("workspace-load:" + name, hold=.15)
+                    assert control_bounds("workspace-name", required=False) is None
+
+                manager()
+                paste_text("Cancelled layout", held=True)
+                capture("native-workspaces-empty.png")
+                key("Escape")
+                assert set(storage.glob("*.json")) == before_paths
+                control_bounds("editor-focused")
+                results.append("Workspace manager command opened; cancelling a name created no metadata and returned keyboard focus")
+
+                if control_bounds("sidebar:explorer", required=False) is None:
+                    command("Toggle left sidebar")
+                if control_bounds("sidebar:details", required=False) is None:
+                    command("Toggle right sidebar")
+                left = control_bounds("sidebar:explorer")
+                xdo("mousemove", str(round(left[2]-1)), "440", "mousedown", "1")
+                time.sleep(.15)
+                xdo("mousemove", str(round(left[2]+32)), "440")
+                time.sleep(.15)
+                xdo("mouseup", "1")
+                pause()
+                resized = control_bounds("sidebar:explorer")
+                assert abs((resized[2]-resized[0]) - (left[2]-left[0])) >= 20, (left,resized)
+                command("Reading view")
+                manager()
+                save_layout("Writing")
+                new_paths = set(storage.glob("*.json")) - before_paths
+                assert len(new_paths) == 1
+                layout_path = new_paths.pop()
+                writing = saved("Writing")
+                assert writing["tabs"] == [{"path":"Workspace A.md","view":"Read","editing_view":"Source"}]
+                capture("native-workspaces-dark.png")
+                original_metadata = layout_path.read_bytes()
+                paste_text("Unsaved name", held=True)
+                key("Escape")
+                assert layout_path.read_bytes() == original_metadata
+                command("Switch appearance")
+                manager()
+                capture("native-workspaces-light.png")
+                xdo("windowsize", window, "860", "560")
+                pause()
+                small = control_bounds("workspace-name")
+                assert 0 <= small[0] < small[2] <= 860 and 0 <= small[1] < small[3] <= 560, small
+                assert control_bounds("workspace-save") and control_bounds("workspace-load:Writing")
+                capture("native-workspaces-compact.png", size=(860,560))
+                key("Escape")
+                xdo("windowsize", window, "1440", "960")
+                pause()
+                command("Switch appearance")
+                results.append("Named layout saved a resized sidebar and Reading/Source modes; cancel preserved bytes and manager controls fit both themes and compact viewport")
+
+                key("ctrl+t")
+                open_note("Workspace B")
+                command("Source editing")
+                command("Toggle left sidebar")
+                right = control_bounds("sidebar:details")
+                xdo("mousemove", str(round(right[0]+1)), "440", "mousedown", "1")
+                time.sleep(.15)
+                xdo("mousemove", str(round(right[0]-32)), "440")
+                time.sleep(.15)
+                xdo("mouseup", "1")
+                pause()
+                manager();save_layout("Reading");key("Escape")
+                reading = saved("Reading")
+                assert [tab["path"] for tab in reading["tabs"]] == ["Workspace A.md","Workspace B.md"]
+                assert reading["active"] == 1 and not reading["left"] and reading["right"]
+                load("Writing");assert_layout(writing)
+                load("Reading");assert_layout(reading)
+                click_control("tab-full:Workspace A.md", hold=.15)
+                title_contains("Workspace A")
+                assert control_bounds("editor", required=False) is None
+                capture("native-workspaces-restored-reading.png")
+                click_control("tab-full:Workspace B.md", hold=.15)
+                title_contains("Workspace B")
+                control_bounds("editor-focused")
+                modified_shortcut(xdo,"a");modified_shortcut(xdo,"c")
+                assert xdo("getwindowname",window).startswith("Workspace B")
+                copied = subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment,text=True)
+                assert copied == second_source, repr(copied)
+                key("End")
+                assert first.read_text() == first_source and second.read_text() == second_source
+                results.append("Both layouts restored tab order, active file, per-tab modes and sidebar sizes; actual restored tabs displayed and copied the correct document")
+
+                key("ctrl+w")
+                command("Workspaces: Save layout")
+                assert control_bounds("workspace-name", required=False) is None
+                assert len(stored()["entries"]) == 2
+                updated = saved("Reading")
+                assert [tab["path"] for tab in updated["tabs"]] == ["Workspace A.md"]
+                command("Workspaces: Load workspace layout")
+                paste_text("Wrtng",held=True)
+                assert control_bounds("workspace-load:Reading",required=False) is None
+                key("Return");assert_layout(writing)
+                command("Workspaces: Save and load another layout")
+                assert control_bounds("workspace-load:Reading")
+                key("Escape");assert_layout(writing)
+                load("Reading");assert_layout(updated)
+                results.append("All four workspace commands work: active overwrite keeps one entry, fuzzy load selects it and cancelled save-and-load retains current tabs")
+
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window()
+                title_contains("Workspace A")
+                manager()
+                assert control_bounds("workspace-load:Writing") and control_bounds("workspace-load:Reading")
+                key("Escape")
+                other = base / "Workspace other vault"
+                other.mkdir()
+                (other / "Home.md").write_text("# Other workspace vault\n")
+                command("Open vault");modified_shortcut(xdo,"a");paste_text(str(other),held=True);key("Return")
+                title_contains(other.name)
+                manager()
+                assert control_bounds("workspace-load:Writing",required=False) is None
+                save_layout("Other vault")
+                assert len(list(storage.glob("*.json"))) == len(before_paths)+2
+                key("Escape")
+                command("Open vault");modified_shortcut(xdo,"a");paste_text(str(fixture),held=True);key("Return")
+                title_contains(fixture.name)
+                manager()
+                assert control_bounds("workspace-load:Writing") and control_bounds("workspace-load:Other vault",required=False) is None
+                key("Escape")
+                results.append("Named layouts and active files survived actual restart; another vault retained an independent layout list")
+
+                # Missing and corrupt metadata must retain the current real document.
+                original_metadata = layout_path.read_bytes()
+                missing = stored()
+                missing["entries"][0]["layout"]["tabs"][0]["path"] = "Missing workspace note.md"
+                layout_path.write_text(json.dumps(missing))
+                manager();click_control("workspace-load:Writing",hold=.15)
+                assert control_bounds("workspace-error")
+                title_contains("Workspace A")
+                assert first.read_text() == first_source
+                key("Escape")
+                layout_path.write_text("{unfinished")
+                manager()
+                assert control_bounds("workspace-error")
+                assert layout_path.read_text() == "{unfinished"
+                key("Escape")
+                layout_path.write_bytes(original_metadata)
+                load("Writing");assert_layout(writing)
+                results.append("Missing workspace files and corrupt metadata reported errors while retaining current tabs, saved entries and original note bytes")
+
+                command("Source editing")
+                command("Open settings");type_text("autosave")
+                session_files=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Workspace A.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(session_files)==1
+                session_path=session_files[0]
+                if json.loads(session_path.read_text())["autosave_enabled"]:
+                    click_control("settings-autosave",hold=.15)
+                wait_autosave(base/"state",False,session_path=session_path)
+                key("Escape");editor_end();paste_text("UNSAVED_WORKSPACE",held=True)
+                assert first.read_text()==first_source
+                manager();click_control("workspace-load:Reading",hold=.15)
+                click_control("pending-cancel",hold=.15)
+                control_bounds("editor-focused")
+                assert first.read_text()==first_source
+                manager();click_control("workspace-load:Reading",hold=.15)
+                click_control("pending-save",hold=.15)
+                assert first.read_text()==first_source+"UNSAVED_WORKSPACE"
+                assert_layout(updated)
+                first.write_text(first_source);time.sleep(.6)
+                command("Source editing");editor_end();paste_text("CONFLICTED_WORKSPACE",held=True)
+                first.write_text("# External workspace version\n");time.sleep(.7)
+                manager();click_control("workspace-load:Writing",hold=.15)
+                click_control("pending-save",hold=.15)
+                assert control_bounds("pending-cancel")
+                assert first.read_text()=="# External workspace version\n"
+                click_control("pending-cancel",hold=.15)
+                command("Save a copy");modified_shortcut(xdo,"a");paste_text("Workspace recovered.md",held=True);key("Return")
+                assert "CONFLICTED_WORKSPACE" in (fixture/"Workspace recovered.md").read_text()
+                assert first.read_text()=="# External workspace version\n"
+                first.write_text(first_source);time.sleep(.6)
+                load("Writing")
+                command("Open settings");type_text("autosave")
+                click_control("settings-autosave",hold=.15)
+                wait_autosave(base/"state",True,session_path=session_path)
+                key("Escape")
+                results.append("Cancelled dirty load kept unsaved editing; Save & continue retained edits, while a conflict refused overwrite and allowed separate recovery")
+
+                manager()
+                click_control("workspace-delete:Writing",hold=.15)
+                click_control("workspace-delete:Reading",hold=.15)
+                assert stored()["entries"]==[] and stored()["active"] is None
+                key("Escape")
+                assert first.read_text()==first_source and second.read_text()==second_source
+                assert (other/"Home.md").read_text()=="# Other workspace vault\n"
+                results.append("Deleting saved layouts removed only metadata and preserved every original workspace document")
+
+            if args.section == "workspaces":
+                workspace_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "workspaces"}))
+                return
             if args.section == "note-aids":
                 note_aids_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -3755,6 +4011,7 @@ def main():
                 bookmark_checks,
                 persian_checks,
                 note_aids_checks,
+                workspace_checks,
             ], retain_failure)
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))

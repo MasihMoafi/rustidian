@@ -15,6 +15,7 @@ mod title_ui;
 mod ui_probe;
 mod vault_manager;
 mod window;
+mod workspace_ui;
 
 use std::{
     path::{Path, PathBuf},

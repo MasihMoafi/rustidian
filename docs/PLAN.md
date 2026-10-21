@@ -10,6 +10,14 @@ A feature is complete only when the same positive and failure/cancellation flows
 
 Keep native Rust UI/editor/rendering and existing data/resource restrictions. Existing JavaScript plugins and proprietary Sync/Publish require compatibility/integration evidence; merely displaying their names is not support. Resolve any concrete architecture conflict before adding a browser/JavaScript runtime or publishing private content. Native equivalents and safe local workflows can proceed under the current authorization.
 
+## Named workspaces acceptance — reference checked21October
+
+The isolated1.13.7 reference passes manage/save/load/cancel/overwrite/delete with all Markdown bytes unchanged (scripts/obsidian-reference.py --section workspaces; reports/obsidian-workspaces-reference.json). Its compact manager is560px wide, with a name field, Save, named rows with Modified/Active, Load and Delete layout. Saving an existing name updates one entry without a confirmation; deleting a layout affects only its metadata.
+
+Next native increment, after the note-aids candidate is verified: store named layouts separately per vault, containing ordered paths, active tab, editing/reading modes and both sidebar widths/visibility. Keep theme, autosave, bookmarks and note-aid preferences under their existing owners. Guard dirty/conflicted tabs before changing layouts; a cancelled/failed load retains the current workspace. Missing files and invalid/escaping paths must not open unrelated content or remove saved entries. Save/delete must report persistence errors and preserve concurrent windows' unrelated names. Opening a vault creates no layout files.
+
+Verify real manager buttons and all four palette commands, empty/cancel states, duplicate-name overwrite, restart/per-vault restoration, recoverable errors, sidebar resizing and exact source preservation. Reference restores inactive views lazily: observe leaf.getViewState().state for the saved file/mode and separately click each restored tab to verify its loaded content. A missing leaf.view.file property alone does not mean a tab vanished. Preserve all existing workflows and pass the exact optimized app before installation.
+
 ## Current vault workflow — 21 October
 
 Masih identifies opening, creating and switching vaults as the next parity gap. The bottom-left vault profile must open a familiar chooser with recent vaults, Create new vault and Open folder as vault. Browse uses the installed native folder chooser without blocking rendering; entering a path remains available. Create accepts one vault name and an existing parent folder, refuses collisions and creates only the requested empty folder.

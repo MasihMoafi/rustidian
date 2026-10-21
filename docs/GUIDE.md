@@ -34,6 +34,12 @@ reports/github-21a1271/release-verification.json. User acceptance stays scoped
 separately from CI. Reports are ignored: download Actions evidence when starting
 from a fresh clone.
 
+A chooser cancellation check must type immediately after Escape, save, undo and
+verify the original bytes. Merely checking that Escape changed nothing misses
+lost keyboard focus: source696938b passed its earlier focused suite but failed
+this added real-input check. Preserve that negative result and include it in the
+next complete Actions gate; do not install the known failing candidate.
+
 ## Protect the user's work and machine
 
 - Never automate writes to `/home/masih/Desktop/o/Main Vault`, original project
@@ -154,6 +160,14 @@ without CLI/PNG features. A lazy worker converts SVG labels to paths using bundl
 fonts and keeps a bounded16-entry source/theme cache. Preserve natural dimensions
 and block placement; hovering/scrolling must not increase the render count.
 Invalid syntax retains source access. Source mode remains editable Markdown.
+
+For named workspaces, run the same reference script with `--section workspaces`.
+The persisted layout records inactive tabs before their document views load:
+`leaf.getViewState().state.file` is present while `leaf.view.file` can be absent.
+Compare stored file order, modes, active file and widths, then click restored tabs.
+Keep the failed loaded-view assertion and the passing actual-click evidence.
+Store only layout facts; loading a named workspace must not reset unrelated
+settings or silently discard dirty documents. PLAN.md owns the acceptance contract.
 
 ## Build and inspect the exact executable
 
