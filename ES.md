@@ -11,7 +11,19 @@ Masih's latest instruction expands the destination to every Obsidian feature, ma
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
-## Current checkpoint — 21 October2026,22:36UTC
+## Current checkpoint — 21 October2026,22:43UTC
+
+Source ff3cc3b/normal Actions39687821640 completed FAILURE at the retained stationary-field Copy assertion in early recovery, before optimized compilation. Clippy/Rust gates pass; date and byte-size now visibly occupy two lines in reports/github-ff3cc3b/early/gui-failure.png. The outer height fix was insufficient: the horizontal row's vertical separator consumes all available outer height, so a new notice still adds height. Exact failed-step log reports/ff3cc3b-failed.log; CRC early artifact12385724892 under reports/github-ff3cc3b/early/.
+
+The next narrow correction bounds the body to its declared height and places errors/notices in a fixed48px scrolling status viewport. The Copy regression is retained and now reports both old/new bounds. Review/commit only src/recovery_ui.rs, tests/gui_smoke.py, docs/GUIDE.md and ES.md for one next normal build; all37/12 gates remain. No running Actions, optimized recovery app or install; installed048fced and user-owned a104 preview/companions remain untouched. No local target/build. Keep the original6b debug app/raw negative controls for diagnosis.
+
+Independent uncompiled future changes must remain unstaged: Cargo.toml/Cargo.lock/src/note_aids.rs/tests/note_aids_behavior.rs add unique-note configuration/atomic safe creation and random-note selection plus five behavioral tests; no GUI commands yet. scripts/obsidian-reference.py now has a passing actual1.13.7 unique-settings audit with existing-folder/template/import, same-prefix collisions, constant-format collision from a blank tab (error/no mutation), and missing-template error/no note created. Evidence reports/obsidian-unique-settings-reference.json and obsidian-unique-settings-final.log; older failed driver attempts remain. Do not confuse future native source with the currently built source, or stage unrelated assets/app-icon.
+
+## Previous checkpoint — 21 October2026,22:38UTC
+
+Exact reviewed HEAD/remote ff3cc3b02a1efb2ec1b04975d9f83a920f1bbae8 carries the recovery geometry/size-label correction, stricter Copy geometry regression and early-import cleanup. Its sole automatic normal Actions39687821640 began22:37:25UTC: https://github.com/MasihMoafi/rust-notes/actions/runs/39687821640 . All37 full/12 focused, Rust/Clippy, CPU and normal Ferrite gates remain; no local compile or install. Unique-settings reference remains independent local work. Finish the early recovery check first, then optimized release gates and actual visual review before installing.
+
+## Previous checkpoint — 21 October2026,22:36UTC
 
 Normal6b4b34a/Actions39686555744 completed FAILURE in early recovery GUI, before optimized compilation. Clippy and160 Rust executions/154 unique pass, including all13 new recovery tests. The first history command and exact Unicode/CRLF Copy pass; then the recovery dialog changes height under the pointer after Copy, and the held click correctly rejects its moved file field. Raw failed-step log reports/6b4b34a-failed.log and CRC-checked early/normal evidence under reports/github-6b4b34a/ preserve the real failure. The date/size row also hides its second line because truncate is single-line.
 

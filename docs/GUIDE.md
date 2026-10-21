@@ -445,7 +445,9 @@ for a decimal KB label can falsely report a missing version. Preserve the failed
 driver evidence instead of attributing that selector failure to snapshot loss.
 Treat modal geometry as behavior too: loading a file or showing a Copy notice
 must not move controls beneath the pointer. Reserve the dialog's height before
-asynchronous content arrives, and assert the file field stays at the same bounds
+asynchronous content arrives. Bound the body UI separately from a fixed status
+viewport: a vertical separator otherwise fills the outer height and pushes
+notices below it, expanding even a UI with an explicit height. Assert the file field stays at the same bounds
 after copying. This assertion fails on the first compiled recovery candidate;
 the negative receipt is in reports/recovery-layout-6b4b34a-before. A multiline
 version label needs wrapping: single-line truncation hid its file-size line.

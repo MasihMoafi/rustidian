@@ -249,9 +249,11 @@ impl Manager {
                 let height = (ctx.content_rect().height() - 190.0).clamp(220.0, 580.0);
                 // Keep controls stationary while async content and clipboard
                 // notices arrive, including the first version's sizing pass.
-                ui.set_height(height + 48.0);
+                ui.set_height(height + 56.0);
                 let busy = self.loading.is_some() || self.clearing.is_some();
-                ui.horizontal_top(|ui| {
+                let body_size = egui::vec2(ui.available_width(), height);
+                let body_layout = Layout::left_to_right(Align::Min);
+                ui.allocate_ui_with_layout(body_size, body_layout, |ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(225.0_f32.min(ui.available_width() * 0.35), height),
                         Layout::top_down(Align::Min),
@@ -512,13 +514,24 @@ impl Manager {
                             });
                     });
                 });
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                    ui_probe::record(ctx, "recovery-error", ui.min_rect());
-                }
-                if let Some(notice) = &self.notice {
-                    ui.label(notice);
-                }
+                ScrollArea::vertical()
+                    .id_salt("recovery-status")
+                    .max_height(48.0)
+                    .min_scrolled_height(48.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if let Some(error) = &self.error {
+                            let response = ui.colored_label(ui.visuals().error_fg_color, error);
+                            ui_probe::record(
+                                ctx,
+                                "recovery-error",
+                                response.rect.intersect(ui.clip_rect()),
+                            );
+                        }
+                        if let Some(notice) = &self.notice {
+                            ui.label(notice);
+                        }
+                    });
             });
             ui_probe::record(ctx, "recovery-dialog", modal.response.rect);
             if (close || modal.should_close()) && !self.confirm_clear {

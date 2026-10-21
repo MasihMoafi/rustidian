@@ -3678,7 +3678,8 @@ def main():
                     click_control("recovery-copy",hold=.15)
                     copied = subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)
                     time.sleep(.15)
-                    assert control_bounds("recovery-files") == before, "Copy acknowledgement must not move the recovery controls"
+                    after = control_bounds("recovery-files")
+                    assert after == before, ("Copy acknowledgement must not move the recovery controls", before, after)
                     return copied
 
                 def choose_version(version):
