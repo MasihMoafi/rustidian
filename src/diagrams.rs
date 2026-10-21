@@ -3,7 +3,7 @@ use eframe::egui;
 use std::{
     collections::VecDeque,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, SyncSender},
     },
@@ -39,7 +39,32 @@ fn render(source: &str, dark: bool) -> Result<String, String> {
     if dark {
         options.theme = mermaid_rs_renderer::Theme::dark();
     }
+    options.theme.font_family = "Inter".into();
     mermaid_rs_renderer::render_with_options(source, options).map_err(|error| error.to_string())
+}
+
+fn svg_paths(svg: &str) -> Result<String, String> {
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut fonts = usvg::fontdb::Database::new();
+        for bytes in [
+            include_bytes!("../assets/fonts/Inter-Regular.otf").as_slice(),
+            include_bytes!("../assets/fonts/Inter-Bold.otf").as_slice(),
+            include_bytes!("../assets/fonts/NotoSansArabic-Regular.ttf").as_slice(),
+        ] {
+            fonts.load_font_data(bytes.to_vec());
+        }
+        fonts.set_sans_serif_family("Inter");
+        Arc::new(fonts)
+    });
+    let options = usvg::Options {
+        font_family: "Inter".into(),
+        fontdb: Arc::clone(fonts),
+        ..Default::default()
+    };
+    usvg::Tree::from_str(svg, &options)
+        .map(|tree| tree.to_string(&usvg::WriteOptions::default()))
+        .map_err(|error| error.to_string())
 }
 
 impl Renderer {
@@ -52,8 +77,10 @@ impl Renderer {
         std::thread::spawn(move || {
             while let Ok(job) = incoming.recv() {
                 let start = Instant::now();
-                let result = std::panic::catch_unwind(|| render(&job.source, job.dark))
-                    .unwrap_or_else(|_| Err("Unable to render this diagram.".into()));
+                let result = std::panic::catch_unwind(|| {
+                    render(&job.source, job.dark).and_then(|svg| svg_paths(&svg))
+                })
+                .unwrap_or_else(|_| Err("Unable to render this diagram.".into()));
                 rendered_count.fetch_add(1, Ordering::Relaxed);
                 let mut cache = rendered_cache
                     .lock()
@@ -189,6 +216,8 @@ mod tests {
         for dark in [false, true] {
             let svg = super::render("flowchart LR\n A[Write] --> B[Read]", dark).unwrap();
             assert!(svg.contains("<svg") && svg.contains("Write") && svg.contains("Read"));
+            let paths = super::svg_paths(&svg).unwrap();
+            assert!(paths.contains("<path") && !paths.contains("<text"));
         }
         assert!(super::render("not a diagram", false).is_err());
     }

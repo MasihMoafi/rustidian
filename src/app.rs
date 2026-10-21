@@ -1585,7 +1585,11 @@ impl NotesApp {
                     });
                 }
             });
-        crate::ui_probe::metric(ui.ctx(), "document-scroll-y", scroll.state.offset().y);
+        crate::ui_probe::metric(
+            ui.ctx(),
+            "document-scroll-y",
+            scroll.state.clamped_offset().y,
+        );
         if let Some((source, name)) = renamed_title {
             if name.is_empty() || name.contains(['/', '\\']) || matches!(name.as_str(), "." | "..")
             {
