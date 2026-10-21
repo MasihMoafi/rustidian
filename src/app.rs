@@ -743,6 +743,7 @@ impl NotesApp {
     }
 
     fn save_bookmarks(&mut self, before: rust_notes::bookmarks::Bookmarks) -> bool {
+        self.ctx.request_repaint();
         if let Err(error) = self.write_session() {
             self.bookmarks = before;
             self.status = "Bookmarks not saved".into();
@@ -768,6 +769,7 @@ impl NotesApp {
             Ok(false) => self.status = "This file is already bookmarked".into(),
             Err(error) => self.error = Some(error),
         }
+        self.ctx.request_repaint();
     }
 
     fn bookmark_list(&mut self, ui: &mut egui::Ui) {
@@ -848,6 +850,7 @@ impl NotesApp {
             });
         if let Some(path) = open {
             self.open_note_at(&path, ui.ctx().input(|input| input.modifiers.command));
+            self.ctx.request_repaint();
         }
         if let Some((path, action)) = action {
             if action == "title" {

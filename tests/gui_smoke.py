@@ -1787,6 +1787,14 @@ def main():
                 click_control("bookmark-up")
                 state = state_with(relative)[1]
                 assert [item["path"] for item in state["bookmarks"]["items"]] == [relative, "Assets/Attachment.png", "Home.md"]
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    image_row = control_bounds("bookmark:Assets/Attachment.png")
+                    home_row = control_bounds("bookmark:Home.md")
+                    if image_row[1] < home_row[1]:
+                        break
+                    time.sleep(.05)
+                assert image_row[1] < home_row[1], "Saved bookmark order was not redrawn"
                 image_bytes = attachment.read_bytes()
                 click_control("bookmark:Assets/Attachment.png")
                 title_contains("Attachment")
