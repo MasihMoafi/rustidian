@@ -248,14 +248,28 @@ equal names; missing roots remain removable. Removing a list entry preserves the
 folder. Atomic failed list writes retain the prior in-memory list; corrupt state
 is reported, never overwritten silently. Creation uses one validated name and an
 existing parent, refuses collisions, and creates only that empty directory.
+Hold a stable sibling lock file around reading the latest list, changing it and
+atomically replacing the JSON. The standard library's
+[file lock](https://doc.rust-lang.org/std/fs/struct.File.html#method.lock) is
+available in the pinned toolchain. Reload the small list on opening the chooser;
+cached windows must preserve other windows' additions and removals.
 
 `src/vault_manager.rs` renders the chooser using existing generated controls.
+Prelayout the recent button's two-row name/path galley before passing it to a
+button; the widget's default truncation can hide the path. Verify actual dark
+and light screenshots. New-note prompts must select the suggested basename
+once before typing, preserving a context folder. Exercise immediate typing
+without Ctrl+A so tests cannot conceal a broken default selection.
 Browse polls an owned native Zenity child, never blocking the UI while choosing;
 closing cancels/reaps it. Zenity is installed on this Ubuntu machine and declared
 in the Actions dependencies. Manual path entry remains available when a picker
 cannot start. Do one index on the background worker after selecting a root;
 metadata validation is not a reason to scan the vault on the UI thread. Preserve
 the current launcher/default, dirty-work guard and per-vault tabs/settings.
+For individual file arguments, select the closest containing registered root
+before falling back to the file's parent. A nested note must retain root-level
+links and must not turn its subfolder into another recent vault. Check component
+boundaries so a vault named `Vault` does not claim files under `Vault-other`.
 
 Run the focused `--section vaults` and retained full regression through Actions.
 Require real picker selection, creation/collision/cancel, recent switching and

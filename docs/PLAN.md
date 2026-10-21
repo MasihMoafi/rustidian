@@ -8,6 +8,8 @@ Masih identifies opening, creating and switching vaults as the next parity gap. 
 
 Store the recent list outside note folders, canonicalize roots and distinguish equal names by their paths. Opening and removing a list entry must never modify or delete notes. Switching preserves each vault's tabs/settings and the existing unsaved-work guard; failure or cancellation retains the active vault. Select an existing recent vault in one click, without rescanning the list or indexing a selected root twice on the UI thread. Preserve the current launcher/default vault.
 
+Opening an individual file inside a registered vault must use the closest containing registered root. Nested documents retain root-level links and do not register their subfolder as another vault. Explicit folder arguments and the configured default remain supported; unrelated files keep their own parent folder.
+
 Before delivery, Actions must exercise actual chooser controls, native Browse, create/collision/cancel, switching and restart/list removal on disposable folders, plus all retained regressions. Inspect both themes. Combine this work with the pending link-probe correction in one optimized candidate; no local Rust build.
 
 Requested by Masih, 20 October 2026. Implementation begins now; full Obsidian equivalence is a staged product, not a first-build claim.

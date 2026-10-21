@@ -49,6 +49,10 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
 }
 
 impl Vaults {
+    pub fn open() -> Result<Self, String> {
+        Self::load(location().ok_or("Cannot locate the vault list.")?)
+    }
+
     pub fn load(location: PathBuf) -> Result<Self, String> {
         let stored = match std::fs::read(&location) {
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -65,29 +69,43 @@ impl Vaults {
 
     pub fn remember(&mut self, root: &Path) -> Result<(), String> {
         let root = folder(root)?;
-        if self.stored.roots.first() == Some(&root) {
-            return Ok(());
-        }
-        let mut roots = vec![root.clone()];
-        roots.extend(
-            self.stored
-                .roots
-                .iter()
-                .filter(|path| **path != root)
-                .cloned(),
-        );
-        self.write(roots)
+        self.update(|roots| {
+            roots.retain(|path| *path != root);
+            roots.insert(0, root);
+        })
     }
 
     pub fn forget(&mut self, root: &Path) -> Result<(), String> {
-        self.write(
-            self.stored
-                .roots
-                .iter()
-                .filter(|path| *path != root)
-                .cloned()
-                .collect(),
-        )
+        self.update(|roots| roots.retain(|path| path != root))
+    }
+
+    fn update(&mut self, change: impl FnOnce(&mut Vec<PathBuf>)) -> Result<(), String> {
+        let parent = self
+            .location
+            .parent()
+            .ok_or("Cannot locate the vault list.")?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Cannot save the vault list: {error}"))?;
+        let _lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.location.with_extension("lock"))
+            .and_then(|file| {
+                file.lock()?;
+                Ok(file)
+            })
+            .map_err(|error| format!("Cannot lock the vault list: {error}"))?;
+        let mut latest = Self::load(self.location.clone())?.stored;
+        let before = latest.roots.clone();
+        change(&mut latest.roots);
+        if latest.roots == before {
+            self.stored = latest;
+            Ok(())
+        } else {
+            self.write(latest.roots)
+        }
     }
 
     fn write(&mut self, roots: Vec<PathBuf>) -> Result<(), String> {
@@ -98,7 +116,6 @@ impl Vaults {
             .parent()
             .ok_or("Cannot locate the vault list.")?;
         let save = || -> std::io::Result<()> {
-            std::fs::create_dir_all(parent)?;
             let mut file = tempfile::NamedTempFile::new_in(parent)?;
             file.write_all(&bytes)?;
             file.as_file().sync_all()?;
@@ -155,6 +172,46 @@ mod tests {
         fs::write(&location, "{broken").unwrap();
         assert!(Vaults::load(location.clone()).is_err());
         assert_eq!(fs::read_to_string(location).unwrap(), "{broken");
+    }
+
+    #[test]
+    fn separate_windows_preserve_each_others_vaults_and_removals() {
+        let base = tempfile::tempdir().unwrap();
+        let a = create(base.path(), "First").unwrap();
+        let b = create(base.path(), "Second").unwrap();
+        let location = base.path().join("shared/vaults.json");
+        let mut first = Vaults::load(location.clone()).unwrap();
+        let mut second = Vaults::load(location.clone()).unwrap();
+        first.remember(&a).unwrap();
+        second.remember(&b).unwrap();
+        assert_eq!(
+            Vaults::load(location.clone()).unwrap().roots(),
+            [b.clone(), a.clone()]
+        );
+        first.forget(&a).unwrap();
+        assert_eq!(Vaults::load(location).unwrap().roots(), [b.clone()]);
+
+        let location = base.path().join("parallel/vaults.json");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let writers: Vec<_> = [a.clone(), b.clone()]
+            .into_iter()
+            .map(|root| {
+                let mut list = Vaults::load(location.clone()).unwrap();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    list.remember(&root).unwrap();
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let saved = Vaults::load(location).unwrap();
+        assert_eq!(saved.roots().len(), 2);
+        assert!(saved.roots().contains(&a));
+        assert!(saved.roots().contains(&b));
+        assert!(a.is_dir() && b.is_dir());
     }
 
     #[test]

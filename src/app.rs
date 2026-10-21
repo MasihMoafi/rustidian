@@ -54,6 +54,7 @@ pub struct NotesApp {
     dialog_input: String,
     dialog_path: Option<PathBuf>,
     dialog_focus: bool,
+    dialog_select_all: bool,
     dialog_selected: usize,
     files: rust_notes::search::FileMatcher,
     pending: Option<Pending>,
@@ -115,6 +116,7 @@ impl NotesApp {
             dialog_input: String::new(),
             dialog_path: None,
             dialog_focus: false,
+            dialog_select_all: false,
             dialog_selected: 0,
             files: rust_notes::search::FileMatcher::new(Vec::new()),
             pending: None,
@@ -626,6 +628,7 @@ impl NotesApp {
         self.dialog_selected = 0;
         self.dialog = Some(dialog);
         self.dialog_focus = true;
+        self.dialog_select_all = dialog == Dialog::NewNote;
     }
 
     fn ask_file(&mut self, dialog: Dialog, path: PathBuf) {
@@ -2000,6 +2003,22 @@ impl NotesApp {
             let focus_settled = ui.memory(|memory| {
                 memory.has_focus(input_id) && memory.had_focus_last_frame(input_id)
             });
+            if self.dialog_select_all && !ui.is_sizing_pass() {
+                let mut state =
+                    egui::text_edit::TextEditState::load(ctx, input_id).unwrap_or_default();
+                let end = self.dialog_input.chars().count();
+                let start = Path::new(&self.dialog_input)
+                    .file_name()
+                    .map_or(0, |name| end - name.to_string_lossy().chars().count());
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(start),
+                        egui::text::CCursor::new(end),
+                    )));
+                state.store(ctx, input_id);
+                self.dialog_select_all = false;
+            }
             if self.dialog_focus && !ui.memory(|memory| memory.has_focus(input_id)) {
                 ui.memory_mut(|memory| memory.request_focus(input_id));
             }

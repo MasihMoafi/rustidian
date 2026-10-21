@@ -71,7 +71,7 @@ def main():
         with os.fdopen(read_fd) as display_file:
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
-        environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), RUST_NOTES_UI_PROBE=str(base / "ui-probe.json"))
+        environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUST_NOTES_UI_PROBE=str(base / "ui-probe.json"))
         display_ready = False
         for _ in range(30):
             geometry = subprocess.run(
@@ -2564,6 +2564,34 @@ def main():
                 xdo("windowfocus", "--sync", window)
                 assert roots()[0] == str(opened)
                 assert (opened / "Home.md").read_text() == "# Browsed vault\n\nBROWSE_ORIGINAL\n"
+                shared = base / "Other window vault"
+                shared.mkdir()
+                (shared / "Home.md").write_text("# Other window\n")
+                catalog = base / "data/rust-notes/vaults.json"
+                updated = json.loads(catalog.read_text())
+                updated["roots"].insert(0, str(shared))
+                pending_catalog = catalog.with_suffix(".pending")
+                pending_catalog.write_text(json.dumps(updated))
+                pending_catalog.replace(catalog)
+                manager()
+                assert control_bounds(f"vault-recent:{shared}"), "Opening the chooser must refresh entries added by another window"
+                click_control("vault-manager-close")
+                nested = opened / "Notes/Nested.md"
+                nested.parent.mkdir()
+                nested_source = "# Nested\n\n[[Home]]\n"
+                nested.write_text(nested_source)
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=5)
+                app = launch_app([launch_command[0], str(nested)])
+                window = ready_window()
+                title_contains("Nested")
+                title_contains(opened.name)
+                click_control("editor-link:Home")
+                title_contains("Home")
+                assert (opened / "Home.md").read_text() == "# Browsed vault\n\nBROWSE_ORIGINAL\n"
+                assert nested.read_text() == nested_source
+                assert str(nested.parent) not in roots()
+                results.append("Opening a nested note directly kept its registered vault, followed a root-level wiki link and avoided registering the note's subfolder")
                 manager()
                 recent(fixture)
                 xdo("key", "--clearmodifiers", "ctrl+q")
@@ -2573,7 +2601,8 @@ def main():
                 manager()
                 assert control_bounds(f"vault-recent:{opened}")
                 assert control_bounds(f"vault-recent:{created}")
-                results.append("Open folder as vault used the real native chooser, selected the intended folder, and recent vaults survived an actual app restart")
+                assert control_bounds(f"vault-recent:{shared}")
+                results.append("Open folder as vault used the real native chooser; shared recent entries refreshed on opening and survived an actual app restart")
                 click_control("vault-manager-close")
 
                 command("Open settings")

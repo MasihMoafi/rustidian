@@ -29,12 +29,9 @@ pub struct Manager {
 
 impl Default for Manager {
     fn default() -> Self {
-        let list = vaults::location()
-            .ok_or_else(|| "Cannot locate the vault list.".to_owned())
-            .and_then(Vaults::load);
         Self {
             open: false,
-            list,
+            list: Vaults::open(),
             page: Page::Home,
             folder: String::new(),
             name: String::new(),
@@ -53,6 +50,7 @@ impl Drop for Manager {
 
 impl Manager {
     pub fn show_chooser(&mut self, current: Option<&Path>) {
+        self.list = Vaults::open();
         self.open = true;
         self.page = Page::Home;
         self.folder = current
@@ -232,13 +230,21 @@ impl Manager {
                                                             ..Default::default()
                                                         },
                                                     );
+                                                    let width =
+                                                        (ui.available_width() - 32.0).max(1.0);
+                                                    label.wrap.max_width = (width - 16.0).max(1.0);
+                                                    label.wrap.max_rows = 2;
+                                                    let galley = ui
+                                                        .fonts_mut(|fonts| fonts.layout_job(label));
                                                     let button = ui.add_sized(
-                                                        [ui.available_width() - 32.0, 48.0],
-                                                        egui::Button::new(label)
+                                                        [width, 48.0],
+                                                        egui::Button::new("")
+                                                            .left_text(egui::WidgetText::Galley(
+                                                                galley,
+                                                            ))
                                                             .selected(
                                                                 current == Some(root.as_path()),
-                                                            )
-                                                            .truncate(),
+                                                            ),
                                                     );
                                                     ui_probe::record(
                                                         ctx,
@@ -315,7 +321,7 @@ impl Manager {
                                             });
                                             let create = ui.add_sized(
                                                 [100.0, 30.0],
-                                                egui::Button::new("Create"),
+                                                egui::Button::new("Create").frame(true),
                                             );
                                             ui_probe::record(ctx, "vault-create", create.rect);
                                             if create.clicked() {
@@ -345,7 +351,7 @@ impl Manager {
                                             });
                                             let open = ui.add_sized(
                                                 [100.0, 30.0],
-                                                egui::Button::new("Open"),
+                                                egui::Button::new("Open").frame(true),
                                             );
                                             ui_probe::record(ctx, "vault-open", open.rect);
                                             if open.clicked() {
@@ -379,7 +385,7 @@ impl Manager {
                                 if !creating {
                                     self.focus = focus;
                                 }
-                                let browse = ui.button("Browse…");
+                                let browse = ui.add(egui::Button::new("Browse…").frame(true));
                                 ui_probe::record(ctx, "vault-browse", browse.rect);
                                 if browse.clicked() {
                                     self.browse();
@@ -397,8 +403,10 @@ impl Manager {
                                 }
                                 ui.add_space(16.0);
                                 ui.horizontal(|ui| {
-                                    let confirm =
-                                        ui.button(if creating { "Create" } else { "Open" });
+                                    let confirm = ui.add(
+                                        egui::Button::new(if creating { "Create" } else { "Open" })
+                                            .frame(true),
+                                    );
                                     ui_probe::record(ctx, "vault-confirm", confirm.rect);
                                     let enter = ui.is_enabled()
                                         && ui.input_mut(|input| {
