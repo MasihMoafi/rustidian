@@ -2834,6 +2834,7 @@ def main():
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))
         except BaseException:
             capture("gui-failure.png")
+            capture(f"gui-{args.section}-failure.png")
             candidates = [path for path in fixture.rglob("*") if path.is_file() and path.suffix.lower() in (".md", ".txt")]
             recent = sorted(candidates, key=lambda path: path.stat().st_mtime_ns, reverse=True)[:5]
             (reports / f"gui-{args.section}-failure-notes.json").write_text(json.dumps({str(path.relative_to(fixture)): path.read_text() for path in recent if path.stat().st_size <= 500_000}, ensure_ascii=False, indent=2)+"\n")

@@ -9,6 +9,10 @@ mod callout_ui;
 mod code_ui;
 #[cfg(not(test))]
 #[allow(dead_code)]
+#[path = "../src/diagrams.rs"]
+mod diagrams;
+#[cfg(not(test))]
+#[allow(dead_code)]
 #[path = "../src/editor_ui.rs"]
 mod editor_ui;
 #[cfg(not(test))]

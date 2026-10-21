@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 return json.loads(value)
 
             report = {}
-            for name, selector in [("icon", ".side-dock-ribbon-action"), ("close", ".workspace-tab-header.is-active .workspace-tab-header-inner-close-button"), ("folder", ".nav-folder-title"), ("file", ".nav-file-title"), ("tab", ".workspace-tab-header.is-active")]:
+            for name, selector in [("icon", ".side-dock-ribbon-action"), ("close", ".workspace-tab-header.is-active .workspace-tab-header-inner-close-button"), ("folder", ".nav-folder:not(.mod-root) > .nav-folder-title"), ("file", ".nav-file-title"), ("tab", ".workspace-tab-header.is-active")]:
                 expression = "JSON.stringify((()=>{const e=[...document.querySelectorAll(" + json.dumps(selector) + ")].find(e=>e.getBoundingClientRect().width);if(!e)return null;const r=e.getBoundingClientRect(),s=getComputedStyle(e);return {rect:[r.x,r.y,r.right,r.bottom],background:s.backgroundColor,color:s.color,radius:s.borderRadius,opacity:s.opacity,cursor:s.cursor,transition:s.transition}})())"
                 xdo("mousemove", "1000", "900")
                 time.sleep(.2)

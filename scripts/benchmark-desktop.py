@@ -1,4 +1,5 @@
 """Three warm interleaved launch comparisons, using disposable profiles/vaults."""
+import argparse
 import json
 import hashlib
 import os
@@ -14,6 +15,12 @@ from PIL import ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / "reports"
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--binary", required=True, type=Path, help="Exact downloaded Actions executable; never compile locally")
+parser.add_argument("--build-label", choices=["debug", "release"], required=True)
+args = parser.parse_args()
+BINARY = args.binary.resolve(strict=True)
+
 
 def memory_tree(pid):
     observations = []
@@ -48,14 +55,14 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-benchmark-") as temporary:
     os.close(write_fd)
     display = ":" + os.read(read_fd, 64).decode().strip()
     os.close(read_fd)
-    env = {**os.environ, "DISPLAY": display, "WAYLAND_DISPLAY": "", "WINIT_UNIX_BACKEND": "x11", "ELECTRON_OZONE_PLATFORM_HINT": "x11", "XDG_STATE_HOME": str(base / "native-state")}
+    env = {**os.environ, "DISPLAY": display, "WAYLAND_DISPLAY": "", "WINIT_UNIX_BACKEND": "x11", "ELECTRON_OZONE_PLATFORM_HINT": "x11", "XDG_STATE_HOME": str(base / "native-state"), "LIBGL_ALWAYS_SOFTWARE": "1"}
     def xdo(*arguments): return subprocess.check_output(["xdotool", *arguments], env=env, text=True, stderr=subprocess.DEVNULL).strip()
     samples = []
     try:
         for run, kind in enumerate(["native", "obsidian", "native", "obsidian", "obsidian", "native", "native", "obsidian"]):
             warmup = run < 2
             log = (REPORTS / f"benchmark-{kind}-{run}.log").open("w")
-            command = [str(ROOT / "target/release/rust-notes"), str(vault)] if kind == "native" else ["/home/masih/Desktop/o/Obsidian.AppImage", "--no-sandbox", f"--user-data-dir={profile}", "--ozone-platform=x11"]
+            command = [str(BINARY), str(vault)] if kind == "native" else ["/home/masih/Desktop/o/Obsidian.AppImage", "--no-sandbox", f"--user-data-dir={profile}", "--ozone-platform=x11"]
             started = time.monotonic()
             app = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)
             try:
@@ -81,7 +88,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-benchmark-") as temporary:
                 while time.monotonic() < deadline:
                     title = xdo("getwindowname", window)
                     pixels = ImageGrab.grab(xdisplay=display).crop((420, 150, 1150, 310))
-                    bright = sum(1 for r, g, b in pixels.get_flattened_data() if min(r, g, b) > 130)
+                    bright = sum(1 for r, g, b in (pixels.get_flattened_data() if hasattr(pixels, "get_flattened_data") else pixels.getdata()) if min(r, g, b) > 130)
                     if "Home" in title and bright > 1200: break
                     time.sleep(0.02)
                 else: raise AssertionError(f"{kind}: Home content did not become visible")
@@ -104,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-benchmark-") as temporary:
         summary = {kind: {"median_launch_visible_ms": statistics.median(row["launch_visible_ms"] for row in samples if row["kind"] == kind), "median_pss_mib": statistics.median(row["pss_kib"] for row in samples if row["kind"] == kind) / 1024} for kind in ["native", "obsidian"]}
         result = {"method": "warm visible Home content; 3 interleaved samples/app; same sample vault, 1440x960 Xvfb, software rendering; reading mode; plugins disabled; process-tree PSS", "platform": platform.platform(), "obsidian": "installed AppImage, captured window version", "samples": samples, "summary": summary}
         result["corpus"] = [{"path": str(path.relative_to(vault)), "bytes": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for path in sorted(vault.rglob("*.md"))]
-        result["build"] = {"binary_sha256": hashlib.sha256((ROOT / "target/release/rust-notes").read_bytes()).hexdigest(), "binary_bytes": (ROOT / "target/release/rust-notes").stat().st_size, "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(), "measured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        result["build"] = {"profile":args.build_label, "binary_sha256": hashlib.sha256(BINARY.read_bytes()).hexdigest(), "binary_bytes": BINARY.stat().st_size, "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(), "measured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
         (REPORTS / "desktop-benchmark.json").write_text(json.dumps(result, indent=2) + "\n")
         print(json.dumps(summary), flush=True)
     finally:
