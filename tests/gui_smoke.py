@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rust-notes")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "large-search", "folders", "explorer", "vault-switch", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -609,28 +609,183 @@ def main():
                 assert fixture.joinpath("Home.md").read_bytes() == home_before
                 results.append("Clean restart restored the image tab; image Trash preserved its bytes and ordinary note editing still worked")
 
-            def task_checks():
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Notes/Task GUI.md")
-                key("Return")
+            def essential_checks():
+                nonlocal app, window
+                source = "# Highlight check\n\n==yellow **bold**==\n\n`==literal code==`\n\neditable"
+                note = fixture / "Notes/Essential UI.md"
+                source = source.replace("\n\neditable", "\n\nSee [[Home]].\n\neditable")
+                note.write_text(source)
+                (fixture / "Notes/Referrer.md").write_text("[[Notes/Essential UI]]\n")
+                time.sleep(.6)
+                open_note("Essential UI")
                 command("Source editing")
                 editor_end()
-                key("ctrl+a")
-                source = "# Task GUI\n\n- [ ] Native task"
-                type_text(source)
+                type_text("control")
                 key("ctrl+s")
+                assert note.read_text() == source + "control"
+                key("ctrl+z")
+                key("ctrl+s")
+                assert note.read_text() == source
+                def marked_pixels(name, control):
+                    capture(name)
+                    path = ROOT / "reports" / name
+                    box = tuple(round(value) for value in control_bounds(control))
+                    return sum(r > g > b + 20 and r - g < 45 for r, g, b in pixel_data(Image.open(path).crop(box).convert("RGB")))
+                command("Reading view")
+                type_text("ignored")
+                key("ctrl+s")
+                assert note.read_text() == source
+                assert marked_pixels("native-highlights-reading.png", "reading-block:1") > 15
+                command("Live preview")
+                assert marked_pixels("native-highlights-live-dark.png", "editor") > 15
+                command("Source editing")
+                assert marked_pixels("native-highlights-source.png", "editor") == 0
+                editor_end()
+                key("ctrl+shift+Left")
+                command("Highlight selection")
+                key("ctrl+s")
+                highlighted = source[:-len("editable")] + "==editable=="
+                assert note.read_text() == highlighted, repr(note.read_text())
+                key("ctrl+z")
+                key("ctrl+s")
+                assert note.read_text() == source
+                key("ctrl+y")
+                key("ctrl+s")
+                assert note.read_text() == highlighted
+                command("Live preview")
+                command("Switch appearance")
+                assert marked_pixels("native-highlights-live-light.png", "editor") > 15
+                command("Switch appearance")
+                command("srcedt")
+                assert control_bounds("dialog-input", required=False) is None
+                assert marked_pixels("native-source-fuzzy.png", "editor") == 0
+                key("ctrl+p")
+                type_text("save")
+                capture("native-command-palette.png")
+                assert control_bounds("command:Save note")
+                key("Escape")
+                results.append("Native highlighting renders in Live/Reading, Source and inline code stay literal, palette insertion preserves selection/undo/redo and fuzzy command discovery works")
+
+                command("Open settings")
+                capture("native-settings.png")
+                type_text("autosave")
+                assert control_bounds("settings-dark", required=False) is None
+                assert control_bounds("settings-autosave")
+                key("ctrl+a")
+                key("BackSpace")
+                click_control("settings-autosave")
+                state_files = [p for p in (base / "state" / "rust-notes").glob("*.json") if any(path == "Notes/Essential UI.md" for path, _ in json.loads(p.read_text()).get("tabs", []))]
+                assert len(state_files) == 1
+                state_path = state_files[0]
+                assert json.loads(state_path.read_text())["autosave_enabled"] is False
+                key("Escape")
+                editor_end()
+                type_text(" offline")
+                time.sleep(1)
+                assert note.read_text() == highlighted
+                key("ctrl+s")
+                expected = highlighted + " offline"
+                assert note.read_text() == expected
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=5)
+                app = subprocess.Popen(launch_command, cwd=base, env=environment, stdout=log, stderr=log)
+                window = ready_window()
+                title_contains("Essential UI")
+                editor_end()
+                type_text(" restored")
+                time.sleep(1)
+                assert note.read_text() == expected
+                key("ctrl+s")
+                expected += " restored"
+                assert note.read_text() == expected
+                key("ctrl+comma")
+                assert control_bounds("settings-autosave")
+                click_control("settings-autosave")
+                assert json.loads(state_path.read_text())["autosave_enabled"] is True
+                displaced = base / "held-essential-state.json"
+                state_path.rename(displaced)
+                state_path.mkdir()
+                try:
+                    click_control("settings-autosave")
+                    capture("native-settings-write-error.png")
+                    assert control_bounds("error-save-copy", required=False) is None
+                finally:
+                    state_path.rmdir()
+                    displaced.rename(state_path)
+                assert json.loads(state_path.read_text())["autosave_enabled"] is True
+                click_control("settings-autosave")
+                assert json.loads(state_path.read_text())["autosave_enabled"] is False
+                click_control("settings-autosave")
+                assert json.loads(state_path.read_text())["autosave_enabled"] is True
+                key("Escape")
+                assert note.read_text() == expected
+                results.append("Searchable settings persist autosave outside the vault across restart; failed writes roll back, retry succeeds, explicit saving and original Markdown stay intact")
+                if control_bounds("panel:outline", required=False) is None:
+                    command("Toggle right sidebar")
+                assert control_bounds("panel:outline")
+                click_control("panel:backlinks")
+                capture("native-panel-backlinks.png")
+                click_control("backlink:Notes/Referrer.md")
+                title_contains("Referrer")
+                open_note("Essential UI")
+                click_control("panel:outgoing")
+                click_control("outgoing:Home")
+                title_contains("Home")
+                open_note("Essential UI")
+                click_control("panel:outline")
+                assert note.read_text() == expected
+                results.append("Outline/backlink/outgoing tabs expose working panels; real link clicks navigate to the correct note without changing Markdown")
+
+
+            def task_checks():
+                key("ctrl+n")
+                capture("native-new-note-dialog.png")
+                key("Escape")
+                source = "# Task GUI\n\n- [ ] Native task\n- [x] Done فارسی\n  - [ ] Nested\n\n```md\n- [ ] Literal code\n```\n"
                 task_note = fixture / "Notes/Task GUI.md"
+                task_note.write_text(source)
+                time.sleep(.6)
+                open_note("Task GUI")
+                command("Source editing")
+                editor_end()
+                type_text("control")
+                key("ctrl+s")
+                assert task_note.read_text() == source + "control"
+                key("ctrl+z")
+                key("ctrl+s")
                 assert task_note.read_text() == source
                 command("Reading view")
                 capture("native-tasks.png")
                 click_control("task:0")
                 time.sleep(1)
-                assert task_note.read_text() == source.replace("[ ]", "[x]")
+                checked = source.replace("- [ ] Native task", "- [x] Native task")
+                assert task_note.read_text() == checked
                 click_control("task:0")
                 time.sleep(1)
                 assert task_note.read_text() == source
-                results.append("Reading-view task checkbox toggled and autosaved the original Markdown in both directions")
+                assert control_bounds("task:3", required=False) is None
+                command("Live preview")
+                capture("native-tasks-live-dark.png")
+                assert control_bounds("task-live:0")
+                assert control_bounds("task-live:1")
+                assert control_bounds("task-live:2")
+                assert control_bounds("task-live:3", required=False) is None
+                click_control("task-live:0")
+                key("ctrl+s")
+                assert task_note.read_text() == checked
+                key("ctrl+z")
+                key("ctrl+s")
+                assert task_note.read_text() == source
+                key("ctrl+y")
+                key("ctrl+s")
+                assert task_note.read_text() == checked
+                command("Source editing")
+                assert control_bounds("task-live:0", required=False) is None
+                command("Live preview")
+                command("Switch appearance")
+                capture("native-tasks-live-light.png")
+                command("Switch appearance")
+                results.append("Reading and Live tasks preserve exact Markdown, nested/Unicode tasks and undo/redo; Source and fenced task syntax stay literal")
             dark_palette = [(250,153,205), (68,207,110), (168,130,255), (251,70,76), (83,223,221), (104,115,117)]
             light_palette = [(213,57,132), (8,185,78), (120,82,238), (233,49,71), (0,191,188), (171,171,171)]
 
@@ -2036,6 +2191,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
+            if args.section == "essential":
+                essential_checks()
+                (ROOT / "reports/gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "tasks":
                 task_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -2283,6 +2443,7 @@ def main():
             image_checks()
             attachment_tab_checks()
             task_checks()
+            essential_checks()
             large_search_checks()
             folder_checks()
             explorer_checks()

@@ -1,5 +1,7 @@
 # Rust Notes resource rules
 
+Use [reference-driven-product](../skills/reference-driven-product/SKILL.md) for the current reference, feedback, OSS comparison and rebuild-guide work. Masih's latest priorities are fast Markdown editing, tasks, highlighting, useful commands, familiar essential panels and small settings; graph, drawings and broad plugin parity are optional. Keep all resource and data restrictions below.
+
 Masih requested on 21 October 2026: finish this existing app, use GitHub Actions for builds, delete local Rust build output, protect disk space, and keep 1 GB of VPN allowance in reserve.
 
 - Run compilation, Rust tests, Clippy and the release GUI suite through `.github/workflows/native.yml`. Do not recreate the local `target/` directory. Local formatting and small source checks are allowed.

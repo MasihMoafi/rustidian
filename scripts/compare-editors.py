@@ -1,0 +1,197 @@
+"""Serial, external edit-and-save comparison. Run release apps on an idle CI host."""
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import statistics
+import subprocess
+import tempfile
+import time
+
+from PIL import ImageGrab
+
+
+def wait_bytes(path, expected, timeout=3):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if path.read_bytes() == expected:
+                return
+        except FileNotFoundError:
+            pass  # Atomic replacement may briefly change the directory entry.
+        time.sleep(.001)
+    raise AssertionError(f"Exact saved input missing: {path.name}")
+
+
+def self_check():
+    with tempfile.TemporaryDirectory(prefix="rn-measure-") as directory:
+        path = Path(directory) / "note.md"
+        path.write_bytes(b"before")
+        try:
+            wait_bytes(path, b"after", .01)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("Measurement accepted unchanged source")
+        path.write_bytes(b"after")
+        wait_bytes(path, b"after")
+
+
+def corpus():
+    source = "# Editor benchmark\n\n"
+    for index in range(500):
+        source += (
+            f"### Section {index}\n\n> A quote with **emphasis** and unicode π.\n\n"
+            f'~~~rust\nfn main() {{\n    let value = "body π {index}";\n'
+            '    // Preserve literal **markdown** [[No link]]\n}\n~~~\n\n'
+            "Plain paragraph for a real document.\n\n"
+        )
+    assert len(source.encode()) == 103300
+    return source.encode()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ours", type=Path)
+    parser.add_argument("--ferrite", type=Path)
+    parser.add_argument("--self-check", action="store_true")
+    args = parser.parse_args()
+    self_check()
+    if args.self_check:
+        print("Measurement rejects unchanged input and accepts exact changed bytes")
+        return
+    assert args.ours and args.ferrite
+    root = Path(__file__).resolve().parents[1]
+    reports = root / "reports" / "editor-comparison"
+    reports.mkdir(parents=True, exist_ok=True)
+    report = {
+        "status": "running", "metric": "synthetic insertion + explicit save until exact bytes are observed",
+        "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
+        "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
+        "versions": {"ferrite": "v0.3.0", "rust-notes": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()},
+        "binary_sha256": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in [("rust-notes", args.ours), ("ferrite", args.ferrite)]},
+        "cpu": subprocess.check_output(["lscpu"], text=True),
+        "limitations": ["Combined edit/save response, not display latency or internal CPU time.",
+                        "Includes common xdotool subprocess and 1ms file polling overhead.",
+                        "Same source size, wrapping, 18px text and software Xvfb host; font families, UI features and save durability differ.",
+                        "Two alternating rounds are a bounded observation, not proof of the world's fastest editor."],
+        "rounds": [],
+    }
+
+    def preserve():
+        (reports / "results.json").write_text(json.dumps(report, indent=2) + "\n")
+
+    preserve()
+    try:
+        with tempfile.TemporaryDirectory(prefix="rn-compare-") as directory:
+            base = Path(directory)
+            with (reports / "xvfb.log").open("w") as output:
+                xvfb = subprocess.Popen(["Xvfb", "-displayfd", "1", "-screen", "0", "1440x960x24"], stdout=subprocess.PIPE, stderr=output, text=True)
+                try:
+                    display = ":" + xvfb.stdout.readline().strip()
+                    assert display != ":"
+                    for round_number, order in enumerate([("rust-notes", "ferrite"), ("ferrite", "rust-notes")]):
+                        for name in order:
+                            profile = base / f"{round_number}-{name}"
+                            vault = profile / "vault"
+                            vault.mkdir(parents=True)
+                            note = vault / "Home.md"
+                            expected = corpus()
+                            note.write_bytes(expected)
+                            env = {**os.environ, "DISPLAY": display, "LIBGL_ALWAYS_SOFTWARE": "1",
+                                   "XDG_STATE_HOME": str(profile / "state"), "XDG_DATA_HOME": str(profile / "data"),
+                                   "XDG_CONFIG_HOME": str(profile / "config"), "RUST_NOTES_UI_PROBE": str(profile / "probe.json"),
+                                   "FERRITE_DATA_DIR": str(profile / "ferrite")}
+                            env.pop("WAYLAND_DISPLAY", None)
+                            portable = profile / "ferrite"
+                            portable.mkdir()
+                            (portable / "config.json").write_text(json.dumps({"font_size": 18.0, "word_wrap": True, "default_view_mode": "raw", "auto_save_enabled_default": False}))
+
+                            def xdo(*parts):
+                                return subprocess.check_output(["xdotool", *map(str, parts)], env=env, text=True, stderr=subprocess.DEVNULL, timeout=5).strip()
+
+                            binary = args.ours if name == "rust-notes" else args.ferrite
+                            command = [str(binary.resolve()), str(vault if name == "rust-notes" else note)]
+                            with (reports / f"{round_number}-{name}.log").open("w") as output:
+                                app = subprocess.Popen(command, cwd=profile, env=env, stdout=output, stderr=output)
+                                try:
+                                    deadline = time.monotonic() + 20
+                                    while time.monotonic() < deadline:
+                                        assert app.poll() is None, f"{name} exited before a window"
+                                        try:
+                                            window = xdo("search", "--onlyvisible", "--pid", app.pid).splitlines()[0]
+                                            break
+                                        except (subprocess.CalledProcessError, IndexError):
+                                            time.sleep(.05)
+                                    else:
+                                        raise AssertionError(f"{name} window timeout")
+                                    xdo("windowsize", window, 1440, 960)
+                                    xdo("windowfocus", "--sync", window)
+                                    time.sleep(2)
+                                    if name == "rust-notes":
+                                        def palette(text):
+                                            xdo("key", "--clearmodifiers", "ctrl+p")
+                                            time.sleep(.2)
+                                            xdo("type", "--clearmodifiers", "--delay", 30, text)
+                                            time.sleep(.1)
+                                            xdo("key", "Return")
+                                            time.sleep(.3)
+                                        palette("Source editing")
+                                        palette("Open settings")
+                                        probe = json.loads((profile / "probe.json").read_text())
+                                        bounds = probe["settings-autosave"]
+                                        x1, y1, x2, y2 = bounds
+                                        xdo("mousemove", "--window", window, int((x1 + x2) / 2), int((y1 + y2) / 2))
+                                        xdo("click", 1)
+                                        xdo("key", "Escape")
+                                        time.sleep(.3)
+                                    xdo("mousemove", "--window", window, 650, 350)
+                                    xdo("click", 1)
+                                    xdo("key", "--clearmodifiers", "ctrl+End")
+                                    time.sleep(.3)
+                                    samples = []
+                                    for sample in range(30):
+                                        inserted = chr(97 + sample % 26)
+                                        expected += inserted.encode()
+                                        start = time.perf_counter_ns()
+                                        xdo("type", "--clearmodifiers", "--delay", 0, inserted)
+                                        xdo("key", "--clearmodifiers", "ctrl+s")
+                                        wait_bytes(note, expected)
+                                        elapsed = (time.perf_counter_ns() - start) / 1_000_000
+                                        if sample >= 5:
+                                            samples.append(elapsed)
+                                        time.sleep(.04)
+                                    ImageGrab.grab(xdisplay=display).save(reports / f"{round_number}-{name}.png")
+                                    report["rounds"].append({"round": round_number, "app": name, "mode": "source/raw", "samples_ms": samples, "inputs_verified": 30})
+                                    preserve()
+                                finally:
+                                    app.terminate()
+                                    try:
+                                        app.wait(timeout=5)
+                                    except subprocess.TimeoutExpired:
+                                        app.kill()
+                                        app.wait(timeout=5)
+                finally:
+                    xvfb.terminate()
+                    xvfb.wait(timeout=5)
+        summaries = {}
+        for name in ["rust-notes", "ferrite"]:
+            samples = sorted(sample for run in report["rounds"] if run["app"] == name for sample in run["samples_ms"])
+            assert len(samples) == 50
+            summaries[name] = {"median_ms": statistics.median(samples), "p95_ms": samples[math.ceil(.95 * len(samples)) - 1]}
+        report["summary"] = summaries
+        report["meets_observed_target"] = all(summaries["rust-notes"][metric] <= summaries["ferrite"][metric] for metric in ["median_ms", "p95_ms"])
+        report["status"] = "completed"
+        print(json.dumps({"summary": summaries, "meets_observed_target": report["meets_observed_target"]}))
+    except Exception as error:
+        report["status"] = "failed"
+        report["error"] = str(error)
+        raise
+    finally:
+        preserve()
+
+
+if __name__ == "__main__":
+    main()

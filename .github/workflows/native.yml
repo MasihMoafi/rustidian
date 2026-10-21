@@ -58,8 +58,10 @@ jobs:
           cargo build --locked --bin rust-notes 2>&1 | tee reports/candidate-build.log
           tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault
           sha256sum target/debug/rust-notes > reports/candidate.sha256
-      - name: Focused bookmark, callout and vault behavior
+      - name: Focused editing, bookmark, callout and vault behavior
         run: |
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section essential 2>&1 | tee reports/essential-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section bookmarks 2>&1 | tee reports/bookmark-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section callouts 2>&1 | tee reports/callout-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --default-vault --section vault-switch 2>&1 | tee reports/portable-vault-gui.log
@@ -79,6 +81,29 @@ jobs:
           target/release/examples/editor_benchmark --diverse > reports/editor-ci-unfolded.json
           target/release/examples/editor_benchmark --diverse --folded > reports/editor-ci-folded.json
           /usr/bin/python3 scripts/check-editor-timings.py reports/editor-ci-unfolded.json reports/editor-ci-folded.json | tee reports/editor-ci-gates.log
+      - name: Compare serial source editing and saving with Ferrite
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ferrite-comparison"
+          gh release download v0.3.0 --repo OlaProeis/Ferrite --pattern ferrite-linux-x64.tar.gz --dir "$RUNNER_TEMP/ferrite-comparison"
+          printf '%s  %s\n' '338b201bf071728ddb08b7466008257e8e3e7325c717586cbfe5cc5edcc63ed8' "$RUNNER_TEMP/ferrite-comparison/ferrite-linux-x64.tar.gz" | sha256sum --check
+          python3 - "$RUNNER_TEMP/ferrite-comparison" <<'PY'
+          import sys, tarfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          with tarfile.open(root / 'ferrite-linux-x64.tar.gz') as archive:
+              for member in archive.getmembers():
+                  path = Path(member.name)
+                  assert not path.is_absolute() and '..' not in path.parts
+                  assert member.isfile() or member.isdir()
+              archive.extractall(root / 'app', filter='data')
+          binaries = [p for p in (root / 'app').rglob('ferrite') if p.is_file()]
+          assert len(binaries) == 1
+          (root / 'binary-path').write_text(str(binaries[0]))
+          PY
+          /usr/bin/python3 scripts/compare-editors.py --self-check
+          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rust-notes --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" | tee reports/editor-comparison.log
       - name: Package the verified Linux application
         run: |
           mv reports/rust-notes-candidate-linux-x86_64.tar.gz reports/rust-notes-linux-x86_64.tar.gz

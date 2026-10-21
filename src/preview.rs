@@ -10,6 +10,7 @@ struct Inline {
     italic: bool,
     code: bool,
     strike: bool,
+    highlight: bool,
     link: Option<String>,
 }
 #[derive(Clone, Default)]
@@ -120,6 +121,18 @@ impl Parsed {
             source: source.into(),
             ..Self::default()
         };
+        let mut marked = source.to_owned();
+        if source.contains("==") {
+            for range in rust_notes::editor::Markdown::parse(source)
+                .highlights
+                .into_iter()
+                .rev()
+            {
+                marked.replace_range(range.end - 2..range.end, "</mark>");
+                marked.replace_range(range.start..range.start + 2, "<mark>");
+            }
+        }
+        let source = marked.as_str();
         let mut block = Block::default();
         let mut style = Inline::default();
         let mut list: Vec<Option<u64>> = Vec::new();
@@ -354,6 +367,8 @@ impl Parsed {
                     }
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
+                Event::InlineHtml(tag) if tag == "<mark>" => style.highlight = true,
+                Event::InlineHtml(tag) if tag == "</mark>" => style.highlight = false,
                 Event::Html(_) | Event::InlineHtml(_) => parsed.fallback = true,
                 _ => {}
             }
@@ -646,6 +661,11 @@ fn show_blocks(
         let mut destinations = Vec::new();
         let mut character = 0;
         for (part_index, part) in block.parts.iter().enumerate() {
+            let mut format = inline_format(ui, part, block.heading, None);
+            if block.task.is_some_and(|(_, checked)| checked) {
+                format.color = ui.visuals().weak_text_color();
+                format.strikethrough = egui::Stroke::new(1.0, format.color);
+            }
             job.append(
                 &part.text,
                 if part_index == 0 && block.list_depth > 0 && block.task.is_none() {
@@ -653,7 +673,7 @@ fn show_blocks(
                 } else {
                     0.0
                 },
-                inline_format(ui, part, block.heading, None),
+                format,
             );
             let end = character + part.text.chars().count();
             if let Some(link) = &part.link {
@@ -835,7 +855,9 @@ fn inline_format(
                 1.62
             },
         ),
-        background: if part.code && table_header.is_none() {
+        background: if part.highlight {
+            crate::theme::highlight_background()
+        } else if part.code && table_header.is_none() {
             ui.visuals().code_bg_color
         } else {
             egui::Color32::TRANSPARENT

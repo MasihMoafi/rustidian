@@ -37,6 +37,9 @@ pub struct Style {
     pub hidden: bool,
     pub quote: bool,
     pub bullet: bool,
+    pub task_marker: bool,
+    pub task_checked: bool,
+    pub highlight: bool,
     pub property: bool,
     pub image: bool,
     pub marker: bool,
@@ -62,6 +65,15 @@ pub struct Markdown {
     pub code_blocks: Vec<CodeBlock>,
     pub tables: Vec<crate::tables::Table>,
     pub callouts: Vec<crate::callouts::Callout>,
+    pub tasks: Vec<Task>,
+    pub highlights: Vec<Range<usize>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Task {
+    pub prefix: Range<usize>,
+    pub character: usize,
+    pub checked: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -203,6 +215,9 @@ impl Markdown {
         let mut code_blocks = Vec::new();
         let mut tables = Vec::new();
         let mut callouts = Vec::new();
+        let mut tasks = Vec::new();
+        let mut current_item = 0;
+        let mut task_positions = text.char_indices().enumerate().peekable();
         let mut table = None;
         for (event, range) in Parser::new_ext(
             text,
@@ -313,7 +328,35 @@ impl Markdown {
                     }
                     patch(&mut styles, range, |s| s.quote = true);
                 }
+                Event::TaskListMarker(checked) => {
+                    let start = current_item;
+                    let prefix = start..range.end;
+                    patch(&mut styles, prefix.clone(), |style| {
+                        style.task_marker = true
+                    });
+                    if checked {
+                        let end = text[range.end..]
+                            .find('\n')
+                            .map_or(text.len(), |offset| range.end + offset);
+                        patch(&mut styles, range.end..end, |style| {
+                            style.task_checked = true
+                        });
+                    }
+                    while task_positions
+                        .peek()
+                        .is_some_and(|(_, (byte, _))| *byte < start)
+                    {
+                        task_positions.next();
+                    }
+                    let character = task_positions.peek().unwrap().0;
+                    tasks.push(Task {
+                        prefix,
+                        character,
+                        checked,
+                    });
+                }
                 Event::Start(Tag::Item) => {
+                    current_item = range.start;
                     item_starts.push(text[..range.start].rfind('\n').map_or(0, |i| i + 1));
                     let item = &text[range.clone()];
                     if item.starts_with("- ") || item.starts_with("* ") || item.starts_with("+ ") {
@@ -333,12 +376,53 @@ impl Markdown {
             code_blocks.retain(|block| !properties.range.contains(&block.range.start));
             tables.retain(|table| !properties.range.contains(&table.range.start));
             callouts.retain(|callout| !properties.range.contains(&callout.range.start));
+            tasks.retain(|task| !properties.range.contains(&task.prefix.start));
             patch(&mut styles, properties.range, |style| {
                 *style = Style {
                     property: true,
                     ..Default::default()
                 }
             });
+        }
+        let mut highlights = Vec::new();
+        let mut opening = None;
+        for (index, _) in text.match_indices("==") {
+            let escaped = text.as_bytes()[..index]
+                .iter()
+                .rev()
+                .take_while(|byte| **byte == b'\\')
+                .count()
+                % 2
+                == 1;
+            if escaped
+                || styles[index].code
+                || styles[index].hidden
+                || styles[index].property
+                || text.as_bytes().get(index.wrapping_sub(1)) == Some(&b'=')
+                || text.as_bytes().get(index + 2) == Some(&b'=')
+            {
+                continue;
+            }
+            if let Some(start) = opening.take() {
+                let content = &text[start + 2..index];
+                if !content.trim().is_empty()
+                    && !content.contains("\n\n")
+                    && !content.contains("\r\n\r\n")
+                {
+                    patch(&mut styles, start + 2..index, |style| {
+                        style.highlight = true
+                    });
+                    for marker in [start..start + 2, index..index + 2] {
+                        hide(&mut styles, marker.clone());
+                        patch(&mut styles, marker, |style| style.marker = true);
+                    }
+                    highlights.push(start..index + 2);
+                } else {
+                    opening = Some(index);
+                }
+            } else {
+                opening = Some(index);
+            }
         }
         for callout in &callouts {
             patch(&mut styles, callout.header.clone(), |style| {
@@ -440,6 +524,8 @@ impl Markdown {
             code_blocks,
             tables,
             callouts,
+            tasks,
+            highlights,
         }
     }
 }

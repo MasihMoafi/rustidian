@@ -1,5 +1,7 @@
 # Native Rust notebook plan
 
+Current scope, implementation order and reproducible route: [GUIDE.md](GUIDE.md). Masih narrowed the goal on21October2026 to fast essential editing, tasks, highlighting, commands, panels and settings. The broad parity stages below are retained history; optional graph/drawings/plugin replication are deferred.
+
 Requested by Masih, 20 October 2026. Implementation begins now; full Obsidian equivalence is a staged product, not a first-build claim.
 
 ## Goal and users

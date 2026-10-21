@@ -4,6 +4,8 @@ A native Rust desktop notebook for Masih, using ordinary Markdown folders and an
 
 ## Core thesis
 
+Masih narrowed the destination on 21 October: fast essential Markdown editing, checklists, highlighting, useful Ctrl+P commands, familiar working panels and small settings. Follow [the guide for starting over](docs/GUIDE.md); broad plugin/settings replication, graph and drawings are optional. Preserve older feature contracts as history.
+
 Keep the vault portable and the interface responsive. Native Rust is the implementation constraint; measured performance, safe editing, and familiar behavior are the acceptance criteria. Changing Linux distributions is not a dependency.
 
 ## Map
@@ -23,7 +25,7 @@ Verified app source `21a1271` passes 113 Rust executions/108 unique, Clippy/form
 
 All six declared editor CPU conditions pass on the GitHub AMD EPYC 9V45 runner; the 103,300-byte edited medians are 4.8625 ms unfolded and 6.7405 ms mostly folded, with 25 inputs verified in each condition. These are CPU observations on that host, not display latency or a speedup over measurements on other hosts. Preserve failed evidence and the historical release verifications.
 
-Full Obsidian appearance/product parity and Masih's acceptance remain unfinished. Math/diagrams, graph/canvas, recovery, bookmark groups/non-file targets, daily notes/templates, plugin equivalents, optional sync/mobile, complex-document folding and full bidi/desktop IME remain. Existing JavaScript plugins do not execute here. Forty-five generated/SVG Studio symbols are integrated; five knowledge-action artworks are prepared only. Preserve `How are you?!` in demo Home and never automate writes to the real vault/profile. Elpis activation belongs to its recovery coordinator.
+Masih's acceptance of the essential workflows remains pending. Full visual bidi/desktop IME and complex-document folding remain unresolved. Math/diagrams, graph/canvas, recovery, bookmark groups/non-file targets, daily notes/templates, plugin equivalents and sync/mobile are deferred under the latest priorities. Existing JavaScript plugins do not execute here. Forty-five generated/SVG Studio symbols are integrated; five knowledge-action artworks are prepared only. Preserve `How are you?!` in demo Home and never automate writes to the real vault/profile. Elpis activation belongs to its recovery coordinator.
 
 Builds and Rust checks run only in private `MasihMoafi/rust-notes` Actions. Local17GB `target/` was trashed; never recreate it. Local formatting and small checks are allowed. Actions uses Bash pipefail, required X11 runtime libraries, one-day artifacts and no persistent Rust cache. Keep only the needed app bundle and at least1GB of VPN allowance in reserve. This is our transfer policy, not a provider-side cap. Prefer direct GitHub access and preserve shared proxy routing. See `AGENTS.md` and `ES.md`.
 

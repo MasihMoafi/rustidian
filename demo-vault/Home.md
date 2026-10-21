@@ -22,4 +22,4 @@ Start with [[Notes/First steps]], or take a look at the [[Projects/Native notebo
 How are you?! 
 ---
 
-**A first build, ready to explore.** Inline live preview, graph, canvas, plugins, and sync are still planned. Reading and editing are separate views; the split button shows both together.
+**Your Markdown workspace.** Create or open a note, use checklists and highlights, and press Ctrl+P to find commands or settings. Switch between Live, Source, Reading and Split views as you work.

@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod bookmarks;
 pub mod callouts;
+pub mod commands;
 pub mod editor;
 pub mod folding;
 pub mod metadata;

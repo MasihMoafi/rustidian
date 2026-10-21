@@ -26,6 +26,19 @@ struct Session {
     bookmarks: rust_notes::bookmarks::Bookmarks,
     #[serde(default)]
     bookmarks_open: bool,
+    #[serde(default)]
+    right_tab: u8,
+    #[serde(default = "default_zoom")]
+    ui_zoom: f32,
+    #[serde(default = "default_autosave")]
+    autosave_enabled: bool,
+}
+
+fn default_zoom() -> f32 {
+    1.0
+}
+fn default_autosave() -> bool {
+    true
 }
 
 fn location(root: &Path) -> Option<PathBuf> {
@@ -88,7 +101,15 @@ impl NotesApp {
             .unwrap_or(0);
         self.show_left = session.left;
         self.show_right = session.right;
+        self.right_tab = session.right_tab.min(2);
         self.dark = session.dark;
+        self.ui_zoom = if session.ui_zoom.is_finite() {
+            session.ui_zoom.clamp(0.75, 1.5)
+        } else {
+            1.0
+        };
+        self.autosave_enabled = session.autosave_enabled;
+        ctx.set_zoom_factor(self.ui_zoom);
         self.sort_descending = session.sort_descending;
         self.bookmarks = session.bookmarks;
         self.bookmarks.sanitize();
@@ -127,6 +148,9 @@ impl NotesApp {
             sort_descending: self.sort_descending,
             bookmarks: self.bookmarks.clone(),
             bookmarks_open: self.show_bookmarks,
+            right_tab: self.right_tab,
+            ui_zoom: self.ui_zoom,
+            autosave_enabled: self.autosave_enabled,
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {

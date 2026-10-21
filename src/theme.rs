@@ -538,6 +538,10 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     .inner
 }
 
+pub fn highlight_background() -> Color32 {
+    Color32::from_rgba_unmultiplied(255, 218, 0, 65)
+}
+
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
     let image = icon_image(icon, ui.visuals().text_color().gamma_multiply(0.8));
     let response = ui.add(

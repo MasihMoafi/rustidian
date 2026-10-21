@@ -29,6 +29,7 @@ pub struct Find {
 pub struct Editor {
     pub jump: Option<usize>,
     pub focus: bool,
+    pub format: Option<(u64, std::path::PathBuf, &'static str)>,
     source: String,
     parsed: Markdown,
     sections: rust_notes::folding::Sections,
@@ -370,6 +371,13 @@ impl Editor {
         files: &mut FileMatcher,
         vault: Option<&rust_notes::vault::Vault>,
     ) -> Option<String> {
+        if self
+            .format
+            .as_ref()
+            .is_some_and(|(target, path, _)| *target != tab.id() || path != &tab.document.path)
+        {
+            self.format = None;
+        }
         if self.focus {
             // A closing modal remains the top interaction layer for one pass.
             // Keep the request until the editor can register its focus interest.
@@ -574,8 +582,22 @@ impl Editor {
             }
         }
         if ui.memory(|m| m.has_focus(id)) {
-            for (key, marker) in [(Key::B, "**"), (Key::I, "*")] {
-                if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, key)) {
+            for (key, modifiers, marker) in [
+                (Key::B, egui::Modifiers::COMMAND, "**"),
+                (Key::I, egui::Modifiers::COMMAND, "*"),
+                (
+                    Key::H,
+                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    "==",
+                ),
+            ] {
+                if self
+                    .format
+                    .as_ref()
+                    .is_some_and(|(_, _, pending)| *pending == marker)
+                    || ui.input_mut(|i| i.consume_key(modifiers, key))
+                {
+                    self.format = None;
                     let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
                     if let Some(selection) = state.cursor.char_range() {
                         let mut undoer = state.undoer();
@@ -913,6 +935,51 @@ impl Editor {
         let positioned = PositionedText::new(&output);
         paint_heading_folds(ui, &positioned, &self.sections, &mut collapsed);
         if live {
+            let mut hidden = self.sections.hidden(&collapsed);
+            for (callout, key) in self.parsed.callouts.iter().zip(callout_keys(&self.parsed)) {
+                if callout_folds
+                    .get(&key)
+                    .copied()
+                    .unwrap_or(callout.folded.unwrap_or(false))
+                {
+                    let start = tab.document.text[..callout.body.start].chars().count();
+                    hidden.push(
+                        start..start + tab.document.text[callout.body.clone()].chars().count(),
+                    );
+                }
+            }
+            for (ordinal, task) in self.parsed.tasks.iter().enumerate() {
+                let character = task.character;
+                if hidden.iter().any(|range| range.contains(&character)) {
+                    continue;
+                }
+                let point = positioned.at(character);
+                let rect = egui::Rect::from_center_size(
+                    egui::pos2(point.min.x + 9.0, point.center().y),
+                    egui::vec2(18.0, 18.0),
+                );
+                if !rect.intersects(output.text_clip_rect) {
+                    continue;
+                }
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt((id, "task", ordinal))
+                        .max_rect(rect),
+                );
+                child.set_clip_rect(output.text_clip_rect);
+                let mut checked = task.checked;
+                let response = crate::theme::checkbox(&mut child, &mut checked);
+                crate::ui_probe::record(ui.ctx(), format!("task-live:{ordinal}"), response.rect);
+                if response.clicked() {
+                    crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
+                    if rust_notes::editor::toggle_task(&mut tab.document.text, ordinal) {
+                        crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
+                        ui.memory_mut(|memory| memory.request_focus(id));
+                        tab.edited();
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
             if let Some(action) = paint_callouts(
                 ui,
                 &positioned,
@@ -1842,13 +1909,16 @@ fn layout(
                 .iter()
                 .find(|image| start >= image.range.start && end <= image.range.end);
             let hidden = live
-                && (style.property
+                && (style.task_marker
+                    || style.property
                     || style.hidden && !active && !style.image
                     || style.quote_marker && !active
                     || style.fence && !code_active
                     || style.callout_header && !active
                     || image.is_some() && !active);
-            let size = if hidden {
+            let size = if live && style.task_marker {
+                12.0
+            } else if hidden {
                 0.01
             } else if style.heading > 0 {
                 match style.heading {
@@ -1883,7 +1953,7 @@ fn layout(
                 crate::theme::accent(ui)
             } else if style.heading > 0 {
                 crate::theme::heading(ui, style.heading)
-            } else if style.block_code {
+            } else if style.block_code || (live && style.task_checked) {
                 ui.visuals().weak_text_color()
             } else {
                 ui.visuals().text_color()
@@ -1891,7 +1961,7 @@ fn layout(
             let count = section.chars().count();
             let highlighted = matched
                 .is_some_and(|range| character < range.end && character + count > range.start);
-            let display = if live && style.bullet && !active {
+            let display = if live && style.bullet && !active && !style.task_marker {
                 "•"
             } else {
                 section
@@ -1958,7 +2028,7 @@ fn layout(
                 } else {
                     0.0
                 },
-                strikethrough: if style.strike {
+                strikethrough: if style.strike || (live && style.task_checked) {
                     Stroke::new(1.0, color)
                 } else {
                     Stroke::NONE
@@ -1968,7 +2038,9 @@ fn layout(
                 } else {
                     Stroke::NONE
                 },
-                background: if highlighted {
+                background: if live && style.highlight && !hidden {
+                    crate::theme::highlight_background()
+                } else if highlighted {
                     Color32::from_rgba_unmultiplied(170, 135, 20, 95)
                 } else if style.code && !style.block_code {
                     ui.visuals().code_bg_color

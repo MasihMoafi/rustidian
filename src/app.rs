@@ -27,6 +27,7 @@ enum Dialog {
     TrashNote,
     AddProperty,
     BookmarkTitle,
+    Settings,
 }
 #[derive(Clone, Copy)]
 enum Pending {
@@ -77,6 +78,9 @@ pub struct NotesApp {
     reset_tree_scroll: bool,
     pub(crate) bookmarks: rust_notes::bookmarks::Bookmarks,
     pub(crate) show_bookmarks: bool,
+    pub(crate) right_tab: u8,
+    pub(crate) ui_zoom: f32,
+    pub(crate) autosave_enabled: bool,
 }
 
 impl NotesApp {
@@ -126,6 +130,9 @@ impl NotesApp {
             reset_tree_scroll: false,
             bookmarks: Default::default(),
             show_bookmarks: false,
+            right_tab: 0,
+            ui_zoom: 1.0,
+            autosave_enabled: true,
         };
         app.load_vault(root);
         app
@@ -227,6 +234,10 @@ impl NotesApp {
                     let opening = self.loading_root.take().is_some();
                     if opening {
                         self.bookmarks = Default::default();
+                        self.right_tab = 0;
+                        self.ui_zoom = 1.0;
+                        self.autosave_enabled = true;
+                        ctx.set_zoom_factor(1.0);
                         self.show_bookmarks = false;
                         self.sort_descending = false;
                         self.collapse_epoch = 0;
@@ -317,7 +328,8 @@ impl NotesApp {
         }
         let mut saves = Vec::new();
         for (index, tab) in self.tabs.iter().enumerate() {
-            if tab.document.dirty()
+            if self.autosave_enabled
+                && tab.document.dirty()
                 && !tab.autosave_failed
                 && let Some(edited) = tab.edited_at
             {
@@ -631,6 +643,9 @@ impl NotesApp {
             return;
         }
         if self.dialog.is_none() {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Comma)) {
+                self.ask(Dialog::Settings);
+            }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Semicolon)) {
                 self.ask(Dialog::AddProperty);
             }
@@ -1137,81 +1152,105 @@ impl NotesApp {
                     .inner_margin(Margin::symmetric(17, 18)),
             )
             .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (tab, title, key) in [
+                        (0, "Outline", "outline"),
+                        (1, "Backlinks", "backlinks"),
+                        (2, "Outgoing", "outgoing"),
+                    ] {
+                        let response = ui.selectable_value(
+                            &mut self.right_tab,
+                            tab,
+                            RichText::new(title).size(12.0),
+                        );
+                        crate::ui_probe::record(ui.ctx(), format!("panel:{key}"), response.rect);
+                    }
+                });
+                ui.add_space(10.0);
                 ScrollArea::vertical().show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(theme::icon_image(
-                            Icon::Outline,
-                            ui.visuals().weak_text_color(),
-                        ));
-                        ui.label(RichText::new("Outline").size(14.0).strong());
-                    });
-                    ui.add_space(9.0);
-                    if outline.is_empty() {
-                        ui.label(RichText::new("No headings yet").size(13.0).weak());
-                    }
-                    for heading in outline {
-                        let depth = heading.level;
-                        ui.horizontal_wrapped(|ui| {
-                            ui.add_space((depth.saturating_sub(1) * 10) as f32);
-                            if ui
-                                .selectable_label(false, RichText::new(&heading.title).size(13.0))
-                                .clicked()
-                            {
-                                jump = Some(heading.title);
-                            }
+                    if self.right_tab == 0 {
+                        ui.horizontal(|ui| {
+                            ui.add(theme::icon_image(
+                                Icon::Outline,
+                                ui.visuals().weak_text_color(),
+                            ));
+                            ui.label(RichText::new("Outline").size(14.0).strong());
                         });
+                        ui.add_space(9.0);
+                        if outline.is_empty() {
+                            ui.label(RichText::new("No headings yet").size(13.0).weak());
+                        }
+                        for heading in outline {
+                            let depth = heading.level;
+                            ui.horizontal_wrapped(|ui| {
+                                ui.add_space((depth.saturating_sub(1) * 10) as f32);
+                                if ui
+                                    .selectable_label(
+                                        false,
+                                        RichText::new(&heading.title).size(13.0),
+                                    )
+                                    .clicked()
+                                {
+                                    jump = Some(heading.title);
+                                }
+                            });
+                        }
                     }
-                    ui.add_space(26.0);
-                    ui.separator();
-                    ui.add_space(14.0);
-                    ui.label(RichText::new("Backlinks").size(14.0).strong());
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(format!("{} linked mentions", backlinks.len()))
-                            .size(12.0)
-                            .weak(),
-                    );
-                    ui.add_space(9.0);
-                    for (path, title) in backlinks {
-                        if ui
-                            .add(
+                    if self.right_tab == 1 {
+                        ui.label(RichText::new("Backlinks").size(14.0).strong());
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(format!("{} linked mentions", backlinks.len()))
+                                .size(12.0)
+                                .weak(),
+                        );
+                        ui.add_space(9.0);
+                        for (path, title) in backlinks {
+                            let row = ui.add(
                                 egui::Button::new(
                                     RichText::new(title).size(13.0).color(theme::accent(ui)),
                                 )
                                 .frame(false),
-                            )
-                            .clicked()
-                        {
-                            selected = Some(path);
+                            );
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("backlink:{}", path.display()),
+                                row.rect,
+                            );
+                            if row.clicked() {
+                                selected = Some(path);
+                            }
                         }
                     }
-                    ui.add_space(25.0);
-                    ui.separator();
-                    ui.add_space(14.0);
-                    ui.label(RichText::new("Outgoing links").size(14.0).strong());
-                    ui.add_space(9.0);
-                    if outgoing.is_empty() {
-                        ui.label(
-                            RichText::new("Connect a note with [[links]]")
-                                .size(12.0)
-                                .weak(),
-                        );
-                    }
-                    for target in outgoing {
-                        let label = target
-                            .split_once('|')
-                            .map(|(_, label)| label)
-                            .unwrap_or(&target);
-                        if ui
-                            .add(
+                    if self.right_tab == 2 {
+                        ui.label(RichText::new("Outgoing links").size(14.0).strong());
+                        ui.add_space(9.0);
+                        if outgoing.is_empty() {
+                            ui.label(
+                                RichText::new("Connect a note with [[links]]")
+                                    .size(12.0)
+                                    .weak(),
+                            );
+                        }
+                        for target in outgoing {
+                            let label = target
+                                .split_once('|')
+                                .map(|(_, label)| label)
+                                .unwrap_or(&target);
+                            let row = ui.add(
                                 egui::Button::new(
                                     RichText::new(label).size(13.0).color(theme::accent(ui)),
                                 )
                                 .frame(false),
-                            )
-                            .clicked()
-                        {
-                            follow = Some(target);
+                            );
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("outgoing:{target}"),
+                                row.rect,
+                            );
+                            if row.clicked() {
+                                follow = Some(target);
+                            }
                         }
                     }
                 });
@@ -1750,6 +1789,7 @@ impl NotesApp {
             Dialog::TrashNote => "Move file to system Trash",
             Dialog::AddProperty => "Add property",
             Dialog::BookmarkTitle => "Edit bookmark title",
+            Dialog::Settings => "Settings",
         };
         let mut close = false;
         let mut submit = false;
@@ -1773,15 +1813,29 @@ impl NotesApp {
         let mut select = None;
         let mut run_command = None;
         let response = egui::Modal::new(egui::Id::unique("main-dialog")).show(ctx, |ui| {
-            ui.set_width(500.0);
-            ui.heading(title);
-            ui.add_space(10.0);
+            ui.set_width(if matches!(dialog, Dialog::Commands | Dialog::Settings) {
+                650.0
+            } else {
+                500.0
+            });
+            ui.style_mut()
+                .text_styles
+                .insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
+            ui.style_mut().text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(20.0, egui::FontFamily::Name("semibold".into())),
+            );
+            if dialog != Dialog::Commands {
+                ui.heading(title);
+                ui.add_space(10.0);
+            }
             let hint = match dialog {
                 Dialog::QuickOpen => "Find a file…",
                 Dialog::NewNote | Dialog::SaveCopy => "Folder/Note.md",
                 Dialog::NewFolder => "Folder/New folder",
                 Dialog::OpenVault => "/path/to/your/vault",
-                Dialog::Commands => "Type a command…",
+                Dialog::Commands => "Select a command…",
+                Dialog::Settings => "Search settings and shortcuts…",
                 Dialog::BookmarkTitle => "Leave blank to use the file name",
                 Dialog::RenameNote
                     if self.vault.as_ref().is_some_and(|vault| {
@@ -1894,53 +1948,11 @@ impl NotesApp {
                     );
                 }
                 Dialog::Commands => {
-                    let commands = [
-                        "New note",
-                        "New folder",
-                        "Add property",
-                        "Rename or move file",
-                        "Move file to system Trash",
-                        "Open a file",
-                        "Open vault",
-                        "Save note",
-                        "Save a copy",
-                        "Reading view",
-                        "Live preview",
-                        "Source editing",
-                        "Split source and preview",
-                        "Toggle left sidebar",
-                        "Toggle right sidebar",
-                        "Switch appearance",
-                        "Refresh vault",
-                        "Bookmark current file",
-                        "Show bookmarks",
-                    ];
                     let image = self
                         .tabs
                         .get(self.active)
                         .is_some_and(|tab| tab.document.is_image());
-                    let matches: Vec<_> = commands
-                        .iter()
-                        .filter(|command| {
-                            !image
-                                || !matches!(
-                                    **command,
-                                    "Add property"
-                                        | "Save note"
-                                        | "Save a copy"
-                                        | "Reading view"
-                                        | "Live preview"
-                                        | "Source editing"
-                                        | "Split source and preview"
-                                )
-                        })
-                        .filter(|command| {
-                            command
-                                .to_lowercase()
-                                .contains(&self.dialog_input.to_lowercase())
-                        })
-                        .copied()
-                        .collect();
+                    let matches = rust_notes::commands::ranked(&self.dialog_input, image);
                     if input.changed() {
                         self.dialog_selected = 0;
                     }
@@ -1953,21 +1965,108 @@ impl NotesApp {
                     }
                     self.dialog_selected =
                         self.dialog_selected.min(matches.len().saturating_sub(1));
-                    for (index, command) in matches.iter().enumerate() {
-                        if ui
-                            .add(
-                                egui::Button::new(*command)
+                    ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                        for (index, command) in matches.iter().enumerate() {
+                            let row = ui.add(
+                                egui::Button::new(command.name)
+                                    .shortcut_text(command.shortcut)
                                     .selected(index == self.dialog_selected)
                                     .frame(false)
-                                    .min_size(egui::vec2(ui.available_width(), 32.0)),
-                            )
-                            .clicked()
-                        {
-                            run_command = Some(*command);
+                                    .min_size(egui::vec2(ui.available_width(), 34.0)),
+                            );
+                            crate::ui_probe::record(
+                                ctx,
+                                format!("command:{}", command.name),
+                                row.rect,
+                            );
+                            if row.clicked() {
+                                run_command = Some(command.name);
+                            }
+                            if index == self.dialog_selected && (navigate_down || navigate_up) {
+                                row.scroll_to_me(Some(Align::Center));
+                            }
                         }
+                    });
+                    if matches.is_empty() {
+                        ui.label("No matching commands");
                     }
+                    ui.label(
+                        RichText::new("↑ ↓ navigate · Enter to run · Esc to close")
+                            .size(11.0)
+                            .weak(),
+                    );
                     if submit_enter {
-                        run_command = matches.get(self.dialog_selected).copied();
+                        run_command = matches
+                            .get(self.dialog_selected)
+                            .map(|command| command.name);
+                    }
+                }
+                Dialog::Settings => {
+                    let before = (self.dark, self.ui_zoom, self.autosave_enabled);
+                    let query = self.dialog_input.to_lowercase();
+                    let show = |terms: &str| query.is_empty() || terms.contains(query.as_str());
+                    let mut changed = false;
+                    if show("appearance theme dark light interface zoom text size") {
+                        ui.strong("Appearance");
+                        let dark = ui.checkbox(&mut self.dark, "Dark theme");
+                        crate::ui_probe::record(ctx, "settings-dark", dark.rect);
+                        changed |= dark.changed();
+                        ui.horizontal(|ui| {
+                            ui.label("Interface zoom");
+                            let zoom = ui.add(
+                                egui::Slider::new(&mut self.ui_zoom, 0.75..=1.5).step_by(0.05),
+                            );
+                            crate::ui_probe::record(ctx, "settings-zoom", zoom.rect);
+                            changed |= zoom.changed();
+                        });
+                    }
+                    if show("editor editing files save autosave") {
+                        ui.separator();
+                        ui.strong("Editor");
+                        let autosave =
+                            ui.checkbox(&mut self.autosave_enabled, "Autosave after 600 ms");
+                        crate::ui_probe::record(ctx, "settings-autosave", autosave.rect);
+                        changed |= autosave.changed();
+                    }
+                    if changed {
+                        if let Err(error) = self.write_session() {
+                            (self.dark, self.ui_zoom, self.autosave_enabled) = before;
+                            self.error = Some(format!("Settings weren’t saved: {error}"));
+                        } else {
+                            self.status = "Settings saved".into();
+                            if self
+                                .error
+                                .as_deref()
+                                .is_some_and(|error| error.starts_with("Settings weren’t saved:"))
+                            {
+                                self.error = None;
+                            }
+                        }
+                        theme::apply(ctx, self.dark);
+                        ctx.set_zoom_factor(self.ui_zoom);
+                        ctx.request_repaint();
+                    }
+                    if show("hotkeys shortcuts commands") || !query.is_empty() {
+                        ui.separator();
+                        ui.strong("Keyboard shortcuts");
+                        ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                            for command in rust_notes::commands::ranked(&self.dialog_input, false) {
+                                if !command.shortcut.is_empty() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(command.name);
+                                        ui.with_layout(
+                                            Layout::right_to_left(Align::Center),
+                                            |ui| {
+                                                ui.weak(command.shortcut);
+                                            },
+                                        );
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    if ui.button("Close").clicked() {
+                        close = true;
                     }
                 }
                 _ => {
@@ -2246,6 +2345,20 @@ impl NotesApp {
 
     fn command(&mut self, command: &str, ctx: &egui::Context) {
         match command {
+            "Open settings" => self.ask(Dialog::Settings),
+            "Highlight selection" => {
+                if let Some(tab) = self
+                    .tabs
+                    .get(self.active)
+                    .filter(|tab| !tab.document.is_image() && tab.view != View::Read)
+                {
+                    self.editor.format = Some((tab.id(), tab.document.path.clone(), "=="));
+                    self.editor.focus = true;
+                    ctx.request_repaint();
+                } else {
+                    self.error = Some("Choose an editable Markdown note to highlight text.".into());
+                }
+            }
             "New note" => self.ask(Dialog::NewNote),
             "New folder" => self.ask(Dialog::NewFolder),
             "Add property" => self.ask(Dialog::AddProperty),
