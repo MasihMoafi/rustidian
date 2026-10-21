@@ -71,6 +71,23 @@ jobs:
       - name: Rust behavior checks
         if: ${{ inputs.reuse_run_id == '' }}
         run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
+      - name: Preserve an existing debug app for early disposable checks
+        if: ${{ inputs.reuse_run_id == '' }}
+        run: |
+          if [ -x target/debug/rust-notes ]; then
+            mkdir -p "$RUNNER_TEMP/rust-notes-functional"
+            tar -czf "$RUNNER_TEMP/rust-notes-functional/rust-notes-functional.tar.gz" -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+            sha256sum target/debug/rust-notes > "$RUNNER_TEMP/rust-notes-functional/functional.sha256"
+            git rev-parse HEAD > "$RUNNER_TEMP/rust-notes-functional/binary-source-commit.txt"
+          fi
+      - name: Keep the existing debug app for one day
+        if: ${{ inputs.reuse_run_id == '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: functional-native-${{ github.sha }}
+          retention-days: 1
+          path: ${{ runner.temp }}/rust-notes-functional/
+          if-no-files-found: ignore
       - name: Build the optimized GUI candidate
         id: build_candidate
         if: ${{ inputs.reuse_run_id == '' }}

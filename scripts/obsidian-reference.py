@@ -127,6 +127,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                     time.sleep(.1)
                 raise AssertionError(message)
             try:
+                original_notes={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
                 report['commands'] = evaluate("JSON.stringify(Object.entries(app.commands.commands).filter(([id])=>id.startsWith('file-recovery')).map(([id,c])=>({id,name:c.name})))")
                 assert len(report['commands'])==1
                 palette(report['commands'][0]['name'])
@@ -140,15 +141,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Copy')")
                 copied=subprocess.check_output(['xclip','-selection','clipboard','-out'],env=environment)
                 assert copied==original, 'History Copy changed the original Markdown bytes'
-                click_dom("document.querySelector('input[type=checkbox]')")
-                assert evaluate("JSON.stringify(document.querySelector('input[type=checkbox]').checked)") is True
-                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-changes.png')
-                home.write_text('# External version for recovery\n')
-                time.sleep(.4)
-                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Restore')")
-                report['restore_ui']=controls()
-                wait(lambda:home.read_bytes()==original,'Restore did not recover the exact snapshot bytes')
-                report['copy_restore']={'copy_exact_bytes':True,'restored_exact_bytes':True,'show_changes_toggled':True,'source_sha256':hashlib.sha256(original).hexdigest()}
+                report['copy_exact_bytes']=True
                 xdo('key','Escape');time.sleep(.3)
                 target=original_target
                 palette('Open settings')
@@ -165,15 +158,55 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 report['settings']=controls()
                 report['settings_items']=evaluate("JSON.stringify([...document.querySelectorAll('.setting-item')].map(e=>({name:e.querySelector('.setting-item-name')?.innerText,description:e.querySelector('.setting-item-description')?.innerText,controls:[...e.querySelectorAll('input,button')].map(i=>({type:i.type,value:i.value,text:i.innerText,min:i.min,max:i.max}))})))")
                 ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-settings.png')
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshot interval')?.querySelector('input')")
+                xdo('key','--clearmodifiers','ctrl+a');xdo('type','--clearmodifiers','0');xdo('key','Tab');time.sleep(.4)
+                report['interval_setting']=json.loads((settings/'file-recovery.json').read_text())
+                home.write_bytes(original+b'\nRECOVERY_SECOND_VERSION\n')
+                time.sleep(2)
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                click_dom("document.querySelector('input[placeholder=\"Choose a file...\"]')")
+                xdo('type','--clearmodifiers','Home');time.sleep(.3);xdo('key','Return');time.sleep(.5)
+                report['history_after_change']=controls()
+                report['history_dom']=evaluate("JSON.stringify(document.querySelector('.file-recovery-text')?.closest('.modal')?.outerHTML||document.body.innerHTML.slice(-15000))")
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-versions.png')
+                assert any(c.get('text')=='Restore' for c in report['history_after_change']['controls']), 'Choosing Home did not open its snapshots'
+                size=f'{len(original)/1024:.2f} KB'
+                click_dom("[...document.querySelectorAll('.modal div,.modal span')].find(e=>!e.children.length&&e.textContent.trim()==="+json.dumps(size)+")")
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Copy')")
+                assert subprocess.check_output(['xclip','-selection','clipboard','-out'],env=environment)==original
+                report['changes_before']=evaluate("JSON.stringify((()=>{const e=document.querySelector('input[type=checkbox]');return {checked:e.checked,html:e.parentElement.outerHTML}})())")
+                click_dom("document.querySelector('input[type=checkbox]').closest('.checkbox-container')")
+                report['changes_after']=evaluate("JSON.stringify((()=>{const e=document.querySelector('input[type=checkbox]');return {checked:e.checked,html:e.parentElement.outerHTML}})())")
+                assert report['changes_after']!=report['changes_before'], 'Show changes did not change state with two saved versions'
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-changes.png')
+                click_dom("[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Restore')")
+                report['restore_ui']=controls()
+                wait(lambda:home.read_bytes()==original,'Restore did not recover exact snapshot bytes')
+                report['copy_restore']={'copy_exact_bytes':True,'restored_exact_bytes':True,'show_changes_toggled':True}
+                close="document.querySelector('.modal.mod-sync-history .modal-header-button')"
+                if evaluate("JSON.stringify(Boolean("+close+"))"):click_dom(close)
                 click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Clear history')?.querySelector('button')")
                 report['clear_confirmation']=controls()
                 ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-clear-confirm.png')
-                xdo('key','Escape');time.sleep(.2)
+                click_dom("[...document.querySelectorAll('.modal button')].find(e=>e.textContent.trim()==='Cancel')")
                 click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                click_dom("document.querySelector('input[placeholder=\"Choose a file...\"]')")
+                xdo('type','--clearmodifiers','Home');time.sleep(.3);xdo('key','Return');time.sleep(.4)
                 report['after_clear_cancel']=controls()
                 assert any(c.get('text')=='Restore' for c in report['after_clear_cancel']['controls'])
                 assert home.read_bytes()==original
-                report['status']='passed-copy-restore-and-clear-cancel'
+                click_dom(close)
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Clear history')?.querySelector('button')")
+                click_dom("[...document.querySelectorAll('.modal button')].filter(e=>e.textContent.trim()==='Clear').at(-1)")
+                click_dom("[...document.querySelectorAll('.setting-item')].find(e=>e.querySelector('.setting-item-name')?.textContent==='Snapshots')?.querySelector('button')")
+                click_dom("document.querySelector('input[placeholder=\"Choose a file...\"]')")
+                xdo('type','--clearmodifiers','Home');time.sleep(.3);xdo('key','Return');time.sleep(.4)
+                report['after_clear']=controls()
+                assert not any(c.get('text')=='Restore' for c in report['after_clear']['controls'])
+                assert original_notes=={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
+                report['notes_unchanged']=True
+                report['status']='passed'
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-after-clear.png')
             except Exception as error:
                 report.update(status='failed',error=str(error))
                 ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-recovery-failure.png')

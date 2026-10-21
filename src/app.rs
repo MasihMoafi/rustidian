@@ -1429,6 +1429,7 @@ impl NotesApp {
                     .inner_margin(Margin::symmetric(17, 18)),
             )
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     for (tab, title, key) in [
                         (0, "Outline", "outline"),

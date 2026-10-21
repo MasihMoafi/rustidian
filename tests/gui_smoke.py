@@ -45,7 +45,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "workspaces"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "workspaces", "recovery"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -3341,6 +3341,7 @@ def main():
                     command("Workspaces: Manage workspace layouts")
                     bounds = control_bounds("workspace-name")
                     assert 0 <= bounds[0] < bounds[2] <= 1440 and 0 <= bounds[1] < bounds[3] <= 960, bounds
+                    assert control_bounds("workspace-close")
                     return bounds
 
                 def save_layout(name, keyboard=False):
@@ -3365,6 +3366,8 @@ def main():
 
                 def assert_layout(expected):
                     names = [tab["path"] for tab in expected["tabs"]]
+                    if tab_order() != names:
+                        (reports / "workspace-load-failure.json").write_text(json.dumps({"expected":expected,"actual_tabs":tab_order(),"stored":stored(),"controls":json.loads((base/"ui-probe.json").read_text())},indent=2)+"\n")
                     assert tab_order() == names, (tab_order(), names)
                     title_contains(Path(names[expected["active"]]).stem)
                     for side, key_name, width in (("left", "explorer", "left_width"), ("right", "details", "right_width")):
@@ -3377,6 +3380,11 @@ def main():
 
                 def load(name):
                     manager()
+                    capture("native-workspaces-load-" + name + "-before.png")
+                    (reports/ ("workspace-load-"+name+"-before.json")).write_text(json.dumps({"stored":stored(),"controls":json.loads((base/"ui-probe.json").read_text())},indent=2)+"\n")
+                    target_bounds=control_bounds("workspace-load:"+name)
+                    modal_bounds=control_bounds("workspace-manager")
+                    assert modal_bounds[0]<=target_bounds[0]<target_bounds[2]<=modal_bounds[2] and modal_bounds[1]<=target_bounds[1]<target_bounds[3]<=modal_bounds[3], (name,target_bounds,modal_bounds)
                     click_control("workspace-load:" + name, hold=.15)
                     assert control_bounds("workspace-name", required=False) is None
 
@@ -3423,7 +3431,7 @@ def main():
                 assert 0 <= small[0] < small[2] <= 860 and 0 <= small[1] < small[3] <= 560, small
                 assert control_bounds("workspace-save") and control_bounds("workspace-load:Writing")
                 capture("native-workspaces-compact.png", size=(860,560))
-                key("Escape")
+                click_control("workspace-close",hold=.15)
                 xdo("windowsize", window, "1440", "960")
                 pause()
                 command("Switch appearance")
@@ -3440,6 +3448,9 @@ def main():
                 time.sleep(.15)
                 xdo("mouseup", "1")
                 pause()
+                resized_right = control_bounds("sidebar:details")
+                (reports/"workspace-right-resize.json").write_text(json.dumps({"before":right,"after":resized_right},indent=2)+"\n")
+                assert abs((resized_right[2]-resized_right[0]) - (right[2]-right[0])) >= 20, (right,resized_right)
                 manager();save_layout("Reading");key("Escape")
                 reading = saved("Reading")
                 assert [tab["path"] for tab in reading["tabs"]] == ["Workspace A.md","Workspace B.md"]
@@ -3565,6 +3576,18 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other workspace vault\n"
                 results.append("Deleting saved layouts removed only metadata and preserved every original workspace document")
 
+            if args.section == "recovery":
+                command("Source editing")
+                key("ctrl+p");type_text("Save note")
+                assert control_bounds("command:Save note"), "Existing commands must work before checking the missing one"
+                key("Escape")
+                key("ctrl+p");type_text("File recovery: Open local history")
+                click_control("command:File recovery: Open local history",hold=.15)
+                assert control_bounds("recovery-files")
+                results.append("File recovery opened through its real available command")
+                (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"recovery"}))
+                return
             if args.section == "workspaces":
                 workspace_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")

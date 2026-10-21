@@ -385,6 +385,25 @@ use real Close/New tab actions to establish the pair, preserving all navigation
 and file-byte assertions. A focused pass with one tab does not establish that
 the fixture is valid in the complete suite.
 
+If cargo test has already produced target/debug/rust-notes, retain that existing
+app in functional-native-$SHA before optimized compilation. Do not add a debug
+build just to create it, and never use it for release latency or installation.
+This permits early focused interaction checks without extra Rust compilation.
+
+The optimized app should be downloadable immediately after compilation from
+application-native-$SHA. Focused reports and the final passing release remain
+separate artifacts; downloading an early app is not an installation receipt.
+This permits small local disposable checks while the full suite runs on Actions.
+
+For reference recovery checks, the current-file command selects the note, while
+Settings → Snapshots → View initially needs a file selection. Its history dialog
+closes through .modal-header-button, not the usual .modal-close-button. Exercise
+real controls before interacting with settings behind it. Show changes needs
+multiple saved versions; use the real interval setting0 in a disposable profile,
+then change the file, select the older size/date and check exact Copy/Restore
+bytes. Scope confirmation clicks to the top dialog: Settings remains below it
+and exposes a different Clear button with the same text. Five-minute/7-day defaults must remain separate from that test setup.
+
 ## Deliver the change
 
 Show a preview of the exact optimized executable on disposable copies early.

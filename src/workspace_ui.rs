@@ -50,18 +50,39 @@ impl Manager {
         let mut load = None;
         let mut save = false;
         let mut remove = None;
-        let response = egui::Modal::new(egui::Id::unique("workspace-manager")).show(ctx, |ui| {
+        let mut close = false;
+        let id = egui::Id::unique(if self.load_only {
+            "workspace-picker"
+        } else {
+            "workspace-manager"
+        });
+        let mut modal = egui::Modal::new(id);
+        if self.load_only {
+            modal = modal.area(
+                egui::Modal::default_area(id)
+                    .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 80.0)),
+            );
+        }
+        let response = modal.show(ctx, |ui| {
             theme::dialog_style(ui);
-            ui.set_width(544.0_f32.min((ctx.content_rect().width() - 48.0).max(240.0)));
-            ui_probe::record(ctx, "workspace-manager", ui.max_rect());
-            if self.load_only {
-                ui.heading("Load workspace layout");
+            let width: f32 = if self.load_only { 686.0 } else { 546.0 };
+            ui.set_width(width.min((ctx.content_rect().width() - 48.0).max(240.0)));
+            if !self.load_only {
+                ui.horizontal(|ui| {
+                    ui.heading("Manage workspace layouts");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let button = theme::icon_button(ui, theme::Icon::Close, "Close");
+                        ui_probe::record(ctx, "workspace-close", button.rect);
+                        close = button.clicked();
+                    });
+                });
+                ui.add_space(12.0);
             }
             ui.horizontal(|ui| {
                 let input = ui.add(
                     TextEdit::singleline(&mut self.input)
                         .hint_text(if self.load_only {
-                            "Search workspace layouts…"
+                            "Type to search..."
                         } else {
                             "Save current workspace layout as..."
                         })
@@ -131,29 +152,47 @@ impl Manager {
                             load = entries.get(self.selected).map(|entry| entry.name.clone());
                         }
                     }
-                    if entries.is_empty() {
+                    if entries.is_empty() && self.load_only {
                         ui.label(if list.entries().is_empty() {
                             "No saved workspace layouts."
                         } else {
                             "No matching layouts."
                         });
                     }
+                    let max_height = (ctx.content_rect().height() - 240.0).clamp(90.0, 360.0);
+                    let row_height = if self.load_only { 40.0 } else { 68.0 };
                     ScrollArea::vertical()
-                        .max_height((ctx.content_rect().height() - 240.0).clamp(90.0, 360.0))
+                        .id_salt(if self.load_only {
+                            "workspace-picker-rows"
+                        } else {
+                            "workspace-manager-rows"
+                        })
+                        .min_scrolled_height((entries.len() as f32 * row_height).min(max_height))
+                        .max_height(max_height)
                         .show(ui, |ui| {
                             for (index, entry) in entries.iter().enumerate() {
                                 if self.load_only {
+                                    let button =
+                                        egui::Button::selectable(index == self.selected, "");
+                                    let button = if list.active() == Some(entry.name.as_str()) {
+                                        button.left_text((
+                                            RichText::new(&entry.name),
+                                            RichText::new("ACTIVE")
+                                                .small()
+                                                .color(theme::accent(ui)),
+                                        ))
+                                    } else {
+                                        button.left_text(&entry.name)
+                                    };
                                     let row = ui.add(
-                                        egui::Button::selectable(
-                                            index == self.selected,
-                                            &entry.name,
-                                        )
-                                        .min_size(egui::vec2(ui.available_width(), 36.0)),
+                                        button
+                                            .min_size(egui::vec2(ui.available_width(), 32.0))
+                                            .corner_radius(4),
                                     );
                                     ui_probe::record(
                                         ctx,
                                         format!("workspace-load:{}", entry.name),
-                                        row.rect,
+                                        row.rect.intersect(ui.clip_rect()),
                                     );
                                     if row.clicked() {
                                         load = Some(entry.name.clone());
@@ -167,6 +206,7 @@ impl Manager {
                                             ),
                                             Layout::top_down(Align::Min),
                                             |ui| {
+                                                ui.set_min_width(ui.max_rect().width());
                                                 let name = ui.add(
                                                     egui::Label::new(
                                                         RichText::new(&entry.name).strong(),
@@ -203,7 +243,7 @@ impl Manager {
                                         ui_probe::record(
                                             ctx,
                                             format!("workspace-load:{}", entry.name),
-                                            button.rect,
+                                            button.rect.intersect(ui.clip_rect()),
                                         );
                                         if button.clicked() {
                                             load = Some(entry.name.clone());
@@ -216,7 +256,7 @@ impl Manager {
                                         ui_probe::record(
                                             ctx,
                                             format!("workspace-delete:{}", entry.name),
-                                            delete.rect,
+                                            delete.rect.intersect(ui.clip_rect()),
                                         );
                                         if delete.clicked() {
                                             remove = Some(entry.name.clone());
@@ -226,6 +266,14 @@ impl Manager {
                                 }
                             }
                         });
+                    if self.load_only {
+                        ui.separator();
+                        ui.label(
+                            RichText::new("↑↓ to navigate    ↵ to open    esc to dismiss")
+                                .small()
+                                .weak(),
+                        );
+                    }
                 }
             }
             if let Some(error) = &self.error {
@@ -233,7 +281,8 @@ impl Manager {
                 ui_probe::record(ctx, "workspace-error", response.rect);
             }
         });
-        if response.should_close() {
+        ui_probe::record(ctx, "workspace-manager", response.response.rect);
+        if close || response.should_close() {
             self.open = false;
             load = None;
         }
