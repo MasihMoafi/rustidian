@@ -5146,6 +5146,7 @@ def main():
             if args.section == "colors":
                 color_checks()
                 (reports / "gui-results.txt").write_text("\n".join(results) + "\n")
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
             if args.section == "essential":
