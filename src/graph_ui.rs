@@ -238,8 +238,8 @@ impl Manager {
             Sense::click_and_drag(),
         );
         ui_probe::record(ui.ctx(), "canvas", rect);
+        let panel_width = 240.0_f32.min((rect.width() - 20.0).max(100.0));
         if pane.settings && !blocked {
-            let panel_width = 240.0_f32.min((rect.width() - 20.0).max(100.0));
             let panel_height = (rect.height() - 44.0).max(40.0);
             egui::Area::new(ui.scope_id().with(("graph-settings", local)))
                 .fixed_pos(egui::pos2(
@@ -323,7 +323,7 @@ impl Manager {
                     let Scene { view, geometry, .. } = scene;
                     if pane.fit {
                         let reserved = if pane.settings {
-                            260.0_f32.min(rect.width() * 0.5)
+                            panel_width + 20.0
                         } else {
                             0.0
                         };
