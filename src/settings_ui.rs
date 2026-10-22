@@ -70,6 +70,7 @@ impl NotesApp {
         let before = (
             self.dark,
             self.ui_zoom,
+            self.document_font_size,
             self.autosave_enabled,
             self.note_aids.clone(),
             self.recovery_config.clone(),
@@ -435,6 +436,7 @@ impl NotesApp {
                 (
                     self.dark,
                     self.ui_zoom,
+                    self.document_font_size,
                     self.autosave_enabled,
                     self.note_aids,
                     self.recovery_config,
@@ -442,14 +444,7 @@ impl NotesApp {
                 ) = before;
                 self.error = Some(format!("Settings weren’t saved: {error}"));
             } else {
-                self.status = "Settings saved".into();
-                if self
-                    .error
-                    .as_deref()
-                    .is_some_and(|error| error.starts_with("Settings weren’t saved:"))
-                {
-                    self.error = None;
-                }
+                self.settings_saved();
             }
             theme::apply(ctx, self.dark);
             ctx.set_zoom_factor(self.ui_zoom);

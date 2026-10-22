@@ -73,6 +73,7 @@ impl Manager {
         tabs: &[Tab],
         active: usize,
         blocked: bool,
+        document_font_size: u8,
     ) -> Option<Action> {
         let request = ctx.data_mut(|data| {
             let id = egui::Id::unique("page-preview-request");
@@ -214,6 +215,7 @@ impl Manager {
                 ui.set_max_height(height + frame.total_margin().sum().y);
                 let content_width = width - frame.total_margin().sum().x;
                 frame.show(ui, |ui| {
+                    crate::theme::document_style(ui, document_font_size);
                     ui.set_width(content_width);
                     let corner = Rect::from_center_size(
                         egui::pos2(ui.max_rect().right() + 16.0, ui.min_rect().top() - 16.0),

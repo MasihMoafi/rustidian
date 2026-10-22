@@ -83,7 +83,7 @@ impl TableCell {
     ) -> Arc<egui::Galley> {
         let mut job = egui::text::LayoutJob::default();
         job.wrap.max_width = width;
-        job.first_row_min_height = 23.4;
+        job.first_row_min_height = crate::theme::document_size(ui, 23.4);
         for part in &self.parts {
             let mut format = inline_format(ui, part, 0, Some(header));
             if let Some(color) = color {
@@ -777,12 +777,13 @@ fn show_blocks(
                         ui.spacing_mut().item_spacing.x = 9.0;
                         ui.add_space(task_indent);
                         let line_height = galley.rows.first().map_or(29.16, |row| row.height());
+                        let size = crate::theme::document_size(ui, 18.0);
                         let checkbox = ui
                             .allocate_ui_with_layout(
-                                egui::vec2(18.0, line_height),
+                                egui::vec2(size, line_height),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                    ui.add_space(((line_height - 18.0) / 2.0).max(0.0));
+                                    ui.add_space(((line_height - size) / 2.0).max(0.0));
                                     crate::theme::checkbox(ui, &mut checked)
                                 },
                             )
@@ -898,15 +899,18 @@ fn inline_format(
     heading: u8,
     table_header: Option<bool>,
 ) -> egui::TextFormat {
-    let size = match heading {
-        1 => 32.436,
-        2 => 28.836,
-        3 => 25.632,
-        4.. => 22.788,
-        _ if part.code && table_header.is_some() => crate::code_ui::FONT_SIZE,
-        _ if part.code => 16.0,
-        _ => 18.0,
-    };
+    let size = crate::theme::document_size(
+        ui,
+        match heading {
+            1 => 32.436,
+            2 => 28.836,
+            3 => 25.632,
+            4.. => 22.788,
+            _ if part.code && table_header.is_some() => crate::code_ui::FONT_SIZE,
+            _ if part.code => 16.0,
+            _ => 18.0,
+        },
+    );
     let family = if part.code {
         egui::FontFamily::Monospace
     } else if heading == 1 || part.html.bold == Some(true) {

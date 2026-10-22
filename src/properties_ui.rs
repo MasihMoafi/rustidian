@@ -154,8 +154,10 @@ impl Properties {
             .scope(|ui| {
                 ui.spacing_mut().button_padding = egui::Vec2::ZERO;
                 ui.add(
-                    egui::Button::new(RichText::new("Properties").size(18.0))
-                        .frame_when_inactive(false),
+                    egui::Button::new(
+                        RichText::new("Properties").size(crate::theme::document_size(ui, 18.0)),
+                    )
+                    .frame_when_inactive(false),
                 )
             })
             .inner;
@@ -216,8 +218,12 @@ impl Properties {
                         |ui| {
                             ui.set_min_width(136.0);
                             ui.add(
-                                egui::Label::new(RichText::new(&field.name).size(18.0).weak())
-                                    .truncate(),
+                                egui::Label::new(
+                                    RichText::new(&field.name)
+                                        .size(crate::theme::document_size(ui, 18.0))
+                                        .weak(),
+                                )
+                                .truncate(),
                             );
                         },
                     );
@@ -244,7 +250,9 @@ impl Properties {
                             let input = ui.add(
                                 TextEdit::singleline(&mut field.text)
                                     .id_salt((&tab.document.path, &field.name))
-                                    .font(FontId::proportional(18.0))
+                                    .font(FontId::proportional(crate::theme::document_size(
+                                        ui, 18.0,
+                                    )))
                                     .frame(egui::Frame::NONE)
                                     .desired_width(value_width)
                                     .hint_text(if field.kind == Kind::Number {
@@ -295,7 +303,11 @@ impl Properties {
                                                         fonts
                                                             .layout_no_wrap(
                                                                 value.clone(),
-                                                                FontId::proportional(18.0),
+                                                                FontId::proportional(
+                                                                    crate::theme::document_size(
+                                                                        ui, 18.0,
+                                                                    ),
+                                                                ),
                                                                 ui.visuals().text_color(),
                                                             )
                                                             .size()
@@ -309,7 +321,9 @@ impl Properties {
                                                         &field.name,
                                                         index,
                                                     ))
-                                                    .font(FontId::proportional(18.0))
+                                                    .font(FontId::proportional(
+                                                        crate::theme::document_size(ui, 18.0),
+                                                    ))
                                                     .frame(egui::Frame::NONE)
                                                     .desired_width(width);
                                                 if tags {
@@ -338,7 +352,9 @@ impl Properties {
                                 let entry = ui.add(
                                     TextEdit::singleline(&mut field.new_item)
                                         .id_salt((&tab.document.path, &field.name, "new-item"))
-                                        .font(FontId::proportional(18.0))
+                                        .font(FontId::proportional(crate::theme::document_size(
+                                            ui, 18.0,
+                                        )))
                                         .frame(egui::Frame::NONE)
                                         .desired_width(140.0)
                                         .hint_text(if field.items.is_empty() {

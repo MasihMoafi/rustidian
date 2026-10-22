@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -3991,6 +3991,89 @@ def main():
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
 
+            def font_controls_checks():
+                nonlocal app,window
+                close_tabs()
+                note=fixture/"Font controls.md"
+                original="# Font controls\n\nA paragraph with **bold**, a [link](Home.md) and `code`.\n\n- [ ] Font task\n\n| Name | Value |\n| --- | --- |\n| Keep | Text |\n\n```rust\nlet keep = 1;\n```\n"
+                note.write_text(original);open_note("Font controls");command("Reading view")
+                def font(expected):
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline:
+                        actual=control_bounds("document-font-size")[0]
+                        if actual==expected:return
+                        time.sleep(.03)
+                    raise AssertionError(("Rendered document font size",expected,actual))
+                def title_width():
+                    bounds=control_bounds("note-title");return bounds[2]-bounds[0]
+                def step_to(size):
+                    actual=round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size-actual)):command("Increase font size" if size>actual else "Decrease font size")
+                    font(size)
+                font(18);baseline=title_width();chrome=control_bounds("tab-full:Font controls.md")
+                paragraph=control_bounds("reading-block:1");height=paragraph[3]-paragraph[1]
+                command("Increase font size");font(19)
+                enlarged=control_bounds("reading-block:1")
+                assert title_width()>baseline and enlarged[3]-enlarged[1]>height
+                assert control_bounds("tab-full:Font controls.md")==chrome and note.read_text()==original
+                command("Decrease font size");font(18);assert abs(title_width()-baseline)<.1
+                results.append("Actual palette font commands changed Reading glyph and line bounds by one pixel, preserved the tab's bounds and left all Markdown bytes unchanged")
+                for dark in (False,True):
+                    set_theme(dark);command("Increase font size");font(19)
+                    for mode in ("Reading view","Live preview","Source editing"):
+                        command(mode);font(19);assert title_width()>baseline
+                        capture("native-font-controls-"+("dark" if dark else "light")+"-"+mode.split()[0].lower()+".png")
+                    command("Decrease font size");font(18)
+                assert note.read_text()==original
+                results.append("Both actual themes used the same enlarged document size in Reading, Live and Source while preserving note bytes and ordinary controls")
+                command("Reading view");command("Open settings");bounds=control_bounds("settings-font-size")
+                xdo("mousemove",str(round(bounds[0]+35)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                xdo("key","--clearmodifiers","--repeat","25","--delay","30","Right");key("Escape");font(30)
+                high=title_width();command("Increase font size");font(30);assert title_width()==high
+                capture("native-font-controls-maximum.png")
+                command("Open settings");bounds=control_bounds("settings-font-size")
+                xdo("mousemove",str(round(bounds[0]+35)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                xdo("key","--clearmodifiers","--repeat","25","--delay","30","Left");key("Escape");font(10)
+                low=title_width();command("Decrease font size");font(10);assert title_width()==low and low<baseline<high
+                capture("native-font-controls-minimum.png");step_to(18)
+                results.append("The actual settings slider reached both observed 10/30 pixel boundaries and the corresponding palette commands could not step beyond either limit")
+                command("Source editing");editor_end();type_text("UNDO_FONT_PROOF");key("ctrl+s")
+                assert note.read_text()==original+"UNDO_FONT_PROOF"
+                command("Increase font size");font(19);key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                key("ctrl+y");key("ctrl+s");assert note.read_text()==original+"UNDO_FONT_PROOF"
+                key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                results.append("Source font changes returned editor focus and left existing text Undo/Redo intact, with exact saved bytes after each action")
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window();title_contains("Font controls");font(19)
+                editor_end();type_text("RESTART_FONT_PROOF");key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                results.append("A clean native restart restored document font size and mode; real focused editing still undid and saved unchanged bytes")
+                other=base/"Font preferences vault";other.mkdir();(other/".obsidian").mkdir()
+                appearance=b'{"baseFontSize":22,"unrelated":"keep"}';(other/".obsidian/appearance.json").write_bytes(appearance)
+                (other/"Home.md").write_text("# Other font vault\n\nKeep.\n")
+                def switch(root):
+                    command("Open vault");modified_shortcut(xdo,"a");paste_text(str(root),held=True);key("Return");title_contains(root.name)
+                switch(other);open_note("Home");font(22);command("Decrease font size");font(21)
+                switch(fixture);title_contains("Font controls");font(19)
+                switch(other);title_contains("Home");font(21)
+                assert (other/".obsidian/appearance.json").read_bytes()==appearance
+                switch(fixture);title_contains("Font controls");font(19)
+                results.append("A new vault imported its guarded Obsidian font preference, retained its independent native setting across switches and preserved the original settings bytes")
+                state_files=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Font controls.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(state_files)==1;state=state_files[0];held=base/"held-font-state.json";state.rename(held);state.mkdir()
+                try:
+                    command("Increase font size");font(19);assert title_width()>baseline
+                    capture("native-font-controls-write-error.png")
+                finally:state.rmdir();held.rename(state)
+                command("Increase font size");font(20);command("Decrease font size");font(19)
+                assert json.loads(state.read_text())["document_font_size"]==19
+                results.append("An actual preference-write failure rolled font size back; retry after restoring the writable state succeeded without changing note contents")
+                step_to(18);command("Reading view");click_control("task:0");key("ctrl+s")
+                checked=original.replace("- [ ] Font task","- [x] Font task");assert note.read_text()==checked
+                command("Source editing");key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                command("Reading view");font(18);assert abs(title_width()-baseline)<.1
+                assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
+                results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
+
             def tab_restore_checks():
                 close_tabs()
                 originals={name:f"# Restore {name}\n\n{name.upper()}_ORIGINAL\n" for name in ("Alpha","Beta","Gamma")}
@@ -5705,6 +5788,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
                 return
+            if args.section == "font-controls":
+                font_controls_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"font-controls"}))
+                return
             if args.section == "tab-restore":
                 tab_restore_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -6062,6 +6150,7 @@ def main():
                 note_creator_checks,
                 tab_action_checks,
                 tab_restore_checks,
+                font_controls_checks,
                 workspace_checks,
                 palette_queue_checks,
                 unicode_queue_checks,

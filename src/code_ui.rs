@@ -45,9 +45,9 @@ pub fn reading(ui: &mut egui::Ui, body: &str, language: &str, ordinal: usize) ->
     job.wrap.max_width = (ui.available_width() - 2.0 * HORIZONTAL_INSET).max(1.0);
     let colors = crate::syntax::code_tokens(ui, &display, language, true);
     let format = egui::TextFormat {
-        font_id: FontId::monospace(FONT_SIZE),
+        font_id: FontId::monospace(crate::theme::document_size(ui, FONT_SIZE)),
         color: ui.visuals().weak_text_color(),
-        line_height: Some(LINE_HEIGHT),
+        line_height: Some(crate::theme::document_size(ui, LINE_HEIGHT)),
         ..Default::default()
     };
     if display.is_empty() {
@@ -56,7 +56,7 @@ pub fn reading(ui: &mut egui::Ui, body: &str, language: &str, ordinal: usize) ->
         append_colored(&mut job, &display, 0, 0.0, format, &colors);
     }
     let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-    crate::theme::set_line_height(&mut galley, LINE_HEIGHT);
+    crate::theme::set_line_height(&mut galley, crate::theme::document_size(ui, LINE_HEIGHT));
     let frame = egui::Frame::NONE
         .fill(ui.visuals().code_bg_color)
         .corner_radius(7)

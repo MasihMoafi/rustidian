@@ -1102,7 +1102,7 @@ impl Editor {
                     .desired_rows(1)
                     .min_size(egui::vec2(0.0, minimum_height))
                     .frame(egui::Frame::NONE)
-                    .font(FontId::proportional(18.0))
+                    .font(FontId::proportional(crate::theme::document_size(ui, 18.0)))
                     .layouter(&mut layouter)
                     .event_filter(egui::EventFilter {
                         tab: true,
@@ -1205,9 +1205,10 @@ impl Editor {
                 let point = positioned
                     .at(character)
                     .translate(output.galley_pos.to_vec2());
+                let size = crate::theme::document_size(ui, 18.0);
                 let rect = egui::Rect::from_center_size(
-                    egui::pos2(point.min.x + 9.0, point.center().y),
-                    egui::vec2(18.0, 18.0),
+                    egui::pos2(point.min.x + size / 2.0, point.center().y),
+                    egui::vec2(size, size),
                 );
                 if !rect.intersects(task_clip) {
                     continue;
@@ -2210,6 +2211,7 @@ fn layout(
     } = decorations;
     let mut job = LayoutJob::default();
     job.wrap.max_width = width;
+    let font_scale = crate::theme::document_size(ui, 1.0);
     let colors = crate::syntax::highlights(ui, text, parsed);
     let callout_heights: Vec<_> = if live {
         parsed
@@ -2287,6 +2289,7 @@ fn layout(
             } else {
                 18.0
             };
+            let size = size * font_scale;
             let family = if style.code {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
@@ -2358,19 +2361,19 @@ fn layout(
                     callout_heights
                         .iter()
                         .find(|(range, _)| range.contains(&start))
-                        .map_or(29.16, |(_, height)| *height)
+                        .map_or_else(|| 29.16 * font_scale, |(_, height)| *height)
                 } else if live && style.property {
                     0.01
                 } else if let Some(image) = image.filter(|_| !active) {
                     image.size.y + 16.0
                 } else if style.block_code {
-                    crate::code_ui::LINE_HEIGHT
+                    crate::code_ui::LINE_HEIGHT * font_scale
                 } else if section == "\n" {
-                    29.16
+                    29.16 * font_scale
                 } else if style.heading > 0 {
-                    size.max(24.0) * 1.2
+                    size.max(24.0 * font_scale) * 1.2
                 } else {
-                    29.16
+                    29.16 * font_scale
                 }),
                 valign: if image.is_some() && active {
                     egui::Align::Min

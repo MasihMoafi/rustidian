@@ -28,6 +28,8 @@ struct Session {
     right_tab: u8,
     #[serde(default = "default_zoom")]
     ui_zoom: f32,
+    #[serde(default)]
+    document_font_size: Option<u8>,
     #[serde(default = "default_autosave")]
     autosave_enabled: bool,
     #[serde(default)]
@@ -116,6 +118,9 @@ impl NotesApp {
             1.0
         };
         self.autosave_enabled = session.autosave_enabled;
+        if let Some(size) = session.document_font_size {
+            self.document_font_size = size.clamp(10, 30);
+        }
         if let Some(config) = session.note_aids {
             self.note_aids = config;
         }
@@ -169,6 +174,7 @@ impl NotesApp {
             bookmarks_open: self.show_bookmarks,
             right_tab: self.right_tab,
             ui_zoom: self.ui_zoom,
+            document_font_size: Some(self.document_font_size),
             autosave_enabled: self.autosave_enabled,
             note_aids: Some(self.note_aids.clone()),
             sidebar_widths: self.sidebar_widths,
@@ -233,6 +239,7 @@ mod tests {
         assert!(state.bookmarks.items.is_empty());
         assert!(!state.bookmarks_open);
         assert!(state.note_aids.is_none());
+        assert_eq!(state.document_font_size, None);
         assert!(state.pinned.is_empty());
         assert_eq!(state.sidebar_widths, [300.0, 234.0]);
         let restored: Session =

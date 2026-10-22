@@ -20,14 +20,17 @@ impl Title {
                 ..Self::default()
             };
         }
-        let font = FontId::new(32.436, egui::FontFamily::Name("bold".into()));
+        let font = FontId::new(
+            crate::theme::document_size(ui, 32.436),
+            egui::FontFamily::Name("bold".into()),
+        );
         if !self.editing {
             let response = ui.add(
                 egui::Label::new(
                     RichText::new(title)
                         .font(font)
                         .color(crate::theme::heading(ui, 1))
-                        .line_height(Some(38.9232)),
+                        .line_height(Some(crate::theme::document_size(ui, 38.9232))),
                 )
                 .selectable(false)
                 .sense(egui::Sense::click()),

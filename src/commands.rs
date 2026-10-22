@@ -30,6 +30,8 @@ pub const OPEN_FILE_SHORTCUT: &str = "Ctrl+Shift+O";
 pub const OPEN_FOLDER_SHORTCUT: &str = "Ctrl+Alt+O";
 pub const OPEN_GRAPH: &str = "Graph view: Open graph view";
 pub const OPEN_LOCAL_GRAPH: &str = "Graph view: Open local graph";
+pub const INCREASE_FONT_SIZE: &str = "Increase font size";
+pub const DECREASE_FONT_SIZE: &str = "Decrease font size";
 
 pub struct Command {
     pub name: &'static str,
@@ -56,6 +58,7 @@ pub const ALL: &[Command] = &[
     },
     Command {
         name: OPEN_GRAPH,
+        name: INCREASE_FONT_SIZE,
         shortcut: "",
         scope: Scope::Global,
     },
@@ -63,6 +66,9 @@ pub const ALL: &[Command] = &[
         name: OPEN_LOCAL_GRAPH,
         shortcut: "",
         scope: Scope::Document,
+        name: DECREASE_FONT_SIZE,
+        shortcut: "",
+        scope: Scope::Global,
     },
     Command {
         name: CLOSE_OTHER_TABS,

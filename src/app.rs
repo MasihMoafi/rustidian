@@ -95,6 +95,7 @@ pub struct NotesApp {
     pub(crate) show_bookmarks: bool,
     pub(crate) right_tab: u8,
     pub(crate) ui_zoom: f32,
+    pub(crate) document_font_size: u8,
     pub(crate) autosave_enabled: bool,
     vault_manager: crate::vault_manager::Manager,
     open_picker: rust_notes::native_picker::Picker,
@@ -178,6 +179,7 @@ impl NotesApp {
             show_bookmarks: false,
             right_tab: 0,
             ui_zoom: 1.0,
+            document_font_size: theme::DEFAULT_DOCUMENT_FONT_SIZE,
             autosave_enabled: true,
             vault_manager: Default::default(),
             open_picker: Default::default(),
@@ -368,6 +370,20 @@ impl NotesApp {
                         self.bookmarks = Default::default();
                         self.right_tab = 0;
                         self.ui_zoom = 1.0;
+                        self.document_font_size = rust_notes::paths::read_obsidian::<
+                            serde_json::Value,
+                        >(
+                            &vault.root, "appearance.json"
+                        )
+                        .unwrap_or_else(|error| {
+                            self.error = Some(error);
+                            Default::default()
+                        })
+                        .get("baseFontSize")
+                        .and_then(serde_json::Value::as_u64)
+                        .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
+                            size.clamp(10, 30) as u8
+                        });
                         self.autosave_enabled = true;
                         ctx.set_zoom_factor(1.0);
                         self.show_bookmarks = false;
@@ -1073,6 +1089,32 @@ impl NotesApp {
                 }
                 self.error = Some(error);
             }
+        }
+    }
+
+    fn set_document_font_size(&mut self, size: u8) {
+        let before = self.document_font_size;
+        self.document_font_size = size.clamp(10, 30);
+        if self.document_font_size != before {
+            if let Err(error) = self.write_session() {
+                self.document_font_size = before;
+                self.error = Some(format!("Settings weren’t saved: {error}"));
+            } else {
+                self.settings_saved();
+            }
+            self.ctx.request_repaint();
+        }
+        self.focus_editor();
+    }
+
+    fn settings_saved(&mut self) {
+        self.status = "Settings saved".into();
+        if self
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("Settings weren’t saved:"))
+        {
+            self.error = None;
         }
     }
 
@@ -2439,6 +2481,7 @@ impl NotesApp {
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                theme::document_style(ui, self.document_font_size);
                 let width = ui.available_width();
                 let content_width = width.min(920.0).min((width - 48.0).max(100.0));
                 let margin = ((width - content_width) / 2.0).max(0.0);
@@ -3394,10 +3437,14 @@ impl NotesApp {
 
     fn show_page_preview(&mut self, ctx: &egui::Context) {
         let blocked = self.interaction_blocked() || self.view() == View::Graph;
-        match self
-            .page_preview
-            .show(ctx, self.vault.as_ref(), &self.tabs, self.active, blocked)
-        {
+        match self.page_preview.show(
+            ctx,
+            self.vault.as_ref(),
+            &self.tabs,
+            self.active,
+            blocked,
+            self.document_font_size,
+        ) {
             Some(crate::page_preview::Action::Open { from, target }) => {
                 self.follow_link_from(&from, &target)
             }
@@ -3805,6 +3852,12 @@ impl NotesApp {
             "Toggle pin" => self.toggle_pin(self.active),
             rust_notes::commands::UNDO_CLOSE_TAB => self.undo_close_tab(),
             rust_notes::commands::CLOSE_OTHER_TABS => self.request_close_other_tabs(),
+            rust_notes::commands::INCREASE_FONT_SIZE => {
+                self.set_document_font_size(self.document_font_size.saturating_add(1))
+            }
+            rust_notes::commands::DECREASE_FONT_SIZE => {
+                self.set_document_font_size(self.document_font_size.saturating_sub(1))
+            }
             "New tab" => self.new_tab(),
             "Close current tab" if !self.tabs.is_empty() => self.request_close_tab(self.active),
             "Go to next tab" => self.step_tab(false),
