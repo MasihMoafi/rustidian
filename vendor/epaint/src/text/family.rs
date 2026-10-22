@@ -205,9 +205,16 @@ impl Family {
         faces: &mut FaceStore,
     ) -> Option<FontFaceKey> {
         chain.iter().copied().find(|&key| {
-            faces
-                .get_mut(key)
-                .is_some_and(|face| face.glyph_id_resolution(c).is_some())
+            faces.get_mut(key).is_some_and(|face| {
+                // Emoji fonts include ASCII bases for keycaps. Ordinary text
+                // must retain its text glyph or primary .notdef metrics;
+                // emoji-presentation clusters were resolved before this lookup.
+                #[cfg(feature = "color_fonts")]
+                if c.is_ascii() && chain.first() != Some(&key) && face.has_color_glyph_for_char(c) {
+                    return false;
+                }
+                face.glyph_id_resolution(c).is_some()
+            })
         })
     }
 

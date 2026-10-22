@@ -50,3 +50,14 @@ The crates declare `MIT OR Apache-2.0`; retain both license files when distribut
 
 
 21 October local folding optimization: `Row::clone_without_visuals` copies logical glyphs and layout metadata without copying the rendered vertex/index buffers. Rust Notes uses it only for zero-height folded rows, whose visuals are empty. Visible rows and the retained original font galley stay unchanged. Logical cursor/selection data survives, and the tessellator can skip empty hidden meshes even without coarse culling. This extension is local, not an upstream claim; patch: `patches/fold-row-without-visuals.patch`. The native editor regression asserts hidden meshes are absent, glyphs preserved and visible visuals unchanged, and demonstrably fails before the fix.
+
+22 October color emoji: application font families now append licensed Noto Color
+Emoji and enable epaint's native color-font support. Local fallback resolution
+selects an emoji-presented grapheme before the ordinary character cache and keeps
+a separate emoji cache, so plain heart/digit layout cannot suppress a later
+VS16/keycap sequence. Ordinary ASCII fallback skips nonprimary color glyphs:
+otherwise # and * in the Arabic-only family acquire wider Noto keycap bases.
+The exact app-font metric regression failed in Actions39758705958; it remains
+unchanged to verify the repair. Emoji sequences, original marker pixels and
+text presentation retain actual shaping/atlas tests. This is a local correction,
+not an upstream release claim.

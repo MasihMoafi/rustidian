@@ -20,13 +20,14 @@ check correctness/appearance/speed, then repeat. Existing Obsidian JavaScript
 plugins do not execute here yet. Masih decides acceptance; CI alone establishes
 neither full parity nor the fastest editor.
 
-Optimized source048fced is installed after complete verification in
-[Actions39658870633](https://github.com/MasihMoafi/rustidian/actions/runs/39658870633)
-with harness e326f14:133 Rust executions/127 unique,115 full native GUI groups,
-all32 sections, six CPU conditions and the normal Ferrite comparison pass.
-The exact executable/bundle hashes, raw evidence and preserved b9 rollback are
-in reports/release-verification.json. No local Rust compilation was performed.
-
+Installed optimized source9febfbb was verified by corrected harness ecad9cb in
+[Actions39704845915](https://github.com/MasihMoafi/rustidian/actions/runs/39704845915):
+172 Rust executions/166 unique,164 full GUI checks across40 workflows,15 focused
+workflows, six CPU conditions and the bounded Ferrite comparison pass. The exact
+identities, hashes and rollback are in reports/release-verification.json. Check
+ES.md and reports/current-candidate.json before resuming: newer source has not
+necessarily passed its full gates or replaced this installed executable. No local
+Rust compilation is permitted.
 Masih accepted the copied-plan link and scrolled checkbox fixes in preview4dbb842.
 That older candidate's full suite exposed a now-fixed table-edit probe crash;
 preserve its failing evidence. The prior21a1271 receipt is retained in
@@ -274,6 +275,29 @@ and20 edited samples,25 verified insertions, unfolded/mostly folded conditions.
 Targets are idle median<=5ms and edited median<=16.7ms. Different runner CPUs
 cannot establish before/after speedups. Hover's150ms gate includes native input
 and screenshot polling; scrolling checks distance, direction and no delayed tail.
+
+## Open existing files and folders
+
+Treat opening an existing path separately from creating one. Keep visible
+File → Open file… / Open folder… actions and command-palette equivalents.
+Ctrl+Shift+O opens a file; Ctrl+Alt+O opens a folder; Ctrl+O remains the familiar
+vault quick switcher. Use the shared native picker and CLI root resolver:
+keep the active containing vault, otherwise choose the deepest registered root
+or the containing folder. Preflight unsupported/invalid text before switching.
+
+A native chooser is asynchronous. Cancel must retain focus, buffers and root;
+Save/Discard/Cancel must resolve dirty buffers before changing vaults. Test real
+file and folder selection with Unicode paths, menu and keyboard routes, external
+files, exact saved bytes and Undo. The old optimized c7 app passes ordinary
+editing controls, then fails on the missing File menu: retain that negative.
+
+Actual isolated Obsidian1.14.4 and Zed1.24.2 opening audits are in
+reports/obsidian-1.14.4-opening/ and reports/zed-opening-reference/. The latter
+verified Markdown/text/folder opening and cancellation, but its private session
+had no portal and used Zed's internal chooser. Do not call that native-dialog
+appearance proof. Cloned Zed3389d875 opening source was fetched directly and
+blob-verified; its installed executable is a different revision. Reference the
+behavior and license; no GPL source was copied into this MIT project.
 
 ## Vault chooser contract
 
