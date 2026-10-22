@@ -1356,6 +1356,7 @@ mod tests {
             "<span style='color:#2b7a4b;font-weight:700'><mark style='background-color:rgba(46,204,113,.4);padding:0.1em 0.2em'>DW</mark></span> plain ==11h==",
         );
         let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx, true);
         ctx.run_ui(egui::RawInput::default(), |ui| {
             let galley = cell.layout(ui, false, 900.0);
