@@ -1574,7 +1574,10 @@ def main():
                 results.append("Properties-note preview edits preserved exact frontmatter and the same first-Live-editor history behavior, with metadata and task bytes restored")
                 command("Open settings");type_text("autosave")
                 click_control("settings-autosave",hold=.15)
-                wait_autosave(base/"state",False)
+                sessions=[path for path in (base/"state/rust-notes").glob("*.json") if any(name=="Preview folder/Preview target.md" for name,_ in json.loads(path.read_text()).get("tabs",[]))]
+                assert len(sessions)==1,sessions
+                session_path=sessions[0]
+                wait_autosave(base/"state",False,session_path=session_path)
                 key("Escape")
                 editor_end();type_text("BUFFER_PREVIEW_MARKER");assert target.read_text()==target_original
                 key("ctrl+t");open_note("Preview source");command("Reading view");hover_target()
@@ -1588,7 +1591,7 @@ def main():
                 key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original
                 command("Open settings");type_text("autosave")
                 click_control("settings-autosave",hold=.15)
-                wait_autosave(base/"state",True)
+                wait_autosave(base/"state",True,session_path=session_path)
                 key("Escape")
                 results.append("A dirty target in another tab kept its prior text with autosave disabled, shared the task change and undid task then typing separately")
                 click_control("tab:Preview source.md");command("Reading view");hover_target()
