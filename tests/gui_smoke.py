@@ -15,7 +15,7 @@ import tempfile
 import time
 import traceback
 
-from PIL import Image, ImageGrab
+from PIL import Image, ImageChops, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -5384,6 +5384,83 @@ def main():
                 assert control_bounds("global-graph:canvas", required=False) is None
                 key("ctrl+w");title_contains("Graph view");ready("global-graph", 9, 9)
                 results.append("Restart restored the active document beside its same-path Graph tab; closing the document revealed the retained graph")
+
+                labels=graph_root/"StableLabels";labels.mkdir()
+                for index in range(64):
+                    text=f"# Label-{index:02}\n\n"
+                    if index==0:text+="\n".join(f"[[StableLabels/Label-{other:02}]]" for other in range(1,64))+"\n"
+                    (labels/f"Label-{index:02}.md").write_text(text)
+                command("Refresh vault");filters("global-graph")
+                filter_text("global-graph","path:StableLabels");ready("global-graph",64,63)
+                click_control("global-graph:settings",hold=.15);click_control("global-graph:fit",hold=.15)
+                xdo("mousemove","--sync","100","80");pause()
+                capture("native-graph-labels-before.png")
+                canvas=control_bounds("global-graph:canvas")
+                area=(round(canvas[0]+260),round(canvas[1]+100),round(canvas[2]-260),round(canvas[3]-100))
+                before=Image.open(reports/"native-graph-labels-before.png").convert("RGB")
+                pause();capture("native-graph-labels-control.png")
+                control=Image.open(reports/"native-graph-labels-control.png").convert("RGB")
+                def changed(first,second):
+                    return sum(max(pixel)>16 for pixel in pixel_data(ImageChops.difference(first,second)))
+                noise=changed(before.crop(area),control.crop(area))
+                assert noise<=20,("The unchanged graph must be settled before comparing a pan",noise)
+                comparisons=[]
+                for index,(dx,dy) in enumerate([(13,5),(17,9),(-7,-4)]):
+                    pan=[metric("global-graph",key) for key in ("pan-x","pan-y")]
+                    x,y=round(canvas[2]-30),round(canvas[3]-30)
+                    xdo("mousemove","--sync",str(x),str(y),"mousedown","1");time.sleep(.12)
+                    try:
+                        for step in range(1,9):
+                            xdo("mousemove",str(round(x+dx*step/8)),str(round(y+dy*step/8)));time.sleep(.035)
+                    finally:xdo("mouseup","1")
+                    xdo("mousemove","--sync","100","80");pause()
+                    shift=[round(metric("global-graph",key)-pan[axis]) for axis,key in enumerate(("pan-x","pan-y"))]
+                    assert any(shift),("The pan must actually move the graph",shift)
+                    capture(f"native-graph-labels-pan-{index}.png")
+                    after=Image.open(reports/f"native-graph-labels-pan-{index}.png").convert("RGB")
+                    moved=tuple(value+shift[axis%2] for axis,value in enumerate(area))
+                    difference=changed(before.crop(area),after.crop(moved))
+                    wrong_alignment=changed(before.crop(area),after.crop(area))
+                    comparisons.append({"shift":shift,"translated_changed_pixels":difference,"untranslated_changed_pixels":wrong_alignment,"control_noise_pixels":noise})
+                    (reports/"graph-label-stability.json").write_text(json.dumps(comparisons,indent=2)+"\n")
+                    assert wrong_alignment>500,("The comparison must reject a missing translation",wrong_alignment)
+                    assert difference<=20,("Graph labels changed while only panning",comparisons[-1])
+                    before=after
+                results.append("Three physical pans preserved the translated dense-graph pixels and labels; independent stationary and wrong-alignment controls passed")
+
+                direction_sources={"Focus.md":"[[Child]]\n[[Peer]]\n","Parent.md":"[[Focus]]\n","Child.md":"# Child\n","Peer.md":"[[Focus]]\n"}
+                direction=graph_root/"Direction";direction.mkdir()
+                for name,text in direction_sources.items():(direction/name).write_text(text)
+                command("Refresh vault");filters("global-graph")
+                filter_text("global-graph","path:Direction");ready("global-graph",4,4)
+                def direction_mode(prefix):
+                    if control_bounds(prefix+":section:display",required=False) is None:click_control(prefix+":settings",hold=.15)
+                    if control_bounds(prefix+":color-mode",required=False) is None:click_control(prefix+":section:display",hold=.15)
+                    click_control(prefix+":color-mode",hold=.15)
+                    click_control(prefix+":color-mode:Link direction",hold=.15)
+                    click_control(prefix+":fit",hold=.15)
+                def check_direction_colors(prefix,dark):
+                    focus=control_bounds(prefix+":node:Direction/Focus.md")
+                    xdo("mousemove","--sync",str(round((focus[0]+focus[2])/2)),str(round((focus[1]+focus[3])/2)));pause()
+                    name="native-graph-"+prefix+"-directions-"+("dark" if dark else "light")+".png"
+                    capture(name);image=Image.open(reports/name).convert("RGB")
+                    colors={}
+                    for label in ("Parent","Child","Peer"):
+                        bounds=control_bounds(prefix+":node:Direction/"+label+".md")
+                        colors[label]=image.getpixel((round((bounds[0]+bounds[2])/2),round((bounds[1]+bounds[3])/2)))
+                    r,g,b=colors["Parent"];assert b>r+60 and b>g+30,("Incoming note must use the blue legend color",colors)
+                    r,g,b=colors["Child"];assert g>r+60 and g>b+20,("Outgoing note must use the green legend color",colors)
+                    r,g,b=colors["Peer"];assert b>g+40 and r>g+20,("A reciprocal link must use the purple legend color",colors)
+                direction_mode("global-graph")
+                for dark in (True,False):set_theme(dark);check_direction_colors("global-graph",dark)
+                focus=control_bounds("global-graph:node:Direction/Focus.md")
+                click_control("global-graph:node:Direction/Focus.md",hold=.15);title_contains("Focus")
+                command("Graph view: Open local graph");ready("local-graph",4,4)
+                direction_mode("local-graph")
+                for dark in (False,True):set_theme(dark);check_direction_colors("local-graph",dark)
+                click_control("local-graph:close",hold=.15)
+                for name,text in direction_sources.items():assert (direction/name).read_text()==text
+                results.append("The actual color menu rendered incoming blue, outgoing green and reciprocal purple links in global/local graphs and both themes without changing files")
                 for name, original in sources.items():
                     assert (graph_root/name).read_text() == original, name
                 command("Open vault");key("ctrl+a");paste_text(str(fixture), held=True);key("Return")

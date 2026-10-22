@@ -20,6 +20,15 @@ on:
         description: 'Trace comparison keyboard input only; never package this as a verified release'
         type: boolean
         default: false
+      verification_scope:
+        description: 'All workflows, or a bounded graph-only update to an already verified app'
+        type: choice
+        options: [all, graph]
+        default: all
+      baseline_commit:
+        description: 'Verified installed source SHA; required for graph-only verification'
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -56,6 +65,24 @@ jobs:
           import shutil
           if shutil.disk_usage('.').free < 8 * 1024**3:
               raise SystemExit('At least 8 GiB of free runner storage is required.')
+          PY
+      - name: Validate bounded graph update
+        if: ${{ inputs.verification_scope == 'graph' }}
+        env:
+          VERIFIED_BASELINE: ${{ inputs.baseline_commit }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, re, subprocess
+          baseline = os.environ['VERIFIED_BASELINE']
+          assert re.fullmatch('[0-9a-f]{40}', baseline)
+          subprocess.run(['git', 'merge-base', '--is-ancestor', baseline, 'HEAD'], check=True)
+          changed = subprocess.check_output(['git', 'diff', '--name-only', baseline, 'HEAD'], text=True).splitlines()
+          allowed = {'src/graph_ui.rs', 'tests/gui_smoke.py', '.github/workflows/native.yml', 'ES.md', 'VISION.md', 'README.md'}
+          assert all(path in allowed or path.startswith('docs/') for path in changed), changed
+          runtime = [path for path in changed if path.startswith('src/')]
+          assert runtime == ['src/graph_ui.rs'], runtime
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          pathlib.Path('reports/verification-scope.json').write_text(json.dumps({'scope':'graph', 'source':source, 'verified_baseline':baseline, 'runtime_paths':runtime, 'changed_paths':changed}, indent=2)+'\n')
           PY
       - name: Install native GUI test dependencies
         timeout-minutes: 8
@@ -115,6 +142,8 @@ jobs:
             reports/early-hover-gui.log
             reports/early-system-open-gui.log
             reports/early-graph-gui.log
+            reports/verification-scope.json
+            reports/graph-label-stability.json
             reports/native-selected-*.png
             reports/native-hover-*.png
             reports/hover-samples.json
@@ -163,6 +192,10 @@ jobs:
           gui_status=0
           trap 'gui_status=1' ERR
           set +e
+          if [ '${{ inputs.verification_scope }}' = 'graph' ]; then
+            /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section graph 2>&1 | tee reports/graph-gui.log
+            exit "$gui_status"
+          fi
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section palette-queued 2>&1 | tee reports/palette-queued-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section unicode-queued 2>&1 | tee reports/unicode-queued-gui.log
           RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section attachments 2>&1 | tee reports/attachments-gui.log
@@ -215,6 +248,8 @@ jobs:
             reports/native-emoji-*
             reports/system-open-gui.log
             reports/graph-gui.log
+            reports/verification-scope.json
+            reports/graph-label-stability.json
             reports/emoji-gui.log
             reports/native-note-aids-*.png
             reports/native-template-*.png
@@ -239,7 +274,7 @@ jobs:
             reports/unicode-keyboard-calibration.json
             reports/command-sequence.jsonl
       - name: Native GUI and portable bundle checks
-        if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
+        if: ${{ !inputs.diagnostic_only && inputs.verification_scope != 'graph' && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
         run: |
           gui_status=0
           trap 'gui_status=1' ERR

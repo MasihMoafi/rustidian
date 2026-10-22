@@ -8,7 +8,7 @@ use rust_notes::{
     vault::Vault,
 };
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     path::PathBuf,
     sync::{
         Arc,
@@ -49,6 +49,23 @@ struct Display {
     fade: f32,
     size: f32,
     thickness: f32,
+    colors: ColorMode,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ColorMode {
+    #[default]
+    Groups,
+    LinkDirection,
+}
+
+impl ColorMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Groups => "Groups",
+            Self::LinkDirection => "Link direction",
+        }
+    }
 }
 
 impl Default for Display {
@@ -58,6 +75,7 @@ impl Default for Display {
             fade: 0.0,
             size: 1.0,
             thickness: 1.0,
+            colors: ColorMode::default(),
         }
     }
 }
@@ -513,7 +531,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         }
         ui.add_space(4.0);
     }
-    if section(ui, &mut pane.sections[1], "Groups") {
+    if pane.display.colors == ColorMode::Groups && section(ui, &mut pane.sections[1], "Groups") {
         let mut remove = None;
         let mut reorder = None;
         let group_count = pane.options.groups.len();
@@ -576,6 +594,31 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         ui.add_space(4.0);
     }
     if section(ui, &mut pane.sections[2], "Display") {
+        ui.label("Color by");
+        let color_mode = egui::ComboBox::from_id_salt("graph-color-mode")
+            .selected_text(pane.display.colors.label())
+            .show_ui(ui, |ui| {
+                for mode in [ColorMode::Groups, ColorMode::LinkDirection] {
+                    let response =
+                        ui.selectable_value(&mut pane.display.colors, mode, mode.label());
+                    ui_probe::record(
+                        ui.ctx(),
+                        format!("color-mode:{}", mode.label()),
+                        response.rect,
+                    );
+                }
+            });
+        ui_probe::record(ui.ctx(), "color-mode", color_mode.response.rect);
+        if pane.display.colors == ColorMode::LinkDirection {
+            for (label, relation) in [("Incoming", 1), ("Outgoing", 2), ("Both directions", 3)] {
+                ui.colored_label(direction_color(ui, relation), label);
+            }
+            ui.small(if local {
+                "Relative to the current note"
+            } else {
+                "Hover a note to see its connections"
+            });
+        }
         toggle(ui, &mut pane.display.arrows, "Arrows", "arrows");
         for (label, value, range, probe) in [
             (
@@ -634,6 +677,18 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
     }
 }
 
+fn direction_color(ui: &egui::Ui, relation: u8) -> Color32 {
+    let [red, green, blue] = match (ui.visuals().dark_mode, relation) {
+        (true, 1) => [112, 173, 237],
+        (true, 2) => [112, 207, 157],
+        (true, _) => [191, 154, 232],
+        (false, 1) => [38, 96, 171],
+        (false, 2) => [32, 119, 77],
+        (false, _) => [116, 67, 164],
+    };
+    Color32::from_rgb(red, green, blue)
+}
+
 fn paint(
     ui: &egui::Ui,
     painter: &egui::Painter,
@@ -675,7 +730,18 @@ fn paint(
             })
     });
     let graph = &ready.graph;
+    let root = ready.key.root.as_deref().and_then(|path| graph.node(path));
+    let anchor = (pane.display.colors == ColorMode::LinkDirection)
+        .then_some(root.or(hovered))
+        .flatten();
+    let mut directions = HashMap::<usize, u8>::new();
     for edge in &view.edges {
+        if anchor == Some(edge.to) {
+            *directions.entry(edge.from).or_default() |= 1;
+        }
+        if anchor == Some(edge.from) {
+            *directions.entry(edge.to).or_default() |= 2;
+        }
         let start = screen(edge.from);
         let end = screen(edge.to);
         let radius = radius(edge.from).max(radius(edge.to));
@@ -701,7 +767,6 @@ fn paint(
             painter.line_segment([start, end], stroke);
         }
     }
-    let root = ready.key.root.as_deref().and_then(|path| graph.node(path));
     for &index in &view.nodes {
         let node = &graph.nodes[index];
         let point = screen(index);
@@ -709,7 +774,13 @@ fn paint(
             continue;
         }
         let size = radius(index);
-        let color = if let Some(&group) = view.groups.get(&index) {
+        let color = if anchor == Some(index) {
+            theme::accent(ui)
+        } else if let Some(&relation) = directions.get(&index) {
+            direction_color(ui, relation)
+        } else if pane.display.colors == ColorMode::Groups
+            && let Some(&group) = view.groups.get(&index)
+        {
             let rgba = ready.key.options.groups[group].color;
             Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
         } else if Some(index) == root || hovered == Some(index) {
@@ -731,9 +802,9 @@ fn paint(
             );
         }
     }
-    // Hubs get first claim on limited label space. A small screen grid bounds collision work
-    // even for large vaults; hovering always reveals the complete name in a tooltip.
-    let mut occupied = HashSet::new();
+    // Grid cells only find candidates. Exact intersections keep the same labels
+    // when a pan moves their rectangles across cell boundaries.
+    let mut occupied = HashMap::<(i32, i32), Vec<Rect>>::new();
     let fade = ((pane.camera.zoom * 2.0_f32.powf(-pane.display.fade) - 0.3) / 0.7).clamp(0.0, 1.0);
     for index in hovered.into_iter().chain(
         labels
@@ -743,7 +814,7 @@ fn paint(
     ) {
         let node = &graph.nodes[index];
         let point = screen(index);
-        if !rect.contains(point) || (fade == 0.0 && hovered != Some(index)) {
+        if !rect.expand(300.0).contains(point) || (fade == 0.0 && hovered != Some(index)) {
             continue;
         }
         let active = hovered == Some(index);
@@ -759,10 +830,7 @@ fn paint(
             font,
         );
         let position = Pos2::new(
-            (point.x - galley.size().x * 0.5).clamp(
-                rect.left(),
-                (rect.right() - galley.size().x).max(rect.left()),
-            ),
+            point.x - galley.size().x * 0.5,
             point.y + radius(index) + 5.0,
         );
         let bounds = Rect::from_min_size(position, galley.size()).expand(3.0);
@@ -771,8 +839,16 @@ fn paint(
             let y = (bounds.top() / 24.0).floor() as i32..=(bounds.bottom() / 24.0).floor() as i32;
             x.flat_map(move |x| y.clone().map(move |y| (x, y)))
         };
-        if active || !cells().any(|cell| occupied.contains(&cell)) {
-            occupied.extend(cells());
+        if active
+            || !cells().any(|cell| {
+                occupied
+                    .get(&cell)
+                    .is_some_and(|others| others.iter().any(|other| other.intersects(bounds)))
+            })
+        {
+            for cell in cells() {
+                occupied.entry(cell).or_default().push(bounds);
+            }
             painter.galley(position, galley, color);
         }
     }
