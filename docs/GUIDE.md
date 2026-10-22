@@ -177,7 +177,7 @@ settings or silently discard dirty documents. PLAN.md owns the acceptance contra
 From a clean authorized machine:
 
 ```sh
-gh repo clone MasihMoafi/rustidian
+gh repo clone MasihMoafi/rustidian rust-notes
 cd rust-notes
 git status --short
 cargo fmt --all -- --check
@@ -194,6 +194,14 @@ pipefail and the final status must still reject any failed case.
 Publish focused logs and failed screenshots before the long full suite, even
 when a focused check fails. On reuse, retain source identity/checksums rather
 than uploading another copy of the same executable.
+
+The disposable runner uses Ubuntu's HTTPS archive and an8-minute setup timeout.
+Retain connection/retry bounds: the713 run downloaded32.9MB in17m27s through a
+stalling Azure mirror. Refresh uncached job status immediately before cancelling
+or replacing a run; an earlier setup observation can outlive the step. Record the
+actual cancelled phase and never turn cancellation into a failing product claim.
+Use `gh api -H 'Cache-Control: no-cache' repos/MasihMoafi/rustidian/actions/runs/RUN_ID/jobs`
+for current step identities and times; complete logs remain the evidence.
 
 For a harness-only correction, reuse the already compiled app and benchmark:
 
