@@ -1456,6 +1456,7 @@ def main():
                 results.append("An empty chooser still listed files; cancelling it kept the current document and every fixture byte unchanged")
 
             def page_preview_checks():
+                close_tabs()
                 source=fixture/"Preview source.md";target=fixture/"Preview folder/Preview target.md"
                 target.parent.mkdir(exist_ok=True)
                 original="# Preview source\n\n[[Preview folder/Preview target|Target preview]]\n\n[[Missing preview target|Missing preview]]\n\n`[[Preview target]]`\n\n[External example](https://example.com/)\n\n[[Preview metadata target|Properties preview]]\n"
@@ -1473,7 +1474,7 @@ def main():
                 def absent():
                     assert control_bounds("page-preview-card",required=False) is None
                 def hover_target(control=False,block=1,editor=False):
-                    bounds=control_bounds("editor-link:Preview folder/Preview target" if editor else f"reading-block:{block}")
+                    bounds=control_bounds("editor-link:Preview folder/Preview target|Target preview" if editor else f"reading-block:{block}")
                     x=round((bounds[0]+bounds[2])/2) if editor else round(bounds[0]+25)
                     if control:xdo("keydown","ctrl")
                     xdo("mousemove","--sync",str(x),str(round((bounds[1]+bounds[3])/2)));time.sleep(.8)
@@ -1523,6 +1524,9 @@ def main():
                 command("Open settings");click_control("settings-autosave");key("Escape")
                 editor_end();type_text("BUFFER_PREVIEW_MARKER");assert target.read_text()==target_original
                 key("ctrl+t");open_note("Preview source");command("Reading view");hover_target()
+                card=control_bounds("page-preview-card");task=control_bounds("page-preview/task:0")
+                assert task[1]>=card[1]+31 and task[3]<=card[3]-31,("A longer preview inherited a short card's clipped viewport",card,task)
+                capture("native-page-preview-open-buffer.png")
                 click_control("page-preview/task:0");assert target.read_text()==target_original
                 away(True);click_control("tab:Preview folder/Preview target.md");title_contains("Preview target")
                 key("ctrl+s");assert target.read_text()==target_original.replace("- [ ]","- [x]")+"BUFFER_PREVIEW_MARKER"
@@ -3574,11 +3578,11 @@ def main():
                 assert control_bounds("tab-full:Move source.md")
                 results.append("Moving back to the vault root kept the current tab and Do not update left the original reference bytes intact")
 
-                close_target=fixture/"Close prompt target.md";close_original=b"# Close prompt target\n"
+                close_target=fixture/"Notes/Close prompt target.md";close_original=b"# Close prompt target\n"
                 close_target.write_bytes(close_original)
-                close_reference=fixture/"Close prompt reference.md";close_links=b"[[Close prompt target]]\n";close_reference.write_bytes(close_links)
+                close_reference=fixture/"Close prompt reference.md";close_links=b"[[Notes/Close prompt target]]\n";close_reference.write_bytes(close_links)
                 command("Refresh vault");pause();unchanged_title=xdo("getwindowname",window)
-                file_menu(close_target.name);click_control("menu:Move file to...",hold=.15);type_text("Move destination");key("Return")
+                file_menu(close_target.relative_to(fixture).as_posix());click_control("menu:Move file to...",hold=.15);type_text("Move destination");key("Return")
                 control_bounds("move-links-dialog");click_control("move-links-close",hold=.15)
                 assert control_bounds("move-links-dialog",required=False) is None
                 assert not close_target.exists() and (destination/close_target.name).read_bytes()==close_original

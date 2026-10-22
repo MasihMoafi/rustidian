@@ -198,6 +198,7 @@ impl Manager {
             }
         }
         let width = (ctx.content_rect().width() - 32.0).clamp(180.0, 452.0);
+        let height = (ctx.content_rect().height() - 100.0).clamp(100.0, 400.0);
         let mut action = None;
         let response = egui::Area::new(egui::Id::unique("page-preview-card"))
             .order(egui::Order::Foreground)
@@ -208,6 +209,9 @@ impl Manager {
                 let frame = egui::Frame::popup(ui.style())
                     .inner_margin(Margin::same(32))
                     .corner_radius(12);
+                // Area remembers the previous card's size. Let a longer note grow
+                // before ScrollArea clamps its viewport to that old height.
+                ui.set_max_height(height + frame.total_margin().sum().y);
                 let content_width = width - frame.total_margin().sum().x;
                 frame.show(ui, |ui| {
                     ui.set_width(content_width);
@@ -252,9 +256,7 @@ impl Manager {
                         let follow = ui_probe::scope(ctx, "page-preview/", || {
                             egui::ScrollArea::vertical()
                                 .id_salt("page-preview-scroll")
-                                .max_height(
-                                    (ctx.content_rect().height() - 100.0).clamp(100.0, 400.0),
-                                )
+                                .max_height(height)
                                 .show(ui, |ui| {
                                     preview::show(ui, &mut self.cache, tab, anchor, Some(vault))
                                 })

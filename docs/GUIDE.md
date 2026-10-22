@@ -832,3 +832,21 @@ focused typing and Undo proved the keyboard path. An earlier assumed positive
 failed and stays saved. Native recording is therefore restricted to an already
 open target. Check both modes with metadata bytes and the old unsaved-buffer
 case; never turn a wrong expectation into an implementation requirement.
+
+A Move-update prompt requires a link that actually becomes invalid after moving.
+A shortest-name link can remain valid and correctly skip the prompt. Use an
+explicit folder-qualified fixture and expand its real folder before testing the
+close button; do not change resolution behavior to satisfy an invalid fixture.
+Keep focused flows independent of earlier tabs and use the exact aliased link
+probe the runtime exposes. A smaller passing preview sequence cannot replace a
+longer failing open-buffer/Undo sequence: retain it as a diagnostic, preserve the
+failed single action and inspect the document/card before and after that action.
+
+The full preview sequence caught a real sizing leak that the short diagnostic
+missed: egui Area restores its last size, then ScrollArea caps its viewport to
+that available height. After a short properties card, a longer card's checkbox
+was below the visible content despite an exposed probe. Give the parent its
+current maximum before laying out the scroll area, while retaining automatic
+shrink and the existing height cap. Check the actual checkbox against the card's
+inner bounds before the original single click; then verify unsaved text, manual
+save and separate task/typing Undo. Never fix this by retrying the click.
