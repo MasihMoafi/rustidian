@@ -95,6 +95,7 @@ jobs:
           early_status=0
           trap 'early_status=1' ERR
           set +e
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section hover 2>&1 | tee reports/early-hover-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section system-open 2>&1 | tee reports/early-system-open-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section graph 2>&1 | tee reports/early-graph-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section emoji 2>&1 | tee reports/early-emoji-gui.log
@@ -120,6 +121,11 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
           path: |
+            reports/early-hover-gui.log
+            reports/native-selected-*.png
+            reports/native-hover-*.png
+            reports/hover-samples.json
+            reports/hover-latency.json
             reports/early-system-open-gui.log
             reports/early-graph-gui.log
             reports/early-emoji-gui.log

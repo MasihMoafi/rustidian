@@ -22,12 +22,12 @@ pub fn hover_fill(ui: &egui::Ui) -> Color32 {
 /// Paint the current response without waiting for another layout pass.
 pub fn control_feedback(ui: &egui::Ui, response: &egui::Response) {
     if response.enabled() && (response.hovered() || response.is_pointer_button_down_on()) {
-        ui.painter().rect_filled(response.rect, 7, hover_fill(ui));
+        ui.painter().rect_filled(response.rect, 4, hover_fill(ui));
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
             response.rect,
-            7,
+            4,
             Stroke::new(1.0, interactive(ui)),
             egui::StrokeKind::Inside,
         );
@@ -725,23 +725,33 @@ pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
 }
 
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
+    icon_toggle(ui, icon, tooltip, false)
+}
+
+pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
     crate::ui_probe::record(ui.ctx(), format!("button:{tooltip}"), rect);
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), tooltip));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, tooltip)
+    });
     if ui.is_rect_visible(rect) {
+        if selected {
+            ui.painter().rect_filled(rect, 4, hover_fill(ui));
+        }
         control_feedback(ui, &response);
-        let color = if response.hovered() && response.enabled() {
+        let color = if (selected || response.hovered()) && response.enabled() {
             ui.visuals().text_color()
         } else {
             ui.visuals().weak_text_color()
         };
         icon_image(icon, color).paint_at(
             ui,
-            egui::Rect::from_center_size(rect.center(), egui::vec2(18.0, 18.0)),
+            egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
         );
     }
-    response.on_hover_text(tooltip)
+    response.on_hover_ui(|ui| {
+        ui.label(egui::RichText::new(tooltip).size(13.0));
+    })
 }
 
 #[cfg(test)]

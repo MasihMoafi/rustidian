@@ -8,6 +8,7 @@ use rust_notes::{
     vault::Vault,
 };
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{
         Arc,
@@ -33,7 +34,14 @@ struct Ready {
     key: Key,
     local: bool,
     graph: Arc<Graph>,
-    result: Result<(View, Geometry), String>,
+    result: Result<Scene, String>,
+}
+
+struct Scene {
+    view: View,
+    geometry: Geometry,
+    degree: Vec<usize>,
+    labels: Vec<usize>,
 }
 
 struct Display {
@@ -164,6 +172,7 @@ impl Manager {
         blocked: bool,
     ) -> Option<Action> {
         self.poll();
+        theme::menu_style(ui);
         if self.source.is_none() {
             self.source = Some(Arc::new(vault.clone()));
         }
@@ -212,7 +221,8 @@ impl Manager {
         );
         ui_probe::record(ui.ctx(), "canvas", rect);
         if pane.settings && !blocked {
-            let panel_width = 224.0_f32.min((rect.width() - 20.0).max(100.0));
+            let panel_width = 240.0_f32.min((rect.width() - 20.0).max(100.0));
+            let panel_height = (rect.height() - 44.0).max(40.0);
             egui::Area::new(ui.scope_id().with(("graph-settings", local)))
                 .fixed_pos(egui::pos2(
                     rect.right() - panel_width - 10.0,
@@ -221,12 +231,15 @@ impl Manager {
                 .order(egui::Order::Foreground)
                 .show(ui.ctx(), |ui| {
                     egui::Frame::popup(ui.style())
-                        .inner_margin(10)
+                        .fill(ui.visuals().panel_fill)
+                        .corner_radius(8)
+                        .inner_margin(egui::Margin::symmetric(12, 6))
                         .show(ui, |ui| {
-                            ui.set_width((panel_width - 20.0).max(80.0));
+                            ui.set_width((panel_width - 24.0).max(76.0));
+                            ui.set_max_height(panel_height);
                             egui::ScrollArea::vertical()
                                 .id_salt("graph-settings-scroll")
-                                .max_height((rect.height() - 44.0).max(40.0))
+                                .max_height(panel_height)
                                 .show(ui, |ui| settings(ui, &mut pane, local));
                         });
                 });
@@ -257,7 +270,19 @@ impl Manager {
                         .map(|view| {
                             let center = request.root.as_deref().and_then(|path| graph.node(path));
                             let geometry = Geometry::compute(&graph, &view, request.forces, center);
-                            (view, geometry)
+                            let mut degree = vec![0; graph.nodes.len()];
+                            for edge in &view.edges {
+                                degree[edge.from] += 1;
+                                degree[edge.to] += 1;
+                            }
+                            let mut labels = view.nodes.clone();
+                            labels.sort_by_key(|&index| std::cmp::Reverse(degree[index]));
+                            Scene {
+                                view,
+                                geometry,
+                                degree,
+                                labels,
+                            }
                         });
                     let _ = sender.send(Ready {
                         key: request,
@@ -276,10 +301,11 @@ impl Manager {
         let painter = ui.painter().with_clip_rect(rect);
         if let Some(ready) = &pane.ready {
             match &ready.result {
-                Ok((view, geometry)) => {
+                Ok(scene) => {
+                    let Scene { view, geometry, .. } = scene;
                     if pane.fit {
                         let reserved = if pane.settings {
-                            244.0_f32.min(rect.width() * 0.5)
+                            260.0_f32.min(rect.width() * 0.5)
                         } else {
                             0.0
                         };
@@ -309,11 +335,9 @@ impl Manager {
                     let open = paint(
                         ui,
                         &painter,
-                        rect,
                         &response,
                         ready,
-                        view,
-                        geometry,
+                        scene,
                         &pane,
                         !pending && !blocked,
                     );
@@ -378,7 +402,8 @@ fn toggle(ui: &mut egui::Ui, value: &mut bool, label: &str, probe: &str) {
 }
 
 fn section(ui: &mut egui::Ui, open: &mut bool, label: &str) -> bool {
-    let response = ui.selectable_label(*open, label);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::click());
     ui_probe::record(
         ui.ctx(),
         format!("section:{}", label.to_lowercase()),
@@ -387,7 +412,41 @@ fn section(ui: &mut egui::Ui, open: &mut bool, label: &str) -> bool {
     if response.clicked() {
         *open = !*open;
     }
+    let color = if response.hovered() {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    theme::icon_image(theme::Icon::Disclosure, color)
+        .rotate(
+            if *open {
+                std::f32::consts::FRAC_PI_2
+            } else {
+                0.0
+            },
+            Vec2::splat(0.5),
+        )
+        .paint_at(
+            ui,
+            Rect::from_center_size(rect.left_center() + egui::vec2(5.0, 0.0), Vec2::splat(12.0)),
+        );
+    ui.painter().text(
+        rect.left_center() + egui::vec2(20.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        ui.visuals().text_color(),
+    );
     *open
+}
+
+fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
+    let response = ui.add(slider);
+    // egui's rail is drag-only; explicitly give a pointer-selected rail keyboard focus.
+    if response.drag_started() {
+        response.request_focus();
+    }
+    ui_probe::record(ui.ctx(), probe, response.rect);
 }
 
 fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
@@ -405,8 +464,11 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         ui_probe::record(ui.ctx(), "filter", filter.rect);
         if local {
             ui.label("Depth");
-            let depth = ui.add(egui::Slider::new(&mut pane.options.depth, 1..=5));
-            ui_probe::record(ui.ctx(), "depth-slider", depth.rect);
+            slider(
+                ui,
+                egui::Slider::new(&mut pane.options.depth, 1..=5),
+                "depth-slider",
+            );
             toggle(ui, &mut pane.options.incoming, "Incoming links", "incoming");
             toggle(ui, &mut pane.options.outgoing, "Outgoing links", "outgoing");
             toggle(
@@ -514,8 +576,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             ),
         ] {
             ui.label(label);
-            let slider = ui.add(egui::Slider::new(value, range));
-            ui_probe::record(ui.ctx(), probe, slider.rect);
+            slider(ui, egui::Slider::new(value, range), probe);
         }
         ui.add_space(4.0);
     }
@@ -542,8 +603,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             ),
         ] {
             ui.label(label);
-            let slider = ui.add(egui::Slider::new(value, range));
-            ui_probe::record(ui.ctx(), probe, slider.rect);
+            slider(ui, egui::Slider::new(value, range), probe);
         }
     }
     ui.separator();
@@ -557,29 +617,40 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn paint(
     ui: &egui::Ui,
     painter: &egui::Painter,
-    rect: Rect,
     response: &egui::Response,
     ready: &Ready,
-    view: &View,
-    geometry: &Geometry,
+    scene: &Scene,
     pane: &Pane,
     interactive: bool,
 ) -> Option<Action> {
+    let rect = response.rect;
+    let Scene {
+        view,
+        geometry,
+        degree,
+        labels,
+    } = scene;
     let screen = |node: usize| {
         let p = pane.camera.project(geometry.points[node]);
         rect.center() + egui::vec2(p[0], p[1])
     };
-    let radius = (6.0 * pane.display.size * pane.camera.zoom.sqrt().clamp(0.6, 2.5)).max(2.0);
+    let radius = |node: usize| {
+        ((8.0 + 2.0 * (degree[node] as f32).sqrt()).min(32.0)
+            * pane.display.size
+            * pane.camera.zoom.sqrt().clamp(0.35, 2.5))
+        .max(2.0)
+    };
     let pointer = response.hover_pos();
     let hovered = pointer.and_then(|pointer| {
         view.nodes
             .iter()
             .copied()
-            .filter(|&node| screen(node).distance_sq(pointer) <= (radius.max(7.0) + 4.0).powi(2))
+            .filter(|&node| {
+                screen(node).distance_sq(pointer) <= (radius(node).max(7.0) + 4.0).powi(2)
+            })
             .min_by(|&a, &b| {
                 screen(a)
                     .distance_sq(pointer)
@@ -590,6 +661,7 @@ fn paint(
     for edge in &view.edges {
         let start = screen(edge.from);
         let end = screen(edge.to);
+        let radius = radius(edge.from).max(radius(edge.to));
         if !Rect::from_two_pos(start, end)
             .expand(radius)
             .intersects(rect)
@@ -619,7 +691,7 @@ fn paint(
         if !rect.expand(50.0).contains(point) {
             continue;
         }
-        let size = radius * if Some(index) == root { 1.6 } else { 1.0 };
+        let size = radius(index);
         let color = if let Some(&group) = view.groups.get(&index) {
             let rgba = ready.key.options.groups[group].color;
             Color32::from_rgba_unmultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
@@ -634,25 +706,6 @@ fn paint(
             }
         };
         painter.circle_filled(point, size, color);
-        if hovered == Some(index) || pane.camera.zoom >= 0.35 * 2.0_f32.powf(pane.display.fade) {
-            let font = FontId::proportional((12.0 * pane.camera.zoom.sqrt()).clamp(11.0, 18.0));
-            let galley =
-                egui::WidgetText::from(RichText::new(&node.label).color(ui.visuals().text_color()))
-                    .into_galley(
-                        ui,
-                        Some(egui::TextWrapMode::Truncate),
-                        (rect.width() * 0.45).clamp(30.0, 240.0),
-                        font,
-                    );
-            let position = Pos2::new(
-                (point.x - galley.size().x * 0.5).clamp(
-                    rect.left(),
-                    (rect.right() - galley.size().x).max(rect.left()),
-                ),
-                point.y + size + 5.0,
-            );
-            painter.galley(position, galley, ui.visuals().text_color());
-        }
         if ui_probe::enabled() {
             ui_probe::record(
                 ui.ctx(),
@@ -661,8 +714,56 @@ fn paint(
             );
         }
     }
-    if hovered.is_some() {
+    // Hubs get first claim on limited label space. A small screen grid bounds collision work
+    // even for large vaults; hovering always reveals the complete name in a tooltip.
+    let mut occupied = HashSet::new();
+    let fade = ((pane.camera.zoom * 2.0_f32.powf(-pane.display.fade) - 0.3) / 0.7).clamp(0.0, 1.0);
+    for index in hovered.into_iter().chain(
+        labels
+            .iter()
+            .copied()
+            .filter(|index| Some(*index) != hovered),
+    ) {
+        let node = &graph.nodes[index];
+        let point = screen(index);
+        if !rect.contains(point) || (fade == 0.0 && hovered != Some(index)) {
+            continue;
+        }
+        let active = hovered == Some(index);
+        let color = ui
+            .visuals()
+            .text_color()
+            .gamma_multiply(if active { 1.0 } else { fade });
+        let font = FontId::proportional((16.0 + (degree[index] as f32).sqrt() * 0.5).min(22.0));
+        let galley = egui::WidgetText::from(RichText::new(&node.label).color(color)).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            (rect.width() * 0.45).clamp(30.0, 240.0),
+            font,
+        );
+        let position = Pos2::new(
+            (point.x - galley.size().x * 0.5).clamp(
+                rect.left(),
+                (rect.right() - galley.size().x).max(rect.left()),
+            ),
+            point.y + radius(index) + 5.0,
+        );
+        let bounds = Rect::from_min_size(position, galley.size()).expand(3.0);
+        let cells = || {
+            let x = (bounds.left() / 24.0).floor() as i32..=(bounds.right() / 24.0).floor() as i32;
+            let y = (bounds.top() / 24.0).floor() as i32..=(bounds.bottom() / 24.0).floor() as i32;
+            x.flat_map(move |x| y.clone().map(move |y| (x, y)))
+        };
+        if active || !cells().any(|cell| occupied.contains(&cell)) {
+            occupied.extend(cells());
+            painter.galley(position, galley, color);
+        }
+    }
+    if let Some(index) = hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        response.clone().on_hover_ui(|ui| {
+            ui.label(RichText::new(&graph.nodes[index].label).size(13.0));
+        });
     }
     if interactive
         && response.clicked()

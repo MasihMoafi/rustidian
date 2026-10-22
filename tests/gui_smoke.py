@@ -396,6 +396,11 @@ def main():
                 before=sample()
                 if (max(before)<128)!=dark:command("Switch appearance")
                 after=sample()
+                deadline=time.monotonic()+5
+                while (max(after)<128)!=dark and time.monotonic()<deadline:
+                    assert app.poll() is None, "App exited before drawing the requested appearance"
+                    time.sleep(.05)
+                    after=sample()
                 theme_observations.append({"requested_dark":dark,"before_rgb":before,"after_rgb":after})
                 (reports/"gui-theme-observations.json").write_text(json.dumps(theme_observations,indent=2)+"\n")
                 assert (max(after)<128)==dark,(dark,before,after)
@@ -1244,6 +1249,30 @@ def main():
                 ordered = sorted(item["dispatch_to_visible_ms"] for item in timings)
                 (reports / "hover-latency.json").write_text(json.dumps({"boundary":"xdotool dispatch plus polling for changed screen pixels; not internal CPU time", "samples":timings,"median_ms":ordered[len(ordered)//2],"max_ms":ordered[-1]}, indent=2)+"\n")
                 results.append("Pointer hover visibly changes icons, tab close, folders and selected files; disabled history stays inert and every note byte is unchanged")
+
+                def icon_background(name):
+                    left,top,right,bottom=control_bounds(name)
+                    return ImageGrab.grab(xdisplay=display).getpixel((round(left+3),round((top+bottom)/2)))[:3]
+
+                for active in ["Search notes", "Bookmarks", "File explorer"]:
+                    click_control("button:"+active,hold=.15)
+                    xdo("mousemove","--sync","1000","880");pause()
+                    assert icon_background("button:"+active)==(34,41,44), (active,"Selected tab lost its background when the pointer left")
+                    for other in {"Search notes","Bookmarks","File explorer"}-{active}:
+                        assert icon_background("button:"+other)==(17,21,23), (other,"Inactive tab still appears selected")
+                capture("native-selected-sidebar.png")
+                click_control("button:New note · Ctrl+N",hold=.15)
+                control_bounds("dialog-input")
+                xdo("mousemove","--sync","1000","880");pause()
+                active=icon_background("button:New note · Ctrl+N")
+                inactive=icon_background("button:Open today's daily note")
+                assert min(a-b for a,b in zip(active,inactive))>=5, ("The open tool must remain visibly marked behind its chooser",active,inactive)
+                capture("native-selected-tool.png")
+                key("Escape")
+                xdo("mousemove","--sync","1000","880");pause()
+                assert icon_background("button:New note · Ctrl+N")==(17,21,23), "A cancelled action must not remain selected"
+                assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
+                results.append("Files, Search and Bookmarks retained a single selected background away from the pointer; the open note chooser retained its tool marker and Cancel cleared only that marker without writing any note")
 
             def title_checks():
                 path = fixture / "Notes/Title edit.md"

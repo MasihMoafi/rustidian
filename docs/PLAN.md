@@ -25,7 +25,8 @@ The previous delivery paragraph was stale and is superseded by this section.
 | V1 | Open the vault chooser, create a vault, Browse to another folder, then select a recent vault | Each real folder can be opened or registered once. The selected vault name, tree and tabs describe the same folder. Cancelling a chooser leaves the previous vault intact. Removing a recent entry does not delete its folder. |
 | V2 | Switch vaults with saved, unsaved or conflicting edits | Saved state restores per vault. Unsaved changes receive working Save/Discard/Cancel choices; Cancel or a failed open retains the current workspace and bytes. Editing after a switch cannot write into the previous vault. |
 | P1 | Type, scroll, open a note and click its controls | Preserve the accepted scrolling and hover behavior. Record equivalent work on the same host and exact optimized binary; keep all existing CPU limits and the serial Ferrite median/p95 comparison. A bounded benchmark does not establish full Obsidian speed parity. |
-| G1 | Open global graph or a linked local graph | Native nodes and edges reflect resolved vault links; filter, navigate, pan and zoom without changing notes. Local depth/direction follow the active note. Bound background work and keep ordinary editing idle when graphs are hidden. Match the exercised reference incrementally; record remaining gaps in PARITY.md. |
+| U1 | Select Files, Search or Bookmarks, then move the pointer away; open and dismiss a ribbon chooser | The selected sidebar tab keeps the reference background and accent underline, with exactly one selected tab. Keep the current tool marked while its chooser/view is open, as Masih requested; clear it when that action closes. Use the actual1.14.4 reference's16px icons,13px tooltips/control headings and compact corners. Cancellation changes no document. |
+| G1 | Open global graph or a linked local graph | Native nodes and edges reflect resolved vault links; filter, navigate, pan and zoom without changing notes. Local depth/direction follow the active note; a clicked slider accepts arrow keys. Match the reference's larger connected hubs, zoom-dependent labels and compact expandable controls, keeping labels legible. Bound background work and keep ordinary editing idle when graphs are hidden. Match the exercised reference incrementally; record remaining gaps in PARITY.md. |
 | E1 | View arbitrary emoji in notes and interface text | General licensed emoji fallback works across shared fonts, Reading/Live/Source, tables and hover; sequences form joined glyphs. Preserve the six existing marker images, Latin/Arabic metrics and exact Markdown bytes. |
 | B1 | Inspect the repository and app identity | Use Rustidian, the name Masih explicitly kept after hearing about the unrelated same-name project. The private repository is MasihMoafi/rustidian. Use original artwork, clear alpha status and no implication of Obsidian affiliation. Internal launcher/state paths remain compatible. |
 
@@ -126,7 +127,7 @@ old executable before trusting the new checks.
 Source9b5/run39721548486 failed two full-suite workflows after43 passed. Preserve
 all45 existing workflows; fix exact command ranking and calibrate the explorer's
 actual clipped-row click using an unchanged binary before the next run. The next
-normal Actions candidate has49 full/25 optimized focused/16 early workflows,
+normal Actions candidate has49 full/25 optimized focused/17 early workflows,
 including global inline and portable-color checks. Keep all CPU/comparison,
 source identity, protected-data and actual visual gates. No local Rust build.
 Graph proceeds in parallel under the acceptance contract above; font controls

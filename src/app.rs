@@ -1224,12 +1224,26 @@ impl NotesApp {
                     self.show_left = !self.show_left;
                 }
 
-                if icon_button(ui, Icon::NewNote, "New note · Ctrl+N").clicked() {
+                if theme::icon_toggle(
+                    ui,
+                    Icon::NewNote,
+                    "New note · Ctrl+N",
+                    self.dialog == Some(Dialog::NewNote),
+                )
+                .clicked()
+                {
                     self.ask(Dialog::NewNote);
                 }
                 let graph = ui.add_enabled_ui(self.vault.is_some(), |ui| {
-                    icon_button(ui, Icon::Graph, "Open graph view")
-                        .on_disabled_hover_text("Open a vault first.")
+                    theme::icon_toggle(
+                        ui,
+                        Icon::Graph,
+                        "Open graph view",
+                        self.tabs
+                            .get(self.active)
+                            .is_some_and(|tab| tab.view == View::Graph),
+                    )
+                    .on_disabled_hover_text("Open a vault first.")
                 });
                 if graph.inner.clicked() {
                     self.open_global_graph();
@@ -1237,19 +1251,42 @@ impl NotesApp {
                 if icon_button(ui, Icon::DailyNote, "Open today's daily note").clicked() {
                     self.open_daily();
                 }
-                if icon_button(ui, Icon::Recovery, "Open local history").clicked() {
+                if theme::icon_toggle(
+                    ui,
+                    Icon::Recovery,
+                    "Open local history",
+                    self.recovery_manager.active(),
+                )
+                .clicked()
+                {
                     self.open_recovery(true);
                 }
-                if icon_button(ui, Icon::Templates, "Insert template").clicked()
-                    && self.editable_note()
+                if theme::icon_toggle(
+                    ui,
+                    Icon::Templates,
+                    "Insert template",
+                    self.dialog == Some(Dialog::InsertTemplate),
+                )
+                .clicked()
                 {
-                    self.ask(Dialog::InsertTemplate);
+                    if self.editable_note() {
+                        self.ask(Dialog::InsertTemplate);
+                    } else {
+                        self.status = "Open a note to insert a template.".into();
+                    }
                 }
                 ui.allocate_ui_with_layout(
                     ui.available_size(),
                     Layout::bottom_up(Align::Center),
                     |ui| {
-                        if icon_button(ui, Icon::Commands, "Command palette · Ctrl+P").clicked() {
+                        if theme::icon_toggle(
+                            ui,
+                            Icon::Commands,
+                            "Command palette · Ctrl+P",
+                            self.dialog == Some(Dialog::Commands),
+                        )
+                        .clicked()
+                        {
                             self.ask(Dialog::Commands);
                         }
                     },
@@ -1635,18 +1672,33 @@ impl NotesApp {
                     Layout::left_to_right(Align::Center),
                     |ui| {
                         ui.set_min_height(40.0);
-                        let files = icon_button(ui, Icon::Files, "File explorer");
+                        let files = theme::icon_toggle(
+                            ui,
+                            Icon::Files,
+                            "File explorer",
+                            !self.searching && !self.show_bookmarks,
+                        );
                         if files.clicked() {
                             self.searching = false;
                             self.show_bookmarks = false;
                         }
-                        let search = icon_button(ui, Icon::Search, "Search notes");
+                        let search = theme::icon_toggle(
+                            ui,
+                            Icon::Search,
+                            "Search notes",
+                            self.searching && !self.show_bookmarks,
+                        );
                         if search.clicked() {
                             self.searching = true;
                             self.show_bookmarks = false;
                             self.search_focus = true;
                         }
-                        let bookmarks = icon_button(ui, Icon::Bookmark, "Bookmarks");
+                        let bookmarks = theme::icon_toggle(
+                            ui,
+                            Icon::Bookmark,
+                            "Bookmarks",
+                            self.show_bookmarks,
+                        );
                         crate::ui_probe::record(ui.ctx(), "bookmarks-tab", bookmarks.rect);
                         if bookmarks.clicked() {
                             self.show_bookmarks = true;

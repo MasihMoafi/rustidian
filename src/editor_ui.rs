@@ -679,7 +679,10 @@ impl Editor {
                     self.completion_selected = 0;
                     self.completion_dismissed = false;
                 }
-                if let Some(completion) = completion
+                if consume_action(ui, egui::Modifiers::COMMAND, &[Key::Enter]) {
+                    follow = link_at(&tab.document.text, cursor);
+                    action_handled = true;
+                } else if let Some(completion) = completion
                     && !self.completion_dismissed
                 {
                     let candidates = files.rank_links(&completion.query, 8);
@@ -705,9 +708,6 @@ impl Editor {
                         tab.edited();
                         action_handled = true;
                     }
-                } else if consume_action(ui, egui::Modifiers::COMMAND, &[Key::Enter]) {
-                    follow = link_at(&tab.document.text, cursor);
-                    action_handled = true;
                 }
             }
         }

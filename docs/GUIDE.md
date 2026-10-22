@@ -276,6 +276,39 @@ Targets are idle median<=5ms and edited median<=16.7ms. Different runner CPUs
 cannot establish before/after speedups. Hover's150ms gate includes native input
 and screenshot polling; scrolling checks distance, direction and no delayed tail.
 
+## Reference controls and graph readability
+
+Use the installed reference, with its actual version checked in General, before
+changing a control. The22October1.14.4 audit in
+reports/obsidian-1.14.4-ribbon/ records both9 synthetic notes and a separate
+125-note copy with Masih's appearance snippet. Keep private source notes/profile
+read-only, freeze the driver and compare identical states. Never drive a preview
+that has already been handed to Masih.
+
+Selected Files/Search/Bookmarks have a persistent hover-colored background and
+Masih's accent underline. Reference action-ribbon buttons use hover, not persistent
+selection; his explicit request additionally keeps a tool marked while its own
+chooser/view is open. Derive that marker from the real owner state and clear it
+when the action ends; do not remember an arbitrary last-clicked button. The
+measured reference uses16px icon SVGs,13px control headings/tooltips,4px control
+corners and a240px graph settings panel.
+
+Cache visible degree and label priority with graph geometry, give hubs larger
+nodes, fade text with zoom and keep labels from obscuring each other. Never run
+layout continuously to make a static graph prettier. A drag-only egui slider
+needs explicit pointer-to-keyboard focus; actual arrow input must change depth.
+An expandable Area must supply the available height before its ScrollArea,
+otherwise the collapsed size traps controls behind a short scrolling viewport.
+The unchanged4dd app exposed both failures; keep the original evaluations.
+PARITY.md records unresolved graph-model differences; visual similarity is not
+complete graph parity.
+
+Appearance verification must acknowledge the drawn frame after one action.
+The4dd emoji flow passes unchanged once it waits124ms for the requested visible
+frame; suppressing that one action still fails the same color assertion. Poll
+within a bounded deadline, keep exact saved bytes and do not retry the action
+or weaken the color predicate. This is correctness evidence, not a latency win.
+
 ## Open existing files and folders
 
 Treat opening an existing path separately from creating one. Keep visible
