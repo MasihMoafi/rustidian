@@ -454,7 +454,7 @@ pub fn show(
 ) -> Option<String> {
     // Navigation reuses the tab; its editing path identifies the document and
     // remains stable when that document moves.
-    let document_id = egui::Id::new((tab.id(), tab.editor_path()));
+    let document_id = egui::Id::unique((tab.id(), tab.editor_path()));
     let text = &tab.document.text;
     let from = &tab.document.path;
     let body = rust_notes::metadata::frontmatter(text)
