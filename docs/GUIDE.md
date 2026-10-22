@@ -919,3 +919,10 @@ child's distance from the scroll bottom. Reproduce with80 trailing roots using
 the unchanged binary, scroll physically until the whole target row is visible,
 then retain the original click/title assertion. See the negative, intermediate
 clipped-click failure and positive in reports/explorer-trailing-after-9b5eafc/.
+
+New actual egui layout checks must import the local render types, install the
+application font families and follow this checkout's typed text indices before
+submission. LayoutSection byte_range is Range<ByteIndex>, not Range<usize>; use
+its explicit offsets when checking shaped text. The cd27/e179 failed Clippy logs
+retain these setup mistakes. All builds stay in Actions; do not evade the rule
+with a local check or remove the behavioral assertion to get a green run.

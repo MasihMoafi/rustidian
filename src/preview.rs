@@ -1372,7 +1372,10 @@ mod tests {
                 .job
                 .sections
                 .iter()
-                .find(|section| galley.job.text[section.byte_range.clone()].contains("plain"))
+                .find(|section| {
+                    galley.job.text[section.byte_range.start.0..section.byte_range.end.0]
+                        .contains("plain")
+                })
                 .unwrap();
             assert_eq!(plain.format.color, ui.visuals().text_color());
             assert_eq!(plain.format.background, egui::Color32::TRANSPARENT);
