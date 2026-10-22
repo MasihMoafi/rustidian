@@ -1208,6 +1208,7 @@ def main():
                 # Collapse them once so the root Home row is actually onscreen.
                 click_control("file-collapse")
                 originals = {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")}
+                original_folders = {str(p.relative_to(fixture)) for p in fixture.rglob("*") if p.is_dir()}
                 timings = []
                 for name in ["new-tab", "close-tab:Home.md", "new-folder", "file-sort", "file-collapse", "bookmarks-tab", "folder:Notes", "file:Home.md"]:
                     xdo("mousemove", "--sync", "1000", "880")
@@ -1267,12 +1268,26 @@ def main():
                 active=icon_background("button:New note · Ctrl+N")
                 inactive=icon_background("button:Open today's daily note")
                 assert min(a-b for a,b in zip(active,inactive))>=5, ("The open tool must remain visibly marked behind its chooser",active,inactive)
+                ribbon=icon_background("ribbon-new-note")
+                assert min(a-b for a,b in zip(ribbon,inactive))>=5, ("Both New note buttons must show the same open chooser",ribbon,inactive)
                 capture("native-selected-tool.png")
                 key("Escape")
                 xdo("mousemove","--sync","1000","880");pause()
                 assert icon_background("button:New note · Ctrl+N")==(17,21,23), "A cancelled action must not remain selected"
+                assert icon_background("ribbon-new-note")== (17,21,23), "Cancel must also clear the ribbon's marker"
+                click_control("new-folder",hold=.15)
+                control_bounds("dialog-input")
+                xdo("mousemove","--sync","1000","880");pause()
+                active=icon_background("new-folder")
+                inactive=icon_background("button:Open today's daily note")
+                assert min(a-b for a,b in zip(active,inactive))>=5, ("New folder must remain visibly marked behind its chooser",active,inactive)
+                capture("native-selected-folder-tool.png")
+                key("Escape")
+                xdo("mousemove","--sync","1000","880");pause()
+                assert icon_background("new-folder")== (17,21,23), "A cancelled folder action must not remain selected"
                 assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
-                results.append("Files, Search and Bookmarks retained a single selected background away from the pointer; the open note chooser retained its tool marker and Cancel cleared only that marker without writing any note")
+                assert {str(p.relative_to(fixture)) for p in fixture.rglob("*") if p.is_dir()} == original_folders
+                results.append("Files, Search and Bookmarks retained a single selected background away from the pointer; both New note buttons and New folder stayed marked behind their chooser, and Cancel cleared their markers without writing notes or folders")
 
             def title_checks():
                 path = fixture / "Notes/Title edit.md"

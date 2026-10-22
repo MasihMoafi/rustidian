@@ -1224,14 +1224,14 @@ impl NotesApp {
                     self.show_left = !self.show_left;
                 }
 
-                if theme::icon_toggle(
+                let new_note = theme::icon_toggle(
                     ui,
                     Icon::NewNote,
                     "New note · Ctrl+N",
                     self.dialog == Some(Dialog::NewNote),
-                )
-                .clicked()
-                {
+                );
+                crate::ui_probe::record(ui.ctx(), "ribbon-new-note", new_note.rect);
+                if new_note.clicked() {
                     self.ask(Dialog::NewNote);
                 }
                 let graph = ui.add_enabled_ui(self.vault.is_some(), |ui| {
@@ -1724,10 +1724,22 @@ impl NotesApp {
                             ui.set_min_height(40.0);
                             ui.spacing_mut().item_spacing.x = 2.0;
                             ui.add_space(74.0);
-                            if icon_button(ui, Icon::NewNote, "New note · Ctrl+N").clicked() {
+                            if theme::icon_toggle(
+                                ui,
+                                Icon::NewNote,
+                                "New note · Ctrl+N",
+                                self.dialog == Some(Dialog::NewNote),
+                            )
+                            .clicked()
+                            {
                                 self.ask(Dialog::NewNote);
                             }
-                            let new_folder = icon_button(ui, Icon::NewFolder, "New folder");
+                            let new_folder = theme::icon_toggle(
+                                ui,
+                                Icon::NewFolder,
+                                "New folder",
+                                self.dialog == Some(Dialog::NewFolder),
+                            );
                             crate::ui_probe::record(ui.ctx(), "new-folder", new_folder.rect);
                             if new_folder.clicked() {
                                 self.ask(Dialog::NewFolder);

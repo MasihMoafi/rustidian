@@ -442,8 +442,10 @@ fn section(ui: &mut egui::Ui, open: &mut bool, label: &str) -> bool {
 
 fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
     let response = ui.add(slider);
-    // egui's rail is drag-only; explicitly give a pointer-selected rail keyboard focus.
-    if response.drag_started() {
+    // A quick press and release can arrive in one frame without starting a drag.
+    if response.drag_started()
+        || response.hovered() && ui.input(|input| input.pointer.primary_pressed())
+    {
         response.request_focus();
     }
     ui_probe::record(ui.ctx(), probe, response.rect);

@@ -41,6 +41,8 @@ lost keyboard focus: source696938b passed its earlier focused suite but failed
 this added real-input check. Preserve that negative result and include it in the
 next complete Actions gate; do not install the known failing candidate.
 
+Treat visible delivery as a separate check: source edits and passing tests do not update an already installed app. Identify the launcher executable and each owned window before reporting a fix. A copied-vault functional preview is a preview until the optimized release is verified and installed. When one action appears in both ribbon and explorer, share its active state and inspect both entry points; a repeated tooltip label can identify only the last recorded control. For drag-only rails, also focus on pointer press: a fast press/release in one frame may not produce a drag-start response. Preserve the actual fast-click regression rather than slowing the test click to make it pass.
+
 ## Protect the user's work and machine
 
 - Never automate writes to `/home/masih/Desktop/o/Main Vault`, original project
