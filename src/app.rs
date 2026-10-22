@@ -8,7 +8,7 @@ use eframe::egui::{
 };
 use egui_commonmark::CommonMarkCache;
 use rust_notes::commands::Scope;
-use rust_notes::tab::{Tab, View};
+use rust_notes::tab::{ClosedTab, Tab, View};
 use rust_notes::vault::{Document, Vault, wiki_links};
 use std::{
     path::{Path, PathBuf},
@@ -34,6 +34,7 @@ enum Dialog {
 #[derive(Clone)]
 enum Pending {
     CloseTab(usize),
+    CloseOtherTabs(u64),
     Quit,
     ChangeVault,
     OpenVault(PathBuf),
@@ -45,6 +46,7 @@ pub struct NotesApp {
     pub(crate) vault: Option<Vault>,
     tree: Tree,
     pub(crate) tabs: Vec<Tab>,
+    closed_tabs: Vec<ClosedTab>,
     pub(crate) active: usize,
     search: String,
     search_cache: rust_notes::query::Cache,
@@ -124,6 +126,7 @@ impl NotesApp {
             vault: None,
             tree: Tree::default(),
             tabs: Vec::new(),
+            closed_tabs: Vec::new(),
             active: 0,
             search: String::new(),
             search_cache: Default::default(),
@@ -308,6 +311,7 @@ impl NotesApp {
                     if opening {
                         self.file_move = Default::default();
                         self.page_preview.close();
+                        self.closed_tabs.clear();
                         self.always_update_links = rust_notes::paths::read_obsidian::<
                             serde_json::Value,
                         >(
@@ -934,7 +938,9 @@ impl NotesApp {
     }
 
     fn close_tab(&mut self, index: usize) {
-        self.tabs.remove(index);
+        if let Some(closed) = self.tabs.remove(index).into_closed() {
+            self.closed_tabs.push(closed);
+        }
         if index < self.active {
             self.active -= 1;
         }
@@ -942,9 +948,82 @@ impl NotesApp {
         self.focus_editor();
     }
 
+    fn request_close_other_tabs(&mut self) {
+        let Some(keep) = self.tabs.get(self.active).map(Tab::id) else {
+            return;
+        };
+        let indices = rust_notes::tab::other_tab_indices(&self.tabs, keep);
+        if indices
+            .into_iter()
+            .all(|index| !self.tabs[index].document.dirty() || self.save(index))
+        {
+            self.close_other_tabs(keep);
+        } else {
+            self.pending = Some(Pending::CloseOtherTabs(keep));
+        }
+    }
+
+    fn close_other_tabs(&mut self, keep: u64) {
+        // Reference closes in visual order, so Undo restores the rightmost first.
+        let indices = rust_notes::tab::other_tab_indices(&self.tabs, keep);
+        for (removed, index) in indices.into_iter().enumerate() {
+            self.close_tab(index - removed);
+        }
+    }
+
+    fn undo_close_tab(&mut self) {
+        let Some(closed) = self.closed_tabs.pop() else {
+            return;
+        };
+        self.page_preview.close();
+        let existing = self
+            .tabs
+            .iter()
+            .find(|tab| tab.document.path == closed.path());
+        let from_existing = existing.is_some();
+        let document = existing
+            .map(|tab| Ok(tab.document.clone()))
+            .unwrap_or_else(|| {
+                self.vault
+                    .as_ref()
+                    .ok_or_else(|| "Open a vault before reopening a tab.".to_owned())
+                    .and_then(|vault| vault.open_document(closed.path()))
+            });
+        match document {
+            Ok(document) => {
+                if !from_existing
+                    && !closed.matches_saved_text(&document)
+                    && let Some(vault) = &self.vault
+                {
+                    crate::editor_ui::clear_document_history(&self.ctx, &vault.root, closed.path());
+                }
+                let tab = closed.restore(document);
+                if self.tabs.len() == 1 && self.tabs[0].document.is_blank() {
+                    self.tabs.clear();
+                }
+                self.tabs.push(tab);
+                self.active = self.tabs.len() - 1;
+                self.find = Default::default();
+                self.error = None;
+                self.focus_editor();
+            }
+            Err(error) => {
+                if self
+                    .tabs
+                    .get(self.active)
+                    .is_none_or(|tab| !tab.document.is_blank())
+                {
+                    self.new_tab();
+                }
+                self.error = Some(error);
+            }
+        }
+    }
+
     fn run_pending(&mut self, pending: Pending, ctx: &egui::Context) {
         match pending {
             Pending::CloseTab(index) => self.close_tab(index),
+            Pending::CloseOtherTabs(keep) => self.close_other_tabs(keep),
             Pending::Quit => {
                 self.persist_session();
                 self.allow_close = true;
@@ -1030,7 +1109,11 @@ impl NotesApp {
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Q)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::T)) {
+        if ctx
+            .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::T))
+        {
+            self.undo_close_tab();
+        } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::T)) {
             self.new_tab();
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::O)) {
@@ -2360,6 +2443,8 @@ impl NotesApp {
                     if save.clicked() {
                         let indices: Vec<usize> = match &pending {
                             Pending::CloseTab(index) => vec![*index],
+                            Pending::CloseOtherTabs(keep) => rust_notes::tab::other_tab_indices(&self.tabs, *keep)
+                                .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
                             _ => self.tabs.iter().enumerate().filter(|(_, tab)| tab.document.dirty()).map(|(i, _)| i).collect(),
                         };
                         if indices.into_iter().all(|index| self.save(index)) {
@@ -2724,7 +2809,18 @@ impl NotesApp {
                     } else {
                         Scope::Document
                     };
-                    let matches = rust_notes::commands::ranked(&self.dialog_input, scope);
+                    let mut matches = rust_notes::commands::ranked(&self.dialog_input, scope);
+                    if tab.is_none_or(|tab| {
+                        rust_notes::tab::other_tab_indices(&self.tabs, tab.id()).is_empty()
+                    }) {
+                        matches.retain(|command| {
+                            command.name != rust_notes::commands::CLOSE_OTHER_TABS
+                        });
+                    }
+                    if self.closed_tabs.is_empty() {
+                        matches
+                            .retain(|command| command.name != rust_notes::commands::UNDO_CLOSE_TAB);
+                    }
                     if input.changed() {
                         self.dialog_selected = 0;
                     }
@@ -3120,6 +3216,9 @@ impl NotesApp {
             crate::editor_ui::relocate_histories(&self.ctx, &vault.root, source, destination);
         }
         self.bookmarks.rename(source, destination);
+        for closed in &mut self.closed_tabs {
+            closed.rename_path(source, destination);
+        }
         for tab in &mut self.tabs {
             tab.history.rename_path(source, destination);
             tab.document.path =
@@ -3549,6 +3648,8 @@ impl NotesApp {
                 }
             }
             "Toggle pin" => self.toggle_pin(self.active),
+            rust_notes::commands::UNDO_CLOSE_TAB => self.undo_close_tab(),
+            rust_notes::commands::CLOSE_OTHER_TABS => self.request_close_other_tabs(),
             "New tab" => self.new_tab(),
             "Close current tab" if !self.tabs.is_empty() => self.request_close_tab(self.active),
             "Go to next tab" => self.step_tab(false),
@@ -3854,16 +3955,21 @@ impl eframe::App for NotesApp {
                             ui.label(RichText::new("Image").size(11.0).weak());
                             return;
                         }
-                        ui.label(
-                            RichText::new(match self.view() {
-                                View::Read => "Reading",
-                                View::Live => "Live preview",
-                                View::Source => "Source mode",
-                                View::Split => "Split view",
-                            })
-                            .size(11.0)
-                            .color(theme::accent(ui)),
-                        );
+                        let mode = match self.view() {
+                            View::Read => "Reading",
+                            View::Live => "Live preview",
+                            View::Source => "Source mode",
+                            View::Split => "Split view",
+                        };
+                        let response =
+                            ui.label(RichText::new(mode).size(11.0).color(theme::accent(ui)));
+                        if crate::ui_probe::enabled() {
+                            crate::ui_probe::record(
+                                &ctx,
+                                format!("view-mode:{mode}"),
+                                response.rect,
+                            );
+                        }
                         if let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document)
                         {
                             ui.label(

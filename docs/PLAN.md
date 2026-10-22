@@ -62,12 +62,18 @@ Masih wants his familiar Obsidian note workflow and appearance, implemented in R
 
 ## Next combined candidate
 
-Build the paired folder-move and native-color changes together in Actions after
-the current corrected release resolves. Keep their individual correctness checks,
-all earlier checks, exact versioned reference evidence and performance gates.
-Use42 full workflows,17 focused sections and7 early sections; verify actual
-counts from the executed results. This scheduling avoids repeating the same
-compiler/full-suite work while preserving both feature contracts.
+Integrate the prepared tab restoration and pinned bulk-close changes with the
+verified source8 preview-height correction and calibrated native picker setup.
+Source8 passes Clippy/Rust and all8 other early workflows; exact-source local
+calibration now passes all7 vault groups. It has no optimized payload, so one
+next NORMAL Actions build verifies45 full/20 focused/10 early workflows with a
+105min cap. Keep every older gate, source identity and actual image inspection.
+Tab restore includes blank/missing/external/cursor/mode/Undo behavior; bulk close
+keeps pinned/current views and actual reference restore order, with safe
+Save/Cancel/Discard on conflicts. Expect209 Rust executions/202 unique and17
+focused tab groups including startup; verify executed counts rather than using
+this forecast as evidence. Installation remains conditional on the exact fully
+verified optimized executable and all performance/visual/data guards.
 
 Native color accepts the observed six marker syntaxes, theme-specific rendering,
 repeat/full/partial changes, empty-word and empty-mark caret behavior, exact

@@ -850,3 +850,25 @@ current maximum before laying out the scroll area, while retaining automatic
 shrink and the existing height cap. Check the actual checkbox against the card's
 inner bounds before the original single click; then verify unsaved text, manual
 save and separate task/typing Undo. Never fix this by retrying the click.
+
+Match a negative driver's probes and query behavior to its exact baseline app.
+Source9feb exposes actual tab-full headers but predates the tab-count metric;
+its old fuzzy matcher also reuses the B in Bulk for Bulk B. Use distinct query
+words and count its real headers before asserting a new command is absent.
+Retain failed setup attempts separately from a demonstrated missing feature.
+
+For bulk tab closing, current1.14.4 closes eligible views in visual order, skips
+pinned/current views and restores them in reverse close order at the group end.
+The four-view audit records D/B, then B/D/C after reordered restoration. The
+palette hides Close all other tabs when only the selected view and pinned
+neighbors remain, including an active blank view. Native close must also retain
+the app's explicit conflict choices: validate only closing notes, close none
+when a save fails, and never replace newer disk bytes on Discard/restore.
+
+Native GTK focus setup must finish before the busy-parent negative. A real
+source8 CI failure occurred before its Enter: asynchronous unmap left focus at
+the X root. Focus the picker once and let activation settle, synchronize its
+unmap, then focus the parent and record each actual map/focus state. Keep the
+single Enter, parent-observed metric and blocked-parent assertions. The exact8
+CI debug app passes all7 vault groups with this calibrated setup; no app focus
+behavior was changed. Preserve the old failed screenshot and raw log.

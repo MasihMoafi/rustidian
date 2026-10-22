@@ -96,6 +96,17 @@ pub fn relocate_histories(
     });
 }
 
+pub fn clear_document_history(ctx: &egui::Context, root: &std::path::Path, path: &std::path::Path) {
+    let state = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Histories>(histories(root))
+            .get(path)
+            .cloned()
+    });
+    if let Some(mut state) = state {
+        state.clear_undoer();
+    }
+}
+
 struct PendingEdit {
     tab: u64,
     path: std::path::PathBuf,

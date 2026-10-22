@@ -22,6 +22,8 @@ impl Scope {
 pub const ADD_UNIQUE_LINK: &str = "Unique note creator: Add unique internal link";
 pub const DUPLICATE_FILE: &str = "Make a copy of the current file";
 pub const MOVE_FILE: &str = "Move current file to another folder";
+pub const UNDO_CLOSE_TAB: &str = "Undo close tab";
+pub const CLOSE_OTHER_TABS: &str = "Close all other tabs";
 
 pub struct Command {
     pub name: &'static str,
@@ -36,6 +38,16 @@ impl AsRef<str> for Command {
 }
 
 pub const ALL: &[Command] = &[
+    Command {
+        name: CLOSE_OTHER_TABS,
+        shortcut: "",
+        scope: Scope::Tab,
+    },
+    Command {
+        name: UNDO_CLOSE_TAB,
+        shortcut: "Ctrl+Shift+T",
+        scope: Scope::Global,
+    },
     Command {
         name: MOVE_FILE,
         shortcut: "",
@@ -361,6 +373,7 @@ mod tests {
     fn tab_actions_need_a_tab_but_creation_remains_available_without_one() {
         for name in [
             "Toggle pin",
+            CLOSE_OTHER_TABS,
             "Close current tab",
             "Go to next tab",
             "Go to previous tab",

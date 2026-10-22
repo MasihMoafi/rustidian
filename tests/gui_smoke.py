@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -2920,12 +2920,22 @@ def main():
                         break
                     time.sleep(.05)
                 assert picker, "Browse must launch the real native folder chooser"
-                # Hide the picker before giving the parent a physical key. GTK
-                # can otherwise reclaim focus and accept that Return itself.
-                xdo("windowunmap",picker)
+                focus_samples=[]
+                def picker_focus(stage):
+                    details=subprocess.check_output(["xwininfo","-id",picker],env=environment,text=True,timeout=3)
+                    mapping=next(line.strip() for line in details.splitlines() if "Map State:" in line)
+                    focus_samples.append({"stage":stage,"parent":window,"picker":picker,"focus":xdo("getwindowfocus"),"picker_mapping":mapping})
+                    (reports/"native-vault-picker-focus.json").write_text(json.dumps(focus_samples,indent=2)+"\n")
+                # Let GTK finish activation before unmapping it. Synchronize the
+                # unmap before assigning the parent its one physical Enter key.
+                xdo("windowfocus", "--sync", picker)
+                pause();picker_focus("picker-ready")
+                xdo("windowunmap", "--sync", picker)
+                picker_focus("picker-unmapped")
                 xdo("windowfocus", "--sync", window)
-                pause()
+                pause();picker_focus("parent-ready")
                 assert xdo("getwindowfocus")==window
+                assert "IsUnMapped" in focus_samples[-1]["picker_mapping"]
                 key("Return")
                 assert control_bounds("vault-parent-enter-observed")[0]==1
                 assert control_bounds("vault-manager")
@@ -3823,6 +3833,142 @@ def main():
                 key("ctrl+w")
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
+
+            def tab_restore_checks():
+                close_tabs()
+                originals={name:f"# Restore {name}\n\n{name.upper()}_ORIGINAL\n" for name in ("Alpha","Beta","Gamma")}
+                paths={name:fixture/f"Restore {name}.md" for name in originals}
+                for name,path in paths.items():path.write_text(originals[name])
+                clean=base/"Tab history setup vault";clean.mkdir();(clean/"Home.md").write_text("# History setup\n")
+                def switch(root):
+                    command("Open vault");modified_shortcut(xdo,"a");paste_text(str(root),held=True);key("Return");title_contains(root.name)
+                # Start with a fresh per-vault history even in the combined suite.
+                switch(clean);switch(fixture)
+                open_note("Restore Alpha");command("Source editing")
+                def tabs():
+                    controls=json.loads((base/"ui-probe.json").read_text())
+                    return [name.removeprefix("tab-full:") for name,bounds in sorted(controls.items(),key=lambda item:item[1][0]) if name.startswith("tab-full:")]
+                def expect(*names):
+                    wanted=[f"Restore {name}.md" for name in names]
+                    assert tabs()==wanted,(wanted,tabs())
+                    assert control_bounds("tab-count")[0]==len(wanted)
+                def mode(label):control_bounds("view-mode:"+label)
+                def select(name):click_control(f"tab-full:Restore {name}.md");title_contains("Restore "+name)
+                expect("Alpha");before=tabs()
+                command("Undo close tab",available=False);key("Escape");key("ctrl+shift+t")
+                assert tabs()==before;title_contains("Restore Alpha");mode("Source mode")
+                results.append("Without closed history the palette hid Undo close tab and Ctrl+Shift+T kept the current view instead of creating a blank tab")
+                editor_end();type_text("ALPHA_SAVED");key("ctrl+s")
+                alpha_saved=originals["Alpha"]+"ALPHA_SAVED";assert paths["Alpha"].read_text()==alpha_saved
+                key("ctrl+t");open_note("Restore Beta");command("Reading view")
+                key("ctrl+t");open_note("Restore Gamma");command("Live preview");expect("Alpha","Beta","Gamma")
+                select("Beta");key("ctrl+w");expect("Alpha","Gamma");title_contains("Restore Gamma")
+                key("ctrl+shift+t");expect("Alpha","Gamma","Beta");title_contains("Restore Beta");mode("Reading")
+                capture("native-tab-restore-middle.png")
+                assert paths["Beta"].read_text()==originals["Beta"]
+                results.append("Closing the middle view selected its right neighbor; one Ctrl+Shift+T appended and selected the same Reading view with unchanged file bytes")
+                key("ctrl+w");select("Gamma");key("ctrl+w");expect("Alpha")
+                key("ctrl+shift+t");expect("Alpha","Gamma");mode("Live preview")
+                command("Undo close tab");expect("Alpha","Gamma","Beta");mode("Reading")
+                results.append("Two closed views returned in last-closed order through both the shortcut and actual palette command, preserving separate modes")
+                select("Alpha");key("ctrl+w");expect("Gamma","Beta")
+                key("ctrl+shift+t");expect("Gamma","Beta","Alpha");mode("Source mode")
+                type_text("_CURSOR");key("ctrl+s");assert paths["Alpha"].read_text()==alpha_saved+"_CURSOR"
+                key("ctrl+z");key("ctrl+s");assert paths["Alpha"].read_text()==alpha_saved
+                key("ctrl+z");key("ctrl+s");assert paths["Alpha"].read_text()==originals["Alpha"]
+                key("ctrl+y");key("ctrl+s");assert paths["Alpha"].read_text()==alpha_saved
+                results.append("Reopening an unchanged Source view retained its insertion point and prior editor Undo/Redo history")
+                key("ctrl+w");external="# Restore Alpha\n\nEXTERNAL_SAVED_BYTES\n";paths["Alpha"].write_text(external)
+                key("ctrl+shift+t");expect("Gamma","Beta","Alpha");mode("Source mode")
+                editor_end();type_text("UNDO_FOCUS_PROOF");key("ctrl+z");key("ctrl+s");assert paths["Alpha"].read_text()==external
+                key("ctrl+z");key("ctrl+s");assert paths["Alpha"].read_text()==external
+                paths["Alpha"].write_text(originals["Alpha"]);time.sleep(.8)
+                results.append("An externally changed closed file reopened from disk; focused typing/Undo worked and another Undo did not resurrect older file contents")
+                key("ctrl+t");key("ctrl+w");expect("Gamma","Beta","Alpha")
+                command("Undo close tab",available=False);key("Escape");key("ctrl+shift+t");expect("Gamma","Beta","Alpha")
+                results.append("Closing a blank tab added no file history and an empty-history restore left all existing views unchanged")
+                key("ctrl+w");key("ctrl+w");key("ctrl+w");assert not tabs()
+                key("ctrl+shift+t");expect("Gamma");mode("Live preview")
+                key("ctrl+shift+t");expect("Gamma","Beta");mode("Reading")
+                key("ctrl+shift+t");expect("Gamma","Beta","Alpha");mode("Source mode")
+                capture("native-tab-restore-last.png")
+                results.append("After the final document view closed, the three saved views still reopened in order without an extra blank tab")
+                key("ctrl+w");removed=paths["Alpha"].with_suffix(".removed");paths["Alpha"].rename(removed)
+                key("ctrl+shift+t");title_contains("New tab")
+                assert not paths["Alpha"].exists() and removed.read_text()==originals["Alpha"]
+                command("Undo close tab",available=False);key("Escape")
+                capture("native-tab-restore-missing.png");removed.rename(paths["Alpha"]);time.sleep(.8)
+                results.append("A missing closed file consumed only that history entry and opened an empty view without recreating or overwriting the file")
+                key("ctrl+w");select("Gamma");command("Toggle pin")
+                key("ctrl+w");expect("Gamma","Beta");title_contains("Restore Gamma")
+                assert control_bounds("unpin-tab:Restore Gamma.md",required=False) is None
+                command("Undo close tab",available=False);key("Escape")
+                key("ctrl+w");expect("Beta");key("ctrl+shift+t");expect("Beta","Gamma")
+                assert control_bounds("unpin-tab:Restore Gamma.md",required=False) is None
+                results.append("The first close only unpinned a pinned view and added no history; the next close restored it as an ordinary unpinned view")
+                for dark in (False,True):
+                    set_theme(dark);key("ctrl+w");key("ctrl+shift+t");expect("Beta","Gamma")
+                    capture("native-tab-restore-"+("dark" if dark else "light")+".png")
+                assert all(path.read_text()==originals[name] for name,path in paths.items())
+                assert (clean/"Home.md").read_text()=="# History setup\n"
+                results.append("Both themes preserved actual reopen behavior, all fixture files and the separate setup vault")
+                close_tabs()
+                bulk={name:fixture/f"Bulk {name}.md" for name in "ABCD"}
+                bulk_originals={name:f"# Bulk {name}\n\nBULK_{name}_ORIGINAL\n" for name in bulk}
+                for name,path in bulk.items():path.write_text(bulk_originals[name])
+                switch(clean);switch(fixture)
+                def bulk_tabs():return [path.removeprefix("Bulk ").removesuffix(".md") for path in tabs()]
+                def bulk_expect(*names):assert bulk_tabs()==list(names),(names,bulk_tabs())
+                def bulk_select(name):click_control(f"tab-full:Bulk {name}.md");title_contains("Bulk "+name)
+                open_note("Bulk A");command("Toggle pin")
+                for name in "BCD":key("ctrl+t");open_note("Bulk "+name)
+                bulk_expect("A","B","C","D");bulk_select("C");command("Close all other tabs")
+                bulk_expect("A","C");title_contains("Bulk C");control_bounds("unpin-tab:Bulk A.md")
+                command("Close all other tabs",available=False);key("Escape")
+                key("ctrl+shift+t");bulk_expect("A","C","D")
+                key("ctrl+shift+t");bulk_expect("A","C","D","B")
+                capture("native-tab-restore-close-others.png")
+                results.append("Close all other tabs kept the selected view and pinned A, hid its inapplicable command and restored the actual reference order D then B")
+                bulk_select("A");command("Close all other tabs");bulk_expect("A");control_bounds("unpin-tab:Bulk A.md")
+                command("Close all other tabs",available=False);key("Escape")
+                for restored,expected in [("B",["A","B"]),("D",["A","B","D"]),("C",["A","B","D","C"])]:
+                    command("Undo close tab");bulk_expect(*expected);title_contains("Bulk "+restored)
+                results.append("A pinned selected view closed all other unpinned views, stayed pinned and restored them B, D, C in observed visual-close order")
+                for name in "BCD":bulk_select(name);command("Toggle pin")
+                command("Close all other tabs",available=False);key("Escape")
+                key("ctrl+t");command("Close all other tabs",available=False);key("Escape");key("ctrl+w")
+                bulk_expect("A","B","D","C")
+                assert all(path.read_text()==bulk_originals[name] for name,path in bulk.items())
+                assert all(path.read_text()==originals[name] for name,path in paths.items())
+                for name in "ABDC":bulk_select(name);command("Toggle pin")
+                results.append("All-pinned views and an active blank view with only pinned neighbors hid bulk close and preserved every original note")
+                command("Open settings");click_control("settings-autosave");key("Escape")
+                bulk_select("A");command("Source editing");editor_end();type_text("LOCAL_PENDING")
+                assert bulk["A"].read_text()==bulk_originals["A"]
+                external=bulk_originals["A"]+"EXTERNAL_PENDING";bulk["A"].write_text(external)
+                bulk_select("C");command("Close all other tabs");control_bounds("pending-cancel")
+                bulk_expect("A","B","D","C");assert bulk["A"].read_text()==external
+                click_control("pending-cancel");bulk_expect("A","B","D","C")
+                command("Close all other tabs");click_control("pending-save");control_bounds("pending-cancel")
+                bulk_expect("A","B","D","C");assert bulk["A"].read_text()==external
+                capture("native-tab-restore-bulk-conflict.png")
+                results.append("An external conflict in a closing note kept all views open; Cancel and an actual failed Save click preserved the newer disk bytes")
+                bulk["A"].write_text(bulk_originals["A"]);click_control("pending-save")
+                bulk_expect("C");assert bulk["A"].read_text()==bulk_originals["A"]+"LOCAL_PENDING"
+                for expected in [("C","D"),("C","D","B"),("C","D","B","A")]:key("ctrl+shift+t");bulk_expect(*expected)
+                title_contains("Bulk A");key("ctrl+z");key("ctrl+s");assert bulk["A"].read_text()==bulk_originals["A"]
+                results.append("Once the conflict cleared, Save and continue saved only the closing notes, kept C selected and retained the saved edit's Undo after ordered restoration")
+                editor_end();type_text("DISCARDED_UNSAVED")
+                discarded_external=bulk_originals["A"]+"KEEP_NEWER_DISK";bulk["A"].write_text(discarded_external)
+                bulk_select("C");command("Close all other tabs");click_control("pending-discard")
+                bulk_expect("C");assert bulk["A"].read_text()==discarded_external
+                key("ctrl+shift+t");bulk_expect("C","A");title_contains("Bulk A")
+                editor_end();type_text("UNDO_FOCUS_PROOF");key("ctrl+z");key("ctrl+s");assert bulk["A"].read_text()==discarded_external
+                key("ctrl+z");key("ctrl+s");assert bulk["A"].read_text()==discarded_external
+                bulk["A"].write_text(bulk_originals["A"]);time.sleep(.8)
+                command("Open settings");click_control("settings-autosave");key("Escape")
+                assert all(path.read_text()==bulk_originals[name] for name,path in bulk.items())
+                results.append("Explicit Discard retained the newer disk file; restoring that view read fresh bytes and could not Undo the discarded contents back into it")
 
             def note_creator_checks():
                 nonlocal app, window
@@ -4898,6 +5044,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
                 return
+            if args.section == "tab-restore":
+                tab_restore_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"tab-restore"}))
+                return
             if args.section == "page-preview":
                 page_preview_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -5244,6 +5395,7 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
+                tab_restore_checks,
                 workspace_checks,
                 palette_queue_checks,
                 unicode_queue_checks,

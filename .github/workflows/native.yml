@@ -36,7 +36,7 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 105
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -99,6 +99,7 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section recovery 2>&1 | tee reports/early-recovery-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-actions 2>&1 | tee reports/early-tab-actions-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-restore 2>&1 | tee reports/early-tab-restore-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-move 2>&1 | tee reports/early-file-move-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section native-highlights 2>&1 | tee reports/early-native-highlights-gui.log
@@ -117,6 +118,8 @@ jobs:
             reports/early-vaults-gui.log
             reports/early-note-creators-gui.log
             reports/early-tab-actions-gui.log
+            reports/early-tab-restore-gui.log
+            reports/native-tab-restore-*.png
             reports/early-file-copy-gui.log
             reports/early-file-move-gui.log
             reports/early-page-preview-gui.log
@@ -189,6 +192,7 @@ jobs:
           RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-creators 2>&1 | tee reports/note-creators-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tab-actions 2>&1 | tee reports/tab-actions-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tab-restore 2>&1 | tee reports/tab-restore-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-copy 2>&1 | tee reports/file-copy-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-move 2>&1 | tee reports/file-move-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section native-highlights 2>&1 | tee reports/native-highlights-gui.log

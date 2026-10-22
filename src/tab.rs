@@ -1,6 +1,8 @@
 use crate::{navigation::History, vault::Document};
 use serde::{Deserialize, Serialize};
 use std::{
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::Instant,
 };
@@ -33,6 +35,66 @@ pub struct Tab {
     pub autosave_failed: bool,
     // Editing state follows a moved file, but never leaks into another document.
     editor_path: std::path::PathBuf,
+}
+
+/// A closed view retains its identity and navigation, without retaining file text.
+pub struct ClosedTab {
+    id: u64,
+    path: PathBuf,
+    editor_path: PathBuf,
+    history: History,
+    view: View,
+    editing_view: View,
+    pinned: bool,
+    image_scale: ImageScale,
+    saved_fingerprint: Option<u64>,
+}
+
+fn saved_fingerprint(document: &Document) -> Option<u64> {
+    document.saved_text().map(|text| {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut hash);
+        hash.finish()
+    })
+}
+
+impl ClosedTab {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn matches_saved_text(&self, document: &Document) -> bool {
+        self.saved_fingerprint.is_some() && self.saved_fingerprint == saved_fingerprint(document)
+    }
+
+    pub fn rename_path(&mut self, source: &Path, destination: &Path) {
+        self.path = crate::paths::moved_path(&self.path, source, destination, true);
+        self.history.rename_path(source, destination);
+    }
+
+    pub fn restore(self, document: Document) -> Tab {
+        let mut tab = Tab::new(document);
+        tab.id = self.id;
+        tab.editor_path = self.editor_path;
+        tab.history = self.history;
+        tab.view = self.view;
+        tab.editing_view = self.editing_view;
+        tab.pinned = self.pinned;
+        tab.image_scale = self.image_scale;
+        tab
+    }
+}
+
+/// Preserve the selected view and every pinned view, in existing tab order.
+pub fn other_tab_indices(tabs: &[Tab], keep: u64) -> Vec<usize> {
+    if !tabs.iter().any(|tab| tab.id() == keep) {
+        return Vec::new();
+    }
+    tabs.iter()
+        .enumerate()
+        .filter(|(_, tab)| tab.id() != keep && !tab.pinned)
+        .map(|(index, _)| index)
+        .collect()
 }
 
 impl Tab {
@@ -68,6 +130,28 @@ impl Tab {
 
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    pub fn into_closed(self) -> Option<ClosedTab> {
+        if self.document.is_blank() {
+            return None;
+        }
+        let fingerprint = if self.document.dirty() {
+            None
+        } else {
+            saved_fingerprint(&self.document)
+        };
+        Some(ClosedTab {
+            id: self.id,
+            path: self.document.path,
+            editor_path: self.editor_path,
+            history: self.history,
+            view: self.view,
+            editing_view: self.editing_view,
+            pinned: self.pinned,
+            image_scale: self.image_scale,
+            saved_fingerprint: fingerprint,
+        })
     }
 
     pub fn editor_path(&self) -> &std::path::Path {
