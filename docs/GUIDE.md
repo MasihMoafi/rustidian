@@ -778,3 +778,8 @@ GlyphRasterizer with is_color=true. Decode lazily and override only those cluste
 Bundle font licenses and preserve narrow archive extraction guards. Verify actual
 Source pixels as well as stored Unicode and Reading highlights; all remain
 unverified until the corrected Actions app executes these cases.
+
+Headless input uses the actual egui0.37 event stream: Event::ModifiersChanged,
+not the removed RawInput.modifiers field. Use Id::unique for a global widget ID;
+Id::new is deprecated and the Clippy gate rejects it. Check those signatures
+in the vendored source before writing a new native input eval.

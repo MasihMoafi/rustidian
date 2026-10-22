@@ -20,11 +20,15 @@ fn key(key: Key) -> Event {
 
 fn frame(ctx: &egui::Context, id: egui::Id, text: &mut String, time: f64, events: Vec<Event>) {
     ctx.memory_mut(|memory| memory.request_focus(id));
+    let events = std::iter::once(Event::ModifiersChanged(
+        Modifiers::CTRL | Modifiers::COMMAND,
+    ))
+    .chain(events)
+    .collect();
     ctx.run_ui(
         egui::RawInput {
             time: Some(time),
             events,
-            modifiers: Modifiers::CTRL | Modifiers::COMMAND,
             ..Default::default()
         },
         |ui| {
@@ -37,7 +41,7 @@ fn frame(ctx: &egui::Context, id: egui::Id, text: &mut String, time: f64, events
 #[test]
 fn one_keyboard_undo_and_redo_skip_cursor_only_snapshots() {
     let ctx = egui::Context::default();
-    let id = egui::Id::new("cursor-snapshot-history");
+    let id = egui::Id::unique("cursor-snapshot-history");
     let mut text = "After".to_owned();
     frame(&ctx, id, &mut text, 0.0, vec![]);
     let mut state = TextEditState::load(&ctx, id).unwrap();
@@ -61,7 +65,7 @@ fn one_keyboard_undo_and_redo_skip_cursor_only_snapshots() {
 #[test]
 fn queued_typing_then_undo_keeps_event_order_and_a_caret_move_alone_changes_no_text() {
     let ctx = egui::Context::default();
-    let id = egui::Id::new("queued-undo-history");
+    let id = egui::Id::unique("queued-undo-history");
     let mut text = "Before".to_owned();
     frame(&ctx, id, &mut text, 0.0, vec![]);
     let mut state = TextEditState::load(&ctx, id).unwrap();

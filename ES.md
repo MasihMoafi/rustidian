@@ -11,6 +11,12 @@ Masih's latest instruction expands the destination to every Obsidian feature, ma
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
+## Headless input API correction — 2026-10-22T02:42:34+00:00
+
+Run39712454968/source124c28a7a0340981546357fc5b9d5efbd71d2af3 stops at the new headless test's obsolete RawInput.modifiers field and deprecated Id::new. The actual egui0.37 API uses Event::ModifiersChanged and Id::unique; fix those test inputs without weakening assertions or changing the prepared runtime corrections. Raw failure reports/124c28a-failed.log retained. No candidate approved/installed. Proactively use those same actual APIs in the isolated future preview feature.
+
+Diagnostic-only deeper checks on exact old e4 debug app now complete:11 Move checks using explicit root clicks to bypass the proven ranking defect, and13 color checks skipping cursor-only history snapshots to examine later cases. Those are NOT acceptance passes; original one-Enter, one-Undo and new Source glyph pixel checks remain in main and must pass a fresh normal build. Retain their exact frozen drivers, identities, logs and copied fresh evidence under reports/e4e1bec-followups/. Installed9feb/ecad and both handed-off previews remain unchanged. Main has only this focused test API correction; unrelated app-icon stays untouched.
+
 ## Early actual-app findings and current corrections — 2026-10-22T02:35:55+00:00
 
 Sourcee4e1bec53196e9f94f0a2d75901fc5efa13e4322/run39710441064 passes all Rust behavior checks and the retained five early workflows (vaults, recovery, creators, pins, copies), then fails new Move/highlight checks. No optimized candidate exists and nothing was installed. Raw source logs/artifact metadata: reports/e4e1bec-failed.log, ...-artifacts.json, reports/github-e4e1bec/early/. Exact CRC/source/bundle-verified debug app is reports/github-e4e1bec/runtime-debug/rust-notes, SHA319eaf51f26c67662388b2e8547ab92251b76ba547fdedaa4d443a5e57365c99, DEBUG ONLY. The direct selected evidence transfer was408485B and debug artifact30254058B; all ordinary bundled files compared byte-for-byte to committed source. No VPN/proxy fallback.
