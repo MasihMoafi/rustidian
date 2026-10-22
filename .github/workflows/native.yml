@@ -36,7 +36,7 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -100,6 +100,8 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-actions 2>&1 | tee reports/early-tab-actions-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-move 2>&1 | tee reports/early-file-move-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section native-highlights 2>&1 | tee reports/early-native-highlights-gui.log
           exit "$early_status"
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
@@ -114,6 +116,8 @@ jobs:
             reports/early-note-creators-gui.log
             reports/early-tab-actions-gui.log
             reports/early-file-copy-gui.log
+            reports/early-file-move-gui.log
+            reports/early-native-highlights-gui.log
             reports/native-vault*.png
             reports/native-vault-*.json
             reports/native-recovery-*.png
@@ -122,6 +126,9 @@ jobs:
             reports/native-pinned-tabs.png
             reports/native-tab-menu-*.png
             reports/native-file-copy*.png
+            reports/native-file-move*.png
+            reports/native-core-highlight-*.png
+            reports/native-highlight-*.png
             reports/gui-*.json
             reports/gui-*-failure*
             reports/gui-failure.png
@@ -177,6 +184,8 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-creators 2>&1 | tee reports/note-creators-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tab-actions 2>&1 | tee reports/tab-actions-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-copy 2>&1 | tee reports/file-copy-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-move 2>&1 | tee reports/file-move-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section native-highlights 2>&1 | tee reports/native-highlights-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section recovery 2>&1 | tee reports/recovery-gui.log
           exit "$gui_status"
@@ -211,7 +220,10 @@ jobs:
             reports/native-pinned-tabs.png
             reports/native-tab-menu-*.png
             reports/native-file-copy*.png
+            reports/native-file-move*.png
             reports/native-image-tab-*.png
+            reports/native-core-highlight-*.png
+            reports/native-highlight-*.png
             reports/native-palette-queued.png
             reports/native-unicode-keyboard.png
             reports/unicode-keyboard-calibration.json

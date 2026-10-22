@@ -40,6 +40,7 @@ pub struct Style {
     pub task_marker: bool,
     pub task_checked: bool,
     pub highlight: Option<crate::highlight::Rgba>,
+    pub native_highlight: Option<crate::highlight::NativeColor>,
     pub property: bool,
     pub image: bool,
     pub marker: bool,
@@ -397,42 +398,54 @@ impl Markdown {
         }
         let mut highlights = Vec::new();
         let mut opening = None;
-        for (index, _) in text.match_indices("==") {
-            let escaped = text.as_bytes()[..index]
+        let mut next = 0;
+        while let Some(found) = text[next..].find("==") {
+            let run = next + found;
+            let count = text.as_bytes()[run..]
+                .iter()
+                .take_while(|byte| **byte == b'=')
+                .count();
+            next = run + count;
+            let escaped = text.as_bytes()[..run]
                 .iter()
                 .rev()
                 .take_while(|byte| **byte == b'\\')
                 .count()
                 % 2
                 == 1;
-            if escaped
-                || styles[index].code
-                || styles[index].hidden
-                || styles[index].property
-                || text.as_bytes().get(index.wrapping_sub(1)) == Some(&b'=')
-                || text.as_bytes().get(index + 2) == Some(&b'=')
-            {
+            if escaped || !matches!(count, 2 | 4) || (count == 4 && opening.is_none()) {
                 continue;
             }
-            if let Some(start) = opening.take() {
-                let content = &text[start + 2..index];
-                if !content.trim().is_empty()
-                    && !content.contains("\n\n")
-                    && !content.contains("\r\n\r\n")
-                {
-                    patch(&mut styles, start + 2..index, |style| {
-                        style.highlight = Some(crate::highlight::Color::Yellow.rgba())
-                    });
-                    for marker in [start..start + 2, index..index + 2] {
-                        hide(&mut styles, marker.clone());
-                        patch(&mut styles, marker, |style| style.marker = true);
+            for index in (run..next).step_by(2) {
+                if styles[index].code || styles[index].hidden || styles[index].property {
+                    continue;
+                }
+                if let Some(start) = opening.take() {
+                    let content = &text[start + 2..index];
+                    let native = crate::highlight::NativeColor::prefix(content);
+                    let marker_end = start + 2 + native.map_or(0, |(_, size)| size);
+                    let content = &text[marker_end..index];
+                    if (native.is_some() || !content.trim().is_empty())
+                        && !content.contains("\n\n")
+                        && !content.contains("\r\n\r\n")
+                    {
+                        patch(&mut styles, marker_end..index, |style| {
+                            style.native_highlight = native.map(|(color, _)| color);
+                            style.highlight = native
+                                .is_none()
+                                .then_some(crate::highlight::Color::Yellow.rgba());
+                        });
+                        for marker in [start..marker_end, index..index + 2] {
+                            hide(&mut styles, marker.clone());
+                            patch(&mut styles, marker, |style| style.marker = true);
+                        }
+                        highlights.push(start..index + 2);
+                    } else {
+                        opening = Some(index);
                     }
-                    highlights.push(start..index + 2);
                 } else {
                     opening = Some(index);
                 }
-            } else {
-                opening = Some(index);
             }
         }
         marks.sort_by_key(|(opening, _, _)| opening.start);

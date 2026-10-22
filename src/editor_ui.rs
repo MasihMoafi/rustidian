@@ -57,6 +57,7 @@ struct PendingEdit {
 
 enum Edit {
     Highlight(Color),
+    NativeHighlight(rust_notes::highlight::NativeColor),
     Insert { text: String, caret_back: usize },
 }
 
@@ -418,6 +419,10 @@ impl Editor {
         self.edit(tab, Edit::Highlight(color));
     }
 
+    pub fn native_highlight(&mut self, tab: &Tab, color: rust_notes::highlight::NativeColor) {
+        self.edit(tab, Edit::NativeHighlight(color));
+    }
+
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
         self.edit(
             tab,
@@ -692,10 +697,15 @@ impl Editor {
             let operation = pending.as_ref().map(|edit| &edit.operation);
             let markers = match operation {
                 Some(Edit::Highlight(color)) => Some(color.markers()),
-                Some(Edit::Insert { .. }) => None,
+                Some(Edit::Insert { .. } | Edit::NativeHighlight(_)) => None,
                 None => shortcut,
             };
-            if markers.is_some() || matches!(operation, Some(Edit::Insert { .. })) {
+            if markers.is_some()
+                || matches!(
+                    operation,
+                    Some(Edit::Insert { .. } | Edit::NativeHighlight(_))
+                )
+            {
                 let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
                 if let Some(selection) = pending
                     .as_ref()
@@ -706,7 +716,13 @@ impl Editor {
                     undoer.add_undo(&(selection, tab.document.text.clone()));
                     let selection_range = selection.as_sorted_char_range();
                     let characters = selection_range.start.0..selection_range.end.0;
-                    let range = if let Some(Edit::Insert { text, caret_back }) = operation {
+                    let range = if let Some(Edit::NativeHighlight(color)) = operation {
+                        rust_notes::highlight::toggle_native(
+                            &mut tab.document.text,
+                            characters,
+                            *color,
+                        )
+                    } else if let Some(Edit::Insert { text, caret_back }) = operation {
                         let caret =
                             characters.start + text.chars().count().saturating_sub(*caret_back);
                         replace_chars(&mut tab.document.text, characters, text);
@@ -2285,8 +2301,11 @@ fn layout(
                 } else {
                     Stroke::NONE
                 },
-                background: if let Some([red, green, blue, alpha]) =
-                    style.highlight.filter(|_| live && !hidden)
+                background: if let Some([red, green, blue, alpha]) = style
+                    .native_highlight
+                    .map(|color| color.rgba(ui.visuals().dark_mode))
+                    .or(style.highlight)
+                    .filter(|_| live && !hidden)
                 {
                     Color32::from_rgba_unmultiplied(red, green, blue, alpha)
                 } else if highlighted {

@@ -5,6 +5,21 @@ use rust_notes::{
 use std::fs;
 
 #[test]
+fn file_moves_keep_editing_identity_but_navigation_changes_it() {
+    use rust_notes::vault::Document;
+    use std::path::Path;
+    let mut tab = Tab::new(Document::new("Source.md".into()));
+    let id = tab.id();
+    tab.document.path = "Folder/Source.md".into();
+    tab.replace(Document::new("Folder/Source.md".into()));
+    assert_eq!(tab.id(), id);
+    assert_eq!(tab.editor_path(), Path::new("Source.md"));
+    tab.open(Document::new("Another.md".into())).unwrap();
+    assert_eq!(tab.id(), id);
+    assert_eq!(tab.editor_path(), Path::new("Another.md"));
+}
+
+#[test]
 fn plain_text_opens_in_source_mode_and_markdown_keeps_live_mode() {
     use rust_notes::vault::Document;
     let mut tab = Tab::new(Document::new("Read me.txt".into()));

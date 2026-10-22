@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview", "native-highlights", "empty-commands"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview", "page-preview-actions", "native-highlights", "native-highlight-caret", "native-highlight-render", "native-highlight-availability", "native-highlight-empty", "empty-commands"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 parser.add_argument("--app-asar", type=Path, help="Read-only copy of an installed update into the disposable profile")
 arguments = parser.parse_args()
@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     (settings / "appearance.json").write_text(json.dumps(appearance))
     shutil.copytree(original / "snippets", settings / "snippets", dirs_exist_ok=True)
     (settings / "app.json").write_text(json.dumps({"defaultViewMode": "preview"}))
-    if arguments.section in ("inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "page-preview"):
+    if arguments.section in ("inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "page-preview", "page-preview-actions"):
         (vault / "Templates").mkdir(exist_ok=True)
         (vault / "Daily").mkdir(exist_ok=True)
         (vault / "Template target.md").write_text("# Before\n\n")
@@ -48,11 +48,19 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         if arguments.section == "unique-links-configured":
             (vault / "Unique").mkdir()
             (settings / "zk-prefixer.json").write_text(json.dumps({"folder":"Unique","format":"[Link-]YYYYMMDDHHmm","template":"Templates/Meeting.md"}))
-        if arguments.section == "page-preview":
+        if arguments.section in ("page-preview", "page-preview-actions"):
             (vault/'Preview source.md').write_text('# Preview source\n\n[[Preview target|Target preview]]\n')
             (vault/'Preview target.md').write_text('# Preview target\n\nVISIBLE_PREVIEW_DESTINATION\n\n- [ ] Preview task\n')
-    if arguments.section == "native-highlights":
+            if arguments.section == "page-preview-actions":
+                (vault/'Preview target.md').write_text('# Preview target\n\nVISIBLE_PREVIEW_DESTINATION\n\n- [ ] Preview task\n\n[Open next](Preview%20next.md)\n')
+                (vault/'Preview next.md').write_text('# Preview next\n\nNEXT_PREVIEW_DESTINATION\n')
+                (vault/'Preview source.md').write_text('# Preview source\n\n[[Preview target|Target preview]]\n\n[[Missing preview target|Missing preview]]\n')
+    if arguments.section in ("native-highlights", "native-highlight-caret", "native-highlight-render", "native-highlight-availability", "native-highlight-empty"):
         (vault / "Native highlights.md").write_text("# Native highlights\n\n`==literal==`\n\nBefore TARGET")
+        if arguments.section == "native-highlight-empty":
+            (vault/"Native highlights.md").write_text("Before  ==🟣EXISTING== after")
+        if arguments.section == "native-highlight-render":
+            (vault/"Native highlight rendering.md").write_text("# Native highlight rendering\n\n"+"\n\n".join(f"{name} =={marker}TARGET_{name.upper()}==" for name,marker in [('Blue','🔵'),('Green','🟢'),('Orange','🟠'),('Purple','🟣'),('Red','🔴'),('Yellow','🟡')])+"\n\nPartial ==🔵TA====🟣RGE====🔵T==\n\n`==🔵literal==`\n\n```md\n==🟣fenced==\n```\n\n[==🔴target link==](Native%20highlights.md)\n")
     profile = base / "profile"
     profile.mkdir()
     update_identity = {}
@@ -146,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 xdo("key","--clearmodifiers","ctrl+w");time.sleep(.3)
             assert all(page['id']!=settings_target['id'] for page in pages()), "Close the isolated settings window before testing notes"
             target=main_target;xdo("windowfocus",window)
-            print(json.dumps({"reference_identity":reference_identity}),flush=True)
+            print(json.dumps({"reference_identity":{k:v for k,v in reference_identity.items() if k!="general_text"}}),flush=True)
             assert reference_identity['observed_general_version']==re.search(r"(\d+\.\d+\.\d+)",arguments.app_asar.name).group(1),reference_identity
 
         if arguments.section == "empty-commands":
@@ -175,7 +183,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             finally:(ROOT/'reports/obsidian-empty-commands-reference.json').write_text(json.dumps(report,indent=2)+'\n')
             raise SystemExit(0)
 
-        if arguments.section == "native-highlights":
+        if arguments.section in ("native-highlights", "native-highlight-caret", "native-highlight-render", "native-highlight-availability", "native-highlight-empty"):
             report={**reference_identity,"profile":"disposable","status":"observed","cases":[]}
             note=vault/'Native highlights.md';original=note.read_text()
             originals={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md') if p!=note}
@@ -199,6 +207,107 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 palette('Toggle Live Preview/Source mode')
                 state=evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")
                 assert state.get('source') is True,state
+                if arguments.section == "native-highlight-empty":
+                    def observed():
+                        state=evaluate("JSON.stringify((()=>{const e=app.workspace.activeLeaf.view.editor;return {text:e.getValue(),selection:e.getSelection(),cursor:e.getCursor()}})())")
+                        saved(state['text']);return state
+                    xdo('key','--clearmodifiers','ctrl+Home');xdo('key',*(['Right']*7))
+                    before=observed();palette('Toggle blue highlight');empty=observed()
+                    report['cases'].append({'name':'Apply Blue between spaces','before':before,'after':empty})
+                    palette('Toggle blue highlight');repeated=observed()
+                    report['cases'].append({'name':'Repeat Blue at an empty mark','after':repeated})
+                    if repeated['text']!=empty['text']:xdo('key','--clearmodifiers','ctrl+z');saved(empty['text'])
+                    xdo('key','--clearmodifiers','ctrl+e');time.sleep(.4)
+                    reading=evaluate("JSON.stringify({text:document.querySelector('.workspace-leaf.mod-active .markdown-preview-view')?.innerText,marks:[...document.querySelectorAll('.workspace-leaf.mod-active .markdown-preview-view mark')].map(e=>({text:e.textContent,color:e.dataset.highlight,html:e.outerHTML}))})")
+                    report['cases'].append({'name':'Empty mark beside a real highlight in Reading','rendered':reading})
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-native-empty-highlight-reading.png')
+                    xdo('key','--clearmodifiers','ctrl+e');time.sleep(.3)
+                    xdo('type','--clearmodifiers','NEW');time.sleep(.4);typed=observed()
+                    report['cases'].append({'name':'Type into the retained empty mark','after':typed})
+                    xdo('key','--clearmodifiers','ctrl+z');saved(empty['text'])
+                    xdo('key','--clearmodifiers','ctrl+z');saved(original)
+                    assert all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
+                    report.update(status='observed',original_notes_unchanged=True,fixture_restored=True)
+                    print(json.dumps({'section':'native-highlight-empty','status':'observed','cases':len(report['cases'])}))
+                    raise SystemExit(0)
+                if arguments.section == "native-highlight-availability":
+                    def palette_rows(label):
+                        xdo('key','--clearmodifiers','ctrl+p');time.sleep(.2);xdo('type','--clearmodifiers',label);time.sleep(.3)
+                        return evaluate("JSON.stringify([...document.querySelectorAll('.suggestion-item')].map(e=>e.textContent.trim()))")
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','--clearmodifiers','ctrl+shift+Left')
+                    rows=palette_rows('Toggle blue highlight');report['cases'].append({'mode':'Source','rows':rows});xdo('key','Escape');time.sleep(.2)
+                    assert any('Toggle blue highlight' in row for row in rows),rows
+                    xdo('key','--clearmodifiers','ctrl+e');time.sleep(.4)
+                    assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")['mode']=='preview'
+                    rows=palette_rows('Toggle blue highlight');report['cases'].append({'mode':'Reading','rows':rows})
+                    if any('Toggle blue highlight' in row for row in rows):
+                        xdo('key','Return');time.sleep(.5)
+                        report['reading_execution']={'state':evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())"),'text':note.read_text()}
+                        if note.read_text()!=original:
+                            if evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")['mode']=='preview':xdo('key','--clearmodifiers','ctrl+e');time.sleep(.3)
+                            xdo('key','--clearmodifiers','ctrl+z');saved(original)
+                    else:xdo('key','Escape');time.sleep(.2)
+                    xdo('key','--clearmodifiers','ctrl+t');time.sleep(.3)
+                    rows=palette_rows('Toggle blue highlight');report['cases'].append({'mode':'Empty','rows':rows});xdo('key','Escape')
+                    assert note.read_text()==original and all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
+                    report.update(status='observed',original_notes_unchanged=True,fixture_restored=True)
+                    print(json.dumps({'section':'native-highlight-availability','status':'observed','cases':report['cases']}))
+                    raise SystemExit(0)
+                if arguments.section == "native-highlight-render":
+                    xdo('key','--clearmodifiers','ctrl+o');time.sleep(.2);xdo('type','--clearmodifiers','Native highlight rendering');time.sleep(.3);xdo('key','Return');time.sleep(.6)
+                    rendered_note=vault/'Native highlight rendering.md';rendered_source=rendered_note.read_text()
+                    for appearance in ('dark','light'):
+                        if not evaluate("JSON.stringify(document.body.classList.contains('theme-"+appearance+"'))"):
+                            palette('Toggle light/dark mode')
+                        assert evaluate("JSON.stringify(document.body.classList.contains('theme-"+appearance+"'))")
+                        if evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")['mode']!='preview':
+                            xdo('key','--clearmodifiers','ctrl+e');time.sleep(.4)
+                        marks=evaluate("JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active .markdown-preview-view mark')].map(e=>{const s=getComputedStyle(e);return {text:e.textContent,highlight:e.dataset.highlight||null,background:s.backgroundColor,color:s.color,html:e.outerHTML}}))")
+                        literal=evaluate("JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active .markdown-preview-view code')].map(e=>({text:e.textContent,marks:e.querySelectorAll('mark').length})))")
+                        assert all(any(m['text']=='TARGET_'+c.upper() and m['highlight']==c.lower() for m in marks) for c in ('Blue','Green','Orange','Purple','Red','Yellow')),marks
+                        assert all(c['marks']==0 for c in literal) and any('==🔵literal==' in c['text'] for c in literal) and any('==🟣fenced==' in c['text'] for c in literal),literal
+                        ImageGrab.grab(xdisplay=display).save(ROOT/f'reports/obsidian-native-highlight-render-{appearance}-reading.png')
+                        report['cases'].append({'appearance':appearance,'mode':'Reading','marks':marks,'literal_code':literal})
+                        xdo('key','--clearmodifiers','ctrl+e');time.sleep(.4)
+                        if evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())").get('source',False):palette('Toggle Live Preview/Source mode')
+                        assert not evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())").get('source',False)
+                        live=evaluate("JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active .cm-content span')].filter(e=>e.textContent.startsWith('TARGET_')).map(e=>{const s=getComputedStyle(e);return {text:e.textContent,classes:e.className,background:s.backgroundColor,color:s.color,html:e.outerHTML}}))")
+                        assert live,('Actual Live rendered highlight spans must appear',appearance)
+                        ImageGrab.grab(xdisplay=display).save(ROOT/f'reports/obsidian-native-highlight-render-{appearance}-live.png')
+                        report['cases'].append({'appearance':appearance,'mode':'Live preview','spans':live})
+                        assert rendered_note.read_text()==rendered_source
+                    assert all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
+                    report.update(status='passed',original_notes_unchanged=True,fixture_restored=note.read_text()==original)
+                    print(json.dumps({'section':'native-highlight-render','status':'passed','cases':len(report['cases'])}))
+                    raise SystemExit(0)
+                if arguments.section == "native-highlight-caret":
+                    def observed():
+                        state=evaluate("JSON.stringify((()=>{const e=app.workspace.activeLeaf.view.editor;return {text:e.getValue(),selection:e.getSelection(),cursor:e.getCursor()}})())")
+                        saved(state['text']);return state
+                    def observe_toggle(name,label):
+                        before=observed();palette(label);after=observed()
+                        report['cases'].append({'name':name,'before':before,'after':after})
+                        if after['text']!=before['text']:
+                            xdo('key','--clearmodifiers','ctrl+z');saved(before['text'])
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','Left','Left','Left')
+                    observe_toggle('Apply Blue at an unmarked interior caret','Toggle blue highlight')
+                    xdo('key','--clearmodifiers','ctrl+End')
+                    observe_toggle('Apply Blue at an empty selection at the document end','Toggle blue highlight')
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','--clearmodifiers','ctrl+shift+Left')
+                    palette('Toggle blue highlight');blue=observed()
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','Left','Left','Left');xdo('key','--clearmodifiers','shift+Left','shift+Left','shift+Left')
+                    observe_toggle('Apply Purple to a partial selection inside Blue','Toggle purple highlight')
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','Left','Left','Left')
+                    observe_toggle('Apply Purple at a caret inside Blue','Toggle purple highlight')
+                    xdo('key','--clearmodifiers','ctrl+z');saved(original)
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','--clearmodifiers','ctrl+shift+Left')
+                    palette('Toggle highlight');plain=observed()
+                    observe_toggle('Apply Yellow to the generic uncolored highlight','Toggle yellow highlight')
+                    xdo('key','--clearmodifiers','ctrl+z');saved(original)
+                    assert all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
+                    report.update(status='observed',original_notes_unchanged=True,fixture_restored=note.read_text()==original)
+                    print(json.dumps({'section':'native-highlight-caret','status':'observed','cases':len(report['cases'])}))
+                    raise SystemExit(0)
                 for color in ('Blue','Green','Orange','Purple','Red','Yellow'):
                     xdo('key','--clearmodifiers','ctrl+End');xdo('key','--clearmodifiers','ctrl+shift+Left')
                     assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.editor.getSelection())")=='TARGET'
@@ -216,20 +325,100 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                     xdo('key','--clearmodifiers','ctrl+z');saved(original)
                     report['cases'].append({'color':color,'source':changed,'reading':rendered,'literal_code_unchanged':True,'single_undo_redo_exact':True})
                 assert note.read_text()==original
+                report['toggle_cases']=[]
+                def edit_state():
+                    state=evaluate("JSON.stringify((()=>{const e=app.workspace.activeLeaf.view.editor;return {text:e.getValue(),selection:e.getSelection(),cursor:e.getCursor()}})())")
+                    saved(state['text'])
+                    return state
+                xdo('key','--clearmodifiers','ctrl+End');xdo('key','--clearmodifiers','ctrl+shift+Left')
+                palette('Toggle blue highlight');blue=edit_state()
+                report['toggle_cases'].append({'name':'Apply Blue','state':blue})
+                palette('Toggle blue highlight');toggled=edit_state()
+                report['toggle_cases'].append({'name':'Repeat same color on the retained selection','state':toggled})
+                xdo('key','--clearmodifiers','ctrl+z');saved(blue['text'])
+                palette('Toggle purple highlight');purple=edit_state()
+                report['toggle_cases'].append({'name':'Change Blue to Purple on the retained selection','state':purple})
+                xdo('key','--clearmodifiers','ctrl+z');saved(blue['text'])
+                xdo('key','--clearmodifiers','ctrl+End');xdo('key','Left','Left','Left')
+                before_caret=edit_state()
+                assert before_caret['selection']=='',before_caret
+                palette('Toggle blue highlight');caret=edit_state()
+                report['toggle_cases'].append({'name':'Toggle Blue at an interior caret without a selection','before':before_caret,'state':caret})
+                xdo('key','--clearmodifiers','ctrl+z');saved(blue['text'])
+                xdo('key','--clearmodifiers','ctrl+z');saved(original)
                 assert all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
                 report.update(status='passed',original_notes_unchanged=True,fixture_restored=True)
-                print(json.dumps({'section':'native-highlights','status':'passed','colors':[row['color'] for row in report['cases']]}))
+                print(json.dumps({'section':'native-highlights','status':'passed','colors':[row['color'] for row in report['cases']],'toggle_observations':len(report['toggle_cases'])}))
             finally:
-                (ROOT/'reports/obsidian-native-highlights-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+                (ROOT/f"reports/obsidian-{arguments.section}-reference.json").write_text(json.dumps(report,indent=2)+'\n')
             raise SystemExit(0)
 
-        if arguments.section == "page-preview":
-            report={'appimage':str(arguments.appimage),'profile':'disposable','status':'observed','cases':[]}
+        if arguments.section in ("page-preview", "page-preview-actions"):
+            report={**reference_identity,'profile':'disposable','status':'observed','cases':[]}
             originals={p.relative_to(vault).as_posix():p.read_bytes() for p in vault.rglob('*.md')}
             def popovers():
                 return evaluate("JSON.stringify({active:app.workspace.activeLeaf?.view.file?.path||null,popovers:[...document.querySelectorAll('.hover-popover')].filter(e=>e.getBoundingClientRect().width&&e.getBoundingClientRect().height).map(e=>({text:e.innerText,rect:(()=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})()}))})")
             try:
                 xdo('key','ctrl+o');time.sleep(.2);xdo('type','--clearmodifiers','Preview source');time.sleep(.3);xdo('key','Return');time.sleep(.7)
+                if arguments.section == "page-preview-actions":
+                    report['actions']=[]
+                    def at(selector):
+                        rect=evaluate("JSON.stringify((()=>{const e=document.querySelector("+json.dumps(selector)+");if(!e)return null;const r=e.getBoundingClientRect();return r.width&&r.height?[screenX+r.x+r.width/2,screenY+r.y+r.height/2]:null})())")
+                        assert rect,('Actual preview control must be visible',selector)
+                        xdo('mousemove',*[str(round(v)) for v in rect]);return rect
+                    def hover(href='Preview target'):
+                        xdo('mousemove','30','930');time.sleep(.6)
+                        at('.workspace-leaf.mod-active a.internal-link[data-href="'+href+'"]');time.sleep(.9)
+                        return popovers()
+                    shown=hover();assert len(shown['popovers'])==1 and shown['active']=='Preview source.md',shown
+                    report['controls']=evaluate("JSON.stringify([...document.querySelectorAll('.hover-popover button,.hover-popover input,.hover-popover .clickable-icon')].map(e=>({tag:e.tagName,type:e.type||null,label:e.getAttribute('aria-label'),title:e.getAttribute('title'),checked:e.checked,disabled:e.disabled,html:e.outerHTML})))")
+                    card=evaluate("JSON.stringify((()=>{const r=document.querySelector('.hover-popover').getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+                    xdo('mousemove',*[str(round(v)) for v in card]);time.sleep(.7)
+                    stayed=popovers();assert stayed['popovers'] and stayed['active']=='Preview source.md',stayed
+                    report['actions'].append({'name':'Pointer entered and stayed within the card','state':stayed})
+                    target_note=vault/'Preview target.md';target_original=target_note.read_text()
+                    at('.hover-popover input[type="checkbox"]');xdo('click','1');time.sleep(.7)
+                    after=target_note.read_text()
+                    report['actions'].append({'name':'Click task checkbox','before':target_original,'after':after,'state':popovers()})
+                    if after!=target_original:
+                        at('.hover-popover input[type="checkbox"]');xdo('click','1');time.sleep(.7)
+                        assert target_note.read_text()==target_original
+                    report['focus_after_task']=evaluate("JSON.stringify((()=>{const e=document.activeElement;return {tag:e?.tagName,type:e?.type||null,in_card:!!e?.closest('.hover-popover')}})())")
+                    xdo('mousemove','30','930');time.sleep(.7)
+                    report['pointer_away_after_task']=popovers()
+                    def dismiss_card():
+                        xdo('mousemove','30','930');time.sleep(.7)
+                        if popovers()['popovers']:
+                            xdo('key','Escape');time.sleep(.3)
+                            report.setdefault('dismissals',[]).append({'gesture':'Escape','state':popovers()})
+                        if popovers()['popovers']:
+                            xdo('mousemove','1100','800','click','1');time.sleep(.5)
+                            report.setdefault('dismissals',[]).append({'gesture':'Outside click','state':popovers()})
+                        assert popovers()['popovers']==[]
+                    dismiss_card();hover()
+                    report['card_html']=evaluate("JSON.stringify(document.querySelector('.hover-popover')?.outerHTML)")
+                    icons=evaluate("JSON.stringify([...document.querySelectorAll('.hover-popover .clickable-icon,.hover-popover .markdown-embed-link,.hover-popover [role=button]')].map(e=>({label:e.getAttribute('aria-label'),title:e.getAttribute('title'),classes:e.className,html:e.outerHTML})))")
+                    report['card_icons']=icons
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-page-preview-actions.png')
+                    embed=evaluate("JSON.stringify(!!document.querySelector('.hover-popover .markdown-embed-link'))")
+                    if embed:
+                        before=evaluate("JSON.stringify({active:app.workspace.activeLeaf?.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').map(l=>l.view.file?.path||null)})")
+                        at('.hover-popover .markdown-embed-link');xdo('click','1');time.sleep(.6)
+                        after=evaluate("JSON.stringify({active:app.workspace.activeLeaf?.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').map(l=>l.view.file?.path||null)})")
+                        report['actions'].append({'name':'Open link from the corner control','before':before,'after':after})
+                        xdo('key','--clearmodifiers','ctrl+o');time.sleep(.2);xdo('type','--clearmodifiers','Preview source');time.sleep(.3);xdo('key','Return');time.sleep(.5)
+                    dismiss_card();hover()
+                    at('.hover-popover a.internal-link');xdo('click','1');time.sleep(.6)
+                    report['actions'].append({'name':'Follow the card internal link','after':evaluate("JSON.stringify({active:app.workspace.activeLeaf?.view.file?.path,tabs:app.workspace.getLeavesOfType('markdown').map(l=>l.view.file?.path||null)})")})
+                    xdo('key','--clearmodifiers','ctrl+o');time.sleep(.2);xdo('type','--clearmodifiers','Preview source');time.sleep(.3);xdo('key','Return');time.sleep(.5)
+                    dismiss_card()
+                    report['missing_hover']=hover('Missing preview target')
+                    assert report['missing_hover']['active']=='Preview source.md' and not (vault/'Missing preview target.md').exists()
+                    dismiss_card()
+                    assert all((vault/name).read_bytes()==data for name,data in originals.items())
+                    report.update(status='observed',notes_unchanged=True)
+                    print(json.dumps({'section':'page-preview-actions','status':'observed','actions':len(report['actions']),'icons':icons}))
+                    raise SystemExit(0)
                 for mode in ('Reading','Live preview','Source'):
                     xdo('mousemove','30','930');time.sleep(.6)
                     if mode=='Live preview':
@@ -261,7 +450,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                 print(json.dumps({'section':'page-preview','status':'passed','cases':[(c['mode'],c['control'],len(c['popovers'])) for c in report['cases']]}))
             finally:
                 xdo('keyup','Control_L')
-                (ROOT/'reports/obsidian-page-preview-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+                (ROOT/f"reports/obsidian-{arguments.section}-reference.json").write_text(json.dumps(report,indent=2)+'\n')
             raise SystemExit(0)
 
         if arguments.section in ("file-actions", "file-move"):

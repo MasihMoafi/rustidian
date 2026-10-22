@@ -36,6 +36,8 @@ struct Session {
     sidebar_widths: [f32; 2],
     #[serde(default)]
     recovery_config: Option<rust_notes::recovery::Config>,
+    #[serde(default)]
+    always_update_links: Option<bool>,
 }
 
 fn default_sidebars() -> [f32; 2] {
@@ -125,6 +127,9 @@ impl NotesApp {
         {
             self.recovery_config = config;
         }
+        if let Some(always) = session.always_update_links {
+            self.always_update_links = always;
+        }
         ctx.set_zoom_factor(self.ui_zoom);
         self.sort_descending = session.sort_descending;
         self.bookmarks = session.bookmarks;
@@ -171,6 +176,7 @@ impl NotesApp {
             note_aids: Some(self.note_aids.clone()),
             sidebar_widths: self.sidebar_widths,
             recovery_config: Some(self.recovery_config.clone()),
+            always_update_links: Some(self.always_update_links),
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {

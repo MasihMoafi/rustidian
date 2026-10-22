@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "file-copy", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -906,6 +906,100 @@ def main():
                     key("ctrl+s")
                     assert note.read_text() == expected + " reopened", (name, "reopen")
                 results.append("All five highlight colors preserve selected text through Ctrl+P, save/reopen and undo/redo, and render in Live/Reading with light/dark captures")
+
+            def native_highlight_checks():
+                close_tabs();key("ctrl+t")
+                command("Toggle blue highlight",available=False);key("Escape")
+                note=fixture/"Native color toggle.md"
+                original="# Native color toggle\n\n`==literal==`\n\nBefore TARGET"
+                note.write_text(original);time.sleep(.6)
+                open_note("Native color toggle");command("Source editing")
+                key("ctrl+p");type_text("Highlight Cyan");control_bounds("command:Highlight Cyan");key("Escape")
+                assert note.read_text()==original
+                results.append("Native color toggles stayed unavailable on a blank tab; the original Cyan command remained available on a document without editing it")
+                colors=[("Blue","🔵"),("Green","🟢"),("Orange","🟠"),("Purple","🟣"),("Red","🔴"),("Yellow","🟡")]
+                for color,marker in colors:
+                    editor_end();key("ctrl+shift+Left")
+                    command("Toggle "+color.lower()+" highlight");key("ctrl+s")
+                    expected=original[:-6]+"=="+marker+"TARGET=="
+                    assert note.read_text()==expected,(color,note.read_text())
+                    key("ctrl+z");key("ctrl+s");assert note.read_text()==original,(color,"undo")
+                    key("ctrl+y");key("ctrl+s");assert note.read_text()==expected,(color,"redo")
+                    command("Toggle "+color.lower()+" highlight");key("ctrl+s")
+                    assert note.read_text()==original,(color,"repeat toggle",note.read_text())
+                    results.append(color+" used the native emoji marker, preserved its selected text and literal-code neighbor, and reversed exactly through undo/redo and a repeated toggle")
+                editor_end();key("ctrl+shift+Left");command("Toggle blue highlight");key("ctrl+s")
+                blue=original[:-6]+"==🔵TARGET==";assert note.read_text()==blue
+                key("ctrl+End");key("Left");key("Left");key("Left")
+                key("shift+Left");key("shift+Left");key("shift+Left")
+                command("Toggle purple highlight");key("ctrl+s")
+                partial=original[:-6]+"==🔵TA====🟣RGE====🔵T=="
+                assert note.read_text()==partial,note.read_text()
+                key("ctrl+c")
+                copied=subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,timeout=5).decode()
+                assert copied=="RGE",repr(copied)
+                command("Reading view");capture("native-highlight-partial-reading.png")
+                key("ctrl+e");command("Source editing");key("ctrl+z");key("ctrl+s");assert note.read_text()==blue
+                key("ctrl+y");key("ctrl+s");assert note.read_text()==partial
+                key("ctrl+z");key("ctrl+s");assert note.read_text()==blue
+                results.append("Recoloring a partial selection split Blue/Purple/Blue with the exact reference bytes, retained the selected RGE clipboard text, rendered, and reversed as a single edit")
+                key("ctrl+End");key("Left");key("Left");key("Left")
+                command("Toggle blue highlight");key("ctrl+s");assert note.read_text()==original
+                type_text("!");key("ctrl+s");assert note.read_text()==original[:-6]+"TARGE!T",note.read_text()
+                key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                results.append("Toggling an existing color at an interior caret removed the whole mark while preserving the exact insertion point")
+                editor_end();key("Left");key("Left");key("Left")
+                command("Toggle blue highlight");key("ctrl+s");assert note.read_text()==blue
+                type_text("!");key("ctrl+s");assert note.read_text()==original[:-6]+"==🔵TAR!GET==",note.read_text()
+                key("ctrl+z");key("ctrl+s");assert note.read_text()==blue
+                key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                results.append("A bare interior caret highlighted the entire word without selecting it; the next typed character remained at the same word position")
+                empty_note=fixture/"Native empty color.md"
+                empty_original="Before  ==🟣EXISTING== after"
+                empty_note.write_text(empty_original);time.sleep(.6);open_note("Native empty color");command("Source editing")
+                key("ctrl+Home")
+                for _ in range(7):key("Right")
+                command("Toggle blue highlight");key("ctrl+s")
+                empty="Before ==🔵== ==🟣EXISTING== after";assert empty_note.read_text()==empty
+                command("Toggle blue highlight");key("ctrl+s");assert empty_note.read_text()==empty_original
+                key("ctrl+z");key("ctrl+s");assert empty_note.read_text()==empty
+                key("ctrl+y");key("ctrl+s");assert empty_note.read_text()==empty_original
+                key("ctrl+z");key("ctrl+s");assert empty_note.read_text()==empty
+                command("Reading view");capture("native-highlight-empty-reading.png")
+                bounds=tuple(round(v) for v in control_bounds("reading-block:0"))
+                pixels=pixel_data(ImageGrab.grab(xdisplay=display).crop(bounds).convert("RGB"))
+                assert sum(b>g+12 and r>g+5 for r,g,b in pixels)>20
+                command("Source editing");type_text("NEW");key("ctrl+s")
+                assert empty_note.read_text()=="Before ==🔵NEW== ==🟣EXISTING== after",empty_note.read_text()
+                key("ctrl+z");key("ctrl+s");assert empty_note.read_text()==empty
+                key("ctrl+z");key("ctrl+s");assert empty_note.read_text()==empty_original
+                results.append("An empty native mark toggled off and reversed exactly, stayed invisible beside Purple in Reading and accepted new text at the retained caret without swallowing its neighbor")
+                rendered=fixture/"Native color rendering.md"
+                source="# Native color rendering\n\n"+"\n\n".join(color+" =="+marker+"TARGET_"+color.upper()+"==" for color,marker in colors)+"\n\n`==🔵literal==`\n\n```md\n==🟣fenced==\n```\n\n==🟡[Target link](Native%20color%20toggle.md)==\n"
+                rendered.write_text(source);time.sleep(.6);open_note("Native color rendering")
+                tints={
+                    "Blue":lambda r,g,b:b>r+16 and b>g+10,
+                    "Green":lambda r,g,b:g>r+12 and g>b+12,
+                    "Orange":lambda r,g,b:r>g+12 and g>b+12,
+                    "Purple":lambda r,g,b:b>g+12 and r>g+5,
+                    "Red":lambda r,g,b:r>g+20 and r>b+20,
+                    "Yellow":lambda r,g,b:r>=g and g>b+12,
+                }
+                for dark in (True,False):
+                    set_theme(dark);command("Reading view")
+                    capture("native-core-highlight-"+("dark" if dark else "light")+"-reading.png")
+                    image=ImageGrab.grab(xdisplay=display)
+                    for index,(color,_) in enumerate(colors,1):
+                        bounds=tuple(round(v) for v in control_bounds("reading-block:"+str(index)))
+                        count=sum(tints[color](r,g,b) for r,g,b in pixel_data(image.crop(bounds).convert("RGB")))
+                        assert count>20,(dark,color,count)
+                    command("Toggle blue highlight",available=False);key("Escape")
+                    command("Live preview");key("ctrl+Home")
+                    capture("native-core-highlight-"+("dark" if dark else "light")+"-live.png")
+                    assert rendered.read_text()==source
+                set_theme(True)
+                assert note.read_text()==original
+                results.append("Six native colors rendered distinct theme-specific backgrounds in Reading and Live, retained inline/fenced literal source and a highlighted link, and stayed unavailable in Reading")
 
             def file_menu(path):
                 if control_bounds("file:" + path, required=False) is None:
@@ -3231,6 +3325,161 @@ def main():
                 else:
                     key("BackSpace")
 
+            def file_move_checks():
+                close_tabs()
+                originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
+                source=fixture/"Move source.md"
+                source_bytes=b"# Move source\r\n\r\nKeep this document.\r\n"
+                source.write_bytes(source_bytes)
+                destination=fixture/"Move destination";destination.mkdir()
+                command("Refresh vault");pause();open_note("Home")
+                before_title=xdo("getwindowname",window)
+                file_menu(source.name)
+                assert control_bounds("menu:Open in new tab")
+                assert control_bounds("menu:Make a copy")
+                click_control("menu:Move file to...",hold=.15)
+                control_bounds("move-input")
+                type_text("Move destination")
+                control_bounds("move-folder:Move destination")
+                capture("native-file-move-filtered.png")
+                key("Escape")
+                assert source.read_bytes()==source_bytes and not list(destination.iterdir())
+                assert xdo("getwindowname",window)==before_title
+                assert all((fixture/name).read_bytes()==data for name,data in originals.items())
+                results.append("The separate Move picker filtered real folders and cancelled without changing navigation or any file byte")
+
+                file_menu(source.name);click_control("menu:Move file to...",hold=.15)
+                type_text("Move destination");key("Return")
+                moved=destination/source.name
+                assert not source.exists() and moved.read_bytes()==source_bytes
+                assert control_bounds("move-input",required=False) is None
+                assert control_bounds("move-links-dialog",required=False) is None
+                assert xdo("getwindowname",window)==before_title
+                open_note("Move destination/Move source");title_contains("Move source")
+                results.append("Moving an inactive file into an existing folder preserved its exact CRLF bytes and active navigation; the updated index opened its new path immediately")
+
+                reference=fixture/"Move reference.md"
+                reference_bytes=b"[[Move destination/Move source|Alias]]\r\n[Label](Move%20destination/Move%20source.md)\r\n"
+                reference.write_bytes(reference_bytes)
+                command("Refresh vault");pause();command("Source editing")
+                editor_end();type_text(" BEFOREMOVE");key("ctrl+s")
+                edited=source_bytes+b" BEFOREMOVE"
+                assert moved.read_bytes()==edited
+                command("Move current file to another folder")
+                type_text("Created/Nested")
+                control_bounds("move-create-folder");capture("native-file-move-create-row.png")
+                key("Return")
+                nested=fixture/"Created/Nested/Move source.md"
+                assert nested.read_bytes()==edited and not moved.exists()
+                assert reference.read_bytes()==reference_bytes
+                control_bounds("move-links-dialog")
+                for name in ("always","once","no"):control_bounds("move-links-"+name)
+                capture("native-file-move-links.png")
+                click_control("move-links-once",hold=.15)
+                expected=b"[[Created/Nested/Move source|Alias]]\r\n[Label](Created/Nested/Move%20source.md)\r\n"
+                assert reference.read_bytes()==expected
+                assert control_bounds("tab-full:Created/Nested/Move source.md")
+                key("ctrl+z");key("ctrl+s");assert nested.read_bytes()==source_bytes
+                key("ctrl+y");key("ctrl+s");assert nested.read_bytes()==edited
+                capture("native-file-move-nested.png")
+                results.append("Plain Enter created the offered nested folder; Just once updated both actual link forms after the physical move, kept labels/CRLF and preserved editor undo/redo")
+
+                command("Move current file to another folder");type_text("/");key("Return")
+                control_bounds("move-links-dialog")
+                assert source.read_bytes()==edited and not nested.exists()
+                assert reference.read_bytes()==expected
+                click_control("move-links-no",hold=.15)
+                assert reference.read_bytes()==expected
+                assert control_bounds("tab-full:Move source.md")
+                results.append("Moving back to the vault root kept the current tab and Do not update left the original reference bytes intact")
+
+                command("Move current file to another folder");type_text("Shift parent/Nested");key("shift+Return")
+                shifted=fixture/"Shift parent/Nested/Move source.md"
+                assert shifted.read_bytes()==edited and not source.exists()
+                assert control_bounds("move-links-dialog",required=False) is None
+                command("Move current file to another folder");type_text("/");key("Return")
+                assert source.read_bytes()==edited and not shifted.exists()
+                assert reference.read_bytes()==expected
+                results.append("Shift+Enter also created a nested destination and a subsequent root move retained the same bytes and intentionally unchanged reference")
+
+                # Make the reference point to the current source again, then force a numbered move.
+                reference.write_bytes(b"[[Move source|Alias]]\r\n[Label](Move%20source.md)\r\n")
+                occupied=destination/"Move source.md";occupied.write_bytes(b"KEEP_OCCUPIED\n")
+                command("Refresh vault");pause()
+                command("Move current file to another folder");type_text("Move destination");key("Return")
+                numbered=destination/"Move source 1.md"
+                control_bounds("move-links-dialog")
+                assert numbered.read_bytes()==edited and occupied.read_bytes()==b"KEEP_OCCUPIED\n"
+                reference.write_bytes(b"EXTERNAL EDIT DURING PROMPT\n")
+                click_control("move-links-once",hold=.15)
+                assert reference.read_bytes()==b"EXTERNAL EDIT DURING PROMPT\n"
+                assert numbered.read_bytes()==edited
+                assert control_bounds("error-notice")
+                capture("native-file-move-external-conflict.png")
+                results.append("An occupied name produced a distinct numbered file and an external reference edit during the prompt survived without overwrite, with a visible review error")
+
+                reference.write_bytes(b"[[Move destination/Move source 1|Alias]]\r\n")
+                command("Refresh vault");pause();set_theme(False)
+                command("Move current file to another folder");type_text("/");key("Return")
+                control_bounds("move-links-dialog");capture("native-file-move-links-light.png")
+                click_control("move-links-always",hold=.15)
+                root_numbered=fixture/"Move source 1.md"
+                assert root_numbered.read_bytes()==edited
+                assert reference.read_bytes()==b"[[Move source 1|Alias]]\r\n"
+                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Move source 1.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(sessions)==1 and json.loads(sessions[0].read_text())["always_update_links"] is True
+                # A different filename is needed so the short link actually requires updating.
+                reference.write_bytes(b"[[Move source 1|Alias]]\r\n")
+                (destination/"Move source 1.md").write_bytes(b"KEEP_SECOND_COLLISION\n")
+                command("Refresh vault");pause()
+                command("Move current file to another folder");type_text("Move destination");key("Return")
+                final=destination/"Move source 1 1.md"
+                assert final.read_bytes()==edited and not root_numbered.exists()
+                assert control_bounds("move-links-dialog",required=False) is None
+                assert reference.read_bytes()==b"[[Move destination/Move source 1 1|Alias]]\r\n"
+                capture("native-file-move-automatic.png")
+                results.append("Always update persisted per-vault and the next real filename-changing move updated links without another prompt, preserving both occupied files")
+
+                # Unsafe typed paths remain an error inside the picker with no file mutation.
+                command("Move current file to another folder");type_text("../Move outside");key("shift+Return")
+                assert control_bounds("move-input") and final.read_bytes()==edited
+                assert not (fixture.parent/"Move outside").exists()
+                key("Escape");set_theme(True)
+                assert occupied.read_bytes()==b"KEEP_OCCUPIED\n"
+                assert (destination/"Move source 1.md").read_bytes()==b"KEEP_SECOND_COLLISION\n"
+                assert all((fixture/name).read_bytes()==data for name,data in originals.items())
+                results.append("An unsafe folder was rejected without moving or escaping the vault; all unrelated original notes and occupied destinations retained their exact bytes")
+
+                command("Open settings");key("ctrl+a");type_text("automatically")
+                click_control("settings-update-move-links",hold=.15)
+                assert json.loads(sessions[0].read_text())["always_update_links"] is False
+                click_control("settings-update-move-links",hold=.15)
+                assert json.loads(sessions[0].read_text())["always_update_links"] is True
+                key("Escape")
+                second=base/"Move Second Vault";second.mkdir()
+                second_home=second/"Home.md";second_home.write_bytes(b"# Separate vault\n")
+                command("Open vault");key("ctrl+a");type_text(str(second));key("Return");title_contains("Move Second Vault")
+                command("Open settings");key("ctrl+a");type_text("automatically")
+                click_control("settings-update-move-links",hold=.15)
+                second_sessions=[p for p in (base/"state/rust-notes").glob("*.json") if p!=sessions[0] and json.loads(p.read_text()).get("always_update_links") is True]
+                assert len(second_sessions)==1
+                click_control("settings-update-move-links",hold=.15)
+                assert json.loads(second_sessions[0].read_text())["always_update_links"] is False
+                assert json.loads(sessions[0].read_text())["always_update_links"] is True
+                key("Escape")
+                command("Open vault");key("ctrl+a");type_text(str(fixture));key("Return");title_contains("Move source 1 1")
+                assert second_home.read_bytes()==b"# Separate vault\n"
+                assert json.loads(sessions[0].read_text())["always_update_links"] is True
+                results.append("The automatic link switch could be reversed and saved; a separate vault started with its own disabled preference and switching back restored the original choice")
+
+                xdo("windowsize",window,"860","560");pause()
+                command("Move current file to another folder");control_bounds("move-input")
+                left,top,right,bottom=control_bounds("move-picker")
+                assert 0<=left<right<=860 and 0<=top<bottom<=560,(left,top,right,bottom)
+                capture("native-file-move-compact.png",(860,560));key("Escape")
+                xdo("windowsize",window,"1440","960");pause()
+                results.append("The real Move picker fit the minimum window and dismissed without changing its file or active tab")
+
             def file_copy_checks():
                 close_tabs()
                 originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
@@ -4310,6 +4559,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "note-aids"}))
                 return
+            if args.section == "file-move":
+                file_move_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "file-move"}))
+                return
             if args.section == "file-copy":
                 file_copy_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -4446,6 +4700,11 @@ def main():
                 navigation_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "native-highlights":
+                native_highlight_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"native-highlights"}))
                 return
             if args.section == "colors":
                 color_checks()
@@ -4741,10 +5000,12 @@ def main():
                 image_checks,
                 attachment_tab_checks,
                 file_copy_checks,
+                file_move_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,
                 color_checks,
+                native_highlight_checks,
                 navigation_checks,
                 hover_checks,
                 title_checks,

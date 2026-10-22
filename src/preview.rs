@@ -11,6 +11,7 @@ struct Inline {
     code: bool,
     strike: bool,
     highlight: Option<rust_notes::highlight::Rgba>,
+    native_highlight: Option<rust_notes::highlight::NativeColor>,
     link: Option<String>,
 }
 #[derive(Clone, Default)]
@@ -129,8 +130,14 @@ impl Parsed {
                 .into_iter()
                 .rev()
             {
+                let native = rust_notes::highlight::NativeColor::prefix(
+                    &source[range.start + 2..range.end - 2],
+                );
                 marked.replace_range(range.end - 2..range.end, "</mark>");
-                marked.replace_range(range.start..range.start + 2, "<mark>");
+                marked.replace_range(
+                    range.start..range.start + 2 + native.map_or(0, |(_, size)| size),
+                    native.map_or("<mark>", |(color, _)| color.tag()),
+                );
             }
         }
         let source = marked.as_str();
@@ -371,11 +378,19 @@ impl Parsed {
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
                 Event::InlineHtml(tag) if rust_notes::highlight::mark_color(&tag).is_some() => {
-                    highlights.push(style.highlight);
+                    highlights.push((style.highlight, style.native_highlight));
                     style.highlight = rust_notes::highlight::mark_color(&tag);
+                    style.native_highlight = None;
+                }
+                Event::InlineHtml(tag)
+                    if rust_notes::highlight::NativeColor::from_tag(&tag).is_some() =>
+                {
+                    highlights.push((style.highlight, style.native_highlight));
+                    style.highlight = None;
+                    style.native_highlight = rust_notes::highlight::NativeColor::from_tag(&tag);
                 }
                 Event::InlineHtml(tag) if tag.as_ref() == "</mark>" && !highlights.is_empty() => {
-                    style.highlight = highlights.pop().flatten();
+                    (style.highlight, style.native_highlight) = highlights.pop().unwrap();
                 }
                 Event::Html(_) | Event::InlineHtml(_) => parsed.fallback = true,
                 _ => {}
@@ -871,7 +886,11 @@ fn inline_format(
                 1.62
             },
         ),
-        background: if let Some([red, green, blue, alpha]) = part.highlight {
+        background: if let Some([red, green, blue, alpha]) = part
+            .native_highlight
+            .map(|color| color.rgba(ui.visuals().dark_mode))
+            .or(part.highlight)
+        {
             egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha)
         } else if part.code && table_header.is_none() {
             ui.visuals().code_bg_color
@@ -1074,6 +1093,55 @@ fn show_table(
 #[cfg(test)]
 mod tests {
     use super::{Parsed, prepare};
+
+    #[test]
+    fn an_empty_native_mark_is_invisible_and_keeps_the_next_color() {
+        let parsed = Parsed::new("Before ==🔵== ==🟣EXISTING== after");
+        assert!(!parsed.fallback);
+        let parts: Vec<_> = parsed
+            .blocks
+            .iter()
+            .flat_map(|block| &block.parts)
+            .collect();
+        let visible: String = parts.iter().map(|part| part.text.as_str()).collect();
+        assert_eq!(visible, "Before  EXISTING after");
+        assert!(parts.iter().any(|part| part.text == "EXISTING"
+            && part.native_highlight == Some(rust_notes::highlight::NativeColor::Purple)));
+    }
+
+    #[test]
+    fn reader_resolves_native_color_markers_adjacent_spans_and_literal_code() {
+        use rust_notes::highlight::NativeColor;
+        let source = "==🔵TA====🟣RGE====🔵T== and ==🟡[TARGET](Other.md)== plus `==🔴literal==`";
+        let parsed = Parsed::new(source);
+        assert!(!parsed.fallback);
+        let parts: Vec<_> = parsed
+            .blocks
+            .iter()
+            .flat_map(|block| &block.parts)
+            .collect();
+        for (text, color) in [
+            ("TA", NativeColor::Blue),
+            ("RGE", NativeColor::Purple),
+            ("T", NativeColor::Blue),
+            ("TARGET", NativeColor::Yellow),
+        ] {
+            assert!(
+                parts
+                    .iter()
+                    .any(|part| part.text == text && part.native_highlight == Some(color)),
+                "{text}"
+            );
+        }
+        assert!(parts.iter().any(|part| part.code
+            && part.text == "==🔴literal=="
+            && part.native_highlight.is_none()));
+        assert!(
+            parts
+                .iter()
+                .any(|part| part.text == "TARGET" && part.link.as_deref() == Some("Other.md"))
+        );
+    }
 
     #[test]
     fn reader_preserves_code_body_bytes_empty_blocks_and_literal_examples() {

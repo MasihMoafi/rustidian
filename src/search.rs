@@ -20,6 +20,28 @@ pub struct FileMatcher {
 }
 
 impl FileMatcher {
+    pub fn folders(vault: &crate::vault::Vault, current: &std::path::Path) -> Self {
+        let mut paths = vec![current.to_owned(), PathBuf::new()];
+        paths.extend(vault.folders.iter().cloned());
+        let mut seen = std::collections::HashSet::new();
+        let entries = paths
+            .into_iter()
+            .filter(|path| seen.insert(path.clone()))
+            .map(|path| Entry {
+                label: if path.as_os_str().is_empty() {
+                    "/".into()
+                } else {
+                    path.to_string_lossy().into_owned()
+                },
+                path,
+            })
+            .collect();
+        Self {
+            entries,
+            matcher: Matcher::new(Config::DEFAULT.match_paths()),
+        }
+    }
+
     pub fn from_vault(vault: &crate::vault::Vault) -> Self {
         let mut matcher = Self::from_notes(&vault.notes);
         matcher

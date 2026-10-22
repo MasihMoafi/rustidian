@@ -8,7 +8,34 @@ use std::path::{Path, PathBuf};
 
 struct Rewrite {
     document: Document,
-    before: String,
+    changes: Vec<LinkChange>,
+}
+struct LinkChange {
+    range: std::ops::Range<usize>,
+    replacement: String,
+    target: String,
+    destination: PathBuf,
+}
+pub struct LinkUpdates {
+    root: PathBuf,
+    path: PathBuf,
+    rewrites: Vec<Rewrite>,
+}
+
+impl LinkUpdates {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn counts(&self) -> (usize, usize) {
+        (
+            self.rewrites
+                .iter()
+                .map(|rewrite| rewrite.changes.len())
+                .sum(),
+            self.rewrites.len(),
+        )
+    }
 }
 pub struct RenamePlan {
     from: PathBuf,
@@ -68,6 +95,101 @@ impl Vault {
             }
         }
         Ok(self.root.join(relative))
+    }
+
+    pub fn begin_move_file(
+        &mut self,
+        from: &Path,
+        folder: &Path,
+        create_folder: bool,
+    ) -> Result<Option<LinkUpdates>> {
+        if crate::vault::is_ignored_path(from)
+            || !(crate::vault::is_text_document(from) || crate::assets::is_image(from))
+            || crate::vault::is_ignored_path(folder)
+            || folder
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err("Choose a visible file and relative folder inside this vault.".into());
+        }
+        let source = self.safe_file_path(from, false)?;
+        let expected = std::fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+        if !expected.is_file() || expected.file_type().is_symlink() {
+            return Err("Choose an existing file inside this vault.".into());
+        }
+        let filename = from.file_name().ok_or("Choose a file first.")?;
+        let first = folder.join(filename);
+        if !folder.as_os_str().is_empty() {
+            self.safe_file_path(folder, false)?;
+        }
+        match std::fs::symlink_metadata(self.root.join(folder)) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err("Choose a real folder inside this vault.".into());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create_folder => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err("This folder does not exist. Use Shift+Enter to create it.".into());
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+        if first == from {
+            return Ok(None);
+        }
+        let stem = from
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid file name.")?;
+        let extension = from
+            .extension()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid file extension.")?;
+        for counter in 0_u64.. {
+            let destination = if counter == 0 {
+                first.clone()
+            } else {
+                folder.join(format!("{stem} {counter}.{extension}"))
+            };
+            let absolute = self.root.join(&destination);
+            match std::fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            let current = std::fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+            if !same_move_source(&expected, &current) {
+                return Err("The source changed outside the app. Nothing was moved.".into());
+            }
+            let attempt = self.plan_rename(from, &destination).and_then(|plan| {
+                let current =
+                    std::fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+                if !same_move_source(&expected, &current) {
+                    return Err("The source changed outside the app. Nothing was moved.".into());
+                }
+                self.begin_rename(plan)
+            });
+            match attempt {
+                Ok(mut updates) => {
+                    for rewrite in &mut updates.rewrites {
+                        rewrite.changes.retain(|change| {
+                            self.resolve_destination(&rewrite.document.path, &change.target)
+                                .as_deref()
+                                != Some(change.destination.as_path())
+                        });
+                    }
+                    updates
+                        .rewrites
+                        .retain(|rewrite| !rewrite.changes.is_empty());
+                    return Ok(Some(updates));
+                }
+                Err(_)
+                    if std::fs::symlink_metadata(&absolute).is_ok()
+                        && std::fs::symlink_metadata(&source)
+                            .is_ok_and(|current| same_move_source(&expected, &current)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err("Cannot find an available destination name.".into())
     }
 
     pub fn plan_rename(&self, from: &Path, to: &Path) -> Result<RenamePlan> {
@@ -170,7 +292,12 @@ impl Vault {
                         link.push('|');
                         link.push_str(alias);
                     }
-                    changes.push((range, format!("[[{link}]]")));
+                    changes.push(LinkChange {
+                        range,
+                        replacement: format!("[[{link}]]"),
+                        target,
+                        destination,
+                    });
                 }
             }
             let parser = Parser::new(&note.text);
@@ -204,42 +331,42 @@ impl Vault {
                         || (folder && resolved.starts_with(from))
                         || note_destination != note.path)
                 {
-                    let mut destination = paths::markdown_destination(
-                        &note_destination,
-                        &moved_path(&resolved, from, to, folder),
-                    );
+                    let relocated = moved_path(&resolved, from, to, folder);
+                    let mut destination =
+                        paths::markdown_destination(&note_destination, &relocated);
                     if let Some((_, fragment)) = url.split_once('#') {
                         destination.push('#');
                         destination.push_str(fragment);
                     }
-                    changes.push((range, destination));
+                    changes.push(LinkChange {
+                        range,
+                        replacement: destination,
+                        target: url,
+                        destination: relocated,
+                    });
                 }
             }
             if changes.is_empty() {
                 continue;
             }
-            let mut document = self.read(&note.path)?;
+            let document = self.read(&note.path)?;
             if document.text != note.text {
                 return Err(format!(
                     "{} changed outside the app. Refresh the vault before renaming.",
                     note.path.display()
                 ));
             }
-            let before = document.text.clone();
-            changes.sort_by_key(|(range, _)| range.start);
+            changes.sort_by_key(|change| change.range.start);
             if changes
                 .windows(2)
-                .any(|pair| pair[0].0.end > pair[1].0.start)
+                .any(|pair| pair[0].range.end > pair[1].range.start)
             {
                 return Err(format!(
                     "Overlapping links in {} need review before renaming.",
                     note.path.display()
                 ));
             }
-            for (range, replacement) in changes.into_iter().rev() {
-                document.text.replace_range(range, &replacement);
-            }
-            rewrites.push(Rewrite { document, before });
+            rewrites.push(Rewrite { document, changes });
         }
         Ok(RenamePlan {
             from: from.to_owned(),
@@ -253,6 +380,11 @@ impl Vault {
     }
 
     pub fn rename_note(&mut self, plan: RenamePlan) -> Result<RenameOutcome> {
+        let updates = self.begin_rename(plan)?;
+        Ok(self.finish_link_updates(updates))
+    }
+
+    fn begin_rename(&mut self, plan: RenamePlan) -> Result<LinkUpdates> {
         let folder = plan.kind == MoveKind::Folder;
         let image = plan.kind == MoveKind::Image;
         let original = if folder {
@@ -261,13 +393,6 @@ impl Vault {
             self.safe_file_path(&plan.from, false)?
         } else {
             self.safe_path(&plan.from, false)?
-        };
-        let destination = if folder {
-            self.folder_path(&plan.to)?
-        } else if image {
-            self.safe_file_path(&plan.to, true)?
-        } else {
-            self.safe_path(&plan.to, true)?
         };
         for source in &plan.source {
             if self.read(&source.path)?.text != source.text {
@@ -278,7 +403,7 @@ impl Vault {
             return Err("The folder contents changed outside the app. Nothing was renamed.".into());
         }
         for rewrite in &plan.rewrites {
-            if self.read(&rewrite.document.path)?.text != rewrite.before {
+            if self.read(&rewrite.document.path)?.text != rewrite.document.text {
                 return Err(format!(
                     "{} changed outside the app. Nothing was renamed.",
                     rewrite.document.path.display()
@@ -299,6 +424,13 @@ impl Vault {
             {
                 return Err("The image changed outside the app. Nothing was renamed.".into());
             }
+            let destination = if folder {
+                self.folder_path(&plan.to)?
+            } else if image {
+                self.safe_file_path(&plan.to, true)?
+            } else {
+                self.safe_path(&plan.to, true)?
+            };
             rustix::fs::renameat_with(
                 rustix::fs::CWD,
                 &original,
@@ -318,19 +450,56 @@ impl Vault {
                 *path = moved_path(path, &plan.from, &plan.to, true);
             }
             self.folders.sort();
+        } else {
+            self.folders.extend(
+                plan.to
+                    .ancestors()
+                    .skip(1)
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .map(Path::to_owned),
+            );
+            self.folders.sort();
+            self.folders.dedup();
         }
         for path in &mut self.attachments {
             *path = moved_path(path, &plan.from, &plan.to, folder);
         }
         self.rebuild_lookup();
+        let rewrites = plan
+            .rewrites
+            .into_iter()
+            .map(|mut rewrite| {
+                rewrite.document.path =
+                    moved_path(&rewrite.document.path, &plan.from, &plan.to, folder);
+                rewrite
+            })
+            .collect();
+        Ok(LinkUpdates {
+            root: self.root.clone(),
+            path: plan.to,
+            rewrites,
+        })
+    }
+
+    pub fn finish_link_updates(&mut self, updates: LinkUpdates) -> RenameOutcome {
         let mut outcome = RenameOutcome {
-            path: plan.to.clone(),
+            path: updates.path,
             updated_notes: 0,
             warnings: Vec::new(),
         };
-        for mut rewrite in plan.rewrites {
-            rewrite.document.path =
-                moved_path(&rewrite.document.path, &plan.from, &plan.to, folder);
+        if updates.root != self.root {
+            outcome
+                .warnings
+                .push("No links updated: this move belongs to a different vault.".into());
+            return outcome;
+        }
+        for mut rewrite in updates.rewrites {
+            for change in rewrite.changes.into_iter().rev() {
+                rewrite
+                    .document
+                    .text
+                    .replace_range(change.range, &change.replacement);
+            }
             match self.save(&mut rewrite.document) {
                 Ok(()) => outcome.updated_notes += 1,
                 Err(error) => outcome
@@ -341,7 +510,7 @@ impl Vault {
         self.notes
             .sort_by_key(|note| note.path.to_string_lossy().to_lowercase());
         self.rebuild_lookup();
-        Ok(outcome)
+        outcome
     }
 
     pub fn trash_note(&mut self, path: &Path) -> Result<()> {
@@ -364,6 +533,22 @@ impl Vault {
 
 // Find the label boundary before looking for a destination. Titles can contain
 // the same delimiters, and inline code can contain brackets inside the label.
+fn same_move_source(expected: &std::fs::Metadata, current: &std::fs::Metadata) -> bool {
+    let same = current.is_file()
+        && !current.file_type().is_symlink()
+        && expected.len() == current.len()
+        && expected.modified().ok() == current.modified().ok();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        same && expected.dev() == current.dev() && expected.ino() == current.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        same
+    }
+}
+
 fn folder_entries(root: &Path) -> Result<Vec<(PathBuf, bool)>> {
     let mut entries = Vec::new();
     for entry in walkdir::WalkDir::new(root).follow_links(false) {

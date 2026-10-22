@@ -21,6 +21,7 @@ impl Scope {
 
 pub const ADD_UNIQUE_LINK: &str = "Unique note creator: Add unique internal link";
 pub const DUPLICATE_FILE: &str = "Make a copy of the current file";
+pub const MOVE_FILE: &str = "Move current file to another folder";
 
 pub struct Command {
     pub name: &'static str,
@@ -35,6 +36,11 @@ impl AsRef<str> for Command {
 }
 
 pub const ALL: &[Command] = &[
+    Command {
+        name: MOVE_FILE,
+        shortcut: "",
+        scope: Scope::File,
+    },
     Command {
         name: DUPLICATE_FILE,
         shortcut: "",
@@ -191,6 +197,36 @@ pub const ALL: &[Command] = &[
         scope: Scope::Document,
     },
     Command {
+        name: crate::highlight::NativeColor::Blue.command(),
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
+        name: crate::highlight::NativeColor::Green.command(),
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
+        name: crate::highlight::NativeColor::Orange.command(),
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
+        name: crate::highlight::NativeColor::Purple.command(),
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
+        name: crate::highlight::NativeColor::Red.command(),
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
+        name: crate::highlight::NativeColor::Yellow.command(),
+        shortcut: "",
+        scope: Scope::Editor,
+    },
+    Command {
         name: "Highlight selection",
         shortcut: "Ctrl+Shift+H",
         scope: Scope::Document,
@@ -287,6 +323,23 @@ pub fn ranked(query: &str, scope: Scope) -> Vec<&'static Command> {
 mod tests {
     use super::*;
     #[test]
+    fn native_color_toggles_require_an_actual_document_editor() {
+        for color in crate::highlight::NativeColor::ALL {
+            assert_eq!(
+                ranked(color.command(), Scope::Editor)[0].name,
+                color.command()
+            );
+            for unavailable in [Scope::Document, Scope::File, Scope::Tab, Scope::Global] {
+                assert!(
+                    ranked(color.command(), unavailable)
+                        .iter()
+                        .all(|command| command.name != color.command())
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unique_link_requires_an_editor_but_note_navigation_remains_global() {
         assert_eq!(
             ranked(ADD_UNIQUE_LINK, Scope::Editor)[0].name,
@@ -318,6 +371,8 @@ mod tests {
         assert_eq!(ranked("New tab", Scope::Global)[0].name, "New tab");
         assert_eq!(ranked(DUPLICATE_FILE, Scope::File)[0].name, DUPLICATE_FILE);
         assert!(ranked(DUPLICATE_FILE, Scope::Tab).is_empty());
+        assert_eq!(ranked(MOVE_FILE, Scope::File)[0].name, MOVE_FILE);
+        assert!(ranked(MOVE_FILE, Scope::Tab).is_empty());
     }
 
     #[test]

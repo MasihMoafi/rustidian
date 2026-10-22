@@ -105,6 +105,8 @@ pub struct NotesApp {
     recovery_index_paths: std::collections::HashSet<PathBuf>,
     recovery_saved: std::collections::HashMap<PathBuf, String>,
     recovery_manager: crate::recovery_ui::Manager,
+    file_move: crate::file_move_ui::Manager,
+    pub(crate) always_update_links: bool,
 }
 
 impl NotesApp {
@@ -181,6 +183,8 @@ impl NotesApp {
             recovery_index_paths: Default::default(),
             recovery_saved: Default::default(),
             recovery_manager: Default::default(),
+            file_move: Default::default(),
+            always_update_links: false,
         };
         app.load_vault(root);
         app
@@ -300,6 +304,19 @@ impl NotesApp {
                 Ok(vault) => {
                     let opening = self.loading_root.take().is_some();
                     if opening {
+                        self.file_move = Default::default();
+                        self.always_update_links = rust_notes::paths::read_obsidian::<
+                            serde_json::Value,
+                        >(
+                            &vault.root, "app.json"
+                        )
+                        .unwrap_or_else(|error| {
+                            self.error = Some(error);
+                            Default::default()
+                        })
+                        .get("alwaysUpdateLinks")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false);
                         self.workspace_manager.open = false;
                         self.recovery_manager = Default::default();
                         self.recovery_recorder = None;
@@ -942,6 +959,7 @@ impl NotesApp {
             || self.vault_manager.open
             || self.workspace_manager.open
             || self.recovery_manager.active()
+            || self.file_move.active()
         {
             return;
         }
@@ -1591,6 +1609,7 @@ impl NotesApp {
                 FileAction::Copy(path) => {
                     self.duplicate_file(&path);
                 }
+                FileAction::Move(path) => self.ask_move_file(path),
                 FileAction::CopyPath(path) => {
                     if let Some(vault) = &self.vault {
                         ui.ctx()
@@ -1969,7 +1988,7 @@ impl NotesApp {
         }
         let id = ui
             .scope_id()
-            .with(("note-editor", tab.id(), &tab.document.path));
+            .with(("note-editor", tab.id(), tab.editor_path()));
         crate::editor_ui::find_bar(ui, &mut self.find, tab, id);
         let mut follow = None;
         let anchor = self.pending_anchor.take();
@@ -1981,7 +2000,7 @@ impl NotesApp {
         let mut renamed_title = None;
         let title = tab.document.title();
         let scroll = ScrollArea::vertical()
-            .id_salt(("document", tab.id(), &tab.document.path))
+            .id_salt(("document", tab.id(), tab.editor_path()))
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -2372,6 +2391,32 @@ impl NotesApp {
             }
             return;
         }
+        if self.file_move.active() {
+            if let Some(action) = self.file_move.show(ctx) {
+                match action {
+                    crate::file_move_ui::Action::Move {
+                        source,
+                        folder,
+                        create,
+                    } => {
+                        self.move_file(&source, &folder, create);
+                    }
+                    crate::file_move_ui::Action::Update { updates, always } => {
+                        if always {
+                            self.always_update_links = true;
+                        }
+                        self.apply_move_links(updates);
+                        if let Err(error) = self.write_session() {
+                            self.error = Some(error);
+                        }
+                    }
+                }
+            }
+            if !self.file_move.active() {
+                self.focus_editor();
+            }
+            return;
+        }
         if self.workspace_manager.open {
             let layout = self.workspace_layout();
             if let Some(name) = self.workspace_manager.show(ctx, &layout) {
@@ -2718,6 +2763,7 @@ impl NotesApp {
                                 self.autosave_enabled,
                                 self.note_aids.clone(),
                                 self.recovery_config.clone(),
+                                self.always_update_links,
                             );
                             let query = self.dialog_input.to_lowercase();
                             let show =
@@ -2745,6 +2791,20 @@ impl NotesApp {
                                     .checkbox(&mut self.autosave_enabled, "Autosave after 600 ms");
                                 crate::ui_probe::record(ctx, "settings-autosave", autosave.rect);
                                 changed |= autosave.changed();
+                            }
+                            if show("files links automatically update move folder") {
+                                ui.separator();
+                                ui.strong("Files & links");
+                                let automatic = ui.checkbox(
+                                    &mut self.always_update_links,
+                                    "Automatically update links when moving files",
+                                );
+                                crate::ui_probe::record(
+                                    ctx,
+                                    "settings-update-move-links",
+                                    automatic.rect,
+                                );
+                                changed |= automatic.changed();
                             }
                             if show("daily notes date format folder template") {
                                 ui.separator();
@@ -2897,6 +2957,7 @@ impl NotesApp {
                                         self.autosave_enabled,
                                         self.note_aids,
                                         self.recovery_config,
+                                        self.always_update_links,
                                     ) = before;
                                     self.error = Some(format!("Settings weren’t saved: {error}"));
                                 } else {
@@ -3032,6 +3093,103 @@ impl NotesApp {
         }
     }
 
+    fn relocate_tabs(&mut self, source: &Path, destination: &Path) {
+        self.bookmarks.rename(source, destination);
+        for tab in &mut self.tabs {
+            tab.history.rename_path(source, destination);
+            tab.document.path =
+                rust_notes::paths::moved_path(&tab.document.path, source, destination, true);
+            if let Some(vault) = &self.vault
+                && !tab.document.is_blank()
+                && let Ok(document) = vault.open_document(&tab.document.path)
+            {
+                tab.replace(document);
+            }
+        }
+    }
+
+    fn refresh_file_views(&mut self) {
+        if let Some(vault) = &self.vault {
+            self.tree = Tree::from_vault(vault);
+            self.files = rust_notes::search::FileMatcher::from_vault(vault);
+        }
+        self.search_cache.invalidate();
+        self.cache = CommonMarkCache::default();
+        self.ctx.request_repaint();
+    }
+
+    fn ask_move_file(&mut self, source: PathBuf) {
+        if let Some(vault) = &self.vault {
+            self.file_move.open(vault, source);
+            self.editor.focus = false;
+        }
+    }
+
+    fn apply_move_links(&mut self, updates: rust_notes::operations::LinkUpdates) {
+        let Some(vault) = &mut self.vault else {
+            return;
+        };
+        let outcome = vault.finish_link_updates(updates);
+        // The file is already moved; only reload clean documents whose links changed.
+        for tab in &mut self.tabs {
+            if !tab.document.is_blank()
+                && !tab.document.dirty()
+                && let Ok(document) = vault.open_document(&tab.document.path)
+            {
+                tab.replace(document);
+            }
+        }
+        self.error = (!outcome.warnings.is_empty()).then(|| {
+            format!(
+                "File moved. Some links need review: {}",
+                outcome.warnings.join("; ")
+            )
+        });
+        self.status = format!(
+            "Moved to {} · updated {} files",
+            outcome.path.display(),
+            outcome.updated_notes
+        );
+        self.refresh_file_views();
+    }
+
+    fn move_file(&mut self, source: &Path, folder: &Path, create: bool) {
+        if !self.save_all() {
+            self.file_move.error(
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "Save your changes before moving the file.".into()),
+            );
+            return;
+        }
+        let result = self
+            .vault
+            .as_mut()
+            .ok_or_else(|| "Open a vault first.".to_owned())
+            .and_then(|vault| vault.begin_move_file(source, folder, create));
+        match result {
+            Ok(Some(updates)) => {
+                self.relocate_tabs(source, updates.path());
+                self.reveal_folder = Some(folder.to_owned());
+                self.status = format!("Moved to {}", updates.path().display());
+                self.error = None;
+                let automatic = self.always_update_links || updates.counts().0 == 0;
+                self.file_move.moved(None);
+                if automatic {
+                    self.apply_move_links(updates);
+                } else {
+                    self.file_move.moved(Some(updates));
+                }
+                self.refresh_file_views();
+            }
+            Ok(None) => self.file_move.moved(None),
+            Err(error) => self.file_move.error(error),
+        }
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+    }
+
     fn submit_dialog(&mut self, dialog: Dialog) -> bool {
         let input = self.dialog_input.trim().to_owned();
         if dialog == Dialog::BookmarkTitle {
@@ -3134,22 +3292,7 @@ impl NotesApp {
             };
             match result {
                 Ok(Some(outcome)) => {
-                    self.bookmarks.rename(&source, &outcome.path);
-                    for tab in &mut self.tabs {
-                        tab.history.rename_path(&source, &outcome.path);
-                        tab.document.path = rust_notes::paths::moved_path(
-                            &tab.document.path,
-                            &source,
-                            &outcome.path,
-                            true,
-                        );
-                        if let Some(vault) = &self.vault
-                            && !tab.document.is_blank()
-                            && let Ok(document) = vault.open_document(&tab.document.path)
-                        {
-                            tab.replace(document);
-                        }
-                    }
+                    self.relocate_tabs(&source, &outcome.path);
                     self.status = format!(
                         "Renamed to {} · updated {} notes",
                         outcome.path.display(),
@@ -3263,6 +3406,20 @@ impl NotesApp {
     }
 
     fn command(&mut self, command: &str, ctx: &egui::Context) {
+        if let Some(color) = rust_notes::highlight::NativeColor::ALL
+            .into_iter()
+            .find(|color| command == color.command())
+        {
+            if let Some(tab) = self.tabs.get(self.active).filter(|tab| {
+                !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Read
+            }) {
+                self.editor.native_highlight(tab, color);
+                ctx.request_repaint();
+            } else {
+                self.error = Some("Choose an editable Markdown note to highlight text.".into());
+            }
+            return;
+        }
         let highlight = rust_notes::highlight::Color::ALL
             .into_iter()
             .find(|color| color.command() == command)
@@ -3283,6 +3440,15 @@ impl NotesApp {
             return;
         }
         match command {
+            rust_notes::commands::MOVE_FILE => {
+                if let Some(path) = self
+                    .tabs
+                    .get(self.active)
+                    .map(|tab| tab.document.path.clone())
+                {
+                    self.ask_move_file(path);
+                }
+            }
             rust_notes::commands::DUPLICATE_FILE => {
                 if let Some(path) = self
                     .tabs
@@ -3672,6 +3838,7 @@ impl eframe::App for NotesApp {
             && !self.vault_manager.open
             && !self.workspace_manager.open
             && !self.recovery_manager.active()
+            && !self.file_move.active()
             && ctx.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::S))
         {
             self.save(self.active);

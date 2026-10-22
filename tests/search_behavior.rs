@@ -2,6 +2,29 @@ use rust_notes::search::FileMatcher;
 use std::path::PathBuf;
 
 #[test]
+fn folder_matching_keeps_dotted_names_root_and_current_folder() {
+    let root = tempfile::tempdir().unwrap();
+    for folder in ["Version 1.2", "Other", "Nested/Folder"] {
+        std::fs::create_dir_all(root.path().join(folder)).unwrap();
+    }
+    let vault = rust_notes::vault::Vault::open(root.path()).unwrap();
+    let mut matcher = FileMatcher::folders(&vault, std::path::Path::new("Other"));
+    assert_eq!(matcher.rank("", 20)[0], PathBuf::from("Other"));
+    assert_eq!(matcher.rank("1.2", 20), vec![PathBuf::from("Version 1.2")]);
+    let slash = matcher.rank("/", 20);
+    assert!(slash.contains(&PathBuf::new()));
+    assert!(slash.contains(&PathBuf::from("Nested/Folder")));
+    let all = matcher.rank("", 20);
+    assert_eq!(
+        all.iter()
+            .filter(|path| **path == PathBuf::from("Other"))
+            .count(),
+        1
+    );
+    assert!(matcher.rank("missing", 20).is_empty());
+}
+
+#[test]
 fn fuzzy_file_matching_ranks_unicode_and_abbreviations_without_false_empty_hits() {
     let paths: Vec<_> = [
         "Notes/Connected thinking.md",

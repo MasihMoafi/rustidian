@@ -31,10 +31,13 @@ pub struct Tab {
     pub image_scale: ImageScale,
     pub edited_at: Option<Instant>,
     pub autosave_failed: bool,
+    // Editing state follows a moved file, but never leaks into another document.
+    editor_path: std::path::PathBuf,
 }
 
 impl Tab {
     pub fn new(document: Document) -> Self {
+        let editor_path = document.path.clone();
         let editing_view = if document.is_plain_text() {
             View::Source
         } else {
@@ -59,11 +62,16 @@ impl Tab {
             image_scale: ImageScale::Fit,
             edited_at: None,
             autosave_failed: false,
+            editor_path,
         }
     }
 
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    pub fn editor_path(&self) -> &std::path::Path {
+        &self.editor_path
     }
 
     pub fn open(&mut self, document: Document) -> Result<(), &'static str> {
@@ -76,6 +84,9 @@ impl Tab {
     }
 
     pub fn replace(&mut self, document: Document) {
+        if self.document.path != document.path {
+            self.editor_path = document.path.clone();
+        }
         if document.is_image() {
             self.view = View::Read;
             if self.document.path != document.path {

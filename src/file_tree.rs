@@ -10,6 +10,7 @@ pub enum FileAction {
     Open(PathBuf),
     OpenInNewTab(PathBuf),
     Copy(PathBuf),
+    Move(PathBuf),
     CopyPath(PathBuf),
     Rename(PathBuf),
     Trash(PathBuf),
@@ -239,6 +240,10 @@ impl Tree {
                 ui.separator();
                 if theme::menu_item(ui, theme::Icon::Copy, "Make a copy").clicked() {
                     open = Some(FileAction::Copy(path.clone()));
+                    ui.close();
+                }
+                if theme::menu_item(ui, theme::Icon::Files, "Move file to...").clicked() {
+                    open = Some(FileAction::Move(path.clone()));
                     ui.close();
                 }
                 let bookmark = theme::menu_item(ui, theme::Icon::Bookmark, "Bookmark…");

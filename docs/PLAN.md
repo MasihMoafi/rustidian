@@ -60,7 +60,21 @@ This increment does not establish complete Daily notes/Templates parity: startup
 
 Masih wants his familiar Obsidian note workflow and appearance, implemented in Rust, with faster startup and interaction. The app runs on his Ubuntu desktop; changing distributions is unnecessary. Other desktop platforms follow once Linux behavior is established.
 
-## Next file-move contract
+## Next combined candidate
+
+Build the paired folder-move and native-color changes together in Actions after
+the current corrected release resolves. Keep their individual correctness checks,
+all earlier checks, exact versioned reference evidence and performance gates.
+Use42 full workflows,17 focused sections and7 early sections; verify actual
+counts from the executed results. This scheduling avoids repeating the same
+compiler/full-suite work while preserving both feature contracts.
+
+Native color accepts the observed six marker syntaxes, theme-specific rendering,
+repeat/full/partial changes, empty-word and empty-mark caret behavior, exact
+undo/redo and literal code. Keep portable Highlightr/Cyan and protected bytes.
+Cross-span/multiline/IME and full visual fidelity still need further paired cases.
+
+## File-move contract
 
 Use the passing actual1.14.4 eight-action `file-move` reference and the guide's
 resolved-link lesson. Provide the separate folder picker, existing/root/nested

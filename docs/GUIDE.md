@@ -673,3 +673,69 @@ The full suite also has17 initial smoke checks before its grouped workflows.
 Keep gui-all-baseline.json and verify its rows plus all per-workflow counts;
 startup alone is not the baseline. This fixes the release check's earlier count
 assumption without discarding any real check.
+
+
+### Preserve the native color edit, caret and theme semantics
+
+The1.14.4 toggle/caret/render audits now retain exact source and real selections.
+Repeating Blue removes its mark. Changing a full selection to Purple replaces
+its marker. A caret anywhere inside the word applies or changes the whole word
+without selecting it; removing the color keeps that caret at the same content
+position. Obsidian positions count UTF-16 units (a color marker adds4 units);
+our native character cursor counts3 characters. Compare the resulting text and
+next typed character, not those incompatible numeric coordinate systems.
+
+A partial color change splits its neighbors: `==🔵TA====🟣RGE====🔵T==`.
+Reading renders three adjacent marks. Accept the paired two-delimiter boundary
+while continuing to reject odd `===` runs, code, escaped delimiters, metadata
+and destinations. Keep exact undo/redo and clipboard-selected text assertions.
+Actual Live leaves a visible Purple emoji at this adjacent boundary; record
+this reference limitation rather than inferring normal six-color rendering.
+
+Six native colors have distinct dark/light computed shades at0.3alpha. Preserve
+semantic color identity in cached parse spans and resolve its theme when painting;
+do not cache one theme's RGBA or perform Oklch conversion every UI frame. The
+observed values, fixed conversion and original screenshots are in the expanded
+reference evidence and isolated color preparation. Keep portable Highlightr/Cyan
+commands and source untouched. Cross-span/multiline selection and full IME/bidi
+editing still need paired cases; the prepared native implementation is uncompiled.
+
+Page preview is independently observed on1.14.4 as a452px card. Reading accepts
+plain or Ctrl hover; Live/Source require Ctrl. Moving away dismisses it without
+changing the active note or any bytes. Preserve that six-case matrix. Interactive
+card task/link/open behavior still needs an audit before implementation; no native
+card has been delivered yet.
+
+
+After interacting with a preview task, the checkbox holds focus. In the actual
+1.14.4 reference, pointer-away and Escape keep that card open; an outside click
+dismisses it. Check the focused element and real dismissal path. The task edits
+the target while source stays active; the corner Open link and an internal link
+replace the current tab. A missing note shows Click to create, without creating
+anything on hover. The first rejected pointer-away assumption and corrected
+physical-input audit remain under the two page-preview supplemental directories.
+
+On the shared desktop, xdotool search combines multiple criteria with OR unless
+`--all` is given. Verify the exact `_NET_WM_PID` as well as the window title before
+reading a candidate screenshot; the first9feb preview lookup captured the older
+preview. No input was sent. Both records are retained and the corrected image is
+inspected. A handed-off preview and its whole private profile/vault become
+user-owned: never drive, close, rewrite or clean them afterward.
+
+
+Validate a move's parent before collision numbering, rather than calling a
+file-path validator on its first occupied basename. That validator correctly
+rejects a final symlink for ordinary Rename; folder Move must instead leave that
+symlink in place and try the next numbered basename. Keep linked-parent refusal.
+The new uncompiled filesystem case preserves a regular external symlink, a
+dangling external symlink, an occupied directory, exact source bytes and updated
+references. Do not weaken the older Rename guard to make Move pass.
+
+
+Recognize empty native color marks as well. In1.14.4, `==🔵==` is an invisible
+empty Blue Reading mark, not an unmatched opener. A repeated toggle removes it;
+typing at its retained caret fills it. Keep its neighbor's color separate and
+verify exact undo/redo. Rejecting the stripped empty content broke this in the
+prepared parser; its correction and two new Rust cases are local/uncompiled.
+The actual availability audit also confirms color commands are absent in Reading
+and Empty views and present in Source; do not infer that from another command.
