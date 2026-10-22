@@ -22,8 +22,10 @@ pub fn title_bar(
                 .inner_margin(Margin::symmetric(6, 3)),
         )
         .show(ui, |ui| {
+            theme::menu_style(ui);
             ui.horizontal(|ui| {
                 let menu = ui.menu_button("File", |ui| {
+                    theme::menu_style(ui);
                     ui.set_min_width(240.0);
                     for (kind, label, shortcut, probe) in [
                         (

@@ -693,7 +693,7 @@ pub fn dialog_style(ui: &mut egui::Ui) {
         .insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
     ui.style_mut().text_styles.insert(
         egui::TextStyle::Heading,
-        egui::FontId::new(20.0, egui::FontFamily::Name("semibold".into())),
+        egui::FontId::new(18.0, egui::FontFamily::Name("semibold".into())),
     );
 }
 

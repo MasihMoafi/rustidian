@@ -5022,6 +5022,11 @@ def main():
                         control_bounds("file-menu-open-file")
                         control_bounds("file-menu-open-folder")
                         capture(f"native-system-open-{kind}-menu.png")
+                        file_row = control_bounds("file-menu-open-file")
+                        folder_row = control_bounds("file-menu-open-folder")
+                        assert folder_row[1] - file_row[1] <= 26, ("Open menu must use the compact row rhythm", file_row, folder_row)
+                        menu = control_bounds("file-menu")
+                        assert menu[3] - menu[1] <= 28, ("File control must fit inside the title bar", menu)
                         click_control("file-menu-open-" + kind, hold=.15)
                     elif via == "palette":
                         command(label + "…")
