@@ -443,7 +443,7 @@ fn section(ui: &mut egui::Ui, open: &mut bool, label: &str) -> bool {
 fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
     ui.push_id(probe, |ui| {
         let response = ui.add(slider);
-        let rail_key = ui.id().with("rail");
+        let rail_key = ui.scope_id().with("rail");
         // Slider returns the number-field ID while it is edited. Retain the real
         // rail ID so both input paths keep their native behavior.
         if let Some(native) = ui.ctx().read_response(response.id)
