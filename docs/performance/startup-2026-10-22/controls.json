@@ -56,16 +56,18 @@
     },
     {
       "control": "rustidian-missing-input-marker",
-      "accepted": false,
       "expected": false,
+      "accepted": false,
       "missing_token_mutation_would_accept": true,
+      "ocr_text": "Home co\nHome\nStartup comparison\nSTARTUP VISIBLE NOTE\nThis is the same synthetic note in both applications.\nKeyboard check:\n",
       "image": "images/control-rustidian-missing-input-marker.png"
     },
     {
       "control": "obsidian-missing-input-marker",
-      "accepted": false,
       "expected": false,
+      "accepted": false,
       "missing_token_mutation_would_accept": true,
+      "ocr_text": "Home\n\n| Startup comparison\n\nSTARTUP VISIBLE NOTE\n\nThis is the same synthetic note in both applications.\nKeyboard check:\n",
       "image": "images/control-obsidian-missing-input-marker.png"
     }
   ]

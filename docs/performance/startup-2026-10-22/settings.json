@@ -26,7 +26,8 @@
       "interval_minutes": 5,
       "keep_days": 7
     },
-    "autosave": true
+    "autosave": true,
+    "folder_expansion": "Native defaults and Obsidian defaults differ; retained screenshots show this."
   },
   "obsidian_enabled_core_plugins": [
     "file-explorer",
@@ -43,7 +44,7 @@
     ],
     "depth_bits": 24,
     "rendering": "software",
-    "window_resize": "1440x960 requested inside the timer; some native first-note captures precede completion of resizing from the initial 1380x900 window"
+    "window_resize": "Requested and verified 1440x960 fully painted application area within the timer for both apps. All 40 measured note/input captures pass."
   },
   "host": {
     "os": "Linux x86_64",
@@ -53,12 +54,12 @@
     "affinity_changed": false,
     "other_applications": "left running; not controlled",
     "measured_load_range": [
-      3.63330078125,
-      6.1826171875
+      2.36865234375,
+      4.1416015625
     ],
     "host_cpu_busy_percent_range": [
-      23.393908369629003,
-      56.576942610433065
+      26.887734718283586,
+      39.48842874545358
     ]
   }
 }

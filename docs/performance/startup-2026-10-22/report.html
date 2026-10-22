@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rustidian preview and Obsidian — a local startup test</title><style>
+<title>Rustidian baseline and Obsidian — a local startup test</title><style>
 *{box-sizing:border-box}body{margin:0;background:#f5f6f7;color:#172125;font:17px/1.6 system-ui,sans-serif}
 main{max-width:1500px;margin:auto;padding:44px 32px 64px}h1{font-size:38px;line-height:1.2;margin:8px 0 18px;letter-spacing:-.7px}
 h2{font-size:24px;margin:32px 0 12px}p{max-width:1060px;margin:12px 0}a{color:#125f8e;text-underline-offset:3px}
@@ -15,11 +15,11 @@ footer{margin-top:36px;padding-top:18px;border-top:1px solid #cbd5db;font-size:1
 .control-links{font-size:15px}.pair figcaption{min-height:30px}</style>
 <main><div class="kicker">22 OCTOBER 2026 · THE TESTED DEVELOPMENT PREVIEW</div>
 <h1>Opening the same note</h1>
-<p>In this local test, a Rustidian development preview displayed the same note sooner than Obsidian in all ten measured pairs.
+<p>In this local test, a optimized Rustidian baseline displayed the same note sooner than Obsidian in all ten measured pairs.
 Both apps then accepted keyboard input and saved the exact expected text.</p>
 <table><thead><tr><th>Median of ten warmed launches each</th><th>Note detected</th><th>Input visible + save confirmed</th></tr></thead><tbody>
-<tr><th scope="row">Rustidian preview</th><td>0.24 s</td><td>1.18 s</td></tr>
-<tr><th scope="row">Obsidian 1.14.4</th><td>3.91 s</td><td>5.21 s</td></tr></tbody></table>
+<tr><th scope="row">Rustidian baseline</th><td>0.61 s</td><td>1.58 s</td></tr>
+<tr><th scope="row">Obsidian 1.14.4</th><td>3.77 s</td><td>5.08 s</td></tr></tbody></table>
 <p>Each app opened its own identical copy of 100 synthetic notes on the same computer. Five practice pairs warmed the apps before
 ten measured pairs, with the launch order balanced. There were no failed measured launches or omitted observations.</p>
 <p class="note">The screen was a private software display, and a screenshot/text detector checked when the note appeared.
@@ -30,23 +30,21 @@ Click an image to read the original full-size capture. Each app's image is from 
 <div class="choices"><label>Measured pair<select id="pair"><option value="1">Pair 1 · Rustidian first</option>
 <option value="10">Pair 10 · Obsidian first</option></select></label><label>Stage<select id="stage">
 <option value="note">Note visible</option><option value="input">Input and save proved</option></select></label></div>
-<div class="pair"><figure><figcaption id="rustidian-caption"></figcaption><a id="rustidian-link"><img id="rustidian-image" alt="Original Rustidian preview synthetic-note capture"></a></figure>
+<div class="pair"><figure><figcaption id="rustidian-caption"></figcaption><a id="rustidian-link"><img id="rustidian-image" alt="Original Rustidian baseline synthetic-note capture"></a></figure>
 <figure><figcaption id="obsidian-caption"></figcaption><a id="obsidian-link"><img id="obsidian-image" alt="Original Obsidian synthetic-note capture"></a></figure></div>
 <h2>Every measured pair</h2><a href="images/all-ten-pairs.png"><img class="plot" src="images/all-ten-pairs.png" alt="All ten measured startup pairs, with visibility sampling intervals"></a>
 <p class="note"><a href="images/all-ten-pairs.png">Open the full-size chart</a> · <a href="raw.csv">Open the raw timing rows</a></p>
-<p class="note">On the left, each line runs from the last frame without the note to the first frame with it. Rustidian was already
-visible in its first post-window capture, so its reported time is an upper observation bound. On the right, the points show
-when input was visible and its exact saved text was confirmed.</p>
-<h2>What this result covers</h2><p>This comparison applies to the tested Rustidian c7 development preview and Obsidian 1.14.4,
+<p class="note">Each line joins one measured pair; labels show medians. On the right, the points show when input was visible and its exact saved text was confirmed.</p>
+<h2>What this result covers</h2><p>This comparison applies to the tested optimized Rustidian baseline and Obsidian 1.14.4,
 with this small warmed vault and software display. It does not establish cold-cache, large-vault, everyday physical-desktop,
-all-feature or future-release performance. The preview has not passed complete release verification.</p>
+all-feature or future-release performance. The exact baseline and later graph update have separate verification records.</p>
 <p class="note">Seven negative checks rejected blank, wrong-note, missing-input and frozen-app states. Two resumed positive checks
 then confirmed input worked. Exact versions, hashes, settings, checks and remaining differences are in the
 <a href="technical-appendix.md">technical appendix</a>.</p>
 <footer><a href="technical-appendix.md">Technical appendix</a> · <a href="protocol.md">How the test was measured</a> ·
 <a href="raw.csv">Raw timing data</a> · <a href="controls.json">Readiness checks</a> · <a href="manifest.json">File integrity</a></footer></main>
-<script>const pairs=[{"pair": 1, "first": "Rustidian", "rustidian": {"visible_ms": "240.61826599790948", "input_visible_ms": "790.3323869977612", "usable_ms": "1150.8831020037178", "note_image": "images/pair-01-rustidian-note.png", "input_image": "images/pair-01-rustidian-input.png"}, "obsidian": {"visible_ms": "3927.3273490034626", "input_visible_ms": "4864.436361000116", "usable_ms": "5245.840536001197", "note_image": "images/pair-01-obsidian-note.png", "input_image": "images/pair-01-obsidian-input.png"}}, {"pair": 10, "first": "Obsidian", "rustidian": {"visible_ms": "243.88999799703015", "input_visible_ms": "833.8393759986502", "usable_ms": "1225.3265629988164", "note_image": "images/pair-10-rustidian-note.png", "input_image": "images/pair-10-rustidian-input.png"}, "obsidian": {"visible_ms": "4105.3661850019125", "input_visible_ms": "4991.372866999882", "usable_ms": "5359.480268001789", "note_image": "images/pair-10-obsidian-note.png", "input_image": "images/pair-10-obsidian-input.png"}}];function update(){const pair=pairs.find(p=>p.pair===Number(document.getElementById('pair').value));const stage=document.getElementById('stage').value;
-for(const app of ['rustidian','obsidian']){const row=pair[app];const name=app==='rustidian'?'Rustidian preview':'Obsidian 1.14.4';const path=row[stage+'_image'];
+<script>const pairs=[{"pair": 1, "first": "Rustidian", "rustidian": {"visible_ms": "594.7236960055307", "input_visible_ms": "1195.0493600015761", "usable_ms": "1569.217797004967", "note_image": "images/pair-01-rustidian-note.png", "input_image": "images/pair-01-rustidian-input.png"}, "obsidian": {"visible_ms": "3747.579486007453", "input_visible_ms": "4654.225892998511", "usable_ms": "5027.618121996056", "note_image": "images/pair-01-obsidian-note.png", "input_image": "images/pair-01-obsidian-input.png"}}, {"pair": 10, "first": "Obsidian", "rustidian": {"visible_ms": "620.7274229964241", "input_visible_ms": "1217.611644999124", "usable_ms": "1577.9819539893651", "note_image": "images/pair-10-rustidian-note.png", "input_image": "images/pair-10-rustidian-input.png"}, "obsidian": {"visible_ms": "3758.2032439968316", "input_visible_ms": "4723.0536449933425", "usable_ms": "5114.993916999083", "note_image": "images/pair-10-obsidian-note.png", "input_image": "images/pair-10-obsidian-input.png"}}];function update(){const pair=pairs.find(p=>p.pair===Number(document.getElementById('pair').value));const stage=document.getElementById('stage').value;
+for(const app of ['rustidian','obsidian']){const row=pair[app];const name=app==='rustidian'?'Rustidian baseline':'Obsidian 1.14.4';const path=row[stage+'_image'];
 const text=stage==='note'?(Number(row.visible_ms)/1000).toFixed(2)+' s · note detected':'input seen '+(Number(row.input_visible_ms)/1000).toFixed(2)+' s · save confirmed '+(Number(row.usable_ms)/1000).toFixed(2)+' s';
 document.getElementById(app+'-caption').textContent=name+' · '+text;document.getElementById(app+'-image').src=path;document.getElementById(app+'-link').href=path;}}
 document.getElementById('pair').addEventListener('change',update);document.getElementById('stage').addEventListener('change',update);update();</script></html>

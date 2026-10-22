@@ -1,36 +1,32 @@
 # The same note, from launch to usable input
 
-On 22 October 2026, the optimized Rustidian c7 development preview displayed
-the matching note sooner in all ten warmed pairs on this host.
+On 22 October 2026, the optimized Rustidian baseline showed the matching note
+sooner in all ten warmed pairs on this host.
 
-| Median of ten launches each | Rustidian preview | Obsidian 1.14.4 |
+| Median of ten launches each | Rustidian | Obsidian 1.14.4 |
 | --- | ---: | ---: |
-| First matching note capture | 0.24 s | 3.91 s |
-| Typed input visible and exact save confirmed | 1.18 s | 5.21 s |
+| First complete matching note frame | **0.61 s** | **3.77 s** |
+| Input visible and exact save confirmed | 1.58 s | 5.08 s |
 
 Five warmup pairs preceded ten measured pairs with balanced launch order.
-Both apps used matching copies of a 100-note / 8,135-byte synthetic vault,
-Live editing, no community plugins and matching recovery settings. All measured
-launches succeeded; nine readiness controls returned their expected outcomes.
+Both apps used matching copies of 100 synthetic notes, no community plugins,
+a 1440×960 virtual display and software rendering. All measured launches
+accepted physical input and saved exact text; all nine readiness controls passed.
 
-| Rustidian preview: note detected at 0.24 s | Obsidian 1.14.4: note detected at 3.93 s |
+| Rustidian: note detected at 0.59 s | Obsidian: note detected at 3.75 s |
 | --- | --- |
-| ![Rustidian displaying the synthetic Home note](images/pair-01-rustidian-note.png) | ![Obsidian displaying the same Home note](images/pair-01-obsidian-note.png) |
+| ![Rustidian showing the synthetic Home note](images/pair-01-rustidian-note.png) | ![Obsidian showing the same Home note](images/pair-01-obsidian-note.png) |
 
-The images record each app's own observation time. They are original captures,
-not a reconstruction or simultaneous frame. Open the [interactive comparison](report.html)
-locally to switch between the retained screenshot pairs and input stages.
+These are original captures at each app's own observation time. The
+[interactive comparison](report.html) opens both launch orders and input stages.
 
-![Every measured pair and its visibility sampling interval](images/all-ten-pairs.png)
+![All ten measured pairs](images/all-ten-pairs.png)
 
-This is a small warmed workload on one busy Linux host, using private Xvfb,
-software rendering and screenshot/OCR sampling. Rustidian was visible in its
-first post-window capture, so its capture time is an upper observation bound.
-Input/save timing includes detector, focus, typing and confirmation overhead.
-No cold-cache, physical-display latency, large-vault, full-feature parity or
-universal speed claim follows. The measured c7 preview did not pass its complete
-release verification; this is not a benchmark of a later release.
+This is a small warmed workload on one shared host. Screenshot/OCR, resizing,
+focusing, typing and confirmation add measurement overhead. Folder expansion
+defaults differ. The measured source is the installed baseline in
+[identity.json](identity.json), before the later graph update. This does not
+establish cold startup, physical-display latency or full-feature speed.
 
-[Raw measurements](raw.csv) · [Predeclared protocol](protocol.md) ·
-[Settings and input recipe](settings.json) · [Controls](controls.json) ·
-[Exact versions, identities, setup failures and limits](technical-appendix.md)
+[Raw measurements](raw.csv) · [Protocol](protocol.md) · [Settings](settings.json) ·
+[Controls](controls.json) · [Exact versions and limits](technical-appendix.md)

@@ -1,132 +1,237 @@
-[
-  {
-    "path": "controls.json",
-    "sha256": "e211d0a43ceb1dd59b686c6c687c837e286b91ef3caef8b8a9003f0dd7ca25b2",
-    "bytes": 2160
-  },
-  {
-    "path": "identity.json",
-    "sha256": "165f70e0826a1f943be626314ca253797f3c6289b1f2c63e9484798cbe56d400",
-    "bytes": 1317
-  },
-  {
-    "path": "images/all-ten-pairs.png",
-    "sha256": "e44008be941008d040cfb1fc70e6575990e2a9e8ef5c9f9718887356c4aed932",
-    "bytes": 67693
-  },
-  {
-    "path": "images/control-blank-display.png",
-    "sha256": "de5addcff54242523a532f49d9e9d46871ec7f2d9ae259de2444e920852df300",
-    "bytes": 4099
-  },
-  {
-    "path": "images/control-obsidian-actual-wrong-note.png",
-    "sha256": "58d93c6d1a867f2b3222b8955f240dc13da1c90efac0d0308febac33744219ed",
-    "bytes": 36635
-  },
-  {
-    "path": "images/control-obsidian-frozen-input-resumed.png",
-    "sha256": "6933b2ecfff860b22898fe0c019d768b33fdc3077a93be4668a2ea893fc464c3",
-    "bytes": 41311
-  },
-  {
-    "path": "images/control-obsidian-frozen-input.png",
-    "sha256": "b87d5a4bdbd277409d73b6a5765b046dd8ad2654d0202b1fb3d51ffb17f56346",
-    "bytes": 39471
-  },
-  {
-    "path": "images/control-obsidian-missing-input-marker.png",
-    "sha256": "1236112e2e3b84e2711355f39045edebc21c070fb1af8d4986b6fdc83677ea7e",
-    "bytes": 32569
-  },
-  {
-    "path": "images/control-rustidian-actual-wrong-note.png",
-    "sha256": "ad25790f39aec46348d36657c972802e1898fd261db8f293835a26fb5c40304b",
-    "bytes": 79387
-  },
-  {
-    "path": "images/control-rustidian-frozen-input-resumed.png",
-    "sha256": "4e03b96d66bbe5d4f50c2e1434bf4449c558813b3f0eb52fcd526bee8ffab614",
-    "bytes": 65129
-  },
-  {
-    "path": "images/control-rustidian-frozen-input.png",
-    "sha256": "67e50ccf8d212658d6a80ce7b7931b34ea36a9c10375a59079964d215fd259fa",
-    "bytes": 60944
-  },
-  {
-    "path": "images/control-rustidian-missing-input-marker.png",
-    "sha256": "fcf42997bf9f1d3c21173b00a1f7b4ebce1aa9fcbd0eeb24622372036c7da700",
-    "bytes": 56122
-  },
-  {
-    "path": "images/pair-01-obsidian-before-note.png",
-    "sha256": "01878846c527f535f02b6321b9e78cb819b4b2a2cddff9839644bd41ee3d05a7",
-    "bytes": 8561
-  },
-  {
-    "path": "images/pair-01-obsidian-input.png",
-    "sha256": "27cd657bc22f68c2dcc6430540b932f758026dd2f8dd043d0826beb4827c0a00",
-    "bytes": 39493
-  },
-  {
-    "path": "images/pair-01-obsidian-note.png",
-    "sha256": "82e8b79511e70548bc95f18c2b683cab515401bb6330934bba168510129674be",
-    "bytes": 33566
-  },
-  {
-    "path": "images/pair-01-rustidian-input.png",
-    "sha256": "f4083fc0ae004f5b981b156a3aebdfe1b7b1c62552507aa66355c0b331ae7801",
-    "bytes": 61526
-  },
-  {
-    "path": "images/pair-01-rustidian-note.png",
-    "sha256": "6a8a4784e4a35cad3a3e515f5015a174e146d953688e6b9b387c8d98d9986ba8",
-    "bytes": 56467
-  },
-  {
-    "path": "images/pair-10-obsidian-input.png",
-    "sha256": "27cd657bc22f68c2dcc6430540b932f758026dd2f8dd043d0826beb4827c0a00",
-    "bytes": 39493
-  },
-  {
-    "path": "images/pair-10-obsidian-note.png",
-    "sha256": "be8de5f295ca1284b2c507e34b8628e44035ac71b72e107a45af5286e02197bf",
-    "bytes": 37730
-  },
-  {
-    "path": "images/pair-10-rustidian-input.png",
-    "sha256": "f4083fc0ae004f5b981b156a3aebdfe1b7b1c62552507aa66355c0b331ae7801",
-    "bytes": 61526
-  },
-  {
-    "path": "images/pair-10-rustidian-note.png",
-    "sha256": "6a8a4784e4a35cad3a3e515f5015a174e146d953688e6b9b387c8d98d9986ba8",
-    "bytes": 56467
-  },
-  {
-    "path": "protocol.md",
-    "sha256": "1faad3fc796acbb71f9636dc95bb6c760610969abc56cfce2ffaed8969466d5f",
-    "bytes": 3921
-  },
-  {
-    "path": "raw.csv",
-    "sha256": "977c763ffa94352a89a84b62c930ffca07ec6823b19f1fcc5c9ac4add5379aec",
-    "bytes": 7560
-  },
-  {
-    "path": "report.html",
-    "sha256": "62f0b137914457da568f34fb35e2fbc50ced57611a0a4b5db74251a46a7da90e",
-    "bytes": 7337
-  },
-  {
-    "path": "settings.json",
-    "sha256": "5cdef9b1b2be39089bd2fb369bb890ef42d86764a88f2c928c765f86f3ac0071",
-    "bytes": 1826
-  },
-  {
-    "path": "technical-appendix.md",
-    "sha256": "ab3830206fae63e2f475f0a046b544bac305da72d9d9de0332ed3056681f8529",
-    "bytes": 4306
-  }
-]
+{
+  "measured_source": "12c2e241e6f2f3222840551a7aaf25969b5cb031",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 1679,
+      "sha256": "1bdba0f264d5cd9d58bd1f4c0d7fe127e4b29d453571238ec4b9f399cefd67f6"
+    },
+    {
+      "path": "controls.json",
+      "bytes": 2461,
+      "sha256": "dbe691d1bcac830ae4889f6a89baf02b8457e36c05cdae1b102a433045e51b06"
+    },
+    {
+      "path": "identity.json",
+      "bytes": 1387,
+      "sha256": "c0f3bd42331a916af82ee5006e0b2b08749cd1c92499912ae5abb751f352e444"
+    },
+    {
+      "path": "images/all-ten-pairs.png",
+      "bytes": 142765,
+      "sha256": "4de0c018b400db836943fed396bf14aa57e6644c31137faf9cc2de4a034d87dc"
+    },
+    {
+      "path": "images/control-blank-display.png",
+      "bytes": 4099,
+      "sha256": "de5addcff54242523a532f49d9e9d46871ec7f2d9ae259de2444e920852df300"
+    },
+    {
+      "path": "images/control-obsidian-actual-wrong-note.png",
+      "bytes": 36654,
+      "sha256": "09c0b1f444dd3f9914fe8a8a64701046d1020ece5547661395c67ab708ce7320"
+    },
+    {
+      "path": "images/control-obsidian-frozen-input-resumed.png",
+      "bytes": 41311,
+      "sha256": "6933b2ecfff860b22898fe0c019d768b33fdc3077a93be4668a2ea893fc464c3"
+    },
+    {
+      "path": "images/control-obsidian-frozen-input.png",
+      "bytes": 39471,
+      "sha256": "b87d5a4bdbd277409d73b6a5765b046dd8ad2654d0202b1fb3d51ffb17f56346"
+    },
+    {
+      "path": "images/control-obsidian-missing-input-marker.png",
+      "bytes": 37886,
+      "sha256": "77bba2294dffcfdf1ee28d6fcbd2db6b341528fcf902769ccebbdddef5562091"
+    },
+    {
+      "path": "images/control-rustidian-actual-wrong-note.png",
+      "bytes": 79582,
+      "sha256": "aaa88f7c73e613c3305028d895331fe4268b38144a81e2a84896ff1f76bcca07"
+    },
+    {
+      "path": "images/control-rustidian-frozen-input-resumed.png",
+      "bytes": 65200,
+      "sha256": "c93f46c5a64fcd72c86a9daf2215da43d2152f7677a3ba9205b05288783a8952"
+    },
+    {
+      "path": "images/control-rustidian-frozen-input.png",
+      "bytes": 61009,
+      "sha256": "8b3cad34ef8ec0ad848fb58b823cf798cbdeceeb4c9d8e53ef3603cf7f27b328"
+    },
+    {
+      "path": "images/control-rustidian-missing-input-marker.png",
+      "bytes": 56185,
+      "sha256": "12652f13337523b40c8ec7ddd331c80ac099b565dc4e4e0faf0357f037f71e20"
+    },
+    {
+      "path": "images/pair-01-obsidian-before-note.png",
+      "bytes": 8561,
+      "sha256": "01878846c527f535f02b6321b9e78cb819b4b2a2cddff9839644bd41ee3d05a7"
+    },
+    {
+      "path": "images/pair-01-obsidian-input.png",
+      "bytes": 39487,
+      "sha256": "91ec22b9679838dca2ce6d524465baa039fd5d5cd4aa473b0d6feffe111418ed"
+    },
+    {
+      "path": "images/pair-01-obsidian-note.png",
+      "bytes": 35440,
+      "sha256": "ea9c91ccad76653c197baa32af9ae9bae5871b2b7a7c06e3375b6f2abc1e8c68"
+    },
+    {
+      "path": "images/pair-01-rustidian-input.png",
+      "bytes": 61586,
+      "sha256": "add1b5de29af918cf295ff1234667e4ba28f095ff00d510ec90c89d1781a45cf"
+    },
+    {
+      "path": "images/pair-01-rustidian-note.png",
+      "bytes": 56328,
+      "sha256": "ff10561b035c478c3eff3967052b19286b42d462e3ecbabce13fbc12efdd8112"
+    },
+    {
+      "path": "images/pair-10-obsidian-input.png",
+      "bytes": 39493,
+      "sha256": "27cd657bc22f68c2dcc6430540b932f758026dd2f8dd043d0826beb4827c0a00"
+    },
+    {
+      "path": "images/pair-10-obsidian-note.png",
+      "bytes": 35440,
+      "sha256": "ea9c91ccad76653c197baa32af9ae9bae5871b2b7a7c06e3375b6f2abc1e8c68"
+    },
+    {
+      "path": "images/pair-10-rustidian-input.png",
+      "bytes": 61586,
+      "sha256": "add1b5de29af918cf295ff1234667e4ba28f095ff00d510ec90c89d1781a45cf"
+    },
+    {
+      "path": "images/pair-10-rustidian-note.png",
+      "bytes": 56328,
+      "sha256": "ff10561b035c478c3eff3967052b19286b42d462e3ecbabce13fbc12efdd8112"
+    },
+    {
+      "path": "protocol.md",
+      "bytes": 5865,
+      "sha256": "d62cbf6d3a73cdf88f35c10a610ebe371f1f7428081dc75086df948c744d3f01"
+    },
+    {
+      "path": "raw.csv",
+      "bytes": 7793,
+      "sha256": "574cf0af9d7a2337d868b54b6e13fd9b4a7208bacdf0cc4aff91e9d67208e1b0"
+    },
+    {
+      "path": "report.html",
+      "bytes": 7201,
+      "sha256": "3c386ca81841f1e68ba929c2bd9abc11939086758a25e706f202a5e2be505e8c"
+    },
+    {
+      "path": "settings.json",
+      "bytes": 1934,
+      "sha256": "7d1b11f20de12e686a15c376145b72a645683195c4a4a1c8b281da0e414caa69"
+    },
+    {
+      "path": "technical-appendix.md",
+      "bytes": 2828,
+      "sha256": "1b8689bfd0e917d621b8de32351b61dd9893d94f3f7a0f1cd2e1d3d6b2008375"
+    }
+  ],
+  "original_pngs": [
+    {
+      "path": "images/pair-01-rustidian-note.png",
+      "sha256": "ff10561b035c478c3eff3967052b19286b42d462e3ecbabce13fbc12efdd8112",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-01-rustidian-input.png",
+      "sha256": "add1b5de29af918cf295ff1234667e4ba28f095ff00d510ec90c89d1781a45cf",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-01-obsidian-note.png",
+      "sha256": "ea9c91ccad76653c197baa32af9ae9bae5871b2b7a7c06e3375b6f2abc1e8c68",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-01-obsidian-input.png",
+      "sha256": "91ec22b9679838dca2ce6d524465baa039fd5d5cd4aa473b0d6feffe111418ed",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-10-rustidian-note.png",
+      "sha256": "ff10561b035c478c3eff3967052b19286b42d462e3ecbabce13fbc12efdd8112",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-10-rustidian-input.png",
+      "sha256": "add1b5de29af918cf295ff1234667e4ba28f095ff00d510ec90c89d1781a45cf",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-10-obsidian-note.png",
+      "sha256": "ea9c91ccad76653c197baa32af9ae9bae5871b2b7a7c06e3375b6f2abc1e8c68",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-10-obsidian-input.png",
+      "sha256": "27cd657bc22f68c2dcc6430540b932f758026dd2f8dd043d0826beb4827c0a00",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/pair-01-obsidian-before-note.png",
+      "sha256": "01878846c527f535f02b6321b9e78cb819b4b2a2cddff9839644bd41ee3d05a7",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/all-ten-pairs.png",
+      "sha256": "4de0c018b400db836943fed396bf14aa57e6644c31137faf9cc2de4a034d87dc",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-rustidian-frozen-input.png",
+      "sha256": "8b3cad34ef8ec0ad848fb58b823cf798cbdeceeb4c9d8e53ef3603cf7f27b328",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-rustidian-frozen-input-resumed.png",
+      "sha256": "c93f46c5a64fcd72c86a9daf2215da43d2152f7677a3ba9205b05288783a8952",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-rustidian-actual-wrong-note.png",
+      "sha256": "aaa88f7c73e613c3305028d895331fe4268b38144a81e2a84896ff1f76bcca07",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-obsidian-frozen-input.png",
+      "sha256": "b87d5a4bdbd277409d73b6a5765b046dd8ad2654d0202b1fb3d51ffb17f56346",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-obsidian-frozen-input-resumed.png",
+      "sha256": "6933b2ecfff860b22898fe0c019d768b33fdc3077a93be4668a2ea893fc464c3",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-obsidian-actual-wrong-note.png",
+      "sha256": "09c0b1f444dd3f9914fe8a8a64701046d1020ece5547661395c67ab708ce7320",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-blank-display.png",
+      "sha256": "de5addcff54242523a532f49d9e9d46871ec7f2d9ae259de2444e920852df300",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-rustidian-missing-input-marker.png",
+      "sha256": "12652f13337523b40c8ec7ddd331c80ac099b565dc4e4e0faf0357f037f71e20",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "images/control-obsidian-missing-input-marker.png",
+      "sha256": "77bba2294dffcfdf1ee28d6fcbd2db6b341528fcf902769ccebbdddef5562091",
+      "original_bytes_preserved": true
+    }
+  ]
+}
