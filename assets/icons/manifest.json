@@ -567,6 +567,17 @@
       "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
       "paths": 1,
       "bytes": 2898
+    },
+    {
+      "name": "open-link",
+      "source": "artwork/source-open-link.png",
+      "traced": "artwork/traced-open-link.svg",
+      "native": "open-link.svg",
+      "sourceColours": "black on transparency after white-background removal",
+      "nativeColours": "white for native UI tinting",
+      "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
+      "paths": 1,
+      "bytes": 2250
     }
   ],
   "additionalArtwork": {
@@ -735,6 +746,24 @@
       "prompt": "artwork/pin-prompt.json",
       "generator": "Built-in image_gen.imagegen; backend model unidentified.",
       "selectedRationale": "The third generated pin keeps clear counters and a broader rounded outline that remains legible at12–18px. Earlier transparent and thin versions were moved to recoverable Trash for noise and poor small-size legibility.",
+      "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
+      "preparedRaster": {
+        "fit": 648,
+        "margin": 60
+      },
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "options": {
+        "mode": "monochrome",
+        "thresholdPercent": 60,
+        "cropStudioPadding": 10
+      },
+      "replaces": []
+    },
+    "pagePreviewOpen": {
+      "original": "artwork/page-preview-open-original.png",
+      "prompt": "artwork/page-preview-open-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "selectedRationale": "The two opposed round-ended arrows match the observed Obsidian Open link geometry; trim its generous transparent margins through the existing SVG Studio pipeline, without redrawing paths. Draft until native app review.",
       "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
       "preparedRaster": {
         "fit": 648,

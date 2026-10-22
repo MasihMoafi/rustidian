@@ -457,7 +457,7 @@ pub fn show(
     });
     if !parsed.fallback {
         let mut task = None;
-        let follow = show_blocks(ui, &parsed.blocks, &links, anchor, &mut task);
+        let follow = show_blocks(ui, &parsed.blocks, &links, anchor, &mut task, from);
         if let Some(ordinal) = task
             && rust_notes::editor::toggle_task(&mut tab.document.text, ordinal)
         {
@@ -499,6 +499,7 @@ fn show_blocks(
     native_links: &[(String, String)],
     anchor: Option<&str>,
     task: &mut Option<usize>,
+    from: &std::path::Path,
 ) -> Option<String> {
     let mut clicked = None;
     ui.style_mut().spacing.item_spacing.y = 0.0;
@@ -580,7 +581,7 @@ fn show_blocks(
                         if !folded && !callout.children.is_empty() {
                             ui.add_space(10.0);
                             let content = ui.scope(|ui| {
-                                show_blocks(ui, &callout.children, native_links, anchor, task)
+                                show_blocks(ui, &callout.children, native_links, anchor, task, from)
                             });
                             crate::ui_probe::record(
                                 ui.ctx(),
@@ -599,7 +600,7 @@ fn show_blocks(
         }
         if let Some(table) = &block.table {
             ui.add_space(16.0);
-            if let Some(link) = show_table(ui, table, native_links, table_index) {
+            if let Some(link) = show_table(ui, table, native_links, table_index, from) {
                 clicked = Some(link);
             }
             ui.add_space(16.0);
@@ -818,11 +819,21 @@ fn show_blocks(
         }
         if let Some(pointer) = response.hover_pos() {
             let cursor = galley.cursor_from_pos(pointer - response.rect.min).index.0;
-            if let Some((_, destination)) = destinations
+            if let Some((range, destination)) = destinations
                 .iter()
                 .find(|(range, _)| range.contains(&cursor))
             {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                if let Some(target) = follow_destination(destination, native_links) {
+                    let first = galley.pos_from_cursor(egui::text::CCursor::new(range.start));
+                    let last = galley.pos_from_cursor(egui::text::CCursor::new(range.end));
+                    crate::page_preview::offer(
+                        ui,
+                        from,
+                        &target,
+                        first.union(last).translate(response.rect.min.to_vec2()),
+                    );
+                }
                 if response.clicked() {
                     clicked = follow_destination(destination, native_links);
                 }
@@ -924,6 +935,7 @@ fn show_table(
     table: &Table,
     native_links: &[(String, String)],
     ordinal: usize,
+    from: &std::path::Path,
 ) -> Option<String> {
     use egui::text::{CCursor, LayoutJob};
     const INLINE_PADDING: f32 = 3.9375;
@@ -1067,6 +1079,11 @@ fn show_table(
                         );
                         if response.clicked() {
                             follow = follow_destination(destination, native_links);
+                        }
+                        if response.hovered()
+                            && let Some(target) = follow_destination(destination, native_links)
+                        {
+                            crate::page_preview::offer(ui, from, &target, rect);
                         }
                     }
                     x += cell_width;

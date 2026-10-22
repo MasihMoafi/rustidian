@@ -1,6 +1,6 @@
 use nucleo_matcher::{
     Config, Matcher,
-    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
+    pattern::{Atom, AtomKind, CaseMatching, Normalization},
 };
 use std::path::PathBuf;
 
@@ -111,11 +111,12 @@ impl FileMatcher {
         limit: usize,
         include: impl Fn(&std::path::Path) -> bool,
     ) -> Vec<PathBuf> {
-        Pattern::new(
+        Atom::new(
             query,
             CaseMatching::Smart,
             Normalization::Smart,
             AtomKind::Fuzzy,
+            false,
         )
         .match_list(
             self.entries.iter().filter(|entry| include(&entry.path)),

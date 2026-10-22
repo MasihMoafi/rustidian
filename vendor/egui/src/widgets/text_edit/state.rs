@@ -80,6 +80,11 @@ impl TextEditState {
         *self.undoer.lock() = undoer;
     }
 
+    /// Share edit history while retaining this view's cursor and scroll state.
+    pub fn share_undoer_with(&mut self, other: &Self) {
+        self.undoer = other.undoer.clone();
+    }
+
     pub fn clear_undoer(&mut self) {
         self.set_undoer(TextEditUndoer::default());
     }

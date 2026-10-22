@@ -267,6 +267,7 @@ pub enum Icon {
     SidebarRight,
     Back,
     Forward,
+    OpenLink,
     Reading,
     Edit,
     Split,
@@ -306,7 +307,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 54] = [
         Self::Files,
         Self::Search,
         Self::Bookmark,
@@ -324,6 +325,7 @@ impl Icon {
         Self::SidebarRight,
         Self::Back,
         Self::Forward,
+        Self::OpenLink,
         Self::Reading,
         Self::Edit,
         Self::Split,
@@ -455,6 +457,10 @@ impl Icon {
             Self::Forward => (
                 "bytes://icons/forward.svg",
                 include_bytes!("../assets/icons/forward.svg"),
+            ),
+            Self::OpenLink => (
+                "bytes://icons/open-link.svg",
+                include_bytes!("../assets/icons/open-link.svg"),
             ),
             Self::Reading => (
                 "bytes://icons/reading.svg",

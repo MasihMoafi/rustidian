@@ -1,0 +1,98 @@
+[
+  {
+    "name": "traced-open-link",
+    "theme": "light",
+    "size": 24,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.007330246913580247,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.025803563434506224,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 146
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "light",
+    "size": 48,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.0048145878721859115,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.019193630813093412,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 486
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "light",
+    "size": 128,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.00257672079248366,
+    "changedPixels": 0.00177001953125,
+    "foregroundMeanDifference": 0.013404341160332445,
+    "foregroundChangedPixels": 0.010229276895943563,
+    "foregroundPixels": 2835
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "light",
+    "size": 512,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.001754431631050858,
+    "changedPixels": 0.0037841796875,
+    "foregroundMeanDifference": 0.01045458687355483,
+    "foregroundChangedPixels": 0.023401193649595434,
+    "foregroundPixels": 42391
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "dark",
+    "size": 24,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.0010189724037763255,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0018967063949762912,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 102
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "dark",
+    "size": 48,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.0006411129266521424,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0011466011466011465,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 407
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "dark",
+    "size": 128,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.00028905930861928105,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0005858109077595206,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 2642
+  },
+  {
+    "name": "traced-open-link",
+    "theme": "dark",
+    "size": 512,
+    "paths": 1,
+    "bytes": 2250,
+    "meanDifference": 0.00015077777937346813,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0005340361023209629,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 41323
+  }
+]

@@ -36,7 +36,7 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 90
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -102,6 +102,8 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-move 2>&1 | tee reports/early-file-move-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section native-highlights 2>&1 | tee reports/early-native-highlights-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section page-preview 2>&1 | tee reports/early-page-preview-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section quick-ranking 2>&1 | tee reports/early-quick-ranking-gui.log
           exit "$early_status"
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
@@ -117,6 +119,10 @@ jobs:
             reports/early-tab-actions-gui.log
             reports/early-file-copy-gui.log
             reports/early-file-move-gui.log
+            reports/early-page-preview-gui.log
+            reports/early-quick-ranking-gui.log
+            reports/native-page-preview-*.png
+            reports/native-quick-ranking-*.png
             reports/early-native-highlights-gui.log
             reports/native-vault*.png
             reports/native-vault-*.json
@@ -186,6 +192,8 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-copy 2>&1 | tee reports/file-copy-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-move 2>&1 | tee reports/file-move-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section native-highlights 2>&1 | tee reports/native-highlights-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section page-preview 2>&1 | tee reports/page-preview-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section quick-ranking 2>&1 | tee reports/quick-ranking-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section recovery 2>&1 | tee reports/recovery-gui.log
           exit "$gui_status"
@@ -222,6 +230,8 @@ jobs:
             reports/native-file-copy*.png
             reports/native-file-move*.png
             reports/native-image-tab-*.png
+            reports/native-page-preview-*.png
+            reports/native-quick-ranking-*.png
             reports/native-core-highlight-*.png
             reports/native-highlight-*.png
             reports/native-palette-queued.png

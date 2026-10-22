@@ -12,6 +12,7 @@ const { vectorizeMulticolourImage, vectorizeImage } = await import(pathToFileURL
 const root = path.resolve('assets/icons');
 const artwork = path.join(root, 'artwork');
 const groups = {
+  'page-preview-open': {key: 'pagePreviewOpen', sheet: 'page-preview-open', columns: 1, rows: 1, names: ['open-link'], scale: 3, monochrome: true},
   pin: {key: 'pin', sheet: 'pin', columns: 1, rows: 1, names: ['pin'], scale: 3, monochrome: true},
   'trash': {key: 'trash', sheet: 'trash', columns: 1, rows: 1, names: ['trash'], scale: 3, monochrome: true},
   'window-controls': {key: 'windowControls', sheet: 'window-controls-sheet', columns: 3, rows: 1, names: ['minimize', 'maximize', 'restore'], scale: 3, monochrome: true},

@@ -1,0 +1,41 @@
+{
+  "inspected_utc": "2026-10-22T02:25:18.278347+00:00",
+  "status": "source/SVG and native tint proofs inspected; actual app pending",
+  "sizes": [
+    12,
+    18,
+    24,
+    48,
+    128,
+    512
+  ],
+  "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+  "method": "existing monochrome SVG Studio builder; source alpha/luminance normalization and margin trim; path geometry untouched; native fills white for tinting",
+  "findings": "Two opposed arrows and negative spaces remain intact; small native tints are legible in both themes. Agent-selected match to requested Obsidian control; no separate user artwork acceptance claimed.",
+  "files": [
+    {
+      "path": "assets/icons/artwork/page-preview-open-original.png",
+      "sha256": "b6ff138ab0d0b83e3ba365063500d471863f43c74d82807677e01d6dc7537269"
+    },
+    {
+      "path": "assets/icons/artwork/source-open-link.png",
+      "sha256": "cfdcd45a53b6b7d6fe158f1a6afb151a657bb98a55f628923e3f732ece56187a"
+    },
+    {
+      "path": "assets/icons/artwork/traced-open-link.svg",
+      "sha256": "58f1f2d02a3bb6e4ef7c38ac3af3c7fe3f79775a7ed15717bf35881fb934a0a4"
+    },
+    {
+      "path": "assets/icons/open-link.svg",
+      "sha256": "c92b9490d268d205dc0eda83e07800179f3b4e01d711de97ed6ef77fc91d3938"
+    },
+    {
+      "path": "assets/icons/proof/selected-open-link/source-vs-vector-1.png",
+      "sha256": "6cb32179cf1191e01afabc9454a4c714268e9ec5b1d0326e5ff099dc0625ade5"
+    },
+    {
+      "path": "assets/icons/proof/selected-open-link/native-tints.png",
+      "sha256": "3eeda1cf83ec62ed3befcd3aa508ecb5f364e6a770a6767a2ad61f4f679bd73b"
+    }
+  ]
+}

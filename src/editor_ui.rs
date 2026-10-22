@@ -47,6 +47,55 @@ pub struct Editor {
     pressed_link: Option<(u64, egui::PointerButton, String)>,
 }
 
+type Histories = HashMap<std::path::PathBuf, TextEditState>;
+
+fn histories(root: &std::path::Path) -> egui::Id {
+    egui::Id::unique(("document-edit-histories", root))
+}
+
+pub fn record_document_edit(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+    before: &rust_notes::vault::Document,
+    after: &rust_notes::vault::Document,
+) {
+    let mut state = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Histories>(histories(root))
+            .entry(before.path.clone())
+            .or_default()
+            .clone()
+    });
+    let range = state
+        .cursor
+        .char_range()
+        .unwrap_or_else(|| CCursorRange::one(CCursor::new(0)));
+    let mut undoer = state.undoer();
+    undoer.add_undo(&(range, before.text.clone()));
+    undoer.add_undo(&(range, after.text.clone()));
+    state.set_undoer(undoer);
+}
+
+pub fn relocate_histories(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+    from: &std::path::Path,
+    to: &std::path::Path,
+) {
+    ctx.data_mut(|data| {
+        let entries = data.get_temp_mut_or_default::<Histories>(histories(root));
+        let moving: Vec<_> = entries
+            .keys()
+            .filter(|path| path.starts_with(from))
+            .cloned()
+            .collect();
+        for path in moving {
+            if let Some(state) = entries.remove(&path) {
+                entries.insert(rust_notes::paths::moved_path(&path, from, to, true), state);
+            }
+        }
+    });
+}
+
 struct PendingEdit {
     tab: u64,
     path: std::path::PathBuf,
@@ -466,6 +515,17 @@ impl Editor {
         files: &mut FileMatcher,
         vault: Option<&rust_notes::vault::Vault>,
     ) -> Option<String> {
+        if let Some(vault) = vault {
+            let mut local = TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            let shared = ui.ctx().data_mut(|data| {
+                data.get_temp_mut_or_default::<Histories>(histories(&vault.root))
+                    .entry(tab.document.path.clone())
+                    .or_insert_with(|| local.clone())
+                    .clone()
+            });
+            local.share_undoer_with(&shared);
+            local.store(ui.ctx(), id);
+        }
         if self.pending_edit.as_ref().is_some_and(|edit| {
             edit.tab != tab.id()
                 || edit.path != tab.document.path
@@ -1346,6 +1406,17 @@ impl Editor {
                     .is_some_and(|line| line.contains(&byte));
             if link && (rendered || ui.input(|input| input.modifiers.command)) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                if ui.input(|input| input.modifiers.command)
+                    && let Some(target) = link_at(&tab.document.text, character)
+                    && let Some(span) = self.parsed.spans.get(index)
+                {
+                    let start = tab.document.text[..span.range.start].chars().count();
+                    let end = start + tab.document.text[span.range.clone()].chars().count();
+                    let first = output.galley.pos_from_cursor(CCursor::new(start));
+                    let last = output.galley.pos_from_cursor(CCursor::new(end));
+                    let anchor = first.union(last).translate(output.galley_pos.to_vec2());
+                    crate::page_preview::offer(ui, &tab.document.path, &target, anchor);
+                }
                 if let Some(button) = pressed_button
                     && let Some(target) = link_at(&tab.document.text, character)
                 {
@@ -1363,7 +1434,7 @@ impl Editor {
         {
             follow = Some(target);
         }
-        if live && crate::ui_probe::enabled() {
+        if crate::ui_probe::enabled() {
             // Table cells can edit the document after this frame's text layout.
             // Probe the same source that owns the parsed ranges and galley.
             let mut character = 0;
@@ -1459,6 +1530,14 @@ impl Editor {
                 self.focus = true;
                 ui.ctx().request_repaint();
             }
+        }
+        if let Some(vault) = vault
+            && let Some(state) = TextEditState::load(ui.ctx(), id)
+        {
+            ui.ctx().data_mut(|data| {
+                data.get_temp_mut_or_default::<Histories>(histories(&vault.root))
+                    .insert(tab.document.path.clone(), state);
+            });
         }
         follow
     }

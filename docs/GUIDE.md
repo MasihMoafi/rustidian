@@ -788,3 +788,47 @@ A font helper used only by theme::install_fonts belongs inside the shared theme
 module. Several standalone benchmarks include theme.rs directly. A new root
 module declared only by main and the editor benchmark broke the explorer target;
 placing it under theme keeps every consumer consistent without repeated setup.
+
+A file query is an ordered sequence. Nucleo Pattern::new splits words into
+independent atoms: Closed C can reuse the first C in Closed A and select it.
+The actual1.14.4 reference returned only Closed C for both original/lowercase
+queries. Keep the failing native screenshot/driver and reference rows, then use
+one fuzzy Atom for the whole filename query. Preserve abbreviations, aliases,
+Unicode, empty/limited results and folder-root ordering with real chooser checks.
+Commands have a separate matcher; do not change it without its own paired cases.
+
+Observe tab restoration order rather than assuming it. Actual1.14.4 appends a
+restored middle tab to its group, Close all other tabs keeps pins, and closing
+the final pinned tab first unpins it. The first original-position assertion
+failed and remains saved. A separate corrected reference passes all12 actions.
+Current9feb Ctrl+Shift+T incorrectly opens a blank tab through the broader Ctrl+T
+handler. Any future undo-close handler must run before that broader shortcut,
+with actual middle/final close, pinned protection and file-byte checks.
+
+Before a focused native check, import Pillow, Xlib and six with the exact Python
+interpreter that will run it. This host's /usr/bin/python3 is3.14 and its current
+six module is absent; python3 is the configured3.13 interpreter with six.
+The existing pure-Python Xlib is under ~/.local/lib/python3.12/site-packages;
+append only that known path for the local disposable driver, then import all
+three dependencies before creating Xvfb. Do not install packages or disable
+stable key mapping merely to get past a dependency failure. Keep CI's declared
+Python/tool setup unchanged unless its actual checks fail.
+
+Inspect popup typography before continuing an expensive suite. Source63321cf
+passed199 Rust executions and all7 early flows, yet Update links inherited the
+32px document heading. Its frozen debug images reject that visual result.
+Current1.14.4 measurements for both themes are560×201.25,16px inset,15px title
+and body/19.5px line,13px buttons30px high,15px corners, right-aligned choices,
+Always update initially focused and a close glyph. Match measured widget bounds
+and sample real normal/hover pixels; all file/link/Enter/close cases still run.
+Cancel a known rejected candidate after saving evidence; one new combined run
+retains every gate. The expanded44/19/9 workflow registry has a90min cap.
+
+Do not invent preview Undo semantics. A target already open shares its editor
+buffer and prior typing history with task changes in its card. A closed target's
+card writes its file, but its first editor starts without those task changes in
+Undo. The latter was verified for plain and properties notes only after actual
+focused typing and Undo proved the keyboard path. An earlier assumed positive
+failed and stays saved. Native recording is therefore restricted to an already
+open target. Check both modes with metadata bytes and the old unsaved-buffer
+case; never turn a wrong expectation into an implementation requirement.

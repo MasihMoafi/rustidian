@@ -106,6 +106,7 @@ pub struct NotesApp {
     recovery_saved: std::collections::HashMap<PathBuf, String>,
     recovery_manager: crate::recovery_ui::Manager,
     file_move: crate::file_move_ui::Manager,
+    page_preview: crate::page_preview::Manager,
     pub(crate) always_update_links: bool,
 }
 
@@ -184,6 +185,7 @@ impl NotesApp {
             recovery_saved: Default::default(),
             recovery_manager: Default::default(),
             file_move: Default::default(),
+            page_preview: Default::default(),
             always_update_links: false,
         };
         app.load_vault(root);
@@ -305,6 +307,7 @@ impl NotesApp {
                     let opening = self.loading_root.take().is_some();
                     if opening {
                         self.file_move = Default::default();
+                        self.page_preview.close();
                         self.always_update_links = rust_notes::paths::read_obsidian::<
                             serde_json::Value,
                         >(
@@ -642,7 +645,13 @@ impl NotesApp {
         let Some(vault) = &self.vault else {
             return;
         };
-        match vault.open_document(path) {
+        let document = self
+            .tabs
+            .iter()
+            .find(|tab| tab.document.path == path)
+            .map(|tab| Ok(tab.document.clone()))
+            .unwrap_or_else(|| vault.open_document(path));
+        match document {
             Ok(document) => {
                 if new_tab || self.tabs.is_empty() {
                     self.tabs.push(Tab::new(document));
@@ -692,6 +701,17 @@ impl NotesApp {
     }
 
     fn follow_link(&mut self, target: &str) {
+        let Some(from) = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.document.path.clone())
+        else {
+            return;
+        };
+        self.follow_link_from(&from, target);
+    }
+
+    fn follow_link_from(&mut self, from: &Path, target: &str) {
         let uri = target.split_once(':').is_some_and(|(scheme, _)| {
             let mut characters = scheme.chars();
             characters
@@ -719,17 +739,10 @@ impl NotesApp {
         {
             return;
         }
-        let Some(from) = self
-            .tabs
-            .get(self.active)
-            .map(|tab| tab.document.path.clone())
-        else {
-            return;
-        };
         let result = self
             .vault
             .as_mut()
-            .map(|vault| vault.open_link(&from, target));
+            .map(|vault| vault.open_link(from, target));
         match result {
             Some(Ok(document)) => {
                 if let Some(vault) = &self.vault {
@@ -2102,6 +2115,7 @@ impl NotesApp {
     }
 
     fn tab_strip(&mut self, ui: &mut egui::Ui) {
+        crate::ui_probe::metric(ui.ctx(), "tab-count", self.tabs.len() as f32);
         let mut close = None;
         let mut pin = None;
         egui::Frame::NONE
@@ -2612,6 +2626,13 @@ impl NotesApp {
                                 .frame_when_inactive(false)
                                 .min_size(egui::vec2(ui.available_width(), 34.0)),
                             );
+                            if crate::ui_probe::enabled() {
+                                crate::ui_probe::record(
+                                    ctx,
+                                    format!("quick-open:{}", path.display()),
+                                    row.rect,
+                                );
+                            }
                             if row.clicked() {
                                 select = Some(path.clone());
                             }
@@ -3094,6 +3115,10 @@ impl NotesApp {
     }
 
     fn relocate_tabs(&mut self, source: &Path, destination: &Path) {
+        self.page_preview.close();
+        if let Some(vault) = &self.vault {
+            crate::editor_ui::relocate_histories(&self.ctx, &vault.root, source, destination);
+        }
         self.bookmarks.rename(source, destination);
         for tab in &mut self.tabs {
             tab.history.rename_path(source, destination);
@@ -3116,6 +3141,71 @@ impl NotesApp {
         self.search_cache.invalidate();
         self.cache = CommonMarkCache::default();
         self.ctx.request_repaint();
+    }
+
+    fn show_page_preview(&mut self, ctx: &egui::Context) {
+        let blocked = self.dialog.is_some()
+            || self.pending.is_some()
+            || self.loading_root.is_some()
+            || self.vault_manager.open
+            || self.workspace_manager.open
+            || self.recovery_manager.active()
+            || self.file_move.active();
+        match self
+            .page_preview
+            .show(ctx, self.vault.as_ref(), &self.tabs, self.active, blocked)
+        {
+            Some(crate::page_preview::Action::Open { from, target }) => {
+                self.follow_link_from(&from, &target)
+            }
+            Some(crate::page_preview::Action::Edit { before, mut after }) => {
+                let indices: Vec<_> = self
+                    .tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, tab)| tab.document.path == before.path)
+                    .map(|(index, _)| index)
+                    .collect();
+                if indices
+                    .iter()
+                    .any(|&index| self.tabs[index].document.text != before.text)
+                {
+                    self.error = Some("The target changed while its preview was open. Reopen the preview before editing it.".into());
+                    self.page_preview.close();
+                    return;
+                }
+                if !indices.is_empty()
+                    && let Some(vault) = &self.vault
+                {
+                    crate::editor_ui::record_document_edit(ctx, &vault.root, &before, &after);
+                }
+                for &index in &indices {
+                    self.tabs[index].document.text.clone_from(&after.text);
+                    self.tabs[index].edited();
+                }
+                if let Some(&index) = indices.first() {
+                    if self.autosave_enabled && self.save(index) {
+                        let saved = self.tabs[index].document.clone();
+                        for &other in &indices[1..] {
+                            self.tabs[other].replace(saved.clone());
+                        }
+                    }
+                } else if let Some(vault) = &mut self.vault {
+                    match vault.save(&mut after) {
+                        Ok(()) => self.refresh_file_views(),
+                        Err(error) => {
+                            let mut tab = Tab::new(after);
+                            tab.edited();
+                            tab.autosave_failed = true;
+                            self.tabs.push(tab);
+                            self.error = Some(error);
+                            self.page_preview.close();
+                        }
+                    }
+                }
+            }
+            None => {}
+        }
     }
 
     fn ask_move_file(&mut self, source: PathBuf) {
@@ -3827,6 +3917,7 @@ impl eframe::App for NotesApp {
         self.sidebar(ui);
         self.details(ui);
         self.content(ui);
+        self.show_page_preview(&ctx);
         self.dialogs(&ctx);
         if let Some(error) = self.editor.error.take() {
             self.error = Some(error);

@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -1415,6 +1415,156 @@ def main():
                 control_bounds("mermaid-error")
                 assert invalid.read_text() == "```mermaid\nnot a diagram\n```\n"
                 results.append("Tables and native Mermaid render in Reading and Live, stay literal in Source, reuse the same diagram through hover/scroll, and invalid syntax retains its source")
+
+            def quick_ranking_checks():
+                close_tabs()
+                originals={}
+                for label in ("Closed A","Closed B","Closed C"):
+                    path=fixture/(label+".md");originals[path]="# "+label+"\n\nORDERED_QUERY_FIXTURE\n";path.write_text(originals[path])
+                alias=fixture/"Quick aliases.md"
+                originals[alias]="---\naliases: [Thinking circle, یادداشت فارسی]\n---\n# Alias target\n"
+                alias.write_text(originals[alias]);time.sleep(.7);key("ctrl+t")
+                def query(value,expected=None):
+                    key("ctrl+o");control_bounds("dialog-input-focused")
+                    if value:
+                        if value.isascii():type_text(value)
+                        else:paste_text(value)
+                    deadline=time.monotonic()+3
+                    while True:
+                        actual={name.removeprefix("quick-open:") for name in json.loads((base/"ui-probe.json").read_text()) if name.startswith("quick-open:")}
+                        if expected is None or actual==set(expected):return actual
+                        if time.monotonic()>=deadline:
+                            capture("native-quick-ranking-failure.png")
+                            raise AssertionError((value,expected,sorted(actual)))
+                        time.sleep(.03)
+                for value in ("Closed C","closed c"):
+                    query(value,["Closed C.md"]);capture("native-quick-ranking-"+value.replace(" ","-")+".png")
+                    key("Return");title_contains("Closed C")
+                results.append("Exact and lowercase multiword queries returned only the requested Closed C note rather than reusing the shared prefix")
+                for value,title in (("Closed B","Closed B"),("ClsdC","Closed C")):
+                    query(value,[title+".md"]);key("Return");title_contains(title)
+                results.append("Another exact title and an abbreviated query still opened their intended files through the real chooser")
+                for value in ("Thinking circle","یادداشت فارسی"):
+                    query(value,["Quick aliases.md"]);key("Return");title_contains("Quick aliases")
+                results.append("Multiword and Unicode aliases resolved once to their canonical file without duplicate rows")
+                for value in ("Closed Closed","No matching needle qzx"):
+                    query(value,[]);key("Return");control_bounds("dialog-input");key("Escape")
+                results.append("Repeated-word false matches and a missing filename produced no rows, and Enter created no note")
+                rows=query("");assert 1<=len(rows)<=100,rows
+                key("Escape");title_contains("Quick aliases")
+                assert all(path.read_text()==original for path,original in originals.items())
+                results.append("An empty chooser still listed files; cancelling it kept the current document and every fixture byte unchanged")
+
+            def page_preview_checks():
+                source=fixture/"Preview source.md";target=fixture/"Preview folder/Preview target.md"
+                target.parent.mkdir(exist_ok=True)
+                original="# Preview source\n\n[[Preview folder/Preview target|Target preview]]\n\n[[Missing preview target|Missing preview]]\n\n`[[Preview target]]`\n\n[External example](https://example.com/)\n\n[[Preview metadata target|Properties preview]]\n"
+                target_original="# Preview target\n\nVISIBLE_PREVIEW_DESTINATION\n\n- [ ] Preview task\n\n[Open next](Preview%20next.md)\n"
+                metadata=fixture/"Preview metadata target.md"
+                metadata_original="---\ntags: [preview]\n---\n# Preview metadata target\n\n- [ ] Metadata task\n"
+                metadata.write_text(metadata_original)
+                source.write_text(original);target.write_text(target_original)
+                (fixture/"Preview folder/Preview next.md").write_text("# Preview next\n\nNEXT_PREVIEW_DESTINATION\n")
+                time.sleep(.7);open_note("Preview source");command("Reading view")
+                def away(click=False):
+                    xdo("keyup","ctrl");xdo("mousemove","--sync","1100","800")
+                    if click:xdo("click","1")
+                    time.sleep(.5)
+                def absent():
+                    assert control_bounds("page-preview-card",required=False) is None
+                def hover_target(control=False,block=1,editor=False):
+                    bounds=control_bounds("editor-link:Preview folder/Preview target" if editor else f"reading-block:{block}")
+                    x=round((bounds[0]+bounds[2])/2) if editor else round(bounds[0]+25)
+                    if control:xdo("keydown","ctrl")
+                    xdo("mousemove","--sync",str(x),str(round((bounds[1]+bounds[3])/2)));time.sleep(.8)
+                bounds=control_bounds("reading-block:1")
+                xdo("mousemove","--sync",str(round(bounds[0]+25)),str(round((bounds[1]+bounds[3])/2)),"click","1");pause();title_contains("Preview target")
+                assert target.read_text()==target_original
+                open_note("Preview source");command("Reading view")
+                results.append("The exact reading-link coordinates actually navigated to the unchanged target as a positive control")
+                hover_target();card=control_bounds("page-preview-card")
+                title_contains("Preview source");assert source.read_text()==original and target.read_text()==target_original
+                assert abs(card[2]-card[0]-452)<=3,card
+                capture("native-page-preview-reading.png")
+                results.append("Unmodified Reading hover showed the 452px target card without opening a tab or changing notes")
+                xdo("mousemove","--sync",str(round((card[0]+card[2])/2)),str(round((card[1]+card[3])/2)));time.sleep(.7)
+                control_bounds("page-preview-card");away();absent()
+                hover_target(True);control_bounds("page-preview-card");away();absent()
+                results.append("Pointer entry kept the card open, unmodified pointer-away dismissed it and Ctrl plus Reading hover also worked")
+                for mode in ("Live preview","Source editing"):
+                    command(mode);away();hover_target(editor=True);absent()
+                    hover_target(True,editor=True);control_bounds("page-preview-card")
+                    capture("native-page-preview-"+mode.split()[0].lower()+".png")
+                    away();absent()
+                results.append("Live and Source required Ctrl for the same preview; plain hover in both modes showed no card")
+                command("Reading view");hover_target()
+                click_control("page-preview/task:0");title_contains("Preview source")
+                assert target.read_text()==target_original.replace("- [ ]","- [x]")
+                assert source.read_text()==original
+                away();control_bounds("page-preview-card");key("Escape");control_bounds("page-preview-card")
+                click_control("page-preview/task:0");assert target.read_text()==target_original
+                away(True);absent()
+                results.append("Preview task clicks updated only the target, and a focused card survived pointer-away/Escape until an outside click")
+                open_note("Preview target");command("Source editing");editor_end()
+                type_text("UNDO_FOCUS_PROOF");key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original
+                key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original
+                results.append("Focused typing and Undo worked, while a newly opened target did not import earlier closed-note preview changes into its editor history")
+                open_note("Preview source");command("Reading view");hover_target(block=5)
+                click_control("page-preview/task:0");away(True)
+                metadata_checked=metadata_original.replace("- [ ]","- [x]");assert metadata.read_text()==metadata_checked
+                open_note("Preview metadata target");command("Live preview");editor_end()
+                type_text("UNDO_FOCUS_PROOF");key("ctrl+z");key("ctrl+s");assert metadata.read_text()==metadata_checked
+                key("ctrl+z");key("ctrl+s");assert metadata.read_text()==metadata_checked
+                capture("native-page-preview-properties.png")
+                open_note("Preview source");command("Reading view");hover_target(block=5)
+                click_control("page-preview/task:0");away(True);assert metadata.read_text()==metadata_original
+                open_note("Preview target");command("Source editing")
+                results.append("Properties-note preview edits preserved exact frontmatter and the same first-Live-editor history behavior, with metadata and task bytes restored")
+                command("Open settings");click_control("settings-autosave");key("Escape")
+                editor_end();type_text("BUFFER_PREVIEW_MARKER");assert target.read_text()==target_original
+                key("ctrl+t");open_note("Preview source");command("Reading view");hover_target()
+                click_control("page-preview/task:0");assert target.read_text()==target_original
+                away(True);click_control("tab:Preview folder/Preview target.md");title_contains("Preview target")
+                key("ctrl+s");assert target.read_text()==target_original.replace("- [ ]","- [x]")+"BUFFER_PREVIEW_MARKER"
+                key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original+"BUFFER_PREVIEW_MARKER"
+                key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original
+                command("Open settings");click_control("settings-autosave");key("Escape")
+                results.append("A dirty target in another tab kept its prior text with autosave disabled, shared the task change and undid task then typing separately")
+                click_control("tab:Preview source.md");command("Reading view");hover_target()
+                changed=target_original.replace("VISIBLE_PREVIEW_DESTINATION","EXTERNAL_PREVIEW_UPDATE")
+                target.write_text(changed);time.sleep(1.1);control_bounds("page-preview-card")
+                capture("native-page-preview-external-update.png")
+                click_control("page-preview/task:0")
+                assert target.read_text()==changed.replace("- [ ]","- [x]")
+                click_control("page-preview/task:0");assert target.read_text()==changed
+                target.write_text(target_original);time.sleep(1.1);away(True)
+                results.append("An external target update refreshed the open card before task editing and was preserved byte-for-byte")
+                hover_target();click_control("page-preview-open");title_contains("Preview target")
+                assert control_bounds("tab-count")[0]==2
+                # Reopen the source in this tab, leaving the original target tab available.
+                open_note("Preview source");command("Reading view");hover_target()
+                link=control_bounds("page-preview/reading-block:3")
+                xdo("mousemove","--sync",str(round(link[0]+25)),str(round((link[1]+link[3])/2)),"click","1");pause();title_contains("Preview next")
+                results.append("The corner Open link and an internal card link replaced the current view, resolving the latter from the target's folder")
+                open_note("Preview source");command("Reading view");hover_target(block=2)
+                control_bounds("page-preview-create");assert not (fixture/"Missing preview target.md").exists()
+                capture("native-page-preview-missing.png");away();absent()
+                hover_target(block=2);click_control("page-preview-create");title_contains("Missing preview target")
+                assert (fixture/"Missing preview target.md").is_file()
+                results.append("A missing note showed a create card without writing on hover and created the note only after its actual button click")
+                open_note("Preview source");command("Reading view")
+                for block in (3,4):
+                    away();hover_target(block=block);absent()
+                results.append("Literal code and an external web link did not open an internal-note preview")
+                for dark in (False,True):
+                    set_theme(dark);hover_target();control_bounds("page-preview-card")
+                    capture("native-page-preview-"+("dark" if dark else "light")+".png");away()
+                xdo("windowsize",window,"860","560");pause();hover_target();card=control_bounds("page-preview-card")
+                assert 0<=card[0]<card[2]<=860 and 0<=card[1]<card[3]<=560,card
+                capture("native-page-preview-compact.png",(860,560));away(True)
+                xdo("windowsize",window,"1440","960");pause()
+                assert source.read_text()==original and target.read_text()==target_original and metadata.read_text()==metadata_original
+                results.append("Both themes and compact-window preview geometry stayed inside the viewport with original source/target bytes restored")
 
             def navigation_checks():
                 note = fixture / "Notes/Navigation UI.md"
@@ -3337,6 +3487,25 @@ def main():
                     key("BackSpace")
 
             def file_move_checks():
+                def inspect_links_dialog(dark):
+                    box=control_bounds("move-links-dialog");heading=control_bounds("move-links-title")
+                    assert abs(box[2]-box[0]-560)<=3 and abs(box[3]-box[1]-201.25)<=4,box
+                    assert 18<=heading[3]-heading[1]<=22,heading
+                    buttons=[control_bounds("move-links-"+name) for name in ("always","once","no")]
+                    assert all(abs(bounds[3]-bounds[1]-30)<=2 for bounds in buttons),buttons
+                    assert buttons[0][0]<buttons[1][0]<buttons[2][0] and abs(box[2]-buttons[2][2]-17)<=4,(box,buttons)
+                    control_bounds("move-links-always-focused");control_bounds("move-links-close")
+                    sample=(round(buttons[1][0]+5),round((buttons[1][1]+buttons[1][3])/2))
+                    xdo("mousemove","--sync","20","900");time.sleep(.2)
+                    normal=ImageGrab.grab(xdisplay=display).getpixel(sample)[:3]
+                    assert normal==((51,51,51) if dark else (255,255,255)),normal
+                    capture("native-file-move-links-"+("dark" if dark else "light")+"-normal.png")
+                    xdo("mousemove","--sync",str(round((buttons[1][0]+buttons[1][2])/2)),str(sample[1]));time.sleep(.2)
+                    hovered=ImageGrab.grab(xdisplay=display).getpixel(sample)[:3]
+                    assert hovered==((63,63,63) if dark else (250,250,250)) and hovered!=normal,(normal,hovered)
+                    capture("native-file-move-links-"+("dark" if dark else "light")+"-hover.png")
+                    xdo("mousemove","--sync","20","900");pause()
+                    results.append("Measured "+("dark" if dark else "light")+" link dialog kept compact title/buttons, right alignment, default focus and actual hover colors")
                 close_tabs()
                 originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
                 source=fixture/"Move source.md"
@@ -3384,6 +3553,7 @@ def main():
                 assert nested.read_bytes()==edited and not moved.exists()
                 assert reference.read_bytes()==reference_bytes
                 control_bounds("move-links-dialog")
+                inspect_links_dialog(True)
                 for name in ("always","once","no"):control_bounds("move-links-"+name)
                 capture("native-file-move-links.png")
                 click_control("move-links-once",hold=.15)
@@ -3403,6 +3573,18 @@ def main():
                 assert reference.read_bytes()==expected
                 assert control_bounds("tab-full:Move source.md")
                 results.append("Moving back to the vault root kept the current tab and Do not update left the original reference bytes intact")
+
+                close_target=fixture/"Close prompt target.md";close_original=b"# Close prompt target\n"
+                close_target.write_bytes(close_original)
+                close_reference=fixture/"Close prompt reference.md";close_links=b"[[Close prompt target]]\n";close_reference.write_bytes(close_links)
+                command("Refresh vault");pause();unchanged_title=xdo("getwindowname",window)
+                file_menu(close_target.name);click_control("menu:Move file to...",hold=.15);type_text("Move destination");key("Return")
+                control_bounds("move-links-dialog");click_control("move-links-close",hold=.15)
+                assert control_bounds("move-links-dialog",required=False) is None
+                assert not close_target.exists() and (destination/close_target.name).read_bytes()==close_original
+                assert close_reference.read_bytes()==close_links and xdo("getwindowname",window)==unchanged_title
+                results.append("The real dialog close control dismissed an inactive file's link prompt, preserving its completed move, current tab and unchanged references")
+
 
                 command("Move current file to another folder");type_text("Shift parent/Nested");key("shift+Return")
                 shifted=fixture/"Shift parent/Nested/Move source.md"
@@ -3432,8 +3614,8 @@ def main():
                 reference.write_bytes(b"[[Move destination/Move source 1|Alias]]\r\n")
                 command("Refresh vault");pause();set_theme(False)
                 command("Move current file to another folder");type_text("/");key("Return")
-                control_bounds("move-links-dialog");capture("native-file-move-links-light.png")
-                click_control("move-links-always",hold=.15)
+                control_bounds("move-links-dialog");inspect_links_dialog(False);capture("native-file-move-links-light.png")
+                key("Return")
                 root_numbered=fixture/"Move source 1.md"
                 assert root_numbered.read_bytes()==edited
                 assert reference.read_bytes()==b"[[Move source 1|Alias]]\r\n"
@@ -4707,6 +4889,17 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
+            if args.section == "quick-ranking":
+                quick_ranking_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
+                return
+            if args.section == "page-preview":
+                page_preview_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"page-preview"}))
+                return
+
             if args.section == "navigation":
                 navigation_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -5018,6 +5211,8 @@ def main():
                 color_checks,
                 native_highlight_checks,
                 navigation_checks,
+                page_preview_checks,
+                quick_ranking_checks,
                 hover_checks,
                 title_checks,
                 scrolling_checks,

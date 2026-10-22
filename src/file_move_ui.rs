@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 pub struct Manager {
     picker: Option<Picker>,
     updates: Option<LinkUpdates>,
+    updates_focus: bool,
     error: Option<String>,
 }
 
@@ -55,6 +56,7 @@ impl Manager {
         self.picker = None;
         self.error = None;
         self.updates = updates;
+        self.updates_focus = self.updates.is_some();
     }
 
     pub fn error(&mut self, error: String) {
@@ -65,32 +67,134 @@ impl Manager {
         if let Some(updates) = &self.updates {
             let (links, files) = updates.counts();
             let mut choice = None;
-            let response =
-                egui::Modal::new(egui::Id::unique("move-update-links")).show(ctx, |ui| {
-                    ui.set_width((ctx.content_rect().width() - 56.0).clamp(220.0, 526.0));
-                    ui.spacing_mut().item_spacing.y = 16.0;
-                    ui.heading("Update links");
-                    ui.label("Do you want to update internal links that link to this file?");
-                    ui.label(format!(
-                        "This will affect {links} {} in {files} {}.",
-                        if links == 1 { "link" } else { "links" },
-                        if files == 1 { "file" } else { "files" },
-                    ));
+            let focus = std::mem::take(&mut self.updates_focus);
+            let dark = ctx.global_style().visuals.dark_mode;
+            let frame = egui::Frame::popup(&ctx.global_style())
+                .inner_margin(Margin::same(16))
+                .corner_radius(15)
+                .fill(if dark {
+                    egui::Color32::from_rgb(23, 27, 29)
+                } else {
+                    egui::Color32::from_rgb(247, 246, 242)
+                })
+                .stroke(Stroke::new(
+                    1.0,
+                    egui::Color32::from_gray(if dark { 63 } else { 218 }),
+                ));
+            let response = egui::Modal::new(egui::Id::unique("move-update-links"))
+                .frame(frame)
+                .show(ctx, |ui| {
+                    let width = (ctx.content_rect().width() - 48.0).clamp(220.0, 560.0);
+                    ui.set_width(width - frame.total_margin().sum().x);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
+                    ui.spacing_mut().interact_size.y = 30.0;
+                    let title = ui.label(
+                        RichText::new("Update links")
+                            .font(FontId::new(15.0, egui::FontFamily::Name("semibold".into())))
+                            .line_height(Some(19.5)),
+                    );
+                    ui_probe::record(ctx, "move-links-title", title.rect);
+                    let corner = egui::Rect::from_center_size(
+                        egui::pos2(ui.max_rect().right() - 3.0, title.rect.center().y),
+                        egui::vec2(24.0, 24.0),
+                    );
+                    let close = ui
+                        .interact(corner, ui.make_persistent_id("close"), egui::Sense::click())
+                        .on_hover_text("Close");
+                    close.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Close")
+                    });
+                    theme::control_feedback(ui, &close);
+                    theme::icon_image(theme::Icon::Close, ui.visuals().weak_text_color()).paint_at(
+                        ui,
+                        egui::Rect::from_center_size(corner.center(), egui::vec2(12.0, 12.0)),
+                    );
+                    ui_probe::record(ctx, "move-links-close", close.rect);
+                    if close.clicked() {
+                        choice = Some(None);
+                    }
+                    ui.add_space(26.25);
+                    ui.label(
+                        RichText::new(
+                            "Do you want to update internal links that link to this file?",
+                        )
+                        .size(15.0)
+                        .line_height(Some(19.5)),
+                    );
+                    ui.add_space(15.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "This will affect {links} {} in {files} {}.",
+                            if links == 1 { "link" } else { "links" },
+                            if files == 1 { "file" } else { "files" },
+                        ))
+                        .size(15.0)
+                        .line_height(Some(19.5)),
+                    );
+                    ui.add_space(37.5);
                     ui.horizontal_wrapped(|ui| {
-                        for (label, name, value) in [
+                        let choices = [
                             ("Always update", "move-links-always", Some(true)),
                             ("Just once", "move-links-once", Some(false)),
                             ("Do not update", "move-links-no", None),
+                        ];
+                        let required = choices
+                            .iter()
+                            .map(|(label, _, _)| {
+                                ui.painter()
+                                    .layout_no_wrap(
+                                        (*label).into(),
+                                        FontId::proportional(13.0),
+                                        ui.visuals().text_color(),
+                                    )
+                                    .size()
+                                    .x
+                                    + 24.0
+                            })
+                            .sum::<f32>()
+                            + 16.0;
+                        ui.add_space((ui.available_width() - required).max(0.0));
+                        let normal = egui::Color32::from_gray(if dark { 51 } else { 255 });
+                        let hovered = egui::Color32::from_gray(if dark { 63 } else { 250 });
+                        let widgets = &mut ui.visuals_mut().widgets;
+                        for (visuals, fill) in [
+                            (&mut widgets.inactive, normal),
+                            (&mut widgets.hovered, hovered),
                         ] {
-                            let button = ui.button(label);
+                            visuals.bg_fill = fill;
+                            visuals.weak_bg_fill = fill;
+                            visuals.bg_stroke = Stroke::NONE;
+                            visuals.corner_radius = egui::CornerRadius::same(8);
+                        }
+                        for (label, name, value) in choices {
+                            let button = ui.add(
+                                egui::Button::new(RichText::new(label).size(13.0))
+                                    .min_size(egui::vec2(0.0, 30.0)),
+                            );
+                            if focus && value == Some(true) {
+                                button.request_focus();
+                            }
                             ui_probe::record(ctx, name, button.rect);
+                            if button.has_focus() {
+                                ui_probe::record(ctx, format!("{name}-focused"), button.rect);
+                                ui.painter().rect_stroke(
+                                    button.rect.expand(1.5),
+                                    10,
+                                    Stroke::new(
+                                        3.0,
+                                        egui::Color32::from_gray(if dark { 85 } else { 189 }),
+                                    ),
+                                    egui::StrokeKind::Middle,
+                                );
+                            }
                             if button.clicked() {
                                 choice = Some(value);
                             }
                         }
                     });
-                    ui_probe::record(ctx, "move-links-dialog", ui.max_rect());
                 });
+            ui_probe::record(ctx, "move-links-dialog", response.response.rect);
             if response.should_close() || choice == Some(None) {
                 self.updates = None;
             } else if let Some(Some(always)) = choice {

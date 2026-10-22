@@ -6,6 +6,7 @@ mod editor_ui;
 mod file_move_ui;
 mod file_tree;
 mod image_view;
+mod page_preview;
 mod preview;
 mod properties_ui;
 mod recovery_ui;

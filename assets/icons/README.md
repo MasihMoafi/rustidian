@@ -73,3 +73,9 @@ The installed048fced source integrates49 of54 selected artworks. Current note-ai
 ## Tab pin — 21 October
 
 The upright pin was generated with the built-in image tool, then traced through the existing SVG Studio monochrome engine. The noisy transparent candidate and the first thin candidate were rejected; the selected broader outline preserves its counters at12–18px. Exact prompts, original, normalized source, unchanged trace and fill-only native variant are retained in the manifest. Reproduce it with `scripts/build-atlas-icons.mjs pin`; `scripts/prove-icons.mjs pin` writes a focused proof under proof/selected-pin without replacing the complete icon index. Source/vector pairs at24/48/128/512px and native tints at12/18/24/48px in both themes were inspected. Native pin integration is local and uncompiled; artwork verification alone does not prove tab behavior.
+
+The draft Open link icon for page previews is generated separately from the
+actual Obsidian1.14.4 control, then traced by SVG Studio's existing monochrome
+pipeline. Its original, exact prompt and selected source/trace are recorded in
+manifest.json under pagePreviewOpen. Proof: [source/SVG and native tints](proof/selected-open-link/source-vs-vector.html).
+Both-theme proof inspection passed; actual optimized-app verification is pending.

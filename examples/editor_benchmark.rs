@@ -17,6 +17,10 @@ mod diagrams;
 mod editor_ui;
 #[cfg(not(test))]
 #[allow(dead_code)]
+#[path = "../src/page_preview.rs"]
+mod page_preview;
+#[cfg(not(test))]
+#[allow(dead_code)]
 #[path = "../src/preview.rs"]
 mod preview;
 #[cfg(not(test))]
