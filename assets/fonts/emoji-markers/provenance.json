@@ -1,0 +1,99 @@
+{
+  "source": "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+  "source_sha256": "9fd0a3d0ce84d77e3185dfbae77bd1abf3926aa49a032e354d076c4f17151f10",
+  "font_units_per_em": 2048,
+  "strike_ppem": 109,
+  "method": "Extract the six existing CBDT PNG glyph bytes unchanged with fontTools; no rendering, drawing or font download. These are Unicode font glyphs, separate from generated UI artwork.",
+  "glyphs": [
+    {
+      "color": "blue",
+      "character": "🔵",
+      "glyph": "u1F535",
+      "sha256": "b5d6d71e8c58d78041e03fc71cebfbda83fb7b9a4349ee53185fa25d3a2f32d8",
+      "bytes": 1157,
+      "metrics": {
+        "height": 128,
+        "width": 136,
+        "BearingX": 0,
+        "BearingY": 101,
+        "Advance": 136
+      },
+      "advance_units": 2550
+    },
+    {
+      "color": "green",
+      "character": "🟢",
+      "glyph": "u1F7E2",
+      "sha256": "0fa15931066cb0aff57ef5d467de0809c3c0b923d64b7397069f220cac57576a",
+      "bytes": 1118,
+      "metrics": {
+        "height": 128,
+        "width": 136,
+        "BearingX": 0,
+        "BearingY": 101,
+        "Advance": 136
+      },
+      "advance_units": 2550
+    },
+    {
+      "color": "orange",
+      "character": "🟠",
+      "glyph": "u1F7E0",
+      "sha256": "e27de9cc38f4de9d36c0f409d5c256d07eb9866695375a43311e6c912f975300",
+      "bytes": 1146,
+      "metrics": {
+        "height": 128,
+        "width": 136,
+        "BearingX": 0,
+        "BearingY": 101,
+        "Advance": 136
+      },
+      "advance_units": 2550
+    },
+    {
+      "color": "purple",
+      "character": "🟣",
+      "glyph": "u1F7E3",
+      "sha256": "3e4fca37e5b6e8706701d281bd79333868b4439a835873cf39c813392d0c6cf1",
+      "bytes": 1177,
+      "metrics": {
+        "height": 128,
+        "width": 136,
+        "BearingX": 0,
+        "BearingY": 101,
+        "Advance": 136
+      },
+      "advance_units": 2550
+    },
+    {
+      "color": "red",
+      "character": "🔴",
+      "glyph": "u1F534",
+      "sha256": "01dd83989a9b9d915dfad3b8a519552fe89a0600e940c6204e9c47b2474b9cf7",
+      "bytes": 1143,
+      "metrics": {
+        "height": 128,
+        "width": 136,
+        "BearingX": 0,
+        "BearingY": 101,
+        "Advance": 136
+      },
+      "advance_units": 2550
+    },
+    {
+      "color": "yellow",
+      "character": "🟡",
+      "glyph": "u1F7E1",
+      "sha256": "be07c14edef5926e8f6e686b9bb1dc844167674575b80e27f2809424337edb2b",
+      "bytes": 1175,
+      "metrics": {
+        "height": 128,
+        "width": 136,
+        "BearingX": 0,
+        "BearingY": 101,
+        "Advance": 136
+      },
+      "advance_units": 2550
+    }
+  ]
+}

@@ -56,7 +56,10 @@ def main():
             path = Path(member.name)
             assert not path.is_absolute() and ".." not in path.parts
             assert member.isfile() or member.isdir()
-            assert path.parts[0] in ("rust-notes", "demo-vault")
+            assert path.parts[0] in ("rust-notes", "demo-vault") or (
+                member.isfile() and len(path.parts) == 3 and path.parts[:2] == ("assets", "fonts")
+                and path.name.startswith("LICENSE-") and path.suffix == ".txt"
+            )
         archive.extractall(bundle, filter="data")
     binary = bundle / "rust-notes"
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == (reports / "candidate.sha256").read_text().split()[0]

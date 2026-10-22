@@ -758,3 +758,23 @@ represents unsaved content; expecting Tab.open to navigate away from it weakens
 the safety contract. The identity fixture now moves actual temporary files, reloads
 the saved result, then navigates. Run Cargo tests with --no-fail-fast to collect
 all target failures in one Actions build, preserving every retained test.
+
+For a folder-qualified quick-switch query, assert the basename in the OS title;
+the title does not display the entire query. In the actual1.14.4 Move picker, /
+ranks first even when other matching folder paths contain slashes. Explicit folder
+queries prefer an exact row, while an empty query keeps the current folder first.
+Preserve both cases and the actual Enter operation in the native eval.
+
+After a Reading/Source round trip, the first color Undo exposed a cursor-only
+text-widget snapshot. A diagnostic second press proved the cause, not acceptance.
+Undo and Redo now skip same-text snapshots inside the existing event handler,
+with real single-action and queued typing/key tests. Do not retry the acceptance
+keypress or process Undo before pending text events.
+
+The six colored native marker characters need real color glyphs. Existing fonts
+rendered boxes. Extract just the installed Noto Color Emoji CBDT PNG bytes with
+fontTools, retain their source hash/metrics/licenses, and use egui's cached native
+GlyphRasterizer with is_color=true. Decode lazily and override only those clusters.
+Bundle font licenses and preserve narrow archive extraction guards. Verify actual
+Source pixels as well as stored Unicode and Reading highlights; all remain
+unverified until the corrected Actions app executes these cases.

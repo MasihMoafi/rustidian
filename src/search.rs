@@ -84,6 +84,23 @@ impl FileMatcher {
         self.rank_matching(query, limit, |_| true)
     }
 
+    pub fn rank_folders(&mut self, query: &str, limit: usize) -> Vec<PathBuf> {
+        let mut paths = self.rank(query, usize::MAX);
+        if !query.is_empty()
+            && let Some(index) = paths.iter().position(|path| {
+                if path.as_os_str().is_empty() {
+                    query == "/"
+                } else {
+                    path == std::path::Path::new(query)
+                }
+            })
+        {
+            paths[..=index].rotate_right(1);
+        }
+        paths.truncate(limit);
+        paths
+    }
+
     pub fn rank_links(&mut self, query: &str, limit: usize) -> Vec<PathBuf> {
         self.rank_matching(query, limit, crate::paths::wiki_path_supported)
     }

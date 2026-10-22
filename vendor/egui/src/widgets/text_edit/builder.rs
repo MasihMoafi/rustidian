@@ -1342,13 +1342,11 @@ fn events(
                 || (modifiers.matches_logically(Modifiers::SHIFT | Modifiers::COMMAND)
                     && *key == Key::Z) =>
             {
-                if let Some((redo_ccursor_range, redo_txt)) = state
-                    .undoer
-                    .lock()
-                    .redo(&(cursor_range, text.as_str().to_owned()))
+                if let Some((redo_ccursor_range, redo_txt)) =
+                    state.undo_or_redo(cursor_range, text.as_str(), true)
                 {
-                    text.replace_with(redo_txt);
-                    Some(CursorMutation::Selection(*redo_ccursor_range))
+                    text.replace_with(&redo_txt);
+                    Some(CursorMutation::Selection(redo_ccursor_range))
                 } else {
                     None
                 }
@@ -1360,13 +1358,11 @@ fn events(
                 modifiers,
                 ..
             } if modifiers.matches_logically(Modifiers::COMMAND) => {
-                if let Some((undo_ccursor_range, undo_txt)) = state
-                    .undoer
-                    .lock()
-                    .undo(&(cursor_range, text.as_str().to_owned()))
+                if let Some((undo_ccursor_range, undo_txt)) =
+                    state.undo_or_redo(cursor_range, text.as_str(), false)
                 {
-                    text.replace_with(undo_txt);
-                    Some(CursorMutation::Selection(*undo_ccursor_range))
+                    text.replace_with(&undo_txt);
+                    Some(CursorMutation::Selection(undo_ccursor_range))
                 } else {
                     None
                 }

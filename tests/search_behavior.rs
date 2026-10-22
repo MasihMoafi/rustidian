@@ -22,6 +22,15 @@ fn folder_matching_keeps_dotted_names_root_and_current_folder() {
         1
     );
     assert!(matcher.rank("missing", 20).is_empty());
+    assert_eq!(matcher.rank_folders("/", 20)[0], std::path::Path::new(""));
+    assert_eq!(
+        matcher.rank_folders("Other", 20)[0],
+        std::path::Path::new("Other")
+    );
+    assert_eq!(
+        matcher.rank_folders("", 20)[0],
+        std::path::Path::new("Other")
+    );
 }
 
 #[test]

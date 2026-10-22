@@ -256,11 +256,11 @@ def main():
                 time.sleep(.05)
             raise AssertionError((value, title))
 
-        def open_note(value):
+        def open_note(value, *, title=None):
             key("ctrl+o")
             type_text(value)
             key("Return")
-            title_contains(value)
+            title_contains(value if title is None else title)
 
         def ready_window():
             deadline = time.monotonic() + 20
@@ -918,11 +918,22 @@ def main():
                 assert note.read_text()==original
                 results.append("Native color toggles stayed unavailable on a blank tab; the original Cyan command remained available on a document without editing it")
                 colors=[("Blue","🔵"),("Green","🟢"),("Orange","🟠"),("Purple","🟣"),("Red","🔴"),("Yellow","🟡")]
+                source_tints={
+                    "Blue":lambda r,g,b:b>r+16 and b>g+10,
+                    "Green":lambda r,g,b:g>r+12 and g>b+12,
+                    "Orange":lambda r,g,b:r>g+12 and g>b+12,
+                    "Purple":lambda r,g,b:b>g+12 and r>g+5,
+                    "Red":lambda r,g,b:r>g+20 and r>b+20,
+                    "Yellow":lambda r,g,b:r>=g and g>b+12,
+                }
                 for color,marker in colors:
                     editor_end();key("ctrl+shift+Left")
                     command("Toggle "+color.lower()+" highlight");key("ctrl+s")
                     expected=original[:-6]+"=="+marker+"TARGET=="
                     assert note.read_text()==expected,(color,note.read_text())
+                    marker_pixels=pixel_data(ImageGrab.grab(xdisplay=display).crop(tuple(round(v) for v in control_bounds("editor"))).convert("RGB"))
+                    assert sum(source_tints[color](*pixel) for pixel in marker_pixels)>15,(color,"Native marker must render in color rather than as a missing glyph")
+                    capture("native-highlight-marker-"+color.lower()+".png")
                     key("ctrl+z");key("ctrl+s");assert note.read_text()==original,(color,"undo")
                     key("ctrl+y");key("ctrl+s");assert note.read_text()==expected,(color,"redo")
                     command("Toggle "+color.lower()+" highlight");key("ctrl+s")
@@ -3355,7 +3366,7 @@ def main():
                 assert control_bounds("move-input",required=False) is None
                 assert control_bounds("move-links-dialog",required=False) is None
                 assert xdo("getwindowname",window)==before_title
-                open_note("Move destination/Move source");title_contains("Move source")
+                open_note("Move destination/Move source",title="Move source")
                 results.append("Moving an inactive file into an existing folder preserved its exact CRLF bytes and active navigation; the updated index opened its new path immediately")
 
                 reference=fixture/"Move reference.md"

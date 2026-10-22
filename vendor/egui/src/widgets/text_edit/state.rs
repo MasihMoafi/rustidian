@@ -83,6 +83,29 @@ impl TextEditState {
     pub fn clear_undoer(&mut self) {
         self.set_undoer(TextEditUndoer::default());
     }
+
+    /// Move through text changes without turning cursor-only snapshots into edits.
+    pub(super) fn undo_or_redo(
+        &self,
+        cursor: CCursorRange,
+        text: &str,
+        redo: bool,
+    ) -> Option<(CCursorRange, String)> {
+        let mut current = (cursor, text.to_owned());
+        let mut history = self.undoer.lock();
+        loop {
+            let next = if redo {
+                history.redo(&current)
+            } else {
+                history.undo(&current)
+            }?
+            .clone();
+            if next.1 != text {
+                return Some(next);
+            }
+            current = next;
+        }
+    }
 }
 
 #[derive(Clone, Default)]

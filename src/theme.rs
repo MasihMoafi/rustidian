@@ -242,6 +242,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         .unwrap()
         .insert(0, "mono".into());
     ctx.set_fonts(fonts);
+    crate::emoji_glyphs::install(ctx);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

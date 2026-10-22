@@ -39,7 +39,7 @@ impl Manager {
     pub fn open(&mut self, vault: &Vault, source: PathBuf) {
         let current = source.parent().unwrap_or_else(|| Path::new(""));
         let mut folders = FileMatcher::folders(vault, current);
-        let paths = folders.rank("", usize::MAX);
+        let paths = folders.rank_folders("", usize::MAX);
         self.picker = Some(Picker {
             folders,
             paths,
@@ -148,7 +148,7 @@ impl Manager {
                     }
                     if field.changed() {
                         picker.selected = 0;
-                        picker.paths = picker.folders.rank(picker.query.trim(), usize::MAX);
+                        picker.paths = picker.folders.rank_folders(picker.query.trim(), usize::MAX);
                         self.error = None;
                     }
                     if theme::icon_button(ui, theme::Icon::Close, "Dismiss").clicked() {

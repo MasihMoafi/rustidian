@@ -76,7 +76,7 @@ jobs:
         run: |
           if [ -x target/debug/rust-notes ]; then
             mkdir -p "$RUNNER_TEMP/rust-notes-functional"
-            tar -czf "$RUNNER_TEMP/rust-notes-functional/rust-notes-functional.tar.gz" -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+            tar -czf "$RUNNER_TEMP/rust-notes-functional/rust-notes-functional.tar.gz" -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault assets/fonts/LICENSE-*.txt
             sha256sum target/debug/rust-notes > "$RUNNER_TEMP/rust-notes-functional/functional.sha256"
             git rev-parse HEAD > "$RUNNER_TEMP/rust-notes-functional/binary-source-commit.txt"
           fi
@@ -140,7 +140,7 @@ jobs:
           cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/candidate-build.log
           sha256sum target/release/rust-notes > reports/candidate.sha256
           git rev-parse HEAD > reports/binary-source-commit.txt
-          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault
+          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault assets/fonts/LICENSE-*.txt
       - name: Restore an unchanged optimized candidate
         id: restore_candidate
         if: ${{ inputs.reuse_run_id != '' }}
