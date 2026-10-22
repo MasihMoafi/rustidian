@@ -1,3 +1,6 @@
+#[path = "settings_ui.rs"]
+mod settings_ui;
+
 use crate::{
     file_tree::{FileAction, Tree},
     preview,
@@ -62,6 +65,7 @@ pub struct NotesApp {
     dialog_focus: bool,
     dialog_select_all: bool,
     dialog_selected: usize,
+    settings_page: settings_ui::Page,
     files: rust_notes::search::FileMatcher,
     pending: Option<Pending>,
     error: Option<String>,
@@ -144,6 +148,7 @@ impl NotesApp {
             dialog_focus: false,
             dialog_select_all: false,
             dialog_selected: 0,
+            settings_page: Default::default(),
             files: rust_notes::search::FileMatcher::new(Vec::new()),
             pending: None,
             error: None,
@@ -1885,24 +1890,38 @@ impl NotesApp {
                     ui.available_size(),
                     Layout::bottom_up(Align::LEFT),
                     |ui| {
-                        ui.separator();
                         let name = self
                             .vault
                             .as_ref()
                             .map(Vault::name)
                             .unwrap_or_else(|| "Open vault…".into());
-                        let vault = ui.add(
-                            egui::Button::new((
-                                theme::icon_image(Icon::Vault, ui.visuals().text_color()),
-                                RichText::new(name).size(13.0),
-                            ))
-                            .truncate(),
-                        );
-                        crate::ui_probe::record(ui.ctx(), "vault-profile", vault.rect);
-                        if vault.clicked() {
-                            self.manage_vaults();
-                        }
-                        ui.label(RichText::new("Ctrl+O  Quick switcher").size(11.0).weak());
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 38.0).max(40.0);
+                            let vault = ui.add_sized(
+                                [width, 30.0],
+                                egui::Button::new((
+                                    theme::icon_image(
+                                        Icon::Disclosure,
+                                        ui.visuals().weak_text_color(),
+                                    )
+                                    .rotate(std::f32::consts::FRAC_PI_2, egui::Vec2::splat(0.5)),
+                                    RichText::new(name).size(13.0),
+                                ))
+                                .frame(false)
+                                .truncate(),
+                            );
+                            crate::ui_probe::record(ui.ctx(), "vault-profile", vault.rect);
+                            if vault.clicked() {
+                                self.manage_vaults();
+                            }
+                            let settings =
+                                icon_button(ui, Icon::Settings, "Open settings · Ctrl+,");
+                            crate::ui_probe::record(ui.ctx(), "open-settings", settings.rect);
+                            if settings.clicked() {
+                                self.ask(Dialog::Settings);
+                            }
+                        });
+                        ui.separator();
                     },
                 );
             });
@@ -2946,6 +2965,10 @@ impl NotesApp {
         let mut run_command = None;
         let mut recovery_action = None;
         let response = egui::Modal::new(egui::Id::unique("main-dialog")).show(ctx, |ui| {
+            if dialog == Dialog::Settings {
+                self.settings_ui(ui, ctx, &mut close, &mut recovery_action);
+                return;
+            }
             ui.set_width(if matches!(dialog, Dialog::Commands | Dialog::Settings) {
                 650.0
             } else {
@@ -3243,256 +3266,6 @@ impl NotesApp {
                         run_command = matches
                             .get(self.dialog_selected)
                             .map(|command| command.name);
-                    }
-                }
-                Dialog::Settings => {
-                    ScrollArea::vertical()
-                        .id_salt("settings-content")
-                        .max_height((ctx.content_rect().height() - 210.0).max(140.0))
-                        .show(ui, |ui| {
-                            let before = (
-                                self.dark,
-                                self.ui_zoom,
-                                self.autosave_enabled,
-                                self.note_aids.clone(),
-                                self.recovery_config.clone(),
-                                self.always_update_links,
-                            );
-                            let query = self.dialog_input.to_lowercase();
-                            let show =
-                                |terms: &str| query.is_empty() || terms.contains(query.as_str());
-                            let mut changed = false;
-                            if show("appearance theme dark light interface zoom text size") {
-                                ui.strong("Appearance");
-                                let dark = ui.checkbox(&mut self.dark, "Dark theme");
-                                crate::ui_probe::record(ctx, "settings-dark", dark.rect);
-                                changed |= dark.changed();
-                                ui.horizontal(|ui| {
-                                    ui.label("Interface zoom");
-                                    let zoom = ui.add(
-                                        egui::Slider::new(&mut self.ui_zoom, 0.75..=1.5)
-                                            .step_by(0.05),
-                                    );
-                                    crate::ui_probe::record(ctx, "settings-zoom", zoom.rect);
-                                    changed |= zoom.changed();
-                                });
-                            }
-                            if show("editor editing files save autosave") {
-                                ui.separator();
-                                ui.strong("Editor");
-                                let autosave = ui
-                                    .checkbox(&mut self.autosave_enabled, "Autosave after 600 ms");
-                                crate::ui_probe::record(ctx, "settings-autosave", autosave.rect);
-                                changed |= autosave.changed();
-                            }
-                            if show("files links automatically update move folder") {
-                                ui.separator();
-                                ui.strong("Files & links");
-                                let automatic = ui.checkbox(
-                                    &mut self.always_update_links,
-                                    "Automatically update links when moving files",
-                                );
-                                crate::ui_probe::record(
-                                    ctx,
-                                    "settings-update-move-links",
-                                    automatic.rect,
-                                );
-                                changed |= automatic.changed();
-                            }
-                            if show("daily notes date format folder template") {
-                                ui.separator();
-                                ui.strong("Daily notes");
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-daily-format",
-                                    "Date format",
-                                    &mut self.note_aids.daily.format,
-                                    "YYYY-MM-DD",
-                                );
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-daily-folder",
-                                    "New file location",
-                                    &mut self.note_aids.daily.folder,
-                                    "Vault folder",
-                                );
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-daily-template",
-                                    "Template file location",
-                                    &mut self.note_aids.daily.template,
-                                    "Optional template note",
-                                );
-                            }
-                            if show("templates date time format folder") {
-                                ui.separator();
-                                ui.strong("Templates");
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-template-folder",
-                                    "Template folder location",
-                                    &mut self.note_aids.templates.folder,
-                                    "Choose a vault folder",
-                                );
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-template-date",
-                                    "Date format",
-                                    &mut self.note_aids.templates.date_format,
-                                    "YYYY-MM-DD",
-                                );
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-template-time",
-                                    "Time format",
-                                    &mut self.note_aids.templates.time_format,
-                                    "HH:mm",
-                                );
-                            }
-                            if show("unique notes prefix format folder template") {
-                                ui.separator();
-                                ui.strong("Unique note creator");
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-unique-folder",
-                                    "New file location",
-                                    &mut self.note_aids.unique.folder,
-                                    "Vault folder",
-                                );
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-unique-template",
-                                    "Template file location",
-                                    &mut self.note_aids.unique.template,
-                                    "Optional template note",
-                                );
-                                changed |= setting_text(
-                                    ui,
-                                    "settings-unique-format",
-                                    "Unique prefix format",
-                                    &mut self.note_aids.unique.format,
-                                    "YYYYMMDDHHmm",
-                                );
-                            }
-                            if show("file recovery snapshots history interval length days") {
-                                ui.separator();
-                                ui.strong("File recovery");
-                                ui.horizontal(|ui| {
-                                    ui.label("Snapshot interval (minutes)");
-                                    let input = ui.add(
-                                        egui::DragValue::new(
-                                            &mut self.recovery_config.interval_minutes,
-                                        )
-                                        .range(0.0..=f64::MAX)
-                                        .speed(0.1),
-                                    );
-                                    crate::ui_probe::record(
-                                        ctx,
-                                        "settings-recovery-interval",
-                                        input.rect,
-                                    );
-                                    changed |= input.changed();
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("History length (days)");
-                                    let input = ui.add(
-                                        egui::DragValue::new(&mut self.recovery_config.keep_days)
-                                            .range(1.0..=f64::MAX),
-                                    );
-                                    crate::ui_probe::record(
-                                        ctx,
-                                        "settings-recovery-days",
-                                        input.rect,
-                                    );
-                                    changed |= input.changed();
-                                });
-                                ui.horizontal(|ui| {
-                                    ui.label("Snapshots");
-                                    let button = ui.add_enabled(
-                                        !self.recovery_manager.active(),
-                                        egui::Button::new("View"),
-                                    );
-                                    crate::ui_probe::record(
-                                        ctx,
-                                        "settings-recovery-view",
-                                        button.rect,
-                                    );
-                                    if !self.recovery_manager.active() {
-                                        crate::ui_probe::record(
-                                            ctx,
-                                            "settings-recovery-view-ready",
-                                            button.rect,
-                                        );
-                                    }
-                                    if button.clicked() {
-                                        recovery_action = Some(false);
-                                    }
-                                    ui.label("Clear history");
-                                    let button = ui.add_enabled(
-                                        !self.recovery_manager.active(),
-                                        egui::Button::new("Clear"),
-                                    );
-                                    crate::ui_probe::record(
-                                        ctx,
-                                        "settings-recovery-clear",
-                                        button.rect,
-                                    );
-                                    if button.clicked() {
-                                        recovery_action = Some(true);
-                                    }
-                                });
-                            }
-                            if changed {
-                                if let Err(error) = self.write_session() {
-                                    (
-                                        self.dark,
-                                        self.ui_zoom,
-                                        self.autosave_enabled,
-                                        self.note_aids,
-                                        self.recovery_config,
-                                        self.always_update_links,
-                                    ) = before;
-                                    self.error = Some(format!("Settings weren’t saved: {error}"));
-                                } else {
-                                    self.status = "Settings saved".into();
-                                    if self.error.as_deref().is_some_and(|error| {
-                                        error.starts_with("Settings weren’t saved:")
-                                    }) {
-                                        self.error = None;
-                                    }
-                                }
-                                theme::apply(ctx, self.dark);
-                                ctx.set_zoom_factor(self.ui_zoom);
-                                ctx.request_repaint();
-                            }
-                            if show("hotkeys shortcuts commands") || !query.is_empty() {
-                                ui.separator();
-                                ui.strong("Keyboard shortcuts");
-                                ScrollArea::vertical()
-                                    .id_salt("settings-shortcuts")
-                                    .max_height(280.0)
-                                    .show(ui, |ui| {
-                                        for command in rust_notes::commands::ranked(
-                                            &self.dialog_input,
-                                            Scope::Editor,
-                                        ) {
-                                            if !command.shortcut.is_empty() {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(command.name);
-                                                    ui.with_layout(
-                                                        Layout::right_to_left(Align::Center),
-                                                        |ui| {
-                                                            ui.weak(command.shortcut);
-                                                        },
-                                                    );
-                                                });
-                                            }
-                                        }
-                                    });
-                            }
-                        });
-                    if ui.button("Close").clicked() {
-                        close = true;
                     }
                 }
                 _ => {
@@ -4273,22 +4046,6 @@ impl NotesApp {
             }
         }
     }
-}
-
-fn setting_text(ui: &mut egui::Ui, id: &str, label: &str, value: &mut String, hint: &str) -> bool {
-    ui.horizontal(|ui| {
-        ui.add_sized([210.0, 24.0], egui::Label::new(label));
-        let response = ui.add(
-            TextEdit::singleline(value)
-                .id_salt(id)
-                .hint_text(hint)
-                .desired_width(ui.available_width())
-                .font(FontId::proportional(14.0)),
-        );
-        crate::ui_probe::record(ui.ctx(), id, response.rect);
-        response.changed()
-    })
-    .inner
 }
 
 impl eframe::App for NotesApp {

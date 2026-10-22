@@ -289,7 +289,7 @@ pub enum Icon {
     Split,
     Save,
     Commands,
-    Vault,
+    Settings,
     Appearance,
     Outline,
     More,
@@ -348,7 +348,7 @@ impl Icon {
         Self::Split,
         Self::Save,
         Self::Commands,
-        Self::Vault,
+        Self::Settings,
         Self::Appearance,
         Self::Outline,
         Self::More,
@@ -503,9 +503,9 @@ impl Icon {
                 "bytes://icons/commands.svg",
                 include_bytes!("../assets/icons/commands.svg"),
             ),
-            Self::Vault => (
-                "bytes://icons/vault.svg",
-                include_bytes!("../assets/icons/vault.svg"),
+            Self::Settings => (
+                "bytes://icons/settings.svg",
+                include_bytes!("../assets/icons/settings.svg"),
             ),
             Self::Appearance => (
                 "bytes://icons/appearance.svg",

@@ -80,3 +80,13 @@ actual Obsidian1.14.4 control, then traced by SVG Studio's existing monochrome
 pipeline. Its original, exact prompt and selected source/trace are recorded in
 manifest.json under pagePreviewOpen. Proof: [source/SVG and native tints](proof/selected-open-link/source-vs-vector.html).
 Both-theme proof inspection passed; actual optimized-app verification is pending.
+
+## Plain toolbar marks — 22 October
+
+The local Settings candidate reuses the generated new-tab and vault artwork.
+`manifest.json` owns `toolbarViewports`: the plus and center gear are cropped
+by changing only the native SVG viewBox, leaving SVG Studio paths unchanged.
+Reproduce from the named traced file, replace its viewBox with the declared
+value, and replace explicit fills with white as in the existing native pipeline.
+The original rasters and traces remain intact. Native light/dark inspection
+is retained in reports/paired-review/after-2; this candidate is not released.
