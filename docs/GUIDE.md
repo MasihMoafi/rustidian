@@ -739,3 +739,16 @@ verify exact undo/redo. Rejecting the stripped empty content broke this in the
 prepared parser; its correction and two new Rust cases are local/uncompiled.
 The actual availability audit also confirms color commands are absent in Reading
 and Empty views and present in Source; do not infer that from another command.
+
+Before a UI compile, check the actual vendored toolkit signatures. In egui0.37,
+Context exposes global_style(), and TextEdit.frame accepts Frame::NONE, not a
+boolean. The first combined Move/color candidate failed these two calls in
+Clippy; keep that raw failure and preserve every behavioral gate on the corrected
+normal build. Borrow Path::new for path comparisons instead of allocating PathBuf.
+
+A preview card shares the target's existing editor and undo history. Actual1.14.4
+shows unsaved target text, propagates task changes to the other tab, and reverses
+two task toggles then the prior typing as three undo steps. It refreshes external
+changes while open. A new tab can inherit Source mode: select Reading explicitly
+before testing unmodified hover. The failed observer and corrected shared-buffer
+audit are retained; no native preview is approved by those reference observations.

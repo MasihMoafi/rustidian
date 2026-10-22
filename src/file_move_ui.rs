@@ -113,7 +113,7 @@ impl Manager {
             Align2::CENTER_TOP,
             [0.0, ctx.content_rect().height() * 0.15],
         );
-        let frame = egui::Frame::popup(&ctx.style())
+        let frame = egui::Frame::popup(&ctx.global_style())
             .inner_margin(Margin::same(12))
             .corner_radius(16);
         let response = egui::Modal::new(egui::Id::unique("move-file-picker"))
@@ -134,7 +134,7 @@ impl Manager {
                             .id(id)
                             .font(FontId::proportional(15.0))
                             .hint_text("Type a folder")
-                            .frame(false)
+                            .frame(egui::Frame::NONE)
                             .desired_width((width - 70.0).max(100.0)),
                     );
                     ui_probe::record(ctx, "move-input", field.rect);

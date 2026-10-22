@@ -17,7 +17,7 @@ fn folder_matching_keeps_dotted_names_root_and_current_folder() {
     let all = matcher.rank("", 20);
     assert_eq!(
         all.iter()
-            .filter(|path| **path == PathBuf::from("Other"))
+            .filter(|path| path.as_path() == std::path::Path::new("Other"))
             .count(),
         1
     );
