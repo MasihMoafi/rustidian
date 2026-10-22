@@ -1,10 +1,11 @@
 use crate::{theme, ui_probe};
 use eframe::egui::{self, Align, FontId, Layout, RichText, ScrollArea, TextEdit};
-use rust_notes::vaults::{self, Vaults};
+use rust_notes::{
+    native_picker::{Kind, Picker},
+    vaults::{self, Vaults},
+};
 use std::{
-    io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
     time::Duration,
 };
 
@@ -23,7 +24,7 @@ pub struct Manager {
     folder: String,
     name: String,
     error: Option<String>,
-    picker: Option<Child>,
+    picker: Picker,
     focus: bool,
     parent_enter_observed: bool,
 }
@@ -37,16 +38,10 @@ impl Default for Manager {
             folder: String::new(),
             name: String::new(),
             error: None,
-            picker: None,
+            picker: Picker::default(),
             focus: false,
             parent_enter_observed: false,
         }
-    }
-}
-
-impl Drop for Manager {
-    fn drop(&mut self) {
-        self.cancel_picker();
     }
 }
 
@@ -90,74 +85,38 @@ impl Manager {
     }
 
     fn cancel_picker(&mut self) {
-        if let Some(mut picker) = self.picker.take() {
-            let _ = picker.kill();
-            let _ = picker.wait();
-        }
+        self.picker.cancel();
     }
 
     fn browse(&mut self) {
-        if self.picker.is_some() {
+        if self.picker.active() {
             return;
         }
-        let mut command = Command::new("zenity");
-        command
-            .args(["--file-selection", "--directory", "--title"])
-            .arg(if self.page == Page::Create {
-                "Choose vault location"
-            } else {
-                "Open folder as vault"
-            });
-        if !self.folder.is_empty() {
-            command
-                .arg("--filename")
-                .arg(format!("{}/", self.folder.trim_end_matches('/')));
-        }
-        match command.stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
-            Ok(child) => self.picker = Some(child),
-            Err(error) => {
-                self.error = Some(format!(
-                    "Cannot open the folder chooser: {error}. Enter a folder path below."
-                ))
-            }
+        let title = if self.page == Page::Create {
+            "Choose vault location"
+        } else {
+            "Open folder as vault"
+        };
+        if let Err(error) = self
+            .picker
+            .start(Kind::Folder, Some(Path::new(&self.folder)), title)
+        {
+            self.error = Some(format!("{error}. Enter a folder path below."));
         }
     }
 
     fn poll_picker(&mut self) -> Option<PathBuf> {
-        let status = match self.picker.as_mut()?.try_wait() {
-            Ok(Some(status)) => status,
-            Ok(None) => return None,
+        match self.picker.poll()? {
+            Ok(Some(path)) => {
+                self.folder = path.display().to_string();
+                (self.page == Page::Open).then_some(path)
+            }
+            Ok(None) => None,
             Err(error) => {
-                self.error = Some(format!("Cannot read the folder chooser: {error}"));
-                self.cancel_picker();
-                return None;
+                self.error = Some(error);
+                None
             }
-        };
-        let mut child = self.picker.take()?;
-        if !status.success() {
-            if status.code() != Some(1) {
-                self.error =
-                    Some("The folder chooser could not open. Enter a folder path below.".into());
-            }
-            return None;
         }
-        let mut result = String::new();
-        let read = child
-            .stdout
-            .take()
-            .ok_or_else(|| "The folder chooser returned no path.".to_owned())
-            .and_then(|stream| {
-                stream
-                    .take(16_384)
-                    .read_to_string(&mut result)
-                    .map_err(|error| error.to_string())
-            });
-        if let Err(error) = read {
-            self.error = Some(error);
-            return None;
-        }
-        self.folder = result.trim_end_matches(['\r', '\n']).to_owned();
-        (self.page == Page::Open).then(|| PathBuf::from(&self.folder))
     }
 
     pub fn show(
@@ -170,7 +129,7 @@ impl Manager {
             return None;
         }
         if ui_probe::enabled() {
-            if self.picker.is_some() && ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
+            if self.picker.active() && ctx.input(|input| input.key_pressed(egui::Key::Enter)) {
                 self.parent_enter_observed = true;
             }
             ui_probe::metric(
@@ -200,7 +159,7 @@ impl Manager {
                 });
             });
             ui.add_space(16.0);
-            ui.add_enabled_ui(!loading && self.picker.is_none(), |ui| {
+            ui.add_enabled_ui(!loading && !self.picker.active(), |ui| {
                 ui.horizontal_top(|ui| {
                     ui.allocate_ui_with_layout(
                         egui::vec2(250.0, 330.0),
@@ -458,7 +417,7 @@ impl Manager {
                     });
                 });
             });
-            if loading || self.picker.is_some() {
+            if loading || self.picker.active() {
                 ui.label(if loading {
                     "Opening vault…"
                 } else {

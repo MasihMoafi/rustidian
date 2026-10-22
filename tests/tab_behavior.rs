@@ -65,6 +65,74 @@ fn empty_views_do_not_enter_closed_file_history() {
 }
 
 #[test]
+fn graph_navigation_preserves_the_buffer_and_refuses_to_discard_dirty_edits() {
+    use std::path::Path;
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("Home.md"), "# Home\r\n").unwrap();
+    fs::write(root.path().join("Target.md"), "# Target\n").unwrap();
+    let vault = Vault::open(root.path()).unwrap();
+    let mut tab = Tab::new(vault.read(Path::new("Home.md")).unwrap());
+    tab.set_view(View::Source);
+    tab.document.text.push_str("Unsaved input\n");
+    tab.set_view(View::Graph);
+    tab.toggle_reading();
+    assert_eq!(tab.view, View::Graph);
+    assert_eq!(tab.title(), "Graph view");
+    assert!(
+        tab.open(vault.read(Path::new("Target.md")).unwrap())
+            .is_err()
+    );
+    assert_eq!(tab.document.path, Path::new("Home.md"));
+    assert_eq!(tab.document.text, "# Home\r\nUnsaved input\n");
+    tab.show_document();
+    assert_eq!(tab.view, View::Source);
+    assert_eq!(tab.title(), "Home");
+    assert!(tab.document.dirty());
+    assert_eq!(
+        fs::read(root.path().join("Home.md")).unwrap(),
+        b"# Home\r\n"
+    );
+}
+
+#[test]
+fn refreshed_graph_tabs_stay_graphs_until_a_note_is_opened() {
+    use std::path::Path;
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("Home.md"), "# Home\n").unwrap();
+    fs::write(root.path().join("Target.md"), "# Target\n").unwrap();
+    let vault = Vault::open(root.path()).unwrap();
+    let mut tab = Tab::new(vault.read(Path::new("Home.md")).unwrap());
+    tab.set_view(View::Source);
+    tab.set_view(View::Graph);
+    fs::write(root.path().join("Home.md"), "# External edit\n").unwrap();
+    tab.replace(vault.read(Path::new("Home.md")).unwrap());
+    assert_eq!(tab.view, View::Graph);
+    assert_eq!(tab.document.text, "# External edit\n");
+    tab.open(vault.read(Path::new("Target.md")).unwrap())
+        .unwrap();
+    assert_eq!(tab.view, View::Source);
+    assert_eq!(tab.document.path, Path::new("Target.md"));
+    assert_eq!(tab.history.back(), Some("Home.md".into()));
+}
+
+#[test]
+fn a_graph_without_a_file_can_be_closed_and_restored() {
+    use rust_notes::vault::Document;
+    let mut tab = Tab::new(Document::blank());
+    tab.set_view(View::Graph);
+    let id = tab.id();
+    let closed = tab.into_closed().unwrap();
+    assert!(closed.path().as_os_str().is_empty());
+    let mut restored = closed.restore(Document::blank());
+    assert_eq!(restored.id(), id);
+    assert_eq!(restored.view, View::Graph);
+    assert_eq!(restored.title(), "Graph view");
+    restored.show_document();
+    assert!(restored.document.is_blank());
+    assert_eq!(restored.view, View::Live);
+}
+
+#[test]
 fn discarded_edits_require_history_reset_even_when_the_saved_bytes_are_unchanged() {
     use std::path::Path;
     let root = tempfile::tempdir().unwrap();

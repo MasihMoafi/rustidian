@@ -677,6 +677,17 @@ impl FontFace {
         self.subpixel_binning
     }
 
+    /// Whether this face has a color glyph for an emoji's base character.
+    #[cfg(feature = "color_fonts")]
+    pub(super) fn has_color_glyph_for_char(&mut self, c: char) -> bool {
+        match self.glyph_id_resolution(c) {
+            Some(GlyphIdResolution::Glyph(id)) => self
+                .font
+                .has_color_glyph(id, skrifa::instance::Size::unscaled()),
+            _ => false,
+        }
+    }
+
     /// Will this glyph be rendered as a color bitmap or `COLR` glyph, e.g. a color emoji?
     pub(crate) fn is_color_glyph(&self, metrics: &StyledMetrics, glyph_id: GlyphId) -> bool {
         core::cfg_select! {

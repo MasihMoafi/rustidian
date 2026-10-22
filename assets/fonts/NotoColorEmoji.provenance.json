@@ -1,0 +1,131 @@
+{
+  "upstream_reference_from_font_version": "https://github.com/googlefonts/noto-emoji/blob/e92753bfa55fd449e427d4d325f9c8c40408c74e/fonts/NotoColorEmoji.ttf",
+  "local_source": "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+  "sha256": "9fd0a3d0ce84d77e3185dfbae77bd1abf3926aa49a032e354d076c4f17151f10",
+  "bytes": 11020136,
+  "font_version": "Version 2.051;GOOG;noto-emoji:20250818:e92753bfa55fd449e427d4d325f9c8c40408c74e",
+  "copyright": "Copyright 2022 Google Inc.",
+  "license": "SIL Open Font License 1.1; see LICENSE-NotoColorEmoji.txt and the embedded font name table",
+  "method": "Unmodified full font split into byte-contiguous numbered parts for source transfer. Build-time concatenation restores the original bytes, cmap, variation, GSUB, CBDT and CBLC data before include_bytes! embeds it. No system font lookup, network, runtime assembly or font subsetting.",
+  "why_full_font": "All supported emoji, including flags, modifiers and ZWJ ligatures, remain available for arbitrary user notes. A shortlist-only subset would reproduce the missing-glyph bug for other emoji.",
+  "packaging": {
+    "directory": "noto-color-emoji-parts",
+    "maximum_part_bytes": 524288,
+    "part_count": 22,
+    "order": "Lexicographic order of contiguous zero-padded names 000.part through021.part.",
+    "parts": [
+      {
+        "file": "000.part",
+        "bytes": 524288,
+        "sha256": "ab63b9c19d313614852c03175efc634d0e064de2fdce714d435777c0bf044c82"
+      },
+      {
+        "file": "001.part",
+        "bytes": 524288,
+        "sha256": "32692a794fe0beca2a7f88896bc4dbca01a3cbf5c4541ccde063134278422a80"
+      },
+      {
+        "file": "002.part",
+        "bytes": 524288,
+        "sha256": "b4d7aeb7ed8b3e3de3b0ad812255bd8a41ea3bd5b07e2317824972c2501b8a4b"
+      },
+      {
+        "file": "003.part",
+        "bytes": 524288,
+        "sha256": "67445f40d0e909a29f0915ed3bfa6d95a5e924bce7c55b499ea4f91cad5c4a21"
+      },
+      {
+        "file": "004.part",
+        "bytes": 524288,
+        "sha256": "4fcf10b64b112977a916a3c750684c0e04f75b4c869ff5472db10bc77976f93c"
+      },
+      {
+        "file": "005.part",
+        "bytes": 524288,
+        "sha256": "271658a1db26cb6d398c6e0f82132c9286f3aec18a563018ad6eb03cbaa8a00f"
+      },
+      {
+        "file": "006.part",
+        "bytes": 524288,
+        "sha256": "007cff27b1a9f64640287364b8d2aeff499a7f2897609d71bce78d11948b2610"
+      },
+      {
+        "file": "007.part",
+        "bytes": 524288,
+        "sha256": "17197a7e57eba384b958010b6f70e1867a3dde23198c304016ed490aaea72e4d"
+      },
+      {
+        "file": "008.part",
+        "bytes": 524288,
+        "sha256": "f7af099521f78c6c7033b68c9b09b785a623dca223ee16a68347207927b0ca52"
+      },
+      {
+        "file": "009.part",
+        "bytes": 524288,
+        "sha256": "f24e94fd6e845e115eb74ddf5da277dbaf899f2c629f13bc740473685b219a68"
+      },
+      {
+        "file": "010.part",
+        "bytes": 524288,
+        "sha256": "eb47cf1accc1938b0c9ed5f6675731ec78e2f153ccb5ccc6e483bb6be573b831"
+      },
+      {
+        "file": "011.part",
+        "bytes": 524288,
+        "sha256": "78b3a681ba4fe53b5dea94b733478d58dbb4cd73a52e62a44b50108ece7e01c6"
+      },
+      {
+        "file": "012.part",
+        "bytes": 524288,
+        "sha256": "15a7700ffd9c7b9913c847b7eb1760f75147cd1a1d68f4e6c92e351e2b56403a"
+      },
+      {
+        "file": "013.part",
+        "bytes": 524288,
+        "sha256": "4266a46e7f384f4851f30d056ab6a57c76aeea092f3f3e3549313fcdb200d0e3"
+      },
+      {
+        "file": "014.part",
+        "bytes": 524288,
+        "sha256": "1b4e20b12d55289d528f6cce8388ccce5b3be3034bf633946b630c5306351d20"
+      },
+      {
+        "file": "015.part",
+        "bytes": 524288,
+        "sha256": "46a34bddac311cf71bbfdf0072b0668228b07c83cad3b166b7c182d31eefaba6"
+      },
+      {
+        "file": "016.part",
+        "bytes": 524288,
+        "sha256": "35a05564b45bcccaf4777bffcf39991b797eea3c3f0cd6382e8d74c28ef2ebf0"
+      },
+      {
+        "file": "017.part",
+        "bytes": 524288,
+        "sha256": "efad406c51ce6630c54476f78094fe7cbf32e63ee333b80f4b454d6213a08bfe"
+      },
+      {
+        "file": "018.part",
+        "bytes": 524288,
+        "sha256": "7a209ecccff752b0dbfcedaa2aa7d5e24d79dc5d30c70335e6ccf682c128c8bc"
+      },
+      {
+        "file": "019.part",
+        "bytes": 524288,
+        "sha256": "9d10e5ea8d98f5c7acf2e63352392e646921eeeb3b5228fb5a7f2031babe484d"
+      },
+      {
+        "file": "020.part",
+        "bytes": 524288,
+        "sha256": "9781abba9e113aabea7e6fae0089b3320ebe6a203a0fad3f1efc4affc08aad76"
+      },
+      {
+        "file": "021.part",
+        "bytes": 10088,
+        "sha256": "c5dfcb08bc6d174a97bcef9646427f6490c1cf1960d061448c5c9e16793e2301"
+      }
+    ],
+    "reproduce_split": "Verify the full input SHA256 and11020136-byte size, then slice consecutive524288-byte blocks into zero-padded three-digit .part files; final part contains10088bytes.",
+    "reproduce_full": "Concatenate the numbered .part files in lexicographic order, require11020136bytes and the unchanged full sha256 above. build.rs writes this exact concatenation to OUT_DIR/NotoColorEmoji.ttf; tests/emoji_font_asset.py reconstructs a temporary font and checks every part plus the full hash."
+  }
+}

@@ -34,7 +34,7 @@ pub struct Note {
 }
 
 impl Note {
-    fn new(path: PathBuf, text: String) -> Self {
+    pub(crate) fn new(path: PathBuf, text: String) -> Self {
         let metadata = crate::metadata::analyze(&text);
         Self {
             path,
@@ -129,6 +129,7 @@ impl Document {
     }
 }
 
+#[derive(Clone)]
 pub struct Vault {
     pub root: PathBuf,
     pub notes: Vec<Note>,

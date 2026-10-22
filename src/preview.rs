@@ -452,6 +452,9 @@ pub fn show(
     anchor: Option<&str>,
     vault: Option<&rust_notes::vault::Vault>,
 ) -> Option<String> {
+    // Navigation reuses the tab; its editing path identifies the document and
+    // remains stable when that document moves.
+    let document_id = egui::Id::new((tab.id(), tab.editor_path()));
     let text = &tab.document.text;
     let from = &tab.document.path;
     let body = rust_notes::metadata::frontmatter(text)
@@ -481,7 +484,15 @@ pub fn show(
     });
     if !parsed.fallback {
         let mut task = None;
-        let follow = show_blocks(ui, &parsed.blocks, &links, anchor, &mut task, from);
+        let follow = show_blocks(
+            ui,
+            &parsed.blocks,
+            &links,
+            anchor,
+            &mut task,
+            from,
+            document_id,
+        );
         if let Some(ordinal) = task
             && rust_notes::editor::toggle_task(&mut tab.document.text, ordinal)
         {
@@ -524,6 +535,7 @@ fn show_blocks(
     anchor: Option<&str>,
     task: &mut Option<usize>,
     from: &std::path::Path,
+    document_id: egui::Id,
 ) -> Option<String> {
     let mut clicked = None;
     ui.style_mut().spacing.item_spacing.y = 0.0;
@@ -574,7 +586,7 @@ fn show_blocks(
             folded_level = None;
         }
         if let Some(callout) = &block.callout {
-            let id = ui.make_persistent_id(("reading-callout", callout.ordinal));
+            let id = ui.make_persistent_id(("reading-callout", document_id, callout.ordinal));
             let mut folded = ui
                 .ctx()
                 .data(|data| data.get_temp::<bool>(id))
@@ -605,7 +617,15 @@ fn show_blocks(
                         if !folded && !callout.children.is_empty() {
                             ui.add_space(10.0);
                             let content = ui.scope(|ui| {
-                                show_blocks(ui, &callout.children, native_links, anchor, task, from)
+                                show_blocks(
+                                    ui,
+                                    &callout.children,
+                                    native_links,
+                                    anchor,
+                                    task,
+                                    from,
+                                    document_id,
+                                )
                             });
                             crate::ui_probe::record(
                                 ui.ctx(),
@@ -1140,6 +1160,10 @@ fn show_table(
         });
     follow
 }
+
+#[cfg(test)]
+#[path = "preview_callout_tests.rs"]
+mod callout_tests;
 
 #[cfg(test)]
 mod tests {

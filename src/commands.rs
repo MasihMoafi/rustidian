@@ -24,6 +24,12 @@ pub const DUPLICATE_FILE: &str = "Make a copy of the current file";
 pub const MOVE_FILE: &str = "Move current file to another folder";
 pub const UNDO_CLOSE_TAB: &str = "Undo close tab";
 pub const CLOSE_OTHER_TABS: &str = "Close all other tabs";
+pub const OPEN_FILE: &str = "Open file…";
+pub const OPEN_FOLDER: &str = "Open folder…";
+pub const OPEN_FILE_SHORTCUT: &str = "Ctrl+Shift+O";
+pub const OPEN_FOLDER_SHORTCUT: &str = "Ctrl+Alt+O";
+pub const OPEN_GRAPH: &str = "Graph view: Open graph view";
+pub const OPEN_LOCAL_GRAPH: &str = "Graph view: Open local graph";
 
 pub struct Command {
     pub name: &'static str,
@@ -38,6 +44,26 @@ impl AsRef<str> for Command {
 }
 
 pub const ALL: &[Command] = &[
+    Command {
+        name: OPEN_FILE,
+        shortcut: OPEN_FILE_SHORTCUT,
+        scope: Scope::Global,
+    },
+    Command {
+        name: OPEN_FOLDER,
+        shortcut: OPEN_FOLDER_SHORTCUT,
+        scope: Scope::Global,
+    },
+    Command {
+        name: OPEN_GRAPH,
+        shortcut: "",
+        scope: Scope::Global,
+    },
+    Command {
+        name: OPEN_LOCAL_GRAPH,
+        shortcut: "",
+        scope: Scope::Document,
+    },
     Command {
         name: CLOSE_OTHER_TABS,
         shortcut: "",
@@ -392,6 +418,7 @@ mod tests {
         for name in [
             "Random note: Open random note",
             "Unique note creator: Create new unique note",
+            OPEN_GRAPH,
         ] {
             assert_eq!(ranked(name, Scope::Global)[0].name, name);
         }
@@ -414,6 +441,17 @@ mod tests {
         assert!(ranked(DUPLICATE_FILE, Scope::Tab).is_empty());
         assert_eq!(ranked(MOVE_FILE, Scope::File)[0].name, MOVE_FILE);
         assert!(ranked(MOVE_FILE, Scope::Tab).is_empty());
+        assert_eq!(
+            ranked(OPEN_LOCAL_GRAPH, Scope::Document)[0].name,
+            OPEN_LOCAL_GRAPH
+        );
+        for unavailable in [Scope::Global, Scope::Tab, Scope::File] {
+            assert!(
+                ranked(OPEN_LOCAL_GRAPH, unavailable)
+                    .iter()
+                    .all(|command| command.name != OPEN_LOCAL_GRAPH)
+            );
+        }
     }
 
     #[test]

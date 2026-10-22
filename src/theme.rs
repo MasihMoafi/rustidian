@@ -244,14 +244,30 @@ pub fn install_fonts(ctx: &egui::Context) {
         .get_mut(&FontFamily::Monospace)
         .unwrap()
         .insert(0, "mono".into());
+    fonts.font_data.insert(
+        "emoji".into(),
+        egui::FontData::from_static(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/NotoColorEmoji.ttf"
+        )))
+        .into(),
+    );
+    for family in fonts.families.values_mut() {
+        family.push("emoji".into());
+    }
     ctx.set_fonts(fonts);
     emoji_glyphs::install(ctx);
 }
+
+#[cfg(test)]
+#[path = "emoji_tests.rs"]
+mod emoji_tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Icon {
     Files,
     Search,
+    Graph,
     Bookmark,
     DailyNote,
     Templates,
@@ -307,9 +323,10 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 54] = [
+    pub const ALL: [Self; 55] = [
         Self::Files,
         Self::Search,
+        Self::Graph,
         Self::Bookmark,
         Self::DailyNote,
         Self::Templates,
@@ -366,6 +383,10 @@ impl Icon {
 
     pub fn asset(self) -> (&'static str, &'static [u8]) {
         match self {
+            Self::Graph => (
+                "bytes://icons/graph.svg",
+                include_bytes!("../assets/icons/graph.svg"),
+            ),
             Self::Trash => (
                 "bytes://icons/trash.svg",
                 include_bytes!("../assets/icons/trash.svg"),

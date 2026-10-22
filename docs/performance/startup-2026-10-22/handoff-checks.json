@@ -1,0 +1,42 @@
+{
+  "status": "public_handoff_verified",
+  "public_text_no_local_paths_or_account_identifiers": true,
+  "profile_log_binary_files_absent": true,
+  "raw_rows": 32,
+  "measured_rows": 20,
+  "raw_numeric_and_status_values_unchanged": true,
+  "omitted_raw_columns": [
+    "visible_image",
+    "usable_image"
+  ],
+  "original_pngs": 19,
+  "all_manifest_hashes_valid": true,
+  "relative_references_checked": 58,
+  "all_links_relative_and_contained": true,
+  "image_selection_combinations": [
+    {
+      "pair": 1,
+      "stage": "note"
+    },
+    {
+      "pair": 1,
+      "stage": "input"
+    },
+    {
+      "pair": 10,
+      "stage": "note"
+    },
+    {
+      "pair": 10,
+      "stage": "input"
+    }
+  ],
+  "browser_page_errors": [],
+  "desktop_and_mobile_no_horizontal_overflow": true,
+  "app_benchmark_rerun": false,
+  "publication_or_upload_performed": false,
+  "c7_preview_only": true,
+  "resize_timing_limitation_disclosed": true,
+  "final_visual_review": "Original synthetic pairs, chart, all control states and rendered desktop/mobile report inspected; same-note/input text readable in full-size originals; no user profile paths or unrelated apps shown.",
+  "public_pngs_byte_identical_to_retained_originals": true
+}

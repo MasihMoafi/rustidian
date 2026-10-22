@@ -2,42 +2,67 @@
 
 Current scope and reproducible route: [GUIDE.md](GUIDE.md). Masih's latest instruction on21October2026 expands the destination to every Obsidian feature with equivalent behavior and appearance, and faster interaction. This supersedes the earlier optional graph/drawings/plugin scope. [PARITY.md](PARITY.md) is the single feature-coverage ledger; the contracts below remain applicable unless explicitly superseded.
 
-## Priority decision and readiness — 22 October 2026
+## Current delivery specification — 22 October 2026
 
-Masih selected Rustidian as the product name and objected that the absent graph
-and other Obsidian features made the launch framing premature. Full feature and
-visual parity remains the target. Earlier implementation prioritized editing,
-link navigation, vault operations and note safety; that was the agent's sequence,
-not authorization to omit other features or declare the product ready.
+Masih requests an Obsidian-equivalent native Rust app with faster interaction.
+The full destination remains in [PARITY.md](PARITY.md). His latest priorities
+are correct shared Markdown rendering, opening existing files and folders, a
+native graph, emoji, and seamless vault creation/opening/switching. He clarified
+that the missing "new" file/folder action means opening existing items like VS
+Code. Toolbar creation works; its remaining context-menu gap is separate.
+This specification records those
+requests; a feature not yet verified is not accepted just because it is listed.
+The previous delivery paragraph was stale and is superseded by this section.
 
-The README must lead with development status and major missing features.
-Graph is the next feature after the blocking global inline-formatting defect. Exercise global and local graph in
-the current disposable Obsidian reference; record actual filters, groups, search,
-pan/zoom, node navigation and local depth. Prove the exact native candidate lacks
-the workflow after a working editor control, then add the native implementation
-and verify the same actions. Unverified graph controls stay visibly incomplete.
-The coverage ledger remains the single source of feature status.
+### Observable acceptance
 
-Native graph must reuse vault path resolution for wiki and Markdown links,
-preserve files and editor state, handle isolated/missing nodes and refresh on
-index changes. Build its model/layout away from ordinary editor rendering;
-reuse unchanged geometry rather than recomputing the whole graph every frame.
-Use the existing Rust stack and Actions pipeline. Actual data/interaction
-correctness, dark/light screenshots and bounded large-vault responsiveness are
-required; a graph screenshot alone is insufficient. No new local Rust builds.
+| ID | User flow | Required result |
+| --- | --- | --- |
+| R1 | Read or edit a table containing colored spans, rgba marks and `==highlight==` | Reading, Live and hover previews render the same supported styles. Long alignment rows and five-column headers remain tables. Source and code show editable literal syntax. The original Markdown is unchanged by viewing. |
+| F1 | Press Ctrl+N, enter a note name and confirm | The note appears immediately in the active vault, opens ready to edit and saves to that exact folder. Cancel creates nothing; a collision cannot overwrite an existing note. |
+| F2 | Create a root or nested folder, then a note inside it | The folder and note appear in the explorer, remain after restart and stay in that vault. Empty folders are retained. Invalid or duplicate names produce a clear error without losing input or changing another item. |
+| F3 | Choose File → Open file… or File → Open folder… | Native pickers open actual existing Markdown/text files and folders. Ctrl+O keeps the active-vault quick switcher. Opening inside the active vault retains its context; outside it, CLI and UI share the deepest registered/default-root policy. Cancel or an invalid selection preserves the workspace, edits and original bytes. Cross-vault requests use Save/Discard/Cancel without retaining a cancelled document request. |
+| V1 | Open the vault chooser, create a vault, Browse to another folder, then select a recent vault | Each real folder can be opened or registered once. The selected vault name, tree and tabs describe the same folder. Cancelling a chooser leaves the previous vault intact. Removing a recent entry does not delete its folder. |
+| V2 | Switch vaults with saved, unsaved or conflicting edits | Saved state restores per vault. Unsaved changes receive working Save/Discard/Cancel choices; Cancel or a failed open retains the current workspace and bytes. Editing after a switch cannot write into the previous vault. |
+| P1 | Type, scroll, open a note and click its controls | Preserve the accepted scrolling and hover behavior. Record equivalent work on the same host and exact optimized binary; keep all existing CPU limits and the serial Ferrite median/p95 comparison. A bounded benchmark does not establish full Obsidian speed parity. |
+| G1 | Open global graph or a linked local graph | Native nodes and edges reflect resolved vault links; filter, navigate, pan and zoom without changing notes. Local depth/direction follow the active note. Bound background work and keep ordinary editing idle when graphs are hidden. Match the exercised reference incrementally; record remaining gaps in PARITY.md. |
+| E1 | View arbitrary emoji in notes and interface text | General licensed emoji fallback works across shared fonts, Reading/Live/Source, tables and hover; sequences form joined glyphs. Preserve the six existing marker images, Latin/Arabic metrics and exact Markdown bytes. |
+| B1 | Inspect the repository and app identity | Use Rustidian, the name Masih explicitly kept after hearing about the unrelated same-name project. The private repository is MasihMoafi/rustidian. Use original artwork, clear alpha status and no implication of Obsidian affiliation. Internal launcher/state paths remain compatible. |
 
-The project remains a private development preview with no published release.
-Rustidian branding uses original artwork; the previously selected personal
-Obsidian icon is not the project logo. Preserve old local artwork and launcher
-until a verified native candidate deliberately updates the visible branding.
+### Delivery and review
 
-## Current delivery loop
+1. Finish the global renderer fix already requested. Verify the actual reported
+   document on a private copy and add a sanitized wide-table regression.
+2. Complete the Actions checks, inspect the exact optimized app and replace the
+   installed executable only when the retained gates pass. Keep its rollback.
+3. Exercise F1–V2 using the current reference evidence and isolated native vaults;
+   show the working flow and repair any demonstrated difference under this spec.
+   Implement and verify graph and emoji in parallel with these repairs and a
+   controlled paired Obsidian/Rustidian startup comparison.
+4. Show this specification in Rustidian. Record Masih's corrections before the
+   next feature increment. Full parity remains the destination; graph is queued
+   after this immediate rendering/file/vault delivery, not silently omitted.
 
-Optimized9febfbb is installed after complete corrected ecad9cb verification; preserve its exact receipt and both user-owned previews. The next combined local source retains633's root/Undo/font fixes and adds the paired page-preview and ordered-file-query patches plus measured Move-dialog correction. It is uncompiled:44 full/19 focused/9 early workflows and a90min cap retain every previous gate. Source633 passed199 Rust executions/all7 early flows but was cancelled for its oversized dialog; it was not installed. Finish the new complete gates and inspect the exact optimized payload before delivery. Then continue the current1.14.4 tab/menu audit and remaining ledger workflows. Keep advanced views, attachments, plugin compatibility, services and platform coverage visible until verified.
+Current evidence and exact installed/candidate identities belong in ES.md;
+PARITY.md owns feature status. Keep original failure evidence, prove each
+correction on the exact app and retain every existing safety, functional and
+performance assertion. An implementation or a passing aggregate suite alone
+does not establish full parity or Masih's acceptance.
 
-A feature is complete only when the same positive and failure/cancellation flows work in both applications, saved Markdown remains correct, its real controls and visual states have been inspected, and the change preserves relevant speed and safety checks. Preserve raw evidence with exact executable/version identity. A passing aggregate suite does not establish full parity or Masih's acceptance. No visible control may imply an unavailable feature.
+### Constraints and decisions
 
-Keep native Rust UI/editor/rendering and existing data/resource restrictions. Existing JavaScript plugins and proprietary Sync/Publish require compatibility/integration evidence; merely displaying their names is not support. Resolve any concrete architecture conflict before adding a browser/JavaScript runtime or publishing private content. Native equivalents and safe local workflows can proceed under the current authorization.
+The current architecture is native Rust. Adding a JavaScript/browser plugin
+runtime, a proprietary service integration or a changed interaction contract
+needs a concrete reviewed design. Existing JavaScript plugins are not supported
+merely by listing them. No public launch or release is authorized here.
+
+All Rust builds/heavy checks use private GitHub Actions; reuse an unchanged
+optimized candidate for harness-only verification. Keep local work lightweight,
+protect disk space and the1GB VPN reserve, and use direct requests. Automated
+checks use private vault copies/profiles and never write Masih's original notes.
+Preserve the installed rollback, launcher/state compatibility, selected artwork,
+user-owned previews and unrelated workspace changes. No Elpis repair work is
+part of this project. Existing detailed acceptance contracts below still apply.
 
 ## File recovery acceptance — reference checked21October
 
@@ -101,10 +126,10 @@ old executable before trusting the new checks.
 Source9b5/run39721548486 failed two full-suite workflows after43 passed. Preserve
 all45 existing workflows; fix exact command ranking and calibrate the explorer's
 actual clipped-row click using an unchanged binary before the next run. The next
-normal Actions candidate has46 full/22 optimized focused/12 early workflows,
+normal Actions candidate has49 full/25 optimized focused/16 early workflows,
 including global inline and portable-color checks. Keep all CPU/comparison,
 source identity, protected-data and actual visual gates. No local Rust build.
-Graph follows this blocker under the acceptance contract above; font controls
+Graph proceeds in parallel under the acceptance contract above; font controls
 remain a separate prepared branch. Passing this increment is not full parity.
 
 ## File-move contract

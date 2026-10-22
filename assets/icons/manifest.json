@@ -306,14 +306,14 @@
     },
     {
       "name": "graph",
-      "source": "artwork/source-graph.png",
-      "traced": "artwork/traced-graph.svg",
+      "source": "artwork/graph-toolbar/graph-toolbar-source.png",
+      "traced": "artwork/graph-toolbar/graph-toolbar-traced.svg",
       "native": "graph.svg",
       "sourceColours": "black on transparency after white-background removal",
       "nativeColours": "white for native UI tinting",
       "colourAdjustment": "Explicit fill colours only; traced geometry unchanged.",
       "paths": 1,
-      "bytes": 5685
+      "bytes": 4695
     },
     {
       "name": "canvas",
@@ -745,7 +745,7 @@
       "original": "artwork/pin-original.png",
       "prompt": "artwork/pin-prompt.json",
       "generator": "Built-in image_gen.imagegen; backend model unidentified.",
-      "selectedRationale": "The third generated pin keeps clear counters and a broader rounded outline that remains legible at12–18px. Earlier transparent and thin versions were moved to recoverable Trash for noise and poor small-size legibility.",
+      "selectedRationale": "The third generated pin keeps clear counters and a broader rounded outline that remains legible at12\u201318px. Earlier transparent and thin versions were moved to recoverable Trash for noise and poor small-size legibility.",
       "preprocessing": "Extract exact atlas cells; remove white background by luminance coverage, dropping coverage <=16; retain ink edges; trim with 4px allowance; contain-fit at the declared prepared resolution with transparent margins. No paths redrawn.",
       "preparedRaster": {
         "fit": 648,
@@ -776,6 +776,17 @@
         "cropStudioPadding": 10
       },
       "replaces": []
+    },
+    "graphToolbar": {
+      "original": "artwork/graph-toolbar/graph-toolbar-original.png",
+      "prompt": "artwork/graph-toolbar/graph-toolbar-prompt.json",
+      "generator": "Built-in image_gen.imagegen; backend model unidentified.",
+      "replaces": [
+        "graph"
+      ],
+      "provenance": "artwork/graph-toolbar/graph-toolbar-provenance.json",
+      "reproduction": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/home/masih/Desktop/p/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
+      "selectedRationale": "Connected open circles remain recognizable at18px alongside the existing thin rounded Files and Bookmark icons. Original and trace proofs inspected; actual app verification pending."
     }
   }
 }

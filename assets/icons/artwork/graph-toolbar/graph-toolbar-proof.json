@@ -1,0 +1,98 @@
+[
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "light",
+    "size": 24,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.014481209150326798,
+    "changedPixels": 0.010416666666666666,
+    "foregroundMeanDifference": 0.05371702637889688,
+    "foregroundChangedPixels": 0.04316546762589928,
+    "foregroundPixels": 139
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "light",
+    "size": 48,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.005216276325344953,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.024909415578786776,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 377
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "light",
+    "size": 128,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.003109442018995098,
+    "changedPixels": 0.00067138671875,
+    "foregroundMeanDifference": 0.021385493072534636,
+    "foregroundChangedPixels": 0.0053789731051344745,
+    "foregroundPixels": 2045
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "light",
+    "size": 512,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.0018186182757608253,
+    "changedPixels": 0.00469207763671875,
+    "foregroundMeanDifference": 0.01597658435451669,
+    "foregroundChangedPixels": 0.04401660463784712,
+    "foregroundPixels": 27944
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "dark",
+    "size": 24,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.0018336964415395789,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.004837948925274577,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 97
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "dark",
+    "size": 48,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.0008005401234567901,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0019808606036271163,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 293
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "dark",
+    "size": 128,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.0003831252553104575,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0013769063180827886,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 1800
+  },
+  {
+    "name": "graph-toolbar-traced",
+    "theme": "dark",
+    "size": 512,
+    "paths": 1,
+    "bytes": 4695,
+    "meanDifference": 0.0001770468319163603,
+    "changedPixels": 0,
+    "foregroundMeanDifference": 0.0009680918900565618,
+    "foregroundChangedPixels": 0,
+    "foregroundPixels": 26834
+  }
+]

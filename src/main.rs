@@ -5,6 +5,7 @@ mod diagrams;
 mod editor_ui;
 mod file_move_ui;
 mod file_tree;
+mod graph_ui;
 mod image_view;
 mod page_preview;
 mod preview;
@@ -20,39 +21,8 @@ mod vault_manager;
 mod window;
 mod workspace_ui;
 
-use std::{
-    path::{Path, PathBuf},
-    time::Instant,
-};
-
-fn resolve_input(
-    input: &Path,
-    default_vault: Option<&Path>,
-    registered_vaults: &[PathBuf],
-) -> Result<(PathBuf, Option<PathBuf>), String> {
-    let absolute = input
-        .canonicalize()
-        .map_err(|error| format!("Cannot open {}: {error}", input.display()))?;
-    if absolute.is_dir() {
-        return Ok((absolute, None));
-    }
-    if !absolute.is_file() || !rust_notes::vault::is_text_document(&absolute) {
-        return Err("Choose a vault folder, Markdown file (.md) or plain-text file (.txt).".into());
-    }
-    let root = default_vault
-        .and_then(|vault| vault.canonicalize().ok())
-        .into_iter()
-        .chain(registered_vaults.iter().cloned())
-        .filter(|vault| absolute.starts_with(vault) && vault.is_dir())
-        .max_by_key(|vault| vault.components().count())
-        .or_else(|| absolute.parent().map(Path::to_path_buf))
-        .ok_or("Cannot determine the document's folder.")?;
-    let document = absolute
-        .strip_prefix(&root)
-        .map_err(|error| error.to_string())?
-        .to_owned();
-    Ok((root, Some(document)))
-}
+use rust_notes::vaults::resolve_input;
+use std::{path::PathBuf, time::Instant};
 
 fn main() -> eframe::Result {
     let started = Instant::now();
@@ -136,67 +106,4 @@ fn main() -> eframe::Result {
             )))
         }),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_input;
-    use std::{fs, path::Path};
-
-    #[test]
-    fn file_input_selects_the_requested_document_and_its_folder() {
-        let folder = tempfile::tempdir().unwrap();
-        for filename in ["Read me سلام.md", "Plain text.TXT"] {
-            let path = folder.path().join(filename);
-            fs::write(&path, "Original content").unwrap();
-            let (root, document) = resolve_input(&path, None, &[]).unwrap();
-            assert_eq!(root, folder.path().canonicalize().unwrap());
-            assert_eq!(document.as_deref(), Some(Path::new(filename)));
-            assert_eq!(fs::read_to_string(&path).unwrap(), "Original content");
-        }
-        assert!(resolve_input(&folder.path().join("Missing.md"), None, &[]).is_err());
-        let unsupported = folder.path().join("Not a text document.pdf");
-        fs::write(&unsupported, "%PDF-1.7").unwrap();
-        assert!(resolve_input(&unsupported, None, &[]).is_err());
-    }
-
-    #[test]
-    fn files_inside_the_default_vault_keep_that_root() {
-        let folder = tempfile::tempdir().unwrap();
-        fs::create_dir(folder.path().join("Nested")).unwrap();
-        let path = folder.path().join("Nested/Note.md");
-        fs::write(&path, "A note").unwrap();
-        let (root, document) = resolve_input(&path, Some(folder.path()), &[]).unwrap();
-        assert_eq!(root, folder.path().canonicalize().unwrap());
-        assert_eq!(document.as_deref(), Some(Path::new("Nested/Note.md")));
-        let outside = tempfile::tempdir().unwrap();
-        let (_, document) = resolve_input(&path, Some(outside.path()), &[]).unwrap();
-        assert_eq!(document.as_deref(), Some(Path::new("Note.md")));
-        let (root, document) = resolve_input(folder.path(), None, &[]).unwrap();
-        assert_eq!(root, folder.path().canonicalize().unwrap());
-        assert!(document.is_none());
-    }
-
-    #[test]
-    fn registered_vaults_keep_nested_files_and_do_not_match_neighbouring_names() {
-        let base = tempfile::tempdir().unwrap();
-        let outer = base.path().join("Vault");
-        let inner = outer.join("Inner vault");
-        let notes = inner.join("Notes");
-        fs::create_dir_all(&notes).unwrap();
-        let file = notes.join("Note.md");
-        fs::write(&file, "[[Home]]").unwrap();
-        let roots = [outer.clone(), inner.clone()];
-        let (root, document) = resolve_input(&file, Some(&outer), &roots).unwrap();
-        assert_eq!(root, inner);
-        assert_eq!(document.as_deref(), Some(Path::new("Notes/Note.md")));
-        let neighbour = base.path().join("Vault-other/Notes");
-        fs::create_dir_all(&neighbour).unwrap();
-        let file = neighbour.join("Note.md");
-        fs::write(&file, "Original").unwrap();
-        let (root, document) = resolve_input(&file, Some(&outer), &roots).unwrap();
-        assert_eq!(root, neighbour);
-        assert_eq!(document.as_deref(), Some(Path::new("Note.md")));
-        assert_eq!(fs::read_to_string(file).unwrap(), "Original");
-    }
 }

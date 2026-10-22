@@ -32,6 +32,10 @@ pub(crate) struct Family {
     /// not on variation coordinates).
     face_cache: ahash::HashMap<char, FontFaceKey>,
 
+    /// Emoji presentation is independent of the same character's text presentation.
+    #[cfg(feature = "color_fonts")]
+    emoji_face_cache: ahash::HashMap<char, FontFaceKey>,
+
     /// Lazily calculated: every supported char, and the names of the faces that have it.
     characters: Option<BTreeMap<char, Vec<String>>>,
 }
@@ -69,6 +73,8 @@ impl Family {
             name: name.clone(),
             chain,
             face_cache: Default::default(),
+            #[cfg(feature = "color_fonts")]
+            emoji_face_cache: Default::default(),
             characters: None,
         }
     }
@@ -114,6 +120,23 @@ impl Family {
         let Some(base_char) = cluster.chars().next() else {
             return self.notdef_face();
         };
+        // A text font may have the base (heart, digit, lightning) without the
+        // emoji sequence. Choose a color face before consulting the text cache;
+        // otherwise laying out a plain heart first breaks a later heart + VS16.
+        #[cfg(feature = "color_fonts")]
+        if super::has_emoji_presentation(cluster) {
+            if let Some(&key) = self.emoji_face_cache.get(&base_char) {
+                return key;
+            }
+            if let Some(key) = self.chain.iter().copied().find(|&key| {
+                faces
+                    .get_mut(key)
+                    .is_some_and(|face| face.has_color_glyph_for_char(base_char))
+            }) {
+                self.emoji_face_cache.insert(base_char, key);
+                return key;
+            }
+        }
         if let Some(font_key) = self.face_cache.get(&base_char) {
             return *font_key;
         }

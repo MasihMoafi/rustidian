@@ -1,0 +1,72 @@
+{
+  "negative_controls": 7,
+  "resumed_positive_controls": 2,
+  "observations": [
+    {
+      "control": "rustidian-frozen-input",
+      "accepted": false,
+      "expected": false,
+      "visible_window_mutation_would_accept": true,
+      "saved_bytes_unchanged": true,
+      "image": "images/control-rustidian-frozen-input.png"
+    },
+    {
+      "control": "rustidian-frozen-input-resumed",
+      "accepted": true,
+      "expected": true,
+      "exact_saved_bytes": true,
+      "image": "images/control-rustidian-frozen-input-resumed.png"
+    },
+    {
+      "control": "rustidian-actual-wrong-note",
+      "accepted": false,
+      "expected": false,
+      "visible_window_mutation_would_accept": true,
+      "correct_other_note_visible": true,
+      "image": "images/control-rustidian-actual-wrong-note.png"
+    },
+    {
+      "control": "obsidian-frozen-input",
+      "accepted": false,
+      "expected": false,
+      "visible_window_mutation_would_accept": true,
+      "saved_bytes_unchanged": true,
+      "image": "images/control-obsidian-frozen-input.png"
+    },
+    {
+      "control": "obsidian-frozen-input-resumed",
+      "accepted": true,
+      "expected": true,
+      "exact_saved_bytes": true,
+      "image": "images/control-obsidian-frozen-input-resumed.png"
+    },
+    {
+      "control": "obsidian-actual-wrong-note",
+      "accepted": false,
+      "expected": false,
+      "visible_window_mutation_would_accept": true,
+      "correct_other_note_visible": true,
+      "image": "images/control-obsidian-actual-wrong-note.png"
+    },
+    {
+      "control": "blank-display",
+      "accepted": false,
+      "expected": false,
+      "image": "images/control-blank-display.png"
+    },
+    {
+      "control": "rustidian-missing-input-marker",
+      "accepted": false,
+      "expected": false,
+      "missing_token_mutation_would_accept": true,
+      "image": "images/control-rustidian-missing-input-marker.png"
+    },
+    {
+      "control": "obsidian-missing-input-marker",
+      "accepted": false,
+      "expected": false,
+      "missing_token_mutation_would_accept": true,
+      "image": "images/control-obsidian-missing-input-marker.png"
+    }
+  ]
+}

@@ -15,6 +15,7 @@ pub enum View {
     Source,
     Read,
     Split,
+    Graph,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,8 +133,16 @@ impl Tab {
         self.id
     }
 
+    pub fn title(&self) -> String {
+        if self.view == View::Graph {
+            "Graph view".into()
+        } else {
+            self.document.title()
+        }
+    }
+
     pub fn into_closed(self) -> Option<ClosedTab> {
-        if self.document.is_blank() {
+        if self.document.is_blank() && self.view != View::Graph {
             return None;
         }
         let fingerprint = if self.document.dirty() {
@@ -164,10 +173,12 @@ impl Tab {
         }
         self.history.visit(&document.path);
         self.replace(document);
+        self.show_document();
         Ok(())
     }
 
     pub fn replace(&mut self, document: Document) {
+        let graph = self.view == View::Graph;
         if self.document.path != document.path {
             self.editor_path = document.path.clone();
         }
@@ -183,6 +194,9 @@ impl Tab {
             self.view = self.editing_view;
         }
         self.document = document;
+        if graph {
+            self.view = View::Graph;
+        }
         self.edited_at = None;
         self.autosave_failed = false;
     }
@@ -193,7 +207,7 @@ impl Tab {
     }
 
     pub fn set_view(&mut self, view: View) {
-        if self.document.is_image() {
+        if self.document.is_image() && view != View::Graph {
             return;
         }
         if matches!(view, View::Source | View::Live) {
@@ -206,8 +220,18 @@ impl Tab {
         self.editing_view
     }
 
+    pub fn show_document(&mut self) {
+        if self.view == View::Graph {
+            self.view = if self.document.is_image() {
+                View::Read
+            } else {
+                self.editing_view
+            };
+        }
+    }
+
     pub fn toggle_reading(&mut self) {
-        if self.document.is_image() {
+        if self.document.is_image() || self.view == View::Graph {
             return;
         }
         self.view = if self.view == View::Read {

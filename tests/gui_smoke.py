@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -429,7 +429,12 @@ def main():
                 source = (ROOT / "tests/fixtures/callouts.md").read_text()
                 note = fixture / "Notes/Callout checks.md"
                 note.write_text(source)
+                seed = fixture / "Notes/Callout state seed.md"
+                seed.write_text("> [!tip]+ Previous document\n> PREVIOUS_CALLOUT_BODY\n")
                 time.sleep(.6)
+                open_note("Callout state seed")
+                command("Reading view")
+                control_bounds("callout-body:0")
                 open_note("Callout checks")
                 command("Source editing")
                 assert not control_bounds("callout:0", required=False)
@@ -1521,7 +1526,10 @@ def main():
                 click_control("page-preview/task:0");away(True);assert metadata.read_text()==metadata_original
                 open_note("Preview target");command("Source editing")
                 results.append("Properties-note preview edits preserved exact frontmatter and the same first-Live-editor history behavior, with metadata and task bytes restored")
-                command("Open settings");click_control("settings-autosave");key("Escape")
+                command("Open settings");type_text("autosave")
+                click_control("settings-autosave",hold=.15)
+                wait_autosave(base/"state",False)
+                key("Escape")
                 editor_end();type_text("BUFFER_PREVIEW_MARKER");assert target.read_text()==target_original
                 key("ctrl+t");open_note("Preview source");command("Reading view");hover_target()
                 card=control_bounds("page-preview-card");task=control_bounds("page-preview/task:0")
@@ -1532,7 +1540,10 @@ def main():
                 key("ctrl+s");assert target.read_text()==target_original.replace("- [ ]","- [x]")+"BUFFER_PREVIEW_MARKER"
                 key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original+"BUFFER_PREVIEW_MARKER"
                 key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original
-                command("Open settings");click_control("settings-autosave");key("Escape")
+                command("Open settings");type_text("autosave")
+                click_control("settings-autosave",hold=.15)
+                wait_autosave(base/"state",True)
+                key("Escape")
                 results.append("A dirty target in another tab kept its prior text with autosave disabled, shared the task change and undid task then typing separately")
                 click_control("tab:Preview source.md");command("Reading view");hover_target()
                 changed=target_original.replace("VISIBLE_PREVIEW_DESTINATION","EXTERNAL_PREVIEW_UPDATE")
@@ -1569,6 +1580,20 @@ def main():
                 xdo("windowsize",window,"1440","960");pause()
                 assert source.read_text()==original and target.read_text()==target_original and metadata.read_text()==metadata_original
                 results.append("Both themes and compact-window preview geometry stayed inside the viewport with original source/target bytes restored")
+                close_tabs();open_note("Preview target")
+                command("Graph view: Open graph view")
+                control_bounds("global-graph:canvas")
+                key("ctrl+t");open_note("Preview source");command("Reading view")
+                hover_target();click_control("page-preview/task:0")
+                assert target.read_text()==target_original.replace("- [ ]","- [x]")
+                away(True);key("ctrl+w")
+                title_contains("Graph view")
+                key("ctrl+s");key("ctrl+w")
+                open_note("Preview target")
+                assert target.read_text()==target_original.replace("- [ ]","- [x]")
+                command("Source editing");editor_end();key("ctrl+a");paste_text(target_original);key("ctrl+s")
+                assert target.read_text()==target_original and source.read_text()==original
+                results.append("Editing a preview of a graph-backed note saved the actual file; Save and closing the graph could not discard that change")
 
             def navigation_checks():
                 note = fixture / "Notes/Navigation UI.md"
@@ -2237,6 +2262,16 @@ def main():
                 results.append("An ordinary native Markdown table rendered before testing the reported compound-style defect")
 
                 source = (ROOT / "tests/fixtures/inline-styles.md").read_text()
+                # Retain the screenshot's five-column shape and long alignment
+                # row, without putting private note contents in the repository.
+                start=source.index("| day |")
+                end=source.index("\n\n",start)
+                rows=source[start:end].splitlines()
+                assert len(rows)==4
+                rows[0]+=" DW subject | section |"
+                rows[1]="| "+" | ".join(":"+"-"*160+":" for _ in range(5))+" |"
+                rows[2:]=[row+" Rust | Notes |" for row in rows[2:]]
+                source=source[:start]+"\n".join(rows)+source[end:]
                 note = fixture / "Shared inline styles.md";note.write_text(source)
                 time.sleep(.6);open_note("Shared inline styles");command("Reading view")
                 # These controls exist only when the actual native table renderer is used.
@@ -4904,6 +4939,408 @@ def main():
                 assert unopened.read_bytes()==second_unopened
                 results.append("Clear history cancellation preserved snapshots; confirmed Clear removed history only and every original Markdown file stayed unchanged")
 
+            def system_open_checks():
+                original = "# Existing control\n\nOPEN_ORIGINAL\n"
+                note = fixture / "Notes/Open existing control.md"
+                note.write_text(original)
+                time.sleep(.6)
+                open_note("Open existing control")
+                command("Source editing")
+                editor_end();type_text(" EDIT");key("ctrl+s")
+                assert note.read_text() == original + " EDIT"
+                key("ctrl+z");key("ctrl+s")
+                assert note.read_text() == original
+                key("Escape")
+                results.append("The existing quick switcher and real editor opened, saved and undid a file before testing system Open")
+
+                def roots():
+                    return json.loads((base / "data/rust-notes/vaults.json").read_text())["roots"]
+
+                def picker_window(title, required=True):
+                    deadline = time.monotonic() + (8 if required else .1)
+                    while time.monotonic() < deadline:
+                        found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^" + title + "$"], env=environment, text=True, capture_output=True)
+                        if found.returncode == 0:
+                            return found.stdout.splitlines()[-1]
+                        time.sleep(.05)
+                    assert not required, f"{title} must show its real native chooser"
+                    return None
+
+                def start(kind, via="menu"):
+                    label = "Open file" if kind == "file" else "Open folder"
+                    if via == "menu":
+                        click_control("file-menu", hold=.15)
+                        control_bounds("file-menu-open-file")
+                        control_bounds("file-menu-open-folder")
+                        capture(f"native-system-open-{kind}-menu.png")
+                        click_control("file-menu-open-" + kind, hold=.15)
+                    elif via == "palette":
+                        command(label + "…")
+                    else:
+                        key("ctrl+shift+o" if kind == "file" else "ctrl+alt+o")
+                    picker = picker_window(label)
+                    control_bounds("system-open-picker")
+                    xdo("windowfocus", "--sync", picker)
+                    pause()
+                    return picker
+
+                def settled(title):
+                    deadline = time.monotonic() + 5
+                    while picker_window(title, required=False) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert picker_window(title, required=False) is None
+                    xdo("windowfocus", "--sync", window)
+                    deadline = time.monotonic() + 5
+                    while control_bounds("system-open-picker", required=False) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert control_bounds("system-open-picker", required=False) is None
+
+                selections = []
+                def choose(kind, path, via="menu"):
+                    start(kind, via)
+                    modified_shortcut(xdo, "l");pause()
+                    modified_shortcut(xdo, "a");pause()
+                    paste_text(str(path), held=True)
+                    modified_shortcut(xdo, "a")
+                    modified_shortcut(xdo, "c");pause()
+                    actual = "";deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        copied = subprocess.run(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, capture_output=True, timeout=2)
+                        actual = copied.stdout.decode()
+                        if copied.returncode == 0 and actual.rstrip("/") == str(path):
+                            break
+                        time.sleep(.05)
+                    selections.append({"kind":kind,"via":via,"expected":str(path),"actual":actual})
+                    (reports / "native-system-open-selections.json").write_text(json.dumps(selections, ensure_ascii=False, indent=2) + "\n")
+                    assert actual.rstrip("/") == str(path), selections[-1]
+                    capture(f"native-system-open-{kind}-picker.png")
+                    modified_shortcut(xdo, "o", "alt");pause()
+                    settled("Open file" if kind == "file" else "Open folder")
+
+                # Both independent cancellation routes must release the owned chooser.
+                start("file");key("Escape");settled("Open file")
+                title_contains("Open existing control")
+                picker = start("folder", "shortcut")
+                xdo("windowunmap", "--sync", picker)
+                xdo("windowfocus", "--sync", window)
+                click_control("system-open-cancel", hold=.15)
+                assert control_bounds("system-open-picker", required=False) is None
+                assert subprocess.run(["xdotool", "getwindowname", picker], env=environment, capture_output=True).returncode != 0
+                title_contains("Open existing control")
+                assert note.read_text() == original
+                results.append("Visible File actions and the folder shortcut launched native pickers; native Escape and parent Cancel preserved the document and closed the chooser")
+
+                nested = fixture / "Notes/Existing text سلام.txt"
+                nested_source = "Plain text original\n"
+                nested.write_text(nested_source)
+                choose("file", nested, "shortcut")
+                title_contains("Existing text")
+                assert roots()[0] == str(fixture)
+                command("Source editing");editor_end();type_text(" LOCAL");key("ctrl+s")
+                assert nested.read_text() == nested_source + " LOCAL"
+                key("ctrl+z");key("ctrl+s")
+                assert nested.read_text() == nested_source
+                results.append("Open file accepted an existing nested Unicode text path, kept the active vault root and edited the actual file with Undo")
+
+                broken_root = base / "Unreadable document vault"
+                broken_root.mkdir()
+                broken = broken_root / "Invalid UTF8.md"
+                broken.write_bytes(b"# Unreadable\n\xff\xfe")
+                choose("file", broken)
+                control_bounds("error-notice")
+                capture("native-system-open-invalid-document.png")
+                title_contains("Existing text")
+                assert roots()[0] == str(fixture)
+                assert nested.read_text() == nested_source and broken.read_bytes() == b"# Unreadable\n\xff\xfe"
+                assert note.read_text() == original
+                results.append("An existing but invalid UTF-8 Markdown file reported a real opening error and retained the previous vault, tab and all bytes")
+
+                other = base / "Opened folder سلام"
+                other.mkdir()
+                outside = other / "Outside.md"
+                outside.write_text("# Outside\n\nOUTSIDE_ORIGINAL\n")
+                selected = other / "Selected after guard.md"
+                selected_source = "# Selected\n\nSELECTED_ORIGINAL\n"
+                selected.write_text(selected_source)
+                child = other / "Nested registered vault"
+                child.mkdir()
+                child_note = child / "Registered child.md"
+                child_source = "# Child\n\n[[Home]]\n"
+                child_note.write_text(child_source)
+                (child / "Home.md").write_text("# Child home\n")
+                choose("folder", other, "palette")
+                title_contains(other.name)
+                assert roots()[0] == str(other)
+                open_note("Outside")
+                command("Source editing");editor_end();type_text(" OTHER");key("ctrl+s")
+                assert outside.read_text().endswith(" OTHER")
+                choose("folder", other)
+                title_contains("Outside")
+                key("ctrl+z");key("ctrl+s")
+                assert outside.read_text() == "# Outside\n\nOUTSIDE_ORIGINAL\n"
+                results.append("Open folder registered the chosen existing vault; reopening that active folder kept the actual document and its Undo history")
+
+                choose("folder", child)
+                title_contains(child.name)
+                choose("folder", fixture)
+                choose("file", child_note)
+                title_contains("Registered child")
+                assert roots()[0] == str(child)
+                command("Source editing")
+                editor_end();key("ctrl+Home");key("Down");key("Down");key("Right");key("Right");key("ctrl+Return")
+                title_contains("Home")
+                assert roots()[0] == str(child)
+                assert child_note.read_text() == child_source
+                results.append("Opening outside the active vault selected the deepest registered root and followed its own root-level wiki link")
+
+                choose("file", note, "palette")
+                title_contains("Open existing control")
+                assert roots()[0] == str(fixture)
+                session_path = next(path for path in (base / "state/rust-notes").glob("*.json") if "Notes/Open existing control.md" in path.read_text())
+                autosave_before = json.loads(session_path.read_text())["autosave_enabled"]
+                def autosave(enabled):
+                    command("Open settings");type_text("autosave")
+                    if json.loads(session_path.read_text())["autosave_enabled"] is not enabled:
+                        click_control("settings-autosave", hold=.15)
+                    wait_autosave(base / "state", enabled, session_path=session_path)
+                    key("Escape")
+                autosave(False)
+                command("Source editing");editor_end();type_text(" UNSAVED")
+                assert note.read_text() == original
+                choose("file", selected)
+                control_bounds("pending-cancel")
+                capture("native-system-open-unsaved.png")
+                click_control("pending-cancel", hold=.15)
+                title_contains("Open existing control")
+                assert roots()[0] == str(fixture)
+                assert note.read_text() == original and selected.read_text() == selected_source
+                key("ctrl+s");assert note.read_text() == original + " UNSAVED"
+                key("ctrl+z");key("ctrl+s");assert note.read_text() == original
+                choose("folder", other)
+                title_contains("Outside")
+                assert control_bounds("tab-full:Selected after guard.md", required=False) is None
+                results.append("Cancelling cross-vault Open file retained exact unsaved text; later Open folder restored its workspace without a stale cancelled file")
+
+                choose("file", note)
+                title_contains("Open existing control")
+                command("Source editing");editor_end();type_text(" SAVED")
+                choose("file", selected, "shortcut")
+                click_control("pending-save", hold=.15)
+                title_contains("Selected after guard")
+                assert roots()[0] == str(other)
+                assert note.read_text() == original + " SAVED"
+                assert selected.read_text() == selected_source
+                command("Source editing");editor_end();type_text(" EXTERNAL");key("ctrl+s")
+                assert selected.read_text() == selected_source + " EXTERNAL"
+                assert note.read_text() == original + " SAVED"
+                key("ctrl+z");key("ctrl+s");assert selected.read_text() == selected_source
+                results.append("Save and continue saved the old vault before opening the requested registered-vault file; subsequent editing and Undo stayed in the selected file")
+
+                choose("file", note)
+                command("Source editing");editor_end();key("ctrl+a");paste_text(original);key("ctrl+s")
+                assert note.read_text() == original
+                editor_end();type_text(" DISCARD")
+                choose("file", outside)
+                click_control("pending-discard", hold=.15)
+                title_contains("Outside")
+                assert note.read_text() == original
+                choose("file", note)
+                title_contains("Open existing control")
+                assert note.read_text() == original
+                autosave(autosave_before)
+                set_theme(False)
+                click_control("file-menu", hold=.15)
+                capture("native-system-open-light.png")
+                key("Escape");set_theme(True)
+                open_note("Home")
+                results.append("Discard explicitly abandoned only unsaved edits; switching back restored the correct file, and File actions also rendered in the light theme")
+
+            def emoji_checks():
+                source = (ROOT / "tests/fixtures/emoji.md").read_text()
+                note = fixture / "Emoji checks 📂.md"
+                note.write_text(source)
+                time.sleep(.6);open_note("Emoji checks")
+                def colored(name):
+                    bounds = control_bounds(name)
+                    image = ImageGrab.grab(xdisplay=display).crop(tuple(round(value) for value in bounds)).convert("RGB")
+                    count = sum(max(pixel)>110 and max(pixel)-min(pixel)>45 for pixel in pixel_data(image))
+                    assert count > 30, (name, "expected actual colored emoji pixels", count, bounds)
+                for dark in (True, False):
+                    set_theme(dark)
+                    command("Reading view")
+                    colored("reading-block:1")
+                    colored("note-title")
+                    control_bounds("table:0")
+                    capture("native-emoji-reading-"+("dark" if dark else "light")+".png")
+                    command("Live preview")
+                    capture("native-emoji-live-"+("dark" if dark else "light")+".png")
+                    command("Source editing")
+                    capture("native-emoji-source-"+("dark" if dark else "light")+".png")
+                    assert note.read_text() == source
+                results.append("Actual colored emoji pixels rendered in the Reading body and editable filename in both themes; Live/Source/table captures retained every original byte")
+                editor_end();paste_text(" 🧭");key("ctrl+s")
+                assert note.read_text() == source + " 🧭"
+                key("ctrl+z");key("ctrl+s")
+                assert note.read_text() == source
+                results.append("Pasting a new arbitrary emoji into Source saved the exact Unicode bytes and Undo restored the original note")
+                link = fixture / "Emoji preview source.md"
+                link_source = "# Emoji preview\n\n[[Emoji checks 📂|Emoji preview]]\n"
+                link.write_text(link_source)
+                time.sleep(.6);open_note("Emoji preview source");command("Reading view")
+                bounds = control_bounds("reading-block:1")
+                xdo("mousemove", "--sync", str(round(bounds[0]+25)), str(round((bounds[1]+bounds[3])/2)))
+                time.sleep(.8)
+                control_bounds("page-preview-card")
+                colored("page-preview/reading-block:1")
+                capture("native-emoji-hover.png")
+                xdo("mousemove", "--sync", "1100", "800", "click", "1");pause()
+                assert note.read_text() == source and link.read_text() == link_source
+                set_theme(True)
+                results.append("The actual linked-note hover used the same colored glyphs without altering source or target")
+
+            def graph_checks():
+                nonlocal app, window
+                graph_root = base / "Graph native vault"
+                graph_root.mkdir()
+                sources = {
+                    "Home.md":"# Home\n\n[[Alpha]]\n[[Beta]]\n[[Projects/Plan]]\n[[Missing target]]\n\n#start\n",
+                    "Alpha.md":"# Alpha\n\n[[Gamma]]\n[[Beta]]\n\n#team/green\n",
+                    "Beta.md":"# Beta\n\n[[Delta]]\n\n#team/blue\n",
+                    "Gamma.md":"# Gamma\n\n[[Epsilon]]\n\n#team/green\n",
+                    "Delta.md":"# Delta\n",
+                    "Epsilon.md":"# Epsilon\n",
+                    "Isolated.md":"# Isolated\n",
+                    "Projects/Plan.md":"# Plan\n\n[[Alpha]]\n\n#project\n",
+                }
+                for name, text in sources.items():
+                    path = graph_root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(text)
+                command("Open vault");key("ctrl+a");paste_text(str(graph_root), held=True);key("Return")
+                title_contains(graph_root.name);open_note("Home")
+                command("Source editing");editor_end();type_text(" GRAPH_CONTROL");key("ctrl+s")
+                assert (graph_root / "Home.md").read_text() == sources["Home.md"] + " GRAPH_CONTROL"
+                key("ctrl+z");key("ctrl+s")
+                assert (graph_root / "Home.md").read_text() == sources["Home.md"]
+                results.append("The graph fixture opened through the real vault flow and ordinary editing/save/Undo passed before the graph command")
+
+                def metric(prefix, name):
+                    return control_bounds(prefix + ":" + name)[0]
+
+                def ready(prefix, nodes, edges=None):
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        if controls.get(prefix+":busy", [1])[0] == 0 and controls.get(prefix+":node-count", [-1])[0] == nodes and (edges is None or controls.get(prefix+":edge-count", [-1])[0] == edges):
+                            return
+                        time.sleep(.05)
+                    capture("native-graph-not-ready.png")
+                    raise AssertionError((prefix, nodes, edges, {key:value for key,value in controls.items() if key.startswith(prefix)}))
+
+                def filters(prefix):
+                    if control_bounds(prefix+":section:filters", required=False) is None:
+                        click_control(prefix+":settings", hold=.15)
+                    if control_bounds(prefix+":filter", required=False) is None:
+                        click_control(prefix+":section:filters", hold=.15)
+                    control_bounds(prefix+":filter")
+
+                def filter_text(prefix, value):
+                    click_control(prefix+":filter", hold=.15);key("ctrl+a")
+                    if value:type_text(value)
+                    else:key("BackSpace")
+
+                click_control("button:Open graph view", hold=.15)
+                title_contains("Graph view")
+                ready("global-graph", 9, 9)
+                filters("global-graph")
+                capture("native-graph-global-dark.png")
+                filter_text("global-graph", "path:Projects");ready("global-graph", 1, 0)
+                filter_text("global-graph", "path:DOES_NOT_EXIST");ready("global-graph", 0, 0)
+                capture("native-graph-empty.png")
+                filter_text("global-graph", "");ready("global-graph", 9, 9)
+                click_control("global-graph:existing-only", hold=.15);ready("global-graph", 8, 8)
+                click_control("global-graph:existing-only", hold=.15);ready("global-graph", 9, 9)
+                click_control("global-graph:orphans", hold=.15);ready("global-graph", 8, 9)
+                click_control("global-graph:orphans", hold=.15);ready("global-graph", 9, 9)
+                click_control("global-graph:tags", hold=.15);ready("global-graph", 13, 14)
+                click_control("global-graph:tags", hold=.15);ready("global-graph", 9, 9)
+                results.append("The native global graph showed actual resolved links; positive/empty queries, existing-only, orphan and tag controls changed the expected topology")
+
+                click_control("global-graph:settings", hold=.15)
+                click_control("global-graph:fit", hold=.15)
+                left, top, right, bottom = control_bounds("global-graph:canvas")
+                zoom = metric("global-graph", "zoom")
+                xdo("mousemove", "--sync", str(round((left+right)/2)), str(round((top+bottom)/2)), "click", "4");pause()
+                assert metric("global-graph", "zoom") > zoom
+                pan = [metric("global-graph", name) for name in ("pan-x", "pan-y")]
+                x, y = round(right-25), round(bottom-25)
+                xdo("mousemove", "--sync", str(x), str(y), "mousedown", "1")
+                try:
+                    for step in range(1, 7):
+                        xdo("mousemove", str(x-step*10), str(y-step*5));time.sleep(.04)
+                finally:xdo("mouseup", "1")
+                pause()
+                assert abs(metric("global-graph", "pan-x")-pan[0]) > 20
+                click_control("global-graph:fit", hold=.15)
+                click_control("global-graph:node:Alpha.md", hold=.15)
+                title_contains("Alpha")
+                assert control_bounds("global-graph:canvas", required=False) is None
+                results.append("Physical wheel and blank-canvas drag zoomed and panned; clicking the actual painted Alpha node opened its note")
+
+                open_note("Home")
+                command("Graph view: Open local graph")
+                ready("local-graph", 5, 4);filters("local-graph")
+                def depth(value, count):
+                    left, top, right, bottom = control_bounds("local-graph:depth-slider")
+                    xdo("mousemove", "--sync", str(round(left+7)), str(round((top+bottom)/2)), "click", "1");pause()
+                    for _ in range(value-1):key("Right")
+                    assert metric("local-graph", "depth") == value
+                    ready("local-graph", count)
+                depth(2, 7);depth(3, 8);depth(1, 5)
+                click_control("local-graph:neighbor", hold=.15);ready("local-graph", 5, 6)
+                click_control("local-graph:outgoing", hold=.15);ready("local-graph", 1, 0)
+                click_control("local-graph:outgoing", hold=.15);ready("local-graph", 5, 6)
+                click_control("local-graph:neighbor", hold=.15);ready("local-graph", 5, 4)
+                capture("native-graph-local-dark.png")
+                results.append("The separate local graph matched reference depths one/two/three and independent outgoing/neighbor controls")
+                click_control("local-graph:settings", hold=.15)
+                click_control("local-graph:fit", hold=.15)
+                click_control("local-graph:node:Beta.md", hold=.15)
+                title_contains("Beta");ready("local-graph", 4, 3)
+                set_theme(False);capture("native-graph-local-light.png")
+                click_control("local-graph:close", hold=.15)
+                assert control_bounds("local-graph:canvas", required=False) is None
+                set_theme(True)
+                results.append("A local-node click opened Beta while its graph followed the active note; the linked pane rendered in both themes and closed normally")
+
+                close_tabs();open_note("Home");key("ctrl+w")
+                command("Graph view: Open graph view");ready("global-graph", 9, 9)
+                assert control_bounds("tab-count")[0] == 1
+                command("Undo close tab")
+                title_contains("Home")
+                assert control_bounds("tab-count")[0] == 2
+                key("ctrl+w");title_contains("Graph view");ready("global-graph", 9, 9)
+                results.append("Undo close tab retained a sole fileless graph and restored the closed note alongside it")
+
+                # Two tabs may retain the same document path but different view types.
+                close_tabs();open_note("Home");command("Graph view: Open graph view")
+                ready("global-graph", 9, 9)
+                key("ctrl+t");open_note("Home")
+                assert control_bounds("tab-count")[0] == 2
+                assert control_bounds("global-graph:canvas", required=False) is None
+                xdo("key", "--clearmodifiers", "ctrl+q");app.wait(timeout=5)
+                app=launch_app([str(ROOT / args.binary), str(graph_root)]);window=ready_window()
+                title_contains("Home")
+                assert control_bounds("tab-count")[0] == 2
+                assert control_bounds("global-graph:canvas", required=False) is None
+                key("ctrl+w");title_contains("Graph view");ready("global-graph", 9, 9)
+                results.append("Restart restored the active document beside its same-path Graph tab; closing the document revealed the retained graph")
+                for name, original in sources.items():
+                    assert (graph_root/name).read_text() == original, name
+                command("Open vault");key("ctrl+a");paste_text(str(fixture), held=True);key("Return")
+                title_contains(fixture.name);open_note("Home")
+                results.append("Every graph operation and real restart preserved all eight original note files and returned to the previous vault")
+
             def palette_queue_checks():
                 sources={p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
                 before=control_bounds("sidebar:details",required=False) is not None
@@ -4959,6 +5396,21 @@ def main():
                 unicode_queue_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"unicode-queued"}))
+                return
+            if args.section == "emoji":
+                emoji_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "graph":
+                graph_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "system-open":
+                system_open_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
             if args.section == "recovery":
                 recovery_checks()
@@ -5456,6 +5908,9 @@ def main():
                 explorer_checks,
                 vault_checks,
                 vault_switch_checks,
+                system_open_checks,
+                graph_checks,
+                emoji_checks,
                 file_toolbar_checks,
                 folding_checks,
                 typography_checks,

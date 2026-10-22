@@ -21,7 +21,7 @@ plugins do not execute here yet. Masih decides acceptance; CI alone establishes
 neither full parity nor the fastest editor.
 
 Optimized source048fced is installed after complete verification in
-[Actions39658870633](https://github.com/MasihMoafi/rust-notes/actions/runs/39658870633)
+[Actions39658870633](https://github.com/MasihMoafi/rustidian/actions/runs/39658870633)
 with harness e326f14:133 Rust executions/127 unique,115 full native GUI groups,
 all32 sections, six CPU conditions and the normal Ferrite comparison pass.
 The exact executable/bundle hashes, raw evidence and preserved b9 rollback are
@@ -63,7 +63,7 @@ next complete Actions gate; do not install the known failing candidate.
   routing; unsetting proxy variables does not bypass an enabled TUN. Stop our VPN
   transfers at the reserve. Connection changes require the user's existing
   conditional authorization to apply, not merely a wish for faster downloads.
-- Use the authorized private `MasihMoafi/rust-notes` repository and `gh` for remote
+- Use the authorized private `MasihMoafi/rustidian` repository and `gh` for remote
   operations. Upload reviewed sources/assets only. No force pushes, arbitrary
   publication, services/autostart, OS migration or Elpis activation changes.
 
@@ -176,13 +176,13 @@ settings or silently discard dirty documents. PLAN.md owns the acceptance contra
 From a clean authorized machine:
 
 ```sh
-gh repo clone MasihMoafi/rust-notes
+gh repo clone MasihMoafi/rustidian
 cd rust-notes
 git status --short
 cargo fmt --all -- --check
-gh workflow run native.yml --repo MasihMoafi/rust-notes
-gh run list --repo MasihMoafi/rust-notes --workflow native.yml --limit 3
-gh run view RUN_ID --repo MasihMoafi/rust-notes --log
+gh workflow run native.yml --repo MasihMoafi/rustidian
+gh run list --repo MasihMoafi/rustidian --workflow native.yml --limit 3
+gh run view RUN_ID --repo MasihMoafi/rustidian --log
 ```
 
 The workflow pins Rust1.95.0 and Linux dependencies, uses two build jobs, no
@@ -198,7 +198,7 @@ For a harness-only correction, reuse the already compiled app and benchmark:
 
 ```sh
 python3 scripts/reuse-actions-candidate.py --source-commit SOURCE_SHA --check-source
-gh workflow run native.yml --repo MasihMoafi/rust-notes   -f reuse_run_id=SOURCE_RUN -f reuse_commit=SOURCE_SHA
+gh workflow run native.yml --repo MasihMoafi/rustidian   -f reuse_run_id=SOURCE_RUN -f reuse_commit=SOURCE_SHA
 ```
 
 The guard permits only declared harness/docs changes. Never restore locally:
@@ -220,7 +220,7 @@ Calibrate this collector with all-success, early-failure/later-execution and
 cancellation cases; isolate later failures before treating them as product bugs.
 
 After checking route, quota and storage, download one needed artifact with `gh`.
-If its downloader stalls, `gh api repos/MasihMoafi/rust-notes/actions/artifacts/ARTIFACT_ID/zip`
+If its downloader stalls, `gh api repos/MasihMoafi/rustidian/actions/artifacts/ARTIFACT_ID/zip`
 can write a checked ZIP into ignored `reports/` on the healthy home filesystem.
 For a large evidence archive, `gh api -H "Range: bytes=START-END"` can
 retrieve its ZIP directory and selected compressed entries. Verify each extracted

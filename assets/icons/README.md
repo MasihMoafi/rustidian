@@ -17,6 +17,7 @@ The workflow follows Masih's [logo skill](../../../skills/logo/SKILL.md): preser
 | Asset | Meaning |
 | --- | --- |
 | `files.svg`, `search.svg` | File explorer; vault search |
+| `graph.svg` | Open the global graph; generated source, SVG Studio trace and native-size proofs are in `artwork/graph-toolbar/` |
 | `new-note.svg` | Create a Markdown note |
 | `new-tab.svg` | Empty tab; creates no file |
 | `sidebar-left.svg`, `sidebar-right.svg` | Toggle the corresponding sidebar |

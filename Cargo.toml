@@ -9,6 +9,7 @@ license = "MIT"
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "clipboard", "links"] }
+epaint = { version = "0.37", default-features = false, features = ["color_fonts"] }
 egui_commonmark = { version = "0.26", default-features = false, features = ["pulldown_cmark"] }
 egui_extras = { version = "0.37", default-features = false, features = ["svg", "file", "image", "gif", "webp", "http"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }

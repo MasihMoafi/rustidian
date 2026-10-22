@@ -1,0 +1,14 @@
+✔ the CLI asks for an engine rather than falling back to a personal path (87.53579ms)
+✔ a monochrome-only engine cannot silently handle a colour request (87.530357ms)
+✔ a bitmap wrapped in SVG is rejected as a vector deliverable (73.645527ms)
+✔ empty SVGs, live font labels and external references cannot pass as traced paths (324.739656ms)
+✔ proofs preserve transparent letterboxing on both dark and light backgrounds (442.864999ms)
+✔ the installed colour engine produces standalone paths that pass the proof pipeline (283.737401ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1631.479143

@@ -1,0 +1,64 @@
+{
+  "fixture": {
+    "markdown_files": 100,
+    "markdown_bytes": 8135,
+    "manifest_sha256": "7ccf4135cb4c7986cc6a16bc5b4283bfe443d9e862ad4caac204b271e42bc5db",
+    "home_text": "# Startup comparison\n\nSTARTUP VISIBLE NOTE\n\nThis is the same synthetic note in both applications.\n\nKeyboard check:\n\n",
+    "other_note_indices": [
+      1,
+      99
+    ],
+    "other_note_path": "Notes/Note {index:03}.md",
+    "other_note_text": "# Note {index:03}\n\nSynthetic startup fixture {index:03}.\n\n[[Home]] and [[Note {next:03}]].\n\n#startup\n",
+    "next_index_formula": "(index % 99) + 1",
+    "text_encoding": "UTF-8",
+    "line_endings": "LF"
+  },
+  "shared_workflow": {
+    "theme": "dark",
+    "editor_mode": "Live editing",
+    "open_note": "Home.md",
+    "open_tabs": 1,
+    "left_file_explorer_px": 300,
+    "right_sidebar": "closed",
+    "community_plugins": [],
+    "recovery": {
+      "interval_minutes": 5,
+      "keep_days": 7
+    },
+    "autosave": true
+  },
+  "obsidian_enabled_core_plugins": [
+    "file-explorer",
+    "switcher",
+    "editor-status",
+    "word-count",
+    "file-recovery"
+  ],
+  "display": {
+    "backend": "private Xvfb",
+    "pixels": [
+      1440,
+      960
+    ],
+    "depth_bits": 24,
+    "rendering": "software",
+    "window_resize": "1440x960 requested inside the timer; some native first-note captures precede completion of resizing from the initial 1380x900 window"
+  },
+  "host": {
+    "os": "Linux x86_64",
+    "cpu": "11th Gen Intel Core i9-11900H @ 2.50GHz",
+    "logical_cpus": 16,
+    "governor": "powersave",
+    "affinity_changed": false,
+    "other_applications": "left running; not controlled",
+    "measured_load_range": [
+      3.63330078125,
+      6.1826171875
+    ],
+    "host_cpu_busy_percent_range": [
+      23.393908369629003,
+      56.576942610433065
+    ]
+  }
+}

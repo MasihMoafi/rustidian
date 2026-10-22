@@ -22,6 +22,40 @@ pub fn location() -> Option<PathBuf> {
         .map(|base| base.join("rust-notes/vaults.json"))
 }
 
+/// CLI and native Open share the same document-to-vault policy.
+pub fn resolve_input(
+    input: &Path,
+    default_vault: Option<&Path>,
+    registered_vaults: &[PathBuf],
+) -> Result<(PathBuf, Option<PathBuf>), String> {
+    let absolute = input
+        .canonicalize()
+        .map_err(|error| format!("Cannot open {}: {error}", input.display()))?;
+    if absolute.is_dir() {
+        return Ok((absolute, None));
+    }
+    if !absolute.is_file() || !crate::vault::is_text_document(&absolute) {
+        return Err("Choose a vault folder, Markdown file (.md) or plain-text file (.txt).".into());
+    }
+    let root = default_vault
+        .and_then(|vault| vault.canonicalize().ok())
+        .into_iter()
+        .chain(
+            registered_vaults
+                .iter()
+                .filter_map(|vault| vault.canonicalize().ok()),
+        )
+        .filter(|vault| absolute.starts_with(vault) && vault.is_dir())
+        .max_by_key(|vault| vault.components().count())
+        .or_else(|| absolute.parent().map(Path::to_path_buf))
+        .ok_or("Cannot determine the document's folder.")?;
+    let document = absolute
+        .strip_prefix(&root)
+        .map_err(|error| error.to_string())?
+        .to_owned();
+    Ok((root, Some(document)))
+}
+
 pub fn folder(path: &Path) -> Result<PathBuf, String> {
     let root = path
         .canonicalize()

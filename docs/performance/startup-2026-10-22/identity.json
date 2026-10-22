@@ -1,0 +1,27 @@
+{
+  "measurement_date": "2026-10-22",
+  "rustidian": {
+    "label": "development preview",
+    "package_version": "0.1.0",
+    "optimized": true,
+    "source_commit": "c7c53209ad0b8e3dc633d169da9a1342a6a22d38",
+    "executable_sha256": "6f3a583db0c4e3448893e2d9b0f249d53954df33550b81d21d9dad930959c129",
+    "executable_bytes": 34090136,
+    "release_verified": false
+  },
+  "obsidian": {
+    "actual_app_version": "1.14.4",
+    "installer_version": "1.13.7",
+    "installer_sha256": "e0d8e0a611624de8c9c7dcd8a9e648279fb0a0d552faa1312b7e4f3a5fa72663",
+    "update_asar_sha256": "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f",
+    "electron_version": "43.3.0",
+    "chromium_version": "150.0.7871.212"
+  },
+  "provenance": {
+    "selected_run": "fourth retained attempt; chosen after correcting configuration, before its results",
+    "original_declared_protocol_sha256": "6b5375725373004e63517f4e966a6afef2ce5037c98076a10e8fa0e84ac9f564",
+    "executed_harness_sha256": "4c855e1444152c07729b59f60a2142321a1d45dca7f8f63b1af6aaa9b0a7a98e",
+    "original_raw_csv_sha256": "86a787fb81d8264f79137217ec136a6d2435de8cff7b72c4a9099ade41619357",
+    "public_raw_csv_changes": "Only visible_image and usable_image columns omitted. Every timing, phase, order, status, load and CPU value is unchanged."
+  }
+}

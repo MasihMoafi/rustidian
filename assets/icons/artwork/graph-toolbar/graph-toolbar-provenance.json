@@ -1,0 +1,62 @@
+{
+  "generator": "Built-in image_gen.imagegen; backend model not independently identified",
+  "original": "graph-toolbar-original.png",
+  "prompt": "graph-toolbar-prompt.json",
+  "selectedRationale": "One requested local candidate: four hollow circular note nodes and three links remain distinct at toolbar size.",
+  "selectionAuthority": "Agent-selected local draft; no claim of user approval or native app verification.",
+  "preprocessing": "Existing build-atlas-icons.mjs monochrome pipeline: remove white canvas by luminance coverage, discard coverage<=16, trim empty margins with4px allowance, proportional648px fit plus60px transparent padding. No contours redrawn.",
+  "originalSize": [
+    1254,
+    1254
+  ],
+  "trim": {
+    "left": 193,
+    "top": 225,
+    "right": 1048,
+    "bottom": 1049
+  },
+  "preparedRaster": {
+    "size": 768,
+    "fit": 648,
+    "margin": 60
+  },
+  "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+  "engineSha256": "f975e80542156cafdfac531a096979fab60535cfe3798b3f1fde089deb91a4f3",
+  "tracing": {
+    "method": "SVG Studio vectorizeImage (monochrome Potrace)",
+    "thresholdPercent": 60,
+    "studioPaddingCrop": 10
+  },
+  "geometryAdjustments": "Crop SVG Studio10px padding through viewBox only; no path coordinates, holes or contours changed.",
+  "nativeAdjustment": "Explicit fill black changed to white for existing egui native tinting; paths and viewBox unchanged.",
+  "raw": "graph-toolbar-studio-raw.svg",
+  "traced": "graph-toolbar-traced.svg",
+  "native": "../../graph.svg",
+  "hashes": {
+    "original": "baeff567ec77d69cec4c83c3427498d6c75d3670b3a3ae3fbaa7d24888e50647",
+    "prepared": "fcc38a54df4fb610877a61e7e065b37b272c5a38ab6a5ee5454c5db52e253824",
+    "raw": "bb6e800b43a22c8ccd3479f4366faf3c4b0f2fe5e7fade6aec2791adb01a0c96",
+    "traced": "7ab20eb664730cea2d86f7ec7c17711176edec78b20efc19d48789670094706b",
+    "native": "3e492a4cbd0caeaaecce1616af5a33a6b04fa328919d9cd58b7eb91aa4961235",
+    "pathData": "bc8adf9d73709d20021b3237bed84eb179dc1a368bb6d9692df815ecb3d2b196"
+  },
+  "pathCount": 1,
+  "nativeBytes": 4695,
+  "reproduction": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/home/masih/Desktop/p/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
+  "verification": {
+    "geometry": "One standalone SVG Studio path, four visible circular counters; path data is byte-identical to the raw engine output. Native file differs only in fills from the normalized trace.",
+    "reproduction": "Re-ran the preserved recipe and obtained byte-identical native SVG SHA256 3e492a4cbd0caeaaecce1616af5a33a6b04fa328919d9cd58b7eb91aa4961235",
+    "pipeline_checks": {
+      "command": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node --test /home/masih/Desktop/p/skills/logo/test/pipeline.test.mjs",
+      "passed": 6,
+      "failed": 0,
+      "log": "graph-toolbar-pipeline-test.log"
+    },
+    "source_vector_proof": "graph-toolbar-proof.html; raw black artwork at24/48/128/512 on both grounds for trace fidelity",
+    "native_tint_proof": "graph-toolbar-native-proof.html; actual existing app tints on both themes at18/24/48/128/512",
+    "intended_size_proof": "graph-toolbar-18px-proof.png; source/vector at18/24/48 beside existing Files/Bookmark at18",
+    "review": "Inspected original generation, raw source/vector proof, both-theme native tint proof and actual18px comparison. Counters, connected silhouette, margins and smooth contours preserved; native strokes remain thin at18px. Corrected overlapping proof labels and inspected again.",
+    "native_tint_max_foreground_mean_difference": 0.037319762510602206,
+    "limitations": "Trace approximates antialiased raster edges. Native executable rendering, Graph behavior, parent manifest registration and user acceptance were not exercised."
+  }
+}

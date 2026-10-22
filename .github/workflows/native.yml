@@ -36,7 +36,7 @@ concurrency:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 105
+    timeout-minutes: 135
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -76,7 +76,7 @@ jobs:
         run: |
           if [ -x target/debug/rust-notes ]; then
             mkdir -p "$RUNNER_TEMP/rust-notes-functional"
-            tar -czf "$RUNNER_TEMP/rust-notes-functional/rust-notes-functional.tar.gz" -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault assets/fonts/LICENSE-*.txt
+            tar -czf "$RUNNER_TEMP/rust-notes-functional/rust-notes-functional.tar.gz" -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault LICENSE assets/fonts/LICENSE-*.txt
             sha256sum target/debug/rust-notes > "$RUNNER_TEMP/rust-notes-functional/functional.sha256"
             git rev-parse HEAD > "$RUNNER_TEMP/rust-notes-functional/binary-source-commit.txt"
           fi
@@ -95,6 +95,10 @@ jobs:
           early_status=0
           trap 'early_status=1' ERR
           set +e
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section system-open 2>&1 | tee reports/early-system-open-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section graph 2>&1 | tee reports/early-graph-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section emoji 2>&1 | tee reports/early-emoji-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section callouts 2>&1 | tee reports/early-callouts-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section vaults 2>&1 | tee reports/early-vaults-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section recovery 2>&1 | tee reports/early-recovery-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
@@ -116,6 +120,14 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
           path: |
+            reports/early-system-open-gui.log
+            reports/early-graph-gui.log
+            reports/early-emoji-gui.log
+            reports/early-callouts-gui.log
+            reports/native-system-open-*
+            reports/native-graph-*
+            reports/native-emoji-*
+            reports/native-callout-*
             reports/early-recovery-gui.log
             reports/early-vaults-gui.log
             reports/early-note-creators-gui.log
@@ -155,7 +167,7 @@ jobs:
           cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/candidate-build.log
           sha256sum target/release/rust-notes > reports/candidate.sha256
           git rev-parse HEAD > reports/binary-source-commit.txt
-          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault assets/fonts/LICENSE-*.txt
+          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault LICENSE assets/fonts/LICENSE-*.txt
       - name: Restore an unchanged optimized candidate
         id: restore_candidate
         if: ${{ inputs.reuse_run_id != '' }}
@@ -194,6 +206,9 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section system-open 2>&1 | tee reports/system-open-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section graph 2>&1 | tee reports/graph-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section emoji 2>&1 | tee reports/emoji-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vaults 2>&1 | tee reports/vaults-gui.log
           RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-creators 2>&1 | tee reports/note-creators-gui.log
@@ -230,6 +245,12 @@ jobs:
             reports/native-edit-table-*.png
             reports/native-vault*.png
             reports/native-vault-picker-entry.json
+            reports/native-system-open-*
+            reports/native-graph-*
+            reports/native-emoji-*
+            reports/system-open-gui.log
+            reports/graph-gui.log
+            reports/emoji-gui.log
             reports/native-note-aids-*.png
             reports/native-template-*.png
             reports/native-daily-*.png

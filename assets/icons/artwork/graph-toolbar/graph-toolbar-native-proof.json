@@ -1,0 +1,72 @@
+[
+  {
+    "theme": "light",
+    "size": 18,
+    "meanDifference": 0.01148632292423142,
+    "foregroundMeanDifference": 0.0362709186238598,
+    "foregroundPixels": 91
+  },
+  {
+    "theme": "light",
+    "size": 24,
+    "meanDifference": 0.009785766158315178,
+    "foregroundMeanDifference": 0.037319762510602206,
+    "foregroundPixels": 131
+  },
+  {
+    "theme": "light",
+    "size": 48,
+    "meanDifference": 0.004257443718228032,
+    "foregroundMeanDifference": 0.021243596537714186,
+    "foregroundPixels": 370
+  },
+  {
+    "theme": "light",
+    "size": 128,
+    "meanDifference": 0.002460315180759804,
+    "foregroundMeanDifference": 0.01721551249746575,
+    "foregroundPixels": 2031
+  },
+  {
+    "theme": "light",
+    "size": 512,
+    "meanDifference": 0.001255578932419322,
+    "foregroundMeanDifference": 0.010939443372400763,
+    "foregroundPixels": 27862
+  },
+  {
+    "theme": "dark",
+    "size": 18,
+    "meanDifference": 0.01111514564673606,
+    "foregroundMeanDifference": 0.03671622495151907,
+    "foregroundPixels": 91
+  },
+  {
+    "theme": "dark",
+    "size": 24,
+    "meanDifference": 0.008805374001452433,
+    "foregroundMeanDifference": 0.035433817292820434,
+    "foregroundPixels": 131
+  },
+  {
+    "theme": "dark",
+    "size": 48,
+    "meanDifference": 0.005109613289760348,
+    "foregroundMeanDifference": 0.02916869227029655,
+    "foregroundPixels": 363
+  },
+  {
+    "theme": "dark",
+    "size": 128,
+    "meanDifference": 0.0031003465839460785,
+    "foregroundMeanDifference": 0.023587595275498925,
+    "foregroundPixels": 2022
+  },
+  {
+    "theme": "dark",
+    "size": 512,
+    "meanDifference": 0.0014707079120710785,
+    "foregroundMeanDifference": 0.013409522949429013,
+    "foregroundPixels": 27791
+  }
+]

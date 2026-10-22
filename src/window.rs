@@ -4,7 +4,13 @@ use eframe::egui::{
 };
 
 /// Keep window controls in the native app so hover feedback matches every other control.
-pub fn title_bar(ui: &mut egui::Ui, title: &str) {
+pub fn title_bar(
+    ui: &mut egui::Ui,
+    title: &str,
+    file_actions_enabled: bool,
+) -> Option<rust_notes::native_picker::Kind> {
+    use rust_notes::{commands, native_picker::Kind};
+    let mut action = None;
     resize_edges(ui);
     let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
     egui::Panel::top("window-title-bar")
@@ -16,62 +22,97 @@ pub fn title_bar(ui: &mut egui::Ui, title: &str) {
                 .inner_margin(Margin::symmetric(6, 3)),
         )
         .show(ui, |ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if control(ui, Icon::Close, "Close window", true).clicked() {
-                    // The existing close-request handler keeps unsaved changes safe.
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
-                }
-                if control(
-                    ui,
-                    if maximized {
-                        Icon::Restore
-                    } else {
-                        Icon::Maximize
-                    },
-                    if maximized {
-                        "Restore window"
-                    } else {
-                        "Maximize window"
-                    },
-                    false,
-                )
-                .clicked()
-                {
-                    ui.ctx()
-                        .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-                }
-                if control(ui, Icon::Minimize, "Minimize window", false).clicked() {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
-                }
-                let rect = ui.available_rect_before_wrap();
-                let response = ui.interact(
-                    rect,
-                    ui.scope_id().with("title-drag"),
-                    Sense::click_and_drag(),
-                );
-                crate::ui_probe::record(ui.ctx(), "window-title-drag", rect);
-                let galley = egui::WidgetText::from(egui::RichText::new(title).size(12.0).weak())
-                    .into_galley(
+            ui.horizontal(|ui| {
+                let menu = ui.menu_button("File", |ui| {
+                    ui.set_min_width(240.0);
+                    for (kind, label, shortcut, probe) in [
+                        (
+                            Kind::File,
+                            commands::OPEN_FILE,
+                            commands::OPEN_FILE_SHORTCUT,
+                            "file-menu-open-file",
+                        ),
+                        (
+                            Kind::Folder,
+                            commands::OPEN_FOLDER,
+                            commands::OPEN_FOLDER_SHORTCUT,
+                            "file-menu-open-folder",
+                        ),
+                    ] {
+                        let button = ui.add_enabled(
+                            file_actions_enabled,
+                            egui::Button::new(label).shortcut_text(shortcut),
+                        );
+                        crate::ui_probe::record(ui.ctx(), probe, button.rect);
+                        if button.clicked() {
+                            action = Some(kind);
+                            ui.close();
+                        }
+                    }
+                    if !file_actions_enabled {
+                        ui.label("Finish the current dialog before opening another item.");
+                    }
+                });
+                crate::ui_probe::record(ui.ctx(), "file-menu", menu.response.rect);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if control(ui, Icon::Close, "Close window", true).clicked() {
+                        // The existing close-request handler keeps unsaved changes safe.
+                        ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                    }
+                    if control(
                         ui,
-                        Some(egui::TextWrapMode::Truncate),
-                        (rect.width() - 12.0).max(1.0),
-                        FontId::proportional(12.0),
+                        if maximized {
+                            Icon::Restore
+                        } else {
+                            Icon::Maximize
+                        },
+                        if maximized {
+                            "Restore window"
+                        } else {
+                            "Maximize window"
+                        },
+                        false,
+                    )
+                    .clicked()
+                    {
+                        ui.ctx()
+                            .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+                    }
+                    if control(ui, Icon::Minimize, "Minimize window", false).clicked() {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
+                    }
+                    let rect = ui.available_rect_before_wrap();
+                    let response = ui.interact(
+                        rect,
+                        ui.scope_id().with("title-drag"),
+                        Sense::click_and_drag(),
                     );
-                ui.painter().galley(
-                    rect.left_center() + egui::vec2(6.0, -galley.size().y / 2.0),
-                    galley,
-                    ui.visuals().weak_text_color(),
-                );
-                if response.double_clicked() {
-                    ui.ctx()
-                        .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-                } else if response.is_pointer_button_down_on()
-                    && ui.input(|input| input.pointer.primary_pressed())
-                {
-                    ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
-                }
+                    crate::ui_probe::record(ui.ctx(), "window-title-drag", rect);
+                    let galley =
+                        egui::WidgetText::from(egui::RichText::new(title).size(12.0).weak())
+                            .into_galley(
+                                ui,
+                                Some(egui::TextWrapMode::Truncate),
+                                (rect.width() - 12.0).max(1.0),
+                                FontId::proportional(12.0),
+                            );
+                    ui.painter().galley(
+                        rect.left_center() + egui::vec2(6.0, -galley.size().y / 2.0),
+                        galley,
+                        ui.visuals().weak_text_color(),
+                    );
+                    if response.double_clicked() {
+                        ui.ctx()
+                            .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+                    } else if response.is_pointer_button_down_on()
+                        && ui.input(|input| input.pointer.primary_pressed())
+                    {
+                        ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+                    }
+                });
             });
         });
+    action
 }
 
 fn control(ui: &mut egui::Ui, icon: Icon, label: &str, close: bool) -> egui::Response {

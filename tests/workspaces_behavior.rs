@@ -128,6 +128,14 @@ fn restoration_preserves_order_modes_active_identity_and_saved_missing_entries()
     assert!(layout("../Keep.md").restore(&vault).is_err());
     assert!(layout("/tmp/Keep.md").restore(&vault).is_err());
     assert_eq!(layout("").restore(&vault).unwrap().tabs.len(), 1);
+    let mut graph = layout("");
+    graph.tabs[0].view = View::Graph;
+    let encoded = serde_json::to_vec(&graph).unwrap();
+    let graph: Layout = serde_json::from_slice(&encoded).unwrap();
+    let restored = graph.restore(&vault).unwrap();
+    assert_eq!(restored.tabs[0].view, View::Graph);
+    assert!(restored.tabs[0].document.is_blank());
+    assert_eq!(restored.tabs[0].editing_view(), View::Source);
 }
 
 #[test]

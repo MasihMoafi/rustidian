@@ -1,0 +1,2 @@
+# Preserve the measured CSV's standard CRLF bytes.
+docs/performance/startup-2026-10-22/raw.csv whitespace=cr-at-eol

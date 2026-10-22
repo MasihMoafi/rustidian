@@ -37,7 +37,7 @@ enum Pending {
     CloseOtherTabs(u64),
     Quit,
     ChangeVault,
-    OpenVault(PathBuf),
+    OpenVault(PathBuf, Option<PathBuf>),
     LoadWorkspace(String),
     RestoreSnapshot(Box<crate::recovery_ui::Restore>),
 }
@@ -93,6 +93,7 @@ pub struct NotesApp {
     pub(crate) ui_zoom: f32,
     pub(crate) autosave_enabled: bool,
     vault_manager: crate::vault_manager::Manager,
+    open_picker: rust_notes::native_picker::Picker,
     pub(crate) note_aids: rust_notes::note_aids::Config,
     template_source: Option<(u64, String)>,
     template_choices: Result<rust_notes::search::FileMatcher, String>,
@@ -109,6 +110,7 @@ pub struct NotesApp {
     recovery_manager: crate::recovery_ui::Manager,
     file_move: crate::file_move_ui::Manager,
     page_preview: crate::page_preview::Manager,
+    graph: crate::graph_ui::Manager,
     pub(crate) always_update_links: bool,
 }
 
@@ -173,6 +175,7 @@ impl NotesApp {
             ui_zoom: 1.0,
             autosave_enabled: true,
             vault_manager: Default::default(),
+            open_picker: Default::default(),
             note_aids: Default::default(),
             template_source: None,
             template_choices: Err(String::new()),
@@ -189,6 +192,7 @@ impl NotesApp {
             recovery_manager: Default::default(),
             file_move: Default::default(),
             page_preview: Default::default(),
+            graph: Default::default(),
             always_update_links: false,
         };
         app.load_vault(root);
@@ -210,7 +214,9 @@ impl NotesApp {
 
     fn focus_editor(&mut self) {
         self.editor.focus = self.tabs.get(self.active).is_some_and(|tab| {
-            tab.view != View::Read && !tab.document.is_blank() && !tab.document.is_image()
+            !matches!(tab.view, View::Read | View::Graph)
+                && !tab.document.is_blank()
+                && !tab.document.is_image()
         });
         self.ctx.request_repaint();
     }
@@ -305,9 +311,23 @@ impl NotesApp {
             .and_then(|loading| loading.try_recv().ok());
         if let Some(result) = result {
             self.loading = None;
+            let result = result.and_then(|vault| {
+                // Reject unreadable/invalid documents before replacing the old workspace.
+                if self.loading_root.is_some()
+                    && let Some(path) = &self.startup_document
+                {
+                    vault.open_document(path)?;
+                }
+                Ok(vault)
+            });
             match result {
                 Ok(vault) => {
                     let opening = self.loading_root.take().is_some();
+                    if opening {
+                        self.graph.reset();
+                    } else {
+                        self.graph.invalidate();
+                    }
                     if opening {
                         self.file_move = Default::default();
                         self.page_preview.close();
@@ -452,6 +472,7 @@ impl NotesApp {
                     self.recovery_changed_paths
                         .extend(self.recovery_index_paths.drain());
                     self.loading_root = None;
+                    self.startup_document = None;
                     if self.vault_manager.open {
                         self.vault_manager.show_error(error.clone());
                     }
@@ -462,6 +483,8 @@ impl NotesApp {
         let mut saves = Vec::new();
         for (index, tab) in self.tabs.iter().enumerate() {
             if self.autosave_enabled
+                && self.loading_root.is_none()
+                && !self.open_picker.active()
                 && tab.document.dirty()
                 && !tab.autosave_failed
                 && let Some(edited) = tab.edited_at
@@ -560,7 +583,10 @@ impl NotesApp {
                 .then(|| {
                     self.tabs
                         .get(self.active)
-                        .filter(|tab| rust_notes::vault::is_markdown(&tab.document.path))
+                        .filter(|tab| {
+                            tab.view != View::Graph
+                                && rust_notes::vault::is_markdown(&tab.document.path)
+                        })
                         .map(|tab| tab.document.path.clone())
                 })
                 .flatten();
@@ -629,6 +655,7 @@ impl NotesApp {
                 .get(self.active)
                 .is_some_and(|t| t.document.path == path)
         {
+            self.tabs[self.active].show_document();
             self.focus_editor();
             return;
         }
@@ -643,6 +670,7 @@ impl NotesApp {
         }
         if new_tab && let Some(index) = self.tabs.iter().position(|t| t.document.path == path) {
             self.active = index;
+            self.tabs[index].show_document();
             self.focus_editor();
             return;
         }
@@ -672,6 +700,11 @@ impl NotesApp {
     }
 
     fn navigate(&mut self, back: bool) {
+        if back && self.view() == View::Graph && !self.tabs[self.active].document.is_blank() {
+            self.tabs[self.active].show_document();
+            self.focus_editor();
+            return;
+        }
         if self
             .tabs
             .get(self.active)
@@ -695,6 +728,7 @@ impl NotesApp {
             match vault.open_document(&path) {
                 Ok(document) => {
                     tab.replace(document);
+                    tab.show_document();
                     tab.history = history;
                     self.cache = CommonMarkCache::default();
                     self.focus_editor();
@@ -785,6 +819,13 @@ impl NotesApp {
         if self
             .tabs
             .get(index)
+            .is_some_and(|tab| tab.view == View::Graph && !tab.document.dirty())
+        {
+            return true;
+        }
+        if self
+            .tabs
+            .get(index)
             .is_some_and(|tab| tab.document.is_image())
         {
             return true;
@@ -807,6 +848,7 @@ impl NotesApp {
                     self.tree = Tree::from_vault(vault);
                     self.files = rust_notes::search::FileMatcher::from_vault(vault);
                     self.search_cache.invalidate();
+                    self.graph.invalidate();
                     return true;
                 }
                 Err(error) => {
@@ -860,6 +902,9 @@ impl NotesApp {
                         .map(rust_notes::search::FileMatcher::new)
                 })
                 .unwrap_or_else(|| Err("Open a vault first.".into()));
+        }
+        if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty) && self.view() == View::Graph {
+            return;
         }
         if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty)
             && self
@@ -984,6 +1029,9 @@ impl NotesApp {
         let document = existing
             .map(|tab| Ok(tab.document.clone()))
             .unwrap_or_else(|| {
+                if closed.path().as_os_str().is_empty() {
+                    return Ok(Document::blank());
+                }
                 self.vault
                     .as_ref()
                     .ok_or_else(|| "Open a vault before reopening a tab.".to_owned())
@@ -998,7 +1046,10 @@ impl NotesApp {
                     crate::editor_ui::clear_document_history(&self.ctx, &vault.root, closed.path());
                 }
                 let tab = closed.restore(document);
-                if self.tabs.len() == 1 && self.tabs[0].document.is_blank() {
+                if self.tabs.len() == 1
+                    && self.tabs[0].document.is_blank()
+                    && self.tabs[0].view != View::Graph
+                {
                     self.tabs.clear();
                 }
                 self.tabs.push(tab);
@@ -1030,13 +1081,19 @@ impl NotesApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
-            Pending::OpenVault(root) => self.load_vault(&root),
+            Pending::OpenVault(root, document) => {
+                self.startup_document = document;
+                self.load_vault(&root);
+            }
             Pending::LoadWorkspace(name) => self.load_workspace(&name),
             Pending::RestoreSnapshot(request) => self.restore_snapshot(*request),
         }
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| input.viewport().close_requested()) {
+            self.open_picker.cancel();
+        }
         if ctx.input(|i| i.viewport().close_requested()) && !self.dirty() {
             self.persist_session();
         }
@@ -1048,6 +1105,7 @@ impl NotesApp {
             return;
         }
         if self.loading_root.is_some()
+            || self.open_picker.active()
             || self.vault_manager.open
             || self.workspace_manager.open
             || self.recovery_manager.active()
@@ -1063,6 +1121,7 @@ impl NotesApp {
                 self.ask(Dialog::AddProperty);
             }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::F2))
+                && self.view() != View::Graph
                 && let Some(path) = self
                     .tabs
                     .get(self.active)
@@ -1089,7 +1148,7 @@ impl NotesApp {
                 && self
                     .tabs
                     .get(self.active)
-                    .is_some_and(|tab| !tab.document.is_image())
+                    .is_some_and(|tab| !tab.document.is_image() && tab.view != View::Graph)
             {
                 self.find.open = true;
                 self.find.focus = true;
@@ -1115,6 +1174,22 @@ impl NotesApp {
             self.undo_close_tab();
         } else if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::T)) {
             self.new_tab();
+        }
+        if self.dialog.is_none()
+            && ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::O)
+            })
+        {
+            self.start_open_picker(rust_notes::native_picker::Kind::File);
+            return;
+        }
+        if self.dialog.is_none()
+            && ctx.input_mut(|i| {
+                i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::ALT, Key::O)
+            })
+        {
+            self.start_open_picker(rust_notes::native_picker::Kind::Folder);
+            return;
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::O)) {
             self.ask(Dialog::QuickOpen);
@@ -1152,6 +1227,13 @@ impl NotesApp {
                 if icon_button(ui, Icon::NewNote, "New note · Ctrl+N").clicked() {
                     self.ask(Dialog::NewNote);
                 }
+                let graph = ui.add_enabled_ui(self.vault.is_some(), |ui| {
+                    icon_button(ui, Icon::Graph, "Open graph view")
+                        .on_disabled_hover_text("Open a vault first.")
+                });
+                if graph.inner.clicked() {
+                    self.open_global_graph();
+                }
                 if icon_button(ui, Icon::DailyNote, "Open today's daily note").clicked() {
                     self.open_daily();
                 }
@@ -1184,14 +1266,80 @@ impl NotesApp {
     }
 
     fn request_vault(&mut self, root: PathBuf) {
+        self.request_open_input(root, None);
+    }
+
+    fn request_open_input(&mut self, root: PathBuf, document: Option<PathBuf>) {
         if self.vault.as_ref().is_some_and(|vault| vault.root == root) {
             self.vault_manager.close();
-            self.focus_editor();
+            if let Some(path) = document {
+                // Keep the current editor, Undo and pin intact, including unsaved buffers.
+                self.open_note_at(&path, true);
+            } else {
+                self.focus_editor();
+            }
         } else if self.dirty() {
             self.vault_manager.close();
-            self.pending = Some(Pending::OpenVault(root));
+            self.pending = Some(Pending::OpenVault(root, document));
         } else {
+            self.startup_document = document;
             self.load_vault(&root);
+        }
+    }
+
+    fn start_open_picker(&mut self, kind: rust_notes::native_picker::Kind) {
+        let title = match kind {
+            rust_notes::native_picker::Kind::File => "Open file",
+            rust_notes::native_picker::Kind::Folder => "Open folder",
+        };
+        match self.open_picker.start(
+            kind,
+            self.vault.as_ref().map(|vault| vault.root.as_path()),
+            title,
+        ) {
+            Ok(()) => {
+                self.dialog = None;
+                self.page_preview.close();
+                self.editor.focus = false;
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn open_system_selection(&mut self, kind: rust_notes::native_picker::Kind, path: PathBuf) {
+        use rust_notes::{native_picker::Kind, vaults};
+        let target = match kind {
+            Kind::Folder => vaults::folder(&path).map(|root| (root, None)),
+            Kind::File => (|| {
+                let absolute = path
+                    .canonicalize()
+                    .map_err(|error| format!("Cannot open {}: {error}", path.display()))?;
+                let current = self.vault.as_ref().map(|vault| vault.root.as_path());
+                let target = if let Some(current) =
+                    current.filter(|root| absolute.starts_with(root))
+                {
+                    // Within the active vault, keep its links and workspace context.
+                    vaults::resolve_input(&absolute, Some(current), &[])?
+                } else {
+                    let registered = vaults::Vaults::open().ok();
+                    let default = std::env::var_os("RUST_NOTES_DEFAULT_VAULT").map(PathBuf::from);
+                    let roots = registered.as_ref().map_or(&[][..], |list| list.roots());
+                    vaults::resolve_input(&absolute, default.as_deref(), roots)?
+                };
+                if target.1.is_none() {
+                    return Err(
+                        "Choose an existing Markdown (.md) or plain-text (.txt) file.".into(),
+                    );
+                }
+                Ok(target)
+            })(),
+        };
+        match target {
+            Ok((root, document)) => self.request_open_input(root, document),
+            Err(error) => {
+                self.error = Some(error);
+                self.focus_editor();
+            }
         }
     }
 
@@ -1720,7 +1868,7 @@ impl NotesApp {
     }
 
     fn details(&mut self, ui: &mut egui::Ui) {
-        if !self.show_right || ui.available_width() < 700.0 {
+        if !self.show_right || ui.available_width() < 700.0 || self.view() == View::Graph {
             return;
         }
         let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document) else {
@@ -1869,6 +2017,76 @@ impl NotesApp {
         }
     }
 
+    fn open_global_graph(&mut self) {
+        if self.vault.is_none() || self.view() == View::Graph {
+            return;
+        }
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| tab.document.dirty())
+            && !self.save(self.active)
+        {
+            return;
+        }
+        if self.tabs.is_empty() || self.tabs[self.active].pinned {
+            self.new_tab();
+        }
+        self.tabs[self.active].set_view(View::Graph);
+        self.find = Default::default();
+        self.page_preview.close();
+        self.focus_editor();
+    }
+
+    fn local_graph_available(&self) -> bool {
+        self.tabs.get(self.active).is_some_and(|tab| {
+            tab.view != View::Graph
+                && !tab.document.is_blank()
+                && !tab.document.is_image()
+                && !tab.document.is_plain_text()
+        })
+    }
+
+    fn interaction_blocked(&self) -> bool {
+        self.dialog.is_some()
+            || self.open_picker.active()
+            || self.pending.is_some()
+            || self.loading_root.is_some()
+            || self.vault_manager.open
+            || self.workspace_manager.open
+            || self.recovery_manager.active()
+            || self.file_move.active()
+    }
+
+    fn graph_view(&mut self, ui: &mut egui::Ui, local: bool) {
+        let blocked = self.interaction_blocked();
+        let root = local.then(|| self.tabs[self.active].document.path.clone());
+        let action = self
+            .vault
+            .as_ref()
+            .and_then(|vault| self.graph.show(ui, vault, root, local, blocked));
+        match action {
+            Some(crate::graph_ui::Action::CloseLocal) => self.graph.local_open = false,
+            Some(crate::graph_ui::Action::Open { path, kind }) => match kind {
+                rust_notes::graph::Kind::Note | rust_notes::graph::Kind::Attachment => {
+                    self.open_note(&path)
+                }
+                rust_notes::graph::Kind::Unresolved => {
+                    self.follow_link_from(Path::new(""), &path.to_string_lossy())
+                }
+                rust_notes::graph::Kind::Tag => {
+                    self.search = format!("tag:{}", path.display());
+                    self.searching = true;
+                    self.show_left = true;
+                    self.show_bookmarks = false;
+                    self.search_focus = true;
+                    self.editor.focus = false;
+                }
+            },
+            None => {}
+        }
+    }
+
     fn content(&mut self, ui: &mut egui::Ui) {
         let background = if self.dark {
             theme::DARK_BG
@@ -1879,6 +2097,9 @@ impl NotesApp {
             .frame(egui::Frame::NONE.fill(background))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
+                if self.open_picker.active() {
+                    ui.disable();
+                }
                 if self.loading_root.is_some() {
                     ui.centered_and_justified(|ui| {
                         ui.label("Opening vault…");
@@ -1886,6 +2107,12 @@ impl NotesApp {
                     return;
                 }
                 self.tab_strip(ui);
+                if self.view() == View::Graph {
+                    egui::Frame::NONE
+                        .inner_margin(12)
+                        .show(ui, |ui| self.graph_view(ui, false));
+                    return;
+                }
                 if self
                     .tabs
                     .get(self.active)
@@ -1913,6 +2140,19 @@ impl NotesApp {
                         }
                     });
                     return;
+                }
+                if self.graph.local_open && self.local_graph_available() {
+                    let maximum = (ui.available_width() - 180.0).max(160.0);
+                    egui::Panel::right("local-graph-pane")
+                        .default_size(440.0)
+                        .size_range(160.0..=maximum)
+                        .resizable(true)
+                        .show(ui, |ui| {
+                            crate::ui_probe::record(ui.ctx(), "local-graph-pane", ui.max_rect());
+                            egui::Frame::NONE
+                                .inner_margin(10)
+                                .show(ui, |ui| self.graph_view(ui, true));
+                        });
                 }
                 egui::Frame::NONE
                     .inner_margin(Margin::symmetric(12, 0))
@@ -2057,6 +2297,19 @@ impl NotesApp {
                                             ui.close();
                                         }
                                     }
+                                    ui.separator();
+                                    if ui.button(rust_notes::commands::OPEN_GRAPH).clicked() {
+                                        self.open_global_graph();
+                                        ui.close();
+                                    }
+                                    if self.local_graph_available()
+                                        && ui
+                                            .button(rust_notes::commands::OPEN_LOCAL_GRAPH)
+                                            .clicked()
+                                    {
+                                        self.graph.local_open = true;
+                                        ui.close();
+                                    }
                                 });
                             },
                         );
@@ -2067,6 +2320,9 @@ impl NotesApp {
 
     fn document_view(&mut self, ui: &mut egui::Ui) {
         let view = self.view();
+        if view == View::Graph {
+            return;
+        }
         let Some(tab) = self.tabs.get_mut(self.active) else {
             return;
         };
@@ -2286,7 +2542,7 @@ impl NotesApp {
                                             }
                                             let label = format!(
                                                 "{}{}",
-                                                tab.document.title(),
+                                                tab.title(),
                                                 if tab.document.dirty() { " •" } else { "" }
                                             );
                                             let galley = egui::WidgetText::from(
@@ -2368,7 +2624,8 @@ impl NotesApp {
                                                 }
                                             } else if response.clicked() {
                                                 self.active = index;
-                                                self.editor.focus = tab.view != View::Read;
+                                                self.editor.focus =
+                                                    !matches!(tab.view, View::Read | View::Graph);
                                             }
                                             response.context_menu(|ui| {
                                                 theme::menu_style(ui);
@@ -2430,6 +2687,44 @@ impl NotesApp {
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.open_picker.active() {
+            let kind = self.open_picker.kind();
+            if let Some(result) = self.open_picker.poll() {
+                match result {
+                    Ok(Some(path)) => self.open_system_selection(kind, path),
+                    Ok(None) => self.focus_editor(),
+                    Err(error) => {
+                        self.error = Some(error);
+                        self.focus_editor();
+                    }
+                }
+                ctx.request_repaint();
+            } else {
+                let mut cancel = false;
+                let response =
+                    egui::Modal::new(egui::Id::unique("system-open-picker")).show(ctx, |ui| {
+                        theme::dialog_style(ui);
+                        ui.set_width(400.0);
+                        ui.heading(match kind {
+                            rust_notes::native_picker::Kind::File => "Open file",
+                            rust_notes::native_picker::Kind::Folder => "Open folder",
+                        });
+                        ui.label("Choose an existing item in the file browser.");
+                        ui.add_space(16.0);
+                        let button = ui.button("Cancel");
+                        crate::ui_probe::record(ctx, "system-open-cancel", button.rect);
+                        crate::ui_probe::record(ctx, "system-open-picker", ui.max_rect());
+                        cancel = button.clicked();
+                    });
+                if cancel || response.should_close() {
+                    self.open_picker.cancel();
+                    self.focus_editor();
+                } else {
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                }
+            }
+            return;
+        }
         if let Some(pending) = self.pending.clone() {
             let response = egui::Modal::new(egui::Id::unique("unsaved-changes")).show(ctx, |ui| {
                 theme::dialog_style(ui);
@@ -2800,7 +3095,9 @@ impl NotesApp {
                     let tab = self.tabs.get(self.active);
                     let scope = if tab.is_none() {
                         Scope::Global
-                    } else if tab.is_some_and(|tab| tab.document.is_blank()) {
+                    } else if tab
+                        .is_some_and(|tab| tab.document.is_blank() || tab.view == View::Graph)
+                    {
                         Scope::Tab
                     } else if tab.is_some_and(|tab| tab.document.is_image()) {
                         Scope::File
@@ -2810,6 +3107,21 @@ impl NotesApp {
                         Scope::Document
                     };
                     let mut matches = rust_notes::commands::ranked(&self.dialog_input, scope);
+                    if !self.local_graph_available() {
+                        matches.retain(|command| {
+                            command.name != rust_notes::commands::OPEN_LOCAL_GRAPH
+                        });
+                    }
+                    if self.view() == View::Graph {
+                        matches.retain(|command| {
+                            !matches!(
+                                command.name,
+                                "Rename or move file"
+                                    | "Move file to system Trash"
+                                    | "Bookmark current file"
+                            )
+                        });
+                    }
                     if tab.is_none_or(|tab| {
                         rust_notes::tab::other_tab_indices(&self.tabs, tab.id()).is_empty()
                     }) {
@@ -3238,18 +3550,13 @@ impl NotesApp {
             self.files = rust_notes::search::FileMatcher::from_vault(vault);
         }
         self.search_cache.invalidate();
+        self.graph.invalidate();
         self.cache = CommonMarkCache::default();
         self.ctx.request_repaint();
     }
 
     fn show_page_preview(&mut self, ctx: &egui::Context) {
-        let blocked = self.dialog.is_some()
-            || self.pending.is_some()
-            || self.loading_root.is_some()
-            || self.vault_manager.open
-            || self.workspace_manager.open
-            || self.recovery_manager.active()
-            || self.file_move.active();
+        let blocked = self.interaction_blocked() || self.view() == View::Graph;
         match self
             .page_preview
             .show(ctx, self.vault.as_ref(), &self.tabs, self.active, blocked)
@@ -3600,7 +3907,9 @@ impl NotesApp {
             .find(|color| command == color.command())
         {
             if let Some(tab) = self.tabs.get(self.active).filter(|tab| {
-                !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Read
+                !tab.document.is_blank()
+                    && !tab.document.is_image()
+                    && !matches!(tab.view, View::Read | View::Graph)
             }) {
                 self.editor.native_highlight(tab, color);
                 ctx.request_repaint();
@@ -3616,11 +3925,9 @@ impl NotesApp {
                 (command == "Highlight selection").then_some(rust_notes::highlight::Color::Yellow)
             });
         if let Some(color) = highlight {
-            if let Some(tab) = self
-                .tabs
-                .get(self.active)
-                .filter(|tab| !tab.document.is_image() && tab.view != View::Read)
-            {
+            if let Some(tab) = self.tabs.get(self.active).filter(|tab| {
+                !tab.document.is_image() && !matches!(tab.view, View::Read | View::Graph)
+            }) {
                 self.editor.highlight(tab, color);
                 ctx.request_repaint();
             } else {
@@ -3629,6 +3936,17 @@ impl NotesApp {
             return;
         }
         match command {
+            rust_notes::commands::OPEN_GRAPH => self.open_global_graph(),
+            rust_notes::commands::OPEN_LOCAL_GRAPH if self.local_graph_available() => {
+                self.graph.local_open = true;
+                self.ctx.request_repaint();
+            }
+            rust_notes::commands::MOVE_FILE
+            | rust_notes::commands::DUPLICATE_FILE
+            | "Rename or move file"
+            | "Move file to system Trash"
+            | "Bookmark current file"
+                if self.view() == View::Graph => {}
             rust_notes::commands::MOVE_FILE => {
                 if let Some(path) = self
                     .tabs
@@ -3735,6 +4053,12 @@ impl NotesApp {
                     self.ask_file(Dialog::TrashNote, path);
                 }
             }
+            rust_notes::commands::OPEN_FILE => {
+                self.start_open_picker(rust_notes::native_picker::Kind::File)
+            }
+            rust_notes::commands::OPEN_FOLDER => {
+                self.start_open_picker(rust_notes::native_picker::Kind::Folder)
+            }
             "Open a file" => self.ask(Dialog::QuickOpen),
             "Open vault" => self.change_vault(),
             "Open another vault" => self.manage_vaults(),
@@ -3811,7 +4135,9 @@ impl NotesApp {
 
     fn can_edit_active(&self) -> bool {
         self.tabs.get(self.active).is_some_and(|tab| {
-            !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Read
+            !tab.document.is_blank()
+                && !tab.document.is_image()
+                && !matches!(tab.view, View::Read | View::Graph)
         })
     }
 
@@ -3929,7 +4255,7 @@ impl eframe::App for NotesApp {
             "{} — {} — {}",
             self.tabs
                 .get(self.active)
-                .map(|tab| tab.document.title())
+                .map(Tab::title)
                 .unwrap_or("New tab".into()),
             self.vault.as_ref().map(Vault::name).unwrap_or_default(),
             rust_notes::APP_NAME
@@ -3938,7 +4264,17 @@ impl eframe::App for NotesApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
         }
-        crate::window::title_bar(ui, &self.window_title);
+        let file_actions_enabled = self.dialog.is_none()
+            && self.pending.is_none()
+            && self.loading_root.is_none()
+            && !self.open_picker.active()
+            && !self.vault_manager.open
+            && !self.workspace_manager.open
+            && !self.recovery_manager.active()
+            && !self.file_move.active();
+        if let Some(kind) = crate::window::title_bar(ui, &self.window_title, file_actions_enabled) {
+            self.start_open_picker(kind);
+        }
         egui::Panel::bottom("status")
             .exact_size(28.0)
             .resizable(false)
@@ -3951,7 +4287,7 @@ impl eframe::App for NotesApp {
                         if self
                             .tabs
                             .get(self.active)
-                            .is_some_and(|tab| tab.document.is_image())
+                            .is_some_and(|tab| tab.document.is_image() && tab.view != View::Graph)
                         {
                             ui.label(RichText::new("Image").size(11.0).weak());
                             return;
@@ -3961,6 +4297,7 @@ impl eframe::App for NotesApp {
                             View::Live => "Live preview",
                             View::Source => "Source mode",
                             View::Split => "Split view",
+                            View::Graph => "Graph",
                         };
                         let response =
                             ui.label(RichText::new(mode).size(11.0).color(theme::accent(ui)));
@@ -3972,6 +4309,7 @@ impl eframe::App for NotesApp {
                             );
                         }
                         if let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document)
+                            && self.view() != View::Graph
                         {
                             ui.label(
                                 RichText::new(format!(
@@ -4032,6 +4370,7 @@ impl eframe::App for NotesApp {
         // Apply this frame's text events before saving. Ctrl+S can arrive in
         // the same frame as the final characters of a fast typing burst.
         if self.pending.is_none()
+            && !self.open_picker.active()
             && self.loading_root.is_none()
             && !self.vault_manager.open
             && !self.workspace_manager.open

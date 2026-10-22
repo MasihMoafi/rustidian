@@ -2,7 +2,7 @@ use crate::{app::NotesApp, theme};
 use eframe::egui;
 use rust_notes::{
     tab::{Tab, View},
-    vault::Document,
+    vault::{Document, Vault},
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -55,6 +55,32 @@ fn location(root: &Path) -> Option<PathBuf> {
     rust_notes::paths::state_file(root, "", "json")
 }
 
+impl Session {
+    fn restore_tabs(&self, vault: &Vault) -> (Vec<Tab>, usize) {
+        let mut tabs = Vec::new();
+        let mut active = 0;
+        for (index, (path, view)) in self.tabs.iter().enumerate() {
+            let document = if path.as_os_str().is_empty() {
+                Document::blank()
+            } else {
+                let Ok(document) = vault.open_document(path) else {
+                    continue;
+                };
+                document
+            };
+            if index == self.active {
+                active = tabs.len();
+            }
+            let mut tab = Tab::new(document);
+            tab.pinned = self.pinned.get(index).copied().unwrap_or(false);
+            tab.set_view(self.editing_modes.get(index).copied().unwrap_or(View::Live));
+            tab.set_view(*view);
+            tabs.push(tab);
+        }
+        (tabs, active)
+    }
+}
+
 // The persisted state contains paths and layout, never unsaved note contents.
 impl NotesApp {
     pub(crate) fn restore_session(&mut self, ctx: &egui::Context) -> bool {
@@ -70,36 +96,7 @@ impl NotesApp {
         let Ok(session) = serde_json::from_slice::<Session>(&bytes) else {
             return false;
         };
-        let selected = session
-            .tabs
-            .get(session.active)
-            .map(|(path, _)| path.clone());
-        self.tabs = session
-            .tabs
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, (path, view))| {
-                let document = if path.as_os_str().is_empty() {
-                    Document::blank()
-                } else {
-                    vault.open_document(&path).ok()?
-                };
-                let mut tab = Tab::new(document);
-                tab.pinned = session.pinned.get(index).copied().unwrap_or(false);
-                tab.set_view(
-                    session
-                        .editing_modes
-                        .get(index)
-                        .copied()
-                        .unwrap_or(View::Live),
-                );
-                tab.set_view(view);
-                Some(tab)
-            })
-            .collect();
-        self.active = selected
-            .and_then(|path| self.tabs.iter().position(|t| t.document.path == path))
-            .unwrap_or(0);
+        (self.tabs, self.active) = session.restore_tabs(vault);
         self.show_left = session.left;
         self.show_right = session.right;
         self.sidebar_widths = if session.sidebar_widths.iter().all(|width| width.is_finite()) {
@@ -196,6 +193,37 @@ impl NotesApp {
 #[cfg(test)]
 mod tests {
     use super::Session;
+
+    #[test]
+    fn restoration_keeps_the_selected_duplicate_path_view_after_skipping_missing_files() {
+        use rust_notes::{tab::View, vault::Vault};
+        let root = tempfile::tempdir().unwrap();
+        let bytes = b"# Home\r\n";
+        std::fs::write(root.path().join("Home.md"), bytes).unwrap();
+        let vault = Vault::open(root.path()).unwrap();
+        let mut state: Session = serde_json::from_str(
+            r#"{"tabs":[["Missing.md","Read"],["Home.md","Graph"],["Home.md","Source"],["","Graph"]],"active":2,"left":true,"right":false,"dark":true,"editing_modes":["Live","Source","Live","Source"],"pinned":[false,true,false,false]}"#,
+        ).unwrap();
+        for (selected, expected, view) in [
+            (2, 1, View::Source),
+            (1, 0, View::Graph),
+            (3, 2, View::Graph),
+            (0, 0, View::Graph),
+            (99, 0, View::Graph),
+        ] {
+            state.active = selected;
+            let (tabs, active) = state.restore_tabs(&vault);
+            assert_eq!(active, expected, "saved active {selected}");
+            assert_eq!(tabs.len(), 3);
+            assert_eq!(tabs[active].view, view);
+            assert!(tabs[0].pinned);
+            assert!(!tabs[1].pinned);
+            assert_eq!(tabs[0].editing_view(), View::Source);
+            assert_eq!(tabs[1].document.text.as_bytes(), bytes);
+            assert!(tabs[2].document.is_blank());
+        }
+        assert_eq!(std::fs::read(root.path().join("Home.md")).unwrap(), bytes);
+    }
 
     #[test]
     fn old_workspace_state_restores_without_bookmarks() {
