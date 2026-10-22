@@ -11,6 +11,10 @@ Masih's latest instruction expands the destination to every Obsidian feature, ma
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
+## Saved-file fixture correction — 2026-10-22T02:15:59+00:00
+
+Corrected source392387437e261190f98170832dea88ebcad8a56c/run39709904781 passed Clippy, new Move backend cases and highlight behavior, then stopped at the new Tab identity test. It constructed Document::new (correctly unsaved) and tried to navigate away; Tab.open correctly refused. Exact log reports/3923874-failed.log is retained. Replace the fixture with real temporary files, the actual guarded Move operation, clean reload and navigation. Do not weaken the unsaved guard. Cargo test now uses --no-fail-fast so every target runs and later failures are collected without removing any gate. Runtime source is unchanged from392; no optimized app exists for this candidate yet. Next one normal Actions build must complete all gates. Installed9feb/ecad remains unchanged.
+
 ## Combined candidate compile correction — 2026-10-22T02:10:18+00:00
 
 First normal build1a557ed615f84624ec2d55470a3f5a9e9ea33762/run39709531370 stopped at Clippy: egui0.37 uses Context.global_style and TextEdit.frame(Frame), while the new picker used older APIs; the new folder test also triggered cmp_owned. Exact failed log is reports/1a557ed-failed.log. No runtime or behavior gates executed and no artifact is approved. Correct only those calls and borrowed Path comparison; retain all tests and42/17/7 workflow registries, then upload one corrected normal candidate. Installed9feb/ecad and both user-owned previews stay untouched.

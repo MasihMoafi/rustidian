@@ -752,3 +752,9 @@ two task toggles then the prior typing as three undo steps. It refreshes externa
 changes while open. A new tab can inherit Source mode: select Reading explicitly
 before testing unmodified hover. The failed observer and corrected shared-buffer
 audit are retained; no native preview is approved by those reference observations.
+
+Use real saved documents for navigation/move fixtures. Document::new correctly
+represents unsaved content; expecting Tab.open to navigate away from it weakens
+the safety contract. The identity fixture now moves actual temporary files, reloads
+the saved result, then navigates. Run Cargo tests with --no-fail-fast to collect
+all target failures in one Actions build, preserving every retained test.

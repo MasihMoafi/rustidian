@@ -6,15 +6,27 @@ use std::fs;
 
 #[test]
 fn file_moves_keep_editing_identity_but_navigation_changes_it() {
-    use rust_notes::vault::Document;
     use std::path::Path;
-    let mut tab = Tab::new(Document::new("Source.md".into()));
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("Folder")).unwrap();
+    fs::write(root.path().join("Source.md"), "# Source\n").unwrap();
+    fs::write(root.path().join("Another.md"), "# Another\n").unwrap();
+    let mut vault = Vault::open(root.path()).unwrap();
+    let mut tab = Tab::new(vault.read(Path::new("Source.md")).unwrap());
     let id = tab.id();
-    tab.document.path = "Folder/Source.md".into();
-    tab.replace(Document::new("Folder/Source.md".into()));
+    let updates = vault
+        .begin_move_file(Path::new("Source.md"), Path::new("Folder"), false)
+        .unwrap()
+        .unwrap();
+    let moved = vault.finish_link_updates(updates);
+    assert!(moved.warnings.is_empty());
+    tab.document.path = moved.path.clone();
+    tab.replace(vault.read(&moved.path).unwrap());
     assert_eq!(tab.id(), id);
     assert_eq!(tab.editor_path(), Path::new("Source.md"));
-    tab.open(Document::new("Another.md".into())).unwrap();
+    assert!(!tab.document.dirty());
+    tab.open(vault.read(Path::new("Another.md")).unwrap())
+        .unwrap();
     assert_eq!(tab.id(), id);
     assert_eq!(tab.editor_path(), Path::new("Another.md"));
 }

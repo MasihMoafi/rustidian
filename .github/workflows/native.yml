@@ -70,7 +70,7 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
       - name: Rust behavior checks
         if: ${{ inputs.reuse_run_id == '' }}
-        run: cargo test --locked --all-targets 2>&1 | tee reports/rust-tests.log
+        run: cargo test --locked --all-targets --no-fail-fast 2>&1 | tee reports/rust-tests.log
       - name: Preserve an existing debug app for early disposable checks
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
