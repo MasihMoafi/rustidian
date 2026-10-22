@@ -115,7 +115,7 @@ jobs:
             reports/early-tab-actions-gui.log
             reports/early-file-copy-gui.log
             reports/native-vault*.png
-            reports/native-vault-picker-entry.json
+            reports/native-vault-*.json
             reports/native-recovery-*.png
             reports/native-unique-*.png
             reports/native-random-*.png

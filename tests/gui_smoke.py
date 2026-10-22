@@ -79,6 +79,9 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUST_NOTES_UI_PROBE=str(base / "ui-probe.json"))
+        # Keep native GTK pickers on this test display instead of the user's portal.
+        environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
+            DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rust-notes-gui-no-bus-{os.getpid()}")
         display_ready = False
         for _ in range(30):
             geometry = subprocess.run(
@@ -385,6 +388,17 @@ def main():
                     assert control_bounds("dialog-input")
                     assert not any(name.startswith("command:") for name in json.loads((base/"ui-probe.json").read_text()))
                 trace("result")
+
+            theme_observations=[]
+            def set_theme(dark):
+                def sample():
+                    return ImageGrab.grab(xdisplay=display).getpixel((5,100))[:3]
+                before=sample()
+                if (max(before)<128)!=dark:command("Switch appearance")
+                after=sample()
+                theme_observations.append({"requested_dark":dark,"before_rgb":before,"after_rgb":after})
+                (reports/"gui-theme-observations.json").write_text(json.dumps(theme_observations,indent=2)+"\n")
+                assert (max(after)<128)==dark,(dark,before,after)
 
             def close_tabs():
                 for _ in range(32):
@@ -2594,9 +2608,21 @@ def main():
                 key("ctrl+n")
                 type_text("Home")
                 key("Return")
-                type_text("# Created vault\n\nVAULT_CREATED_ORIGINAL\n")
+                title_contains("Home")
+                assert control_bounds("editor-focused")
+                created_home=created/"Home.md"
+                initial_home=created_home.read_bytes()
+                typed_home=b"# Created vault\n\nVAULT_CREATED_ORIGINAL\n"
+                type_text(typed_home.decode())
                 key("ctrl+s")
-                created_source = (created / "Home.md").read_bytes()
+                created_source=initial_home+typed_home
+                samples=[];deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    actual=created_home.read_bytes();samples.append(actual.decode())
+                    if actual==created_source:break
+                    time.sleep(.05)
+                (reports/"native-vault-created-write.json").write_text(json.dumps({"initial":initial_home.decode(),"expected":created_source.decode(),"observed":samples},indent=2)+"\n")
+                assert actual==created_source,(actual,created_source)
                 manager()
                 recent(fixture)
                 title_contains("Home")
@@ -2608,7 +2634,7 @@ def main():
                 click_control("vault-confirm")
                 assert control_bounds("vault-error")
                 capture("native-vault-collision.png")
-                assert (created / "Home.md").read_bytes() == created_source
+                assert (created / "Home.md").read_bytes() == created_source,((created/"Home.md").read_bytes(),created_source)
                 click_control("vault-manager-close")
                 results.append("Creating a named Unicode vault made only its empty folder, one-click switching restored the previous note, and a name collision retained every original byte")
 
@@ -3254,13 +3280,26 @@ def main():
                 open_note("Pinned second")
                 assert control_bounds("tab-full:Pinned first.md")
                 assert control_bounds("tab-full:Pinned second.md")
+                def pinned():
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline:
+                        try:
+                            controls=json.loads((base/"ui-probe.json").read_text())
+                            return {name.removeprefix("tab-full:"):("unpin-tab:"+name.removeprefix("tab-full:")) in controls for name in controls if name.startswith("tab-full:")}
+                        except (FileNotFoundError,json.JSONDecodeError):time.sleep(.02)
+                    raise AssertionError("The actual tab controls did not become readable")
+                expected_pins={"Pinned first.md":True,"Pinned second.md":False}
+                assert pinned()==expected_pins
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
                 sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Pinned first.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1
                 session_path=sessions[0]
-                def pinned():
+                def persisted_pins():
                     state=json.loads(session_path.read_text())
                     return {path:state["pinned"][index] for index,(path,_) in enumerate(state["tabs"])}
-                assert pinned()=={"Pinned first.md":True,"Pinned second.md":False}
+                assert persisted_pins()==expected_pins
+                app=launch_app(launch_command);window=ready_window()
+                assert pinned()==expected_pins
                 capture("native-pinned-tabs.png")
                 results.append("Pinning through the palette protected the first tab while quick switching opened the second and persisted its real pin state")
 
@@ -3276,7 +3315,11 @@ def main():
                 command("Go to next tab");title_contains("Pinned third")
                 command("New tab");title_contains("New tab")
                 command("Close current tab");title_contains("Pinned third")
-                app.terminate();app.wait(timeout=5);app=launch_app(launch_command);window=ready_window()
+                expected_pins=pinned()
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                assert persisted_pins()==expected_pins
+                app=launch_app(launch_command);window=ready_window()
+                assert pinned()==expected_pins
                 assert pinned()["Pinned first.md"]
                 control_bounds("unpin-tab:Pinned first.md")
                 results.append("Palette tab cycling/new/close reused the keyboard behavior, and a real restart restored the pinned document")
@@ -3292,8 +3335,7 @@ def main():
                 click_control("tab-full:Pinned first.md");open_note("Pinned fourth")
                 assert "Pinned first.md" not in pinned() and len(pinned())==3
                 for dark in (False,True):
-                    state=json.loads(session_path.read_text())
-                    if state["dark"]!=dark:command("Switch appearance")
+                    set_theme(dark)
                     command("Toggle pin")
                     click_control("tab-full:Pinned fourth.md",button="3")
                     capture("native-tab-menu-"+("dark" if dark else "light")+".png");key("Escape")
@@ -3352,7 +3394,7 @@ def main():
                 expected={"folder":"Creator output","format":"[Pair-]YYYYMMDDHHmm","template":"Creator templates/Unique template.md"}
                 assert json.loads(session_path.read_text())["note_aids"]["unique"]==expected
                 for dark in (True,False):
-                    if json.loads(session_path.read_text())["dark"]!=dark:command("Switch appearance")
+                    set_theme(dark)
                     command("Open settings");type_text("unique note")
                     capture("native-unique-settings-"+("dark" if dark else "light")+".png");key("Escape")
                 command("Switch appearance")

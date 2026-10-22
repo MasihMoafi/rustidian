@@ -574,3 +574,32 @@ before failing, retaining section-specific screenshots. Keep that aggregate
 failure as a hard prerequisite for optimized compilation. One broken workflow
 must not prevent discovery of unrelated failures in the already compiled app;
 this avoids rebuilding merely to reach the next new check.
+
+### Acknowledge saved bytes and the correct session checkpoint
+
+A created-note guard must establish the actual editor focus/title, type once,
+save once and observe the exact initial-plus-typed bytes before switching away.
+An immediate snapshot can still contain the new file's header before its queued
+edit is saved. Preserve the typed-byte acknowledgement and compare those same
+bytes after switching and a rejected vault-name collision; do not weaken the
+content check or retry input. The Cea failure and corrected focused run retain
+both sides of this case.
+
+Live pin state comes from the actual tab/pin controls. Persisted pin state must
+be checked after a real clean Ctrl+Q or vault switch, then checked again in the
+restarted UI. SIGTERM is not a clean quit, and this version does not write a
+session for every navigation. Keep saved flags/order and live glyph assertions;
+abrupt-exit layout durability is a separate incomplete requirement.
+
+Isolate GTK as well as the Rust app during native tests. The workstation's GTK4
+picker can use the shared desktop portal even with a private DISPLAY. Force
+GDK's X11 backend, disable portal use and give test children an unavailable,
+short task-specific session-bus address. A real picker window must appear on
+the private display before driving it. These overrides belong only to test
+children; preserve Masih's desktop session, services and normal app environment.
+
+Check the rendered theme as live UI state as well. The pin fixture initially
+labelled two identical light captures as dark/light because it read a stale saved
+preference. `set_theme` samples the unobscured ribbon before/after the actual
+palette toggle and keeps the observations; inspect both distinct screenshots.
+A filename or a serialized dark flag is not visual evidence.
