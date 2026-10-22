@@ -137,10 +137,10 @@ Keep the local-clock RFC3339 inputs alongside Moment outputs; parseZone timezone
 names differ from normal local template variables. Retain the fixed-offset
 failure evidence, not an unexplained special case in the Rust implementation.
 
-The current note-aids source is uncompiled. Its focused native check uses
-`--section note-aids`; the full collector retains all prior32 sections and adds
-this one. Require exact saved source, undo/redo, cancellation, missing-template
-errors, external-change rejection and per-vault settings. The fixture
+Use the focused native check `--section note-aids` when changing templates or
+daily notes, and retain it in the complete workflow registry. Require exact saved
+source, undo/redo, cancellation, missing-template errors, external-change
+rejection and per-vault settings. The fixture
 tests/fixtures/obsidian-date-formats.json contains51 observed English cases.
 Do not call full template/daily parity complete while PARITY.md still lists gaps.
 
@@ -175,6 +175,10 @@ Store only layout facts; loading a named workspace must not reset unrelated
 settings or silently discard dirty documents. PLAN.md owns the acceptance contract.
 
 ## Build and inspect the exact executable
+
+Keep diagnostic checks proportional to the remaining doubt. Preliminary debug runs cover the three current hover, system-open and graph regressions; the25 focused optimized invocations and49 full workflows retain the complete feature checks. Fourteen repeated preliminary invocations added16m44s in one observed run without a separate production contract. Do not rebuild or replay a passed matrix for guide-only changes. Exact current counts and execution evidence belong in ES.md and the release receipt.
+
+An input helper should verify that its intended click point still lies inside the live target before pressing. Native menus can settle their width after first appearing while the same pointer remains valid. Exact rectangle equality stopped the recorded Open file flow before mousedown. Preserve both the recorded valid-target rejection and an actual off-target negative; keep the real picker, invalid-file, unsaved-text and saved-byte assertions. This calibration must not slow or change the graph's original fast-click regression.
 
 From a clean authorized machine:
 

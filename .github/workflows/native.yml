@@ -103,20 +103,6 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section hover 2>&1 | tee reports/early-hover-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section system-open 2>&1 | tee reports/early-system-open-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section graph 2>&1 | tee reports/early-graph-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section emoji 2>&1 | tee reports/early-emoji-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section callouts 2>&1 | tee reports/early-callouts-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section vaults 2>&1 | tee reports/early-vaults-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section recovery 2>&1 | tee reports/early-recovery-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section note-creators 2>&1 | tee reports/early-note-creators-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-actions 2>&1 | tee reports/early-tab-actions-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section tab-restore 2>&1 | tee reports/early-tab-restore-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-copy 2>&1 | tee reports/early-file-copy-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section file-move 2>&1 | tee reports/early-file-move-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section native-highlights 2>&1 | tee reports/early-native-highlights-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section page-preview 2>&1 | tee reports/early-page-preview-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section quick-ranking 2>&1 | tee reports/early-quick-ranking-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section inline-styles 2>&1 | tee reports/early-inline-styles-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section colors 2>&1 | tee reports/early-colors-gui.log
           exit "$early_status"
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
@@ -127,46 +113,14 @@ jobs:
           if-no-files-found: ignore
           path: |
             reports/early-hover-gui.log
+            reports/early-system-open-gui.log
+            reports/early-graph-gui.log
             reports/native-selected-*.png
             reports/native-hover-*.png
             reports/hover-samples.json
             reports/hover-latency.json
-            reports/early-system-open-gui.log
-            reports/early-graph-gui.log
-            reports/early-emoji-gui.log
-            reports/early-callouts-gui.log
             reports/native-system-open-*
             reports/native-graph-*
-            reports/native-emoji-*
-            reports/native-callout-*
-            reports/early-recovery-gui.log
-            reports/early-vaults-gui.log
-            reports/early-note-creators-gui.log
-            reports/early-tab-actions-gui.log
-            reports/early-tab-restore-gui.log
-            reports/native-tab-restore-*.png
-            reports/early-file-copy-gui.log
-            reports/early-file-move-gui.log
-            reports/early-page-preview-gui.log
-            reports/early-quick-ranking-gui.log
-            reports/early-inline-styles-gui.log
-            reports/early-colors-gui.log
-            reports/native-inline-*.png
-            reports/native-color-*.png
-            reports/native-page-preview-*.png
-            reports/native-quick-ranking-*.png
-            reports/early-native-highlights-gui.log
-            reports/native-vault*.png
-            reports/native-vault-*.json
-            reports/native-recovery-*.png
-            reports/native-unique-*.png
-            reports/native-random-*.png
-            reports/native-pinned-tabs.png
-            reports/native-tab-menu-*.png
-            reports/native-file-copy*.png
-            reports/native-file-move*.png
-            reports/native-core-highlight-*.png
-            reports/native-highlight-*.png
             reports/gui-*.json
             reports/gui-*-failure*
             reports/gui-failure.png

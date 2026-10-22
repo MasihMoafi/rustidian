@@ -232,11 +232,13 @@ def main():
 
         def click_control(name, button="1", *, hold=0):
             left, top, right, bottom = control_bounds(name)
-            pointer = ("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)))
+            x, y = round((left + right) / 2), round((top + bottom) / 2)
+            pointer = ("mousemove", "--sync", str(x), str(y))
             if hold:
                 xdo(*pointer)
                 time.sleep(.1)
-                assert control_bounds(name) == [left, top, right, bottom]
+                current = control_bounds(name)
+                assert current[0] <= x <= current[2] and current[1] <= y <= current[3], f"{name} moved away from the pointer before clicking: {current}"
                 xdo("mousedown", button)
                 try:
                     time.sleep(hold)
