@@ -1,5 +1,8 @@
 use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle, Visuals};
 
+#[path = "emoji_glyphs.rs"]
+mod emoji_glyphs;
+
 pub const ACCENT: Color32 = Color32::from_rgb(101, 183, 182);
 pub const DARK_BG: Color32 = Color32::from_rgb(23, 27, 29);
 pub const DARK_SIDE: Color32 = Color32::from_rgb(17, 21, 23);
@@ -242,7 +245,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         .unwrap()
         .insert(0, "mono".into());
     ctx.set_fonts(fonts);
-    crate::emoji_glyphs::install(ctx);
+    emoji_glyphs::install(ctx);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

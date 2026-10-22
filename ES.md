@@ -11,6 +11,12 @@ Masih's latest instruction expands the destination to every Obsidian feature, ma
 - Native Rust eframe/egui0.37; no browser/JS app runtime. Use private Xvfb, disposable vault/XDG directories and announced background apps. GUI harness locks prevent overlap. Never kill user-owned processes. Expected quit uses raw xdotool rather than key()'s app-alive check.
 - All11 current screenshots are from Obsidian1.14.4. Historical isolated reference script uses Obsidian.AppImage1.5.12; do not equate versions or infer logical font size from unknown screenshot DPI.
 
+## Shared font-helper ownership correction — 2026-10-22T02:46:19+00:00
+
+Source6e645574a4d5af0bd37695b62afab26f832718c7/run39712874672 stops at Clippy because explorer_benchmark includes theme.rs without the new root emoji_glyphs module. Raw log reports/6e64557-failed.log retained. Put the glyph helper under its sole owning theme module with a relative path; remove redundant main/editor-example declarations. All consumers of the shared theme then receive the same glyph support. Do not add another root declaration for each consumer, skip an example, or claim the runtime fixes verified. Next normal build retains all targets and42/17/7 workflows.
+
+Future page-preview source is durably committed only in its clean isolated worktree:3da89b66d5f87119a7bb916b54dbcc23971c00cc on work/page-preview-20261022, based on1a557ed. It remains uncompiled/unuploaded and has43 full/18 focused/8 early workflows. Integrate only that feature patch after the current candidate resolves; preserve all main runtime/font/undo/root/test fixes. No copied ES/GUIDE/PLAN changed. Its public shared-undo method preserves independent per-view cursor/scroll state; Source anchors cover the entire hovered link span. No whole-preview or whole-app parity claim.
+
 ## Headless input API correction — 2026-10-22T02:42:34+00:00
 
 Run39712454968/source124c28a7a0340981546357fc5b9d5efbd71d2af3 stops at the new headless test's obsolete RawInput.modifiers field and deprecated Id::new. The actual egui0.37 API uses Event::ModifiersChanged and Id::unique; fix those test inputs without weakening assertions or changing the prepared runtime corrections. Raw failure reports/124c28a-failed.log retained. No candidate approved/installed. Proactively use those same actual APIs in the isolated future preview feature.

@@ -783,3 +783,8 @@ Headless input uses the actual egui0.37 event stream: Event::ModifiersChanged,
 not the removed RawInput.modifiers field. Use Id::unique for a global widget ID;
 Id::new is deprecated and the Clippy gate rejects it. Check those signatures
 in the vendored source before writing a new native input eval.
+
+A font helper used only by theme::install_fonts belongs inside the shared theme
+module. Several standalone benchmarks include theme.rs directly. A new root
+module declared only by main and the editor benchmark broke the explorer target;
+placing it under theme keeps every consumer consistent without repeated setup.

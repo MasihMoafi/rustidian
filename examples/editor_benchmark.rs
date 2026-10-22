@@ -17,10 +17,6 @@ mod diagrams;
 mod editor_ui;
 #[cfg(not(test))]
 #[allow(dead_code)]
-#[path = "../src/emoji_glyphs.rs"]
-mod emoji_glyphs;
-#[cfg(not(test))]
-#[allow(dead_code)]
 #[path = "../src/preview.rs"]
 mod preview;
 #[cfg(not(test))]
