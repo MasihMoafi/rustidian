@@ -1143,7 +1143,8 @@ fn show_table(
 
 #[cfg(test)]
 mod tests {
-    use super::{Parsed, prepare};
+    use super::{Parsed, TableCell, prepare};
+    use eframe::egui;
 
     #[test]
     fn an_empty_native_mark_is_invisible_and_keeps_the_next_color() {
