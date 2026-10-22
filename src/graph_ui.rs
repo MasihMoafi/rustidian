@@ -441,14 +441,29 @@ fn section(ui: &mut egui::Ui, open: &mut bool, label: &str) -> bool {
 }
 
 fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
-    let response = ui.add(slider);
-    // A quick press and release can arrive in one frame without starting a drag.
-    if response.drag_started()
-        || response.hovered() && ui.input(|input| input.pointer.primary_pressed())
-    {
-        response.request_focus();
-    }
-    ui_probe::record(ui.ctx(), probe, response.rect);
+    ui.push_id(probe, |ui| {
+        let response = ui.add(slider);
+        let rail_key = ui.id().with("rail");
+        // Slider returns the number-field ID while it is edited. Retain the real
+        // rail ID so both input paths keep their native behavior.
+        if let Some(native) = ui.ctx().read_response(response.id)
+            && !native.sense.senses_click()
+        {
+            ui.data_mut(|data| data.insert_temp(rail_key, native.id));
+        }
+        if let Some(rail) = ui
+            .data(|data| data.get_temp::<egui::Id>(rail_key))
+            .and_then(|id| ui.ctx().read_response(id))
+        {
+            // Sense clicks as well as drags: a complete press/release in one
+            // frame must update the rail, even when no drag was started.
+            let rail = rail.interact(Sense::click());
+            if rail.clicked() || rail.is_pointer_button_down_on() {
+                rail.request_focus();
+            }
+        }
+        ui_probe::record(ui.ctx(), probe, response.rect);
+    });
 }
 
 fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {

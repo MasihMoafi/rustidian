@@ -41,7 +41,7 @@ lost keyboard focus: source696938b passed its earlier focused suite but failed
 this added real-input check. Preserve that negative result and include it in the
 next complete Actions gate; do not install the known failing candidate.
 
-Treat visible delivery as a separate check: source edits and passing tests do not update an already installed app. Identify the launcher executable and each owned window before reporting a fix. A copied-vault functional preview is a preview until the optimized release is verified and installed. When one action appears in both ribbon and explorer, share its active state and inspect both entry points; a repeated tooltip label can identify only the last recorded control. For drag-only rails, also focus on pointer press: a fast press/release in one frame may not produce a drag-start response. Preserve the actual fast-click regression rather than slowing the test click to make it pass.
+Treat visible delivery as a separate check: source edits and passing tests do not update an already installed app. Identify the launcher executable and each owned window before reporting a fix. A copied-vault functional preview is a preview until the optimized release is verified and installed. When one action appears in both ribbon and explorer, share its active state and inspect both entry points; a repeated tooltip label can identify only the last recorded control. For drag-only rails, a fast press/release in one frame needs native click interaction as well as focus. Focus alone allowed arrows but left the old value unchanged after the second rail click. Extend the actual rail response, not Slider's composite response; retain its ID while the native number field owns focus. Preserve the original fast-click regression rather than slowing the test click to make it pass.
 
 ## Protect the user's work and machine
 
@@ -183,10 +183,11 @@ gh repo clone MasihMoafi/rustidian rust-notes
 cd rust-notes
 git status --short
 cargo fmt --all -- --check
-gh workflow run native.yml --repo MasihMoafi/rustidian
 gh run list --repo MasihMoafi/rustidian --workflow native.yml --limit 3
 gh run view RUN_ID --repo MasihMoafi/rustidian --log
 ```
+
+Source updates through the Git data API can also trigger a push workflow. Before a manual `gh workflow run native.yml --repo MasihMoafi/rustidian`, query runs for the reviewed full head SHA and reuse its queued/running run. Dispatch manually only when that exact source has no suitable run; an unconditional manual dispatch created a duplicate39778362796, immediately cancelled by concurrency in favor of39778363568.
 
 The workflow pins Rust1.95.0 and Linux dependencies, uses two build jobs, no
 persistent Rust cache and one-day artifacts. It runs formatting, Clippy, behavior
