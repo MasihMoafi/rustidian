@@ -1,20 +1,36 @@
 <div align="center">
 
-# ⚡ Rust Notes — Obsidian, but Fast
+<img src="docs/brand/rustidian.svg" alt="Rustidian bookmark R logo" width="112" height="112">
 
-**A blazingly fast Markdown notebook, written in Rust.**
+# Rustidian
 
-[Quick start](#quick-start) · [Features](#why-rust-notes) · [Performance](#performance) · [Roadmap](docs/PARITY.md)
+**An Obsidian-style Markdown notebook, written in Rust. Built for speed.**
 
-Linux preview · Active development
+[Status](#development-status) · [Quick start](#quick-start) · [Features](#why-rustidian) · [Performance](#performance) · [Roadmap](docs/PARITY.md)
+
+Development preview · Full Obsidian parity is unfinished
 
 </div>
 
 A familiar vault workflow, from the file explorer and `[[wiki links]]` to live editing and backlinks. Open an ordinary Markdown folder and keep your notes portable.
 
-![Rust Notes desktop preview](docs/images/rust-notes.png)
+## Development status
 
-## Why Rust Notes?
+Rustidian is a work in progress toward a complete, fast Obsidian-style app. The current build covers a subset of that goal.
+
+| Area | Current state |
+| --- | --- |
+| Markdown editing, links, tasks, tables, Mermaid | Implemented workflows with ongoing parity work |
+| Vaults, daily notes, templates, workspaces, recovery | Implemented workflows with remaining gaps |
+| Global and local graph | Missing; next implementation priority |
+| Canvas, Bases, math, full settings and hotkeys | Missing or incomplete |
+| Existing Obsidian community plugins | Unsupported; compatibility design remains open |
+
+Editing, navigation and note safety were built first. That order is documented in [the plan](docs/PLAN.md); the [coverage ledger](docs/PARITY.md) records the full scope and remaining work.
+
+![Current Rustidian development build, still displaying its former Rust Notes name](docs/images/rust-notes.png)
+
+## Why Rustidian?
 
 - **Native throughout.** Rust powers the interface, text editor, Markdown renderer, search, and vault operations.
 - **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, and native Mermaid diagrams bring your notes to life.
@@ -45,7 +61,7 @@ The included `demo-vault` opens by default. Keep it beside the executable, or pa
 
 Artifacts expire after **one day** and currently require access to the private repository. If none remain, a maintainer can start a new full run from the workflow page.
 
-Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rust Notes retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
+Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rustidian retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
 
 | Shortcut | Action |
 | --- | --- |
@@ -62,7 +78,7 @@ A [verified same-host comparison](https://github.com/MasihMoafi/rust-notes/actio
 
 | Editor | Median |
 | --- | ---: |
-| **Rust Notes** | **86.49 ms** |
+| **Rustidian (measured as Rust Notes)** | **86.49 ms** |
 | Ferrite 0.3.0 | 520.46 ms |
 
 **About 6× faster in this edit-and-save test.** Both editors used the same 103,300-byte document in source mode on one Linux/Xvfb host. Four alternating rounds collected 100 timed samples plus 20 warmups. Timings cover synthetic input through observing the exact saved bytes, including keyboard-driver and file-polling overhead. Overall speed varies by workload; equivalent-feature Obsidian timings remain unmeasured.
@@ -71,6 +87,6 @@ The linked run contains the verification evidence. See the [comparison script](s
 
 ## Project status
 
-Rust Notes is an **independent native implementation**, unaffiliated with Obsidian. Full feature and visual parity is the goal and remains unfinished. Existing Obsidian JavaScript community plugins do not execute here.
+Rustidian is an **independent native implementation**, unaffiliated with Obsidian. Full feature and visual parity is the goal and remains unfinished. Existing Obsidian JavaScript community plugins do not execute here.
 
 Graph, Canvas, math, sync, broader window/tab behavior, and other platforms still need work. The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining gaps; the [development guide](docs/GUIDE.md) explains how to continue the project.

@@ -872,3 +872,50 @@ unmap, then focus the parent and record each actual map/focus state. Keep the
 single Enter, parent-observed metric and blocked-parent assertions. The exact8
 CI debug app passes all7 vault groups with this calibrated setup; no app focus
 behavior was changed. Preserve the old failed screenshot and raw log.
+
+Document font controls require their own scope. Actual1.14.4 changes document
+text by1px across Reading/Live/Source and other notes, keeps tab/status fonts
+unchanged, clamps10–30 and restores the change after normal quit/relaunch.
+Measure real glyph/line bounds and text Undo, not only a preference value.
+Retain current baseline fonts at size18, scale inside document/card UIs and
+include code, title, property inputs, tables and task hit boxes. Do not change
+interface zoom. Import a guarded ordinary appearance.json once, preserve its
+bytes and let an absent field in an old native session keep that imported
+default. Native state owns later changes; failed writes must roll back and
+retries clear their error. The current isolated font implementation remains
+uncompiled. The first theme capture silently kept dark mode; its filenames
+are not light-mode evidence. Corrected Toggle light/dark observations and a
+normal-restart audit are retained under reports/obsidian-1.14.4-font-controls-*/.
+
+Use plain proof words when measuring shared editing. Actual1.14.4 Source
+automatically turned a newly typed `_FIRST` into `_FIRST_`: active buffer and
+saved file matched, so this was successful input plus auto-pairing. Retain the
+raw observation, use alphanumeric text for the separate buffer/Undo audit and
+track automatic delimiter completion as its own parity case. A fixed autosave
+sleep or an unexamined literal expectation cannot establish an input failure.
+
+For duplicate-note observations, assert the focused visible pane is actually
+Source before typing. Quick switching or splitting can create a Reading leaf;
+its hidden editor may keep an old model. Compare visible buffers, disk and
+independent cursors. Undo can group physical keystrokes differently: record a
+bounded real Undo/Redo chain and verify original bytes rather than assuming
+one whole word per Undo. The14-action1.14.4 audit and immutable earlier setup
+failures live in reports/obsidian-1.14.4-shared-document-history/.
+
+### Compound inline formatting must not switch the entire renderer
+
+Trigger: a table mixes a colored/bold span, an rgba mark with padding/color-inherit
+and ==highlight==. The exact9b5 app passes an ordinary native-table control, then
+loses table controls and displays literal attributes for the reconstructed case
+(reports/inline-styles-missing-9b5eafc/). Unsupported inline HTML triggered a
+whole-document fallback. Parse inert presentation styles once for both renderers;
+keep code/YAML literal and Source editable. Test actual colored table pixels in
+both themes, nested callouts, native hover cards, exact Undo/Save and source bytes.
+Source changes alone are not proof; require the exact Actions app.
+
+For long virtual lists, a registered probe can refer to an overscan row hidden
+under a fixed toolbar. Full-suite trailing root notes also change the final
+child's distance from the scroll bottom. Reproduce with80 trailing roots using
+the unchanged binary, scroll physically until the whole target row is visible,
+then retain the original click/title assertion. See the negative, intermediate
+clipped-click failure and positive in reports/explorer-trailing-after-9b5eafc/.

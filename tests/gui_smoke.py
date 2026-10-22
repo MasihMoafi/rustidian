@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -268,7 +268,7 @@ def main():
             while time.monotonic() < deadline:
                 assert app.poll() is None, (reports / "gui-smoke.log").read_text()
                 try:
-                    window = xdo("search", "--onlyvisible", "--name", "Rust Notes$").splitlines()[0]
+                    window = xdo("search", "--onlyvisible", "--name", "Rustidian$").splitlines()[0]
                     break
                 except (subprocess.CalledProcessError, IndexError):
                     time.sleep(0.1)
@@ -2228,6 +2228,66 @@ def main():
                 capture("native-edit-table-wide.png")
                 results.append("A 20-column Live table scrolled to and edited its final cell while retaining every other column")
 
+            def inline_styles_checks():
+                control = fixture / "Inline positive control.md"
+                control.write_text("# Plain table\n\n| A | B |\n|---|---|\n| plain | ==yellow== |\n")
+                time.sleep(.6);open_note("Inline positive control");command("Reading view")
+                control_bounds("table-cell:0:1:1")
+                capture("native-inline-positive-control.png")
+                results.append("An ordinary native Markdown table rendered before testing the reported compound-style defect")
+
+                source = (ROOT / "tests/fixtures/inline-styles.md").read_text()
+                note = fixture / "Shared inline styles.md";note.write_text(source)
+                time.sleep(.6);open_note("Shared inline styles");command("Reading view")
+                # These controls exist only when the actual native table renderer is used.
+                # The old executable falls back for this document and fails here.
+                table = control_bounds("table:0")
+                assert table[2]-table[0] < 650, table
+                def region(name):
+                    bounds = control_bounds(name)
+                    return ImageGrab.grab(xdisplay=display).crop(tuple(round(v) for v in bounds)).convert("RGB")
+                def green(name):
+                    count = sum(g>r+15 and g>b+15 for r,g,b in pixel_data(region(name)))
+                    assert count > 45, (name,count)
+                def yellow(name):
+                    count = sum(r>g>b+20 and r-g<70 for r,g,b in pixel_data(region(name)))
+                    assert count > 45, (name,count)
+                green("table-cell:0:1:2");yellow("table-cell:0:1:1")
+                results.append("The reported rgba mark and ==11h== rendered as colored backgrounds inside the actual native Reading table, with compact text instead of raw attributes")
+                for dark,label in [(True,"dark"),(False,"light")]:
+                    set_theme(dark);green("table-cell:0:1:2");yellow("table-cell:0:1:1")
+                    control_bounds("callout:0");green("table-cell:1:1:1")
+                    ink=sum(abs(r-43)<4 and abs(g-122)<4 and abs(b-75)<4 for r,g,b in pixel_data(region("table-cell:0:0:1")))
+                    assert ink>4,(label,ink)
+                    capture("native-inline-reading-"+label+".png")
+                assert note.read_text()==source
+                results.append("Both themes painted the explicit green foreground, bold header and shared callout-table highlight without changing source bytes")
+                command("Live preview")
+                for dark,label in [(True,"dark"),(False,"light")]:
+                    set_theme(dark)
+                    green("edit-table-cell:0:1:2");yellow("edit-table-cell:0:1:1")
+                    capture("native-inline-live-"+label+".png")
+                assert note.read_text()==source
+                results.append("Actual Live table cells used the same rgba and yellow styles in dark and light themes and retained the original markup")
+                command("Source editing");editor_end();type_text("EDIT_UNDO_CONTROL");key("ctrl+z");key("ctrl+s")
+                assert note.read_text()==source
+                capture("native-inline-source.png")
+                results.append("Source mode retained editable raw markup and ordinary typing, Undo and Save restored the exact original document")
+                target=fixture/"Inline preview target.md"
+                target_text="| total | actual |\n|---|---|\n| ==11h== | <mark style='background-color:rgba(46,204,113,.4);color:inherit'>56h</mark> |\n"
+                target.write_text(target_text)
+                link=fixture/"Inline preview source.md";link_text="[[Inline preview target|Styles preview]]\n";link.write_text(link_text)
+                time.sleep(.6);open_note("Inline preview source");command("Reading view")
+                bounds=control_bounds("reading-block:0")
+                xdo("mousemove","--sync",str(round(bounds[0]+25)),str(round((bounds[1]+bounds[3])/2)));time.sleep(.8)
+                control_bounds("page-preview-card")
+                green("page-preview/table-cell:0:1:1");yellow("page-preview/table-cell:0:1:0")
+                capture("native-inline-page-preview.png")
+                assert target.read_text()==target_text and link.read_text()==link_text and note.read_text()==source
+                xdo("mousemove","--sync","1100","800");time.sleep(.5)
+                results.append("The actual hover preview rendered the same table backgrounds without opening or rewriting either linked note")
+                set_theme(True);open_note("Home")
+
             def table_checks():
                 source = (ROOT / "tests/fixtures/table.md").read_text()
                 note = fixture / "Table GUI.md"
@@ -3131,7 +3191,20 @@ def main():
                     time.sleep(.3)
                     if control_bounds("file:Explorer bulk/Note04999.md", required=False):
                         break
-                assert control_bounds("file:Explorer bulk/Note04999.md")
+                # Other workflows leave root notes below this folder. The virtual
+                # list also registers overscan rows under the fixed toolbar; only
+                # click after the entire target row is inside the tree viewport.
+                top = control_bounds("file-collapse")[3] + 42
+                bottom = control_bounds("vault-profile")[1] - 12
+                for _ in range(64):
+                    row = control_bounds("file:Explorer bulk/Note04999.md", required=False)
+                    if row and top < row[1] and row[3] < bottom:
+                        break
+                    direction = "5" if row and row[3] >= bottom else "4"
+                    xdo("click", "--repeat", "2", "--delay", "1", direction)
+                    pause()
+                row = control_bounds("file:Explorer bulk/Note04999.md")
+                assert top < row[1] and row[3] < bottom, (row, top, bottom)
                 click_control("file:Explorer bulk/Note04999.md")
                 title_contains("Note04999")
                 capture("native-large-explorer.png")
@@ -4099,7 +4172,7 @@ def main():
                     path=random_vault/name;path.parent.mkdir(exist_ok=True);path.write_bytes(("# "+name+"\nKeep this file.\n").encode())
                 switch(random_vault)
                 before={p.relative_to(random_vault).as_posix():p.read_bytes() for p in random_vault.rglob("*.md")}
-                valid={name+" — "+random_vault.name+" — Rust Notes" for name in ("One","Two","Three")}
+                valid={name+" — "+random_vault.name+" — Rustidian" for name in ("One","Two","Three")}
                 for _ in range(3):
                     key("ctrl+t");blank_title=xdo("getwindowname",window)
                     command("Random note: Open random note")
@@ -4959,6 +5032,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "table-edit"}))
                 return
+            if args.section == "inline-styles":
+                inline_styles_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "inline-styles"}))
+                return
             if args.section == "tables":
                 table_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -5386,6 +5464,7 @@ def main():
                 keyboard_focus_checks,
                 reading_code_checks,
                 table_checks,
+                inline_styles_checks,
                 table_edit_checks,
                 table_link_checks,
                 table_input_checks,

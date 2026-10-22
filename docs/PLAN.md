@@ -1,6 +1,35 @@
-# Native Rust notebook plan
+# Rustidian implementation plan
 
 Current scope and reproducible route: [GUIDE.md](GUIDE.md). Masih's latest instruction on21October2026 expands the destination to every Obsidian feature with equivalent behavior and appearance, and faster interaction. This supersedes the earlier optional graph/drawings/plugin scope. [PARITY.md](PARITY.md) is the single feature-coverage ledger; the contracts below remain applicable unless explicitly superseded.
+
+## Priority decision and readiness — 22 October 2026
+
+Masih selected Rustidian as the product name and objected that the absent graph
+and other Obsidian features made the launch framing premature. Full feature and
+visual parity remains the target. Earlier implementation prioritized editing,
+link navigation, vault operations and note safety; that was the agent's sequence,
+not authorization to omit other features or declare the product ready.
+
+The README must lead with development status and major missing features.
+Graph is the next feature after the blocking global inline-formatting defect. Exercise global and local graph in
+the current disposable Obsidian reference; record actual filters, groups, search,
+pan/zoom, node navigation and local depth. Prove the exact native candidate lacks
+the workflow after a working editor control, then add the native implementation
+and verify the same actions. Unverified graph controls stay visibly incomplete.
+The coverage ledger remains the single source of feature status.
+
+Native graph must reuse vault path resolution for wiki and Markdown links,
+preserve files and editor state, handle isolated/missing nodes and refresh on
+index changes. Build its model/layout away from ordinary editor rendering;
+reuse unchanged geometry rather than recomputing the whole graph every frame.
+Use the existing Rust stack and Actions pipeline. Actual data/interaction
+correctness, dark/light screenshots and bounded large-vault responsiveness are
+required; a graph screenshot alone is insufficient. No new local Rust builds.
+
+The project remains a private development preview with no published release.
+Rustidian branding uses original artwork; the previously selected personal
+Obsidian icon is not the project logo. Preserve old local artwork and launcher
+until a verified native candidate deliberately updates the visible branding.
 
 ## Current delivery loop
 
@@ -62,23 +91,21 @@ Masih wants his familiar Obsidian note workflow and appearance, implemented in R
 
 ## Next combined candidate
 
-Integrate the prepared tab restoration and pinned bulk-close changes with the
-verified source8 preview-height correction and calibrated native picker setup.
-Source8 passes Clippy/Rust and all8 other early workflows; exact-source local
-calibration now passes all7 vault groups. It has no optimized payload, so one
-next NORMAL Actions build verifies45 full/20 focused/10 early workflows with a
-105min cap. Keep every older gate, source identity and actual image inspection.
-Tab restore includes blank/missing/external/cursor/mode/Undo behavior; bulk close
-keeps pinned/current views and actual reference restore order, with safe
-Save/Cancel/Discard on conflicts. Expect209 Rust executions/202 unique and17
-focused tab groups including startup; verify executed counts rather than using
-this forecast as evidence. Installation remains conditional on the exact fully
-verified optimized executable and all performance/visual/data guards.
+The immediate blocker is global inline formatting: reproduce the supplied rgba
+mark, compound presentation styles, colored/bold span and ==highlight== through
+shared parsing and native Reading/Live/table/callout/hover paths. Preserve literal
+code, raw Source editing, Undo/Save and exact files; never rewrite a specific note.
+Run the positive plain-table and failing reported-case evaluation on the exact
+old executable before trusting the new checks.
 
-Native color accepts the observed six marker syntaxes, theme-specific rendering,
-repeat/full/partial changes, empty-word and empty-mark caret behavior, exact
-undo/redo and literal code. Keep portable Highlightr/Cyan and protected bytes.
-Cross-span/multiline/IME and full visual fidelity still need further paired cases.
+Source9b5/run39721548486 failed two full-suite workflows after43 passed. Preserve
+all45 existing workflows; fix exact command ranking and calibrate the explorer's
+actual clipped-row click using an unchanged binary before the next run. The next
+normal Actions candidate has46 full/22 optimized focused/12 early workflows,
+including global inline and portable-color checks. Keep all CPU/comparison,
+source identity, protected-data and actual visual gates. No local Rust build.
+Graph follows this blocker under the acceptance contract above; font controls
+remain a separate prepared branch. Passing this increment is not full parity.
 
 ## File-move contract
 

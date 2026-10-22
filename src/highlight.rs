@@ -51,31 +51,15 @@ impl Color {
     }
 }
 
-/// Read only a mark's hex background. No CSS or HTML is executed.
+/// Read a mark's inert background through the shared inline-style parser.
 pub fn mark_color(tag: &str) -> Option<Rgba> {
-    if tag == "<mark>" {
-        return Some(Color::Yellow.rgba());
+    if let Some(crate::inline_style::Tag::Open(crate::inline_style::Element::Mark, style)) =
+        crate::inline_style::parse(tag)
+    {
+        style.background
+    } else {
+        None
     }
-    let attribute = tag.strip_prefix("<mark ")?.strip_suffix('>')?.trim();
-    let value = attribute.strip_prefix("style=")?;
-    let quote = value.chars().next()?;
-    if !matches!(quote, '\'' | '"') {
-        return None;
-    }
-    let style = value.strip_prefix(quote)?.strip_suffix(quote)?.trim();
-    let (property, value) = style.trim_end_matches(';').split_once(':')?;
-    if !matches!(property.trim(), "background" | "background-color") {
-        return None;
-    }
-    let hex = value.trim().strip_prefix('#')?;
-    if !matches!(hex.len(), 6 | 8) || !hex.is_ascii() {
-        return None;
-    }
-    let mut rgba = [0, 0, 0, 255];
-    for (index, pair) in hex.as_bytes().chunks_exact(2).enumerate() {
-        rgba[index] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(rgba)
 }
 
 /// Core Obsidian 1.14.4 color markers. Keep portable Highlightr colors above.

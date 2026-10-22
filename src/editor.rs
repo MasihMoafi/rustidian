@@ -41,6 +41,7 @@ pub struct Style {
     pub task_checked: bool,
     pub highlight: Option<crate::highlight::Rgba>,
     pub native_highlight: Option<crate::highlight::NativeColor>,
+    pub html: crate::inline_style::Style,
     pub property: bool,
     pub image: bool,
     pub marker: bool,
@@ -369,15 +370,20 @@ impl Markdown {
                         });
                     }
                 }
-                Event::InlineHtml(tag) => {
-                    if let Some(color) = crate::highlight::mark_color(&tag) {
-                        mark_stack.push((range, color));
-                    } else if tag.as_ref() == "</mark>"
-                        && let Some((opening, color)) = mark_stack.pop()
-                    {
-                        marks.push((opening, range, color));
+                Event::InlineHtml(tag) => match crate::inline_style::parse(&tag) {
+                    Some(crate::inline_style::Tag::Open(element, style)) => {
+                        mark_stack.push((element, range, style));
                     }
-                }
+                    Some(crate::inline_style::Tag::Close(element))
+                        if mark_stack
+                            .last()
+                            .is_some_and(|(open, _, _)| *open == element) =>
+                    {
+                        let (_, opening, style) = mark_stack.pop().unwrap();
+                        marks.push((opening, range, style));
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -449,12 +455,15 @@ impl Markdown {
             }
         }
         marks.sort_by_key(|(opening, _, _)| opening.start);
-        for (opening, closing, color) in marks {
+        for (opening, closing, html) in marks {
             if styles[opening.start].property || styles[closing.start].property {
                 continue;
             }
             patch(&mut styles, opening.end..closing.start, |style| {
-                style.highlight = Some(color);
+                style.html.overlay(html);
+                if let Some(background) = html.background {
+                    style.highlight = Some(background);
+                }
             });
             for marker in [opening, closing] {
                 hide(&mut styles, marker.clone());

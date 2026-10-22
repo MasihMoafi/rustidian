@@ -316,7 +316,8 @@ pub const ALL: &[Command] = &[
 ];
 
 pub fn ranked(query: &str, scope: Scope) -> Vec<&'static Command> {
-    Pattern::new(
+    let query = query.trim();
+    let mut matches: Vec<_> = Pattern::new(
         query,
         CaseMatching::Ignore,
         Normalization::Smart,
@@ -328,12 +329,39 @@ pub fn ranked(query: &str, scope: Scope) -> Vec<&'static Command> {
     )
     .into_iter()
     .map(|(command, _)| command)
-    .collect()
+    .collect();
+    if let Some(index) = matches
+        .iter()
+        .position(|command| command.name.eq_ignore_ascii_case(query))
+    {
+        let exact = matches.remove(index);
+        matches.insert(0, exact);
+    }
+    matches
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_portable_and_native_highlight_names_win_over_similar_commands() {
+        for command in crate::highlight::Color::ALL
+            .into_iter()
+            .map(|color| color.command())
+            .chain(
+                crate::highlight::NativeColor::ALL
+                    .into_iter()
+                    .map(|color| color.command()),
+            )
+        {
+            assert_eq!(ranked(command, Scope::Editor)[0].name, command);
+            assert_eq!(
+                ranked(&command.to_lowercase(), Scope::Editor)[0].name,
+                command
+            );
+        }
+        assert!(ranked("not an available command 987654", Scope::Editor).is_empty());
+    }
     #[test]
     fn native_color_toggles_require_an_actual_document_editor() {
         for color in crate::highlight::NativeColor::ALL {

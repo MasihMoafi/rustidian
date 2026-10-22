@@ -320,7 +320,9 @@ impl Manager {
                         match self.page {
                             Page::Home => {
                                 ui.vertical_centered(|ui| {
-                                    ui.label(RichText::new("Rust Notes").size(24.0).strong());
+                                    ui.label(
+                                        RichText::new(rust_notes::APP_NAME).size(24.0).strong(),
+                                    );
                                 });
                                 ui.add_space(28.0);
                                 egui::Frame::group(ui.style())

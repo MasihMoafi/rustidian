@@ -5,6 +5,7 @@ pub mod commands;
 pub mod editor;
 pub mod folding;
 pub mod highlight;
+pub mod inline_style;
 pub mod metadata;
 pub mod navigation;
 pub mod note_aids;
@@ -20,3 +21,5 @@ pub mod tables;
 pub mod vault;
 pub mod vaults;
 pub mod workspaces;
+
+pub const APP_NAME: &str = "Rustidian";

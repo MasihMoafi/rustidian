@@ -2289,11 +2289,11 @@ fn layout(
             };
             let family = if style.code {
                 FontFamily::Monospace
-            } else if style.heading == 1 {
+            } else if style.heading == 1 || style.html.bold == Some(true) {
                 FontFamily::Name("bold".into())
-            } else if style.strong {
+            } else if style.html.bold.unwrap_or(style.strong) {
                 FontFamily::Name("semibold".into())
-            } else if style.italic {
+            } else if style.html.italic.unwrap_or(style.italic) {
                 FontFamily::Name("italic".into())
             } else {
                 FontFamily::Proportional
@@ -2302,6 +2302,8 @@ fn layout(
                 Color32::TRANSPARENT
             } else if style.marker {
                 crate::theme::marker(ui)
+            } else if let Some([red, green, blue, alpha]) = style.html.color {
+                Color32::from_rgba_unmultiplied(red, green, blue, alpha)
             } else if style.link {
                 crate::theme::accent(ui)
             } else if style.heading > 0 {
@@ -2375,18 +2377,24 @@ fn layout(
                 } else {
                     egui::Align::Center
                 },
-                italics: style.italic,
+                italics: style.html.italic.unwrap_or(style.italic),
                 extra_letter_spacing: if style.heading > 0 {
                     -0.025 * size
                 } else {
                     0.0
                 },
-                strikethrough: if style.strike || (live && style.task_checked) {
+                strikethrough: if style.html.strike.unwrap_or(style.strike)
+                    || (live && style.task_checked)
+                {
                     Stroke::new(1.0, color)
                 } else {
                     Stroke::NONE
                 },
-                underline: if live && style.link && !style.marker && !hidden {
+                underline: if live
+                    && style.html.underline.unwrap_or(style.link)
+                    && !style.marker
+                    && !hidden
+                {
                     Stroke::new(1.0, color)
                 } else {
                     Stroke::NONE

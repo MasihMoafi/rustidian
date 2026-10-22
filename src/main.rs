@@ -60,7 +60,8 @@ fn main() -> eframe::Result {
     let first = arguments.next();
     if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
         println!(
-            "Rust Notes — native Markdown notebook\n\nUsage: rust-notes [VAULT_FOLDER | FILE.md | FILE.txt]\n       rust-notes --check-vault VAULT_FOLDER\n\nRUST_NOTES_DEFAULT_VAULT selects the default vault; otherwise opens the included demo vault. Ctrl+P opens commands."
+            "{} — native Markdown notebook\n\nUsage: rust-notes [VAULT_FOLDER | FILE.md | FILE.txt]\n       rust-notes --check-vault VAULT_FOLDER\n\nRUST_NOTES_DEFAULT_VAULT selects the default vault; otherwise opens the included demo vault. Ctrl+P opens commands.",
+            rust_notes::APP_NAME
         );
         return Ok(());
     }
@@ -115,7 +116,7 @@ fn main() -> eframe::Result {
     };
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Rust Notes")
+            .with_title(rust_notes::APP_NAME)
             .with_app_id("rust-notes")
             .with_decorations(false)
             .with_inner_size([1380.0, 900.0])
@@ -124,7 +125,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Rust Notes",
+        rust_notes::APP_NAME,
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::NotesApp::new(

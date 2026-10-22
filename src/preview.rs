@@ -12,6 +12,7 @@ struct Inline {
     strike: bool,
     highlight: Option<rust_notes::highlight::Rgba>,
     native_highlight: Option<rust_notes::highlight::NativeColor>,
+    html: rust_notes::inline_style::Style,
     link: Option<String>,
 }
 #[derive(Clone, Default)]
@@ -377,22 +378,45 @@ impl Parsed {
                     }
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
-                Event::InlineHtml(tag) if rust_notes::highlight::mark_color(&tag).is_some() => {
-                    highlights.push((style.highlight, style.native_highlight));
-                    style.highlight = rust_notes::highlight::mark_color(&tag);
-                    style.native_highlight = None;
-                }
                 Event::InlineHtml(tag)
                     if rust_notes::highlight::NativeColor::from_tag(&tag).is_some() =>
                 {
-                    highlights.push((style.highlight, style.native_highlight));
+                    highlights.push((
+                        rust_notes::inline_style::Element::Mark,
+                        style.html,
+                        style.highlight,
+                        style.native_highlight,
+                    ));
                     style.highlight = None;
                     style.native_highlight = rust_notes::highlight::NativeColor::from_tag(&tag);
                 }
-                Event::InlineHtml(tag) if tag.as_ref() == "</mark>" && !highlights.is_empty() => {
-                    (style.highlight, style.native_highlight) = highlights.pop().unwrap();
-                }
-                Event::Html(_) | Event::InlineHtml(_) => parsed.fallback = true,
+                Event::InlineHtml(tag) => match rust_notes::inline_style::parse(&tag) {
+                    Some(rust_notes::inline_style::Tag::Open(element, html)) => {
+                        highlights.push((
+                            element,
+                            style.html,
+                            style.highlight,
+                            style.native_highlight,
+                        ));
+                        style.html.overlay(html);
+                        if let Some(background) = html.background {
+                            style.highlight = Some(background);
+                            style.native_highlight = None;
+                        }
+                    }
+                    Some(rust_notes::inline_style::Tag::Close(element))
+                        if highlights
+                            .last()
+                            .is_some_and(|(open, _, _, _)| *open == element) =>
+                    {
+                        let (_, html, highlight, native) = highlights.pop().unwrap();
+                        style.html = html;
+                        style.highlight = highlight;
+                        style.native_highlight = native;
+                    }
+                    _ => parsed.fallback = true,
+                },
+                Event::Html(_) => parsed.fallback = true,
                 _ => {}
             }
         }
@@ -865,16 +889,22 @@ fn inline_format(
     };
     let family = if part.code {
         egui::FontFamily::Monospace
-    } else if heading == 1 {
+    } else if heading == 1 || part.html.bold == Some(true) {
         egui::FontFamily::Name("bold".into())
-    } else if part.bold || heading > 0 || table_header == Some(true) {
+    } else if part
+        .html
+        .bold
+        .unwrap_or(part.bold || heading > 0 || table_header == Some(true))
+    {
         egui::FontFamily::Name("semibold".into())
-    } else if part.italic {
+    } else if part.html.italic.unwrap_or(part.italic) {
         egui::FontFamily::Name("italic".into())
     } else {
         egui::FontFamily::Proportional
     };
-    let color = if part.link.is_some() {
+    let color = if let Some([red, green, blue, alpha]) = part.html.color {
+        egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha)
+    } else if part.link.is_some() {
         crate::theme::accent(ui)
     } else if heading > 0 {
         crate::theme::heading(ui, heading)
@@ -886,7 +916,7 @@ fn inline_format(
     egui::TextFormat {
         font_id: egui::FontId::new(size, family),
         color,
-        italics: part.italic,
+        italics: part.html.italic.unwrap_or(part.italic),
         extra_letter_spacing: if heading > 0 { -0.025 * size } else { 0.0 },
         line_height: Some(
             size * if table_header.is_some() {
@@ -908,12 +938,16 @@ fn inline_format(
         } else {
             egui::Color32::TRANSPARENT
         },
-        strikethrough: if part.strike {
+        strikethrough: if part.html.strike.unwrap_or(part.strike) {
             egui::Stroke::new(1.0, color)
         } else {
             egui::Stroke::NONE
         },
-        underline: if part.link.is_some() && table_header.is_some() {
+        underline: if part
+            .html
+            .underline
+            .unwrap_or(part.link.is_some() && table_header.is_some())
+        {
             egui::Stroke::new(1.0, color)
         } else {
             egui::Stroke::NONE
@@ -1252,6 +1286,96 @@ mod tests {
         assert!(!Parsed::new("| A | B |\n|---|---|\n| 1 | 2 |\n").fallback);
         assert!(!Parsed::new("![Image](image.png)").fallback);
         assert!(!Parsed::new("```\n**literal**\n```\n").fallback);
+    }
+
+    #[test]
+    fn compound_inline_styles_keep_the_whole_document_on_the_native_renderer() {
+        let parsed = Parsed::new(include_str!("../tests/fixtures/inline-styles.md"));
+        assert!(!parsed.fallback);
+        let table = parsed
+            .blocks
+            .iter()
+            .find_map(|block| block.table.as_ref())
+            .unwrap();
+        let header = &table.rows[0][1];
+        assert_eq!(
+            header
+                .iter()
+                .map(|part| part.text.as_str())
+                .collect::<String>(),
+            "DW"
+        );
+        assert!(header.iter().all(
+            |part| part.html.color == Some([43, 122, 75, 255]) && part.html.bold == Some(true)
+        ));
+        assert!(
+            table.rows[1][1]
+                .iter()
+                .any(|part| part.text == "11h" && part.highlight.is_some())
+        );
+        assert!(
+            table.rows[1][2]
+                .iter()
+                .any(|part| part.text == "8h" && part.highlight == Some([46, 204, 113, 102]))
+        );
+        let callout = parsed
+            .blocks
+            .iter()
+            .find_map(|block| block.callout.as_ref())
+            .unwrap();
+        assert!(
+            callout
+                .children
+                .iter()
+                .flat_map(|block| &block.parts)
+                .any(|part| part.text == "DW" && part.html.color == Some([43, 122, 75, 255]))
+        );
+        let nested = callout
+            .children
+            .iter()
+            .find_map(|block| block.table.as_ref())
+            .unwrap();
+        assert!(
+            nested.rows[1][1]
+                .iter()
+                .any(|part| part.text == "49h" && part.highlight == Some([46, 204, 113, 102]))
+        );
+        assert!(
+            parsed
+                .blocks
+                .iter()
+                .flat_map(|block| &block.parts)
+                .any(|part| part.code && part.text.contains("<mark style="))
+        );
+    }
+
+    #[test]
+    fn actual_cell_layout_paints_shared_styles_and_restores_following_text() {
+        let cell = TableCell::new(
+            "<span style='color:#2b7a4b;font-weight:700'><mark style='background-color:rgba(46,204,113,.4);padding:0.1em 0.2em'>DW</mark></span> plain ==11h==",
+        );
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx, true);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let galley = cell.layout(ui, false, 900.0);
+            assert_eq!(galley.job.text, "DW plain 11h");
+            let styled = &galley.job.sections[0].format;
+            assert_eq!(styled.color, egui::Color32::from_rgb(43, 122, 75));
+            assert_eq!(
+                styled.background,
+                egui::Color32::from_rgba_unmultiplied(46, 204, 113, 102)
+            );
+            assert_eq!(styled.font_id.family, egui::FontFamily::Name("bold".into()));
+            let plain = galley
+                .job
+                .sections
+                .iter()
+                .find(|section| galley.job.text[section.byte_range.clone()].contains("plain"))
+                .unwrap();
+            assert_eq!(plain.format.color, ui.visuals().text_color());
+            assert_eq!(plain.format.background, egui::Color32::TRANSPARENT);
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]

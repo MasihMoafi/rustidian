@@ -66,11 +66,19 @@ fn color_parser_rejects_executable_or_unknown_styles_and_ignores_code_and_yaml()
     for tag in [
         "<mark onclick=\"alert(1)\">",
         "<mark style=\"background: url(x);\">",
-        "<mark style=\"color: #123456;\">",
-        "<mark style=\"background: #123456; color: red;\">",
     ] {
         assert_eq!(mark_color(tag), None);
     }
+    assert_eq!(
+        mark_color(
+            "<mark style=\"background-color:rgba(46,204,113,0.4);color:inherit;padding:0.1em 0.2em\">"
+        ),
+        Some([46, 204, 113, 102])
+    );
+    assert_eq!(
+        mark_color("<mark style=\"color:#123456\">"),
+        Some(Color::Yellow.rgba())
+    );
     let (opening, closing) = Color::Cyan.markers();
     for text in [
         format!("`{opening}code{closing}`"),

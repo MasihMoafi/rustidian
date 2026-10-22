@@ -105,6 +105,8 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section native-highlights 2>&1 | tee reports/early-native-highlights-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section page-preview 2>&1 | tee reports/early-page-preview-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section quick-ranking 2>&1 | tee reports/early-quick-ranking-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section inline-styles 2>&1 | tee reports/early-inline-styles-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section colors 2>&1 | tee reports/early-colors-gui.log
           exit "$early_status"
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
@@ -124,6 +126,10 @@ jobs:
             reports/early-file-move-gui.log
             reports/early-page-preview-gui.log
             reports/early-quick-ranking-gui.log
+            reports/early-inline-styles-gui.log
+            reports/early-colors-gui.log
+            reports/native-inline-*.png
+            reports/native-color-*.png
             reports/native-page-preview-*.png
             reports/native-quick-ranking-*.png
             reports/early-native-highlights-gui.log
@@ -198,6 +204,8 @@ jobs:
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section native-highlights 2>&1 | tee reports/native-highlights-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section page-preview 2>&1 | tee reports/page-preview-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section quick-ranking 2>&1 | tee reports/quick-ranking-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section inline-styles 2>&1 | tee reports/inline-styles-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
           /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section recovery 2>&1 | tee reports/recovery-gui.log
           exit "$gui_status"
@@ -236,6 +244,8 @@ jobs:
             reports/native-image-tab-*.png
             reports/native-page-preview-*.png
             reports/native-quick-ranking-*.png
+            reports/native-inline-*.png
+            reports/native-color-*.png
             reports/native-core-highlight-*.png
             reports/native-highlight-*.png
             reports/native-palette-queued.png

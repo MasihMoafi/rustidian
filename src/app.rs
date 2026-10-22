@@ -3926,12 +3926,13 @@ impl eframe::App for NotesApp {
         self.background(&ctx);
         self.shortcuts(&ctx);
         let title = format!(
-            "{} — {} — Rust Notes",
+            "{} — {} — {}",
             self.tabs
                 .get(self.active)
                 .map(|tab| tab.document.title())
                 .unwrap_or("New tab".into()),
-            self.vault.as_ref().map(Vault::name).unwrap_or_default()
+            self.vault.as_ref().map(Vault::name).unwrap_or_default(),
+            rust_notes::APP_NAME
         );
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
