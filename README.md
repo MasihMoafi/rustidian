@@ -1,90 +1,76 @@
-# Rust Notes
+<div align="center">
 
-A working native Rust Markdown notebook with an Obsidian-style layout and Masih's charcoal/teal theme. Its UI, text editor, Markdown renderer, search, and vault operations are Rust. There is no Electron, embedded browser, JavaScript UI, or server.
+# ⚡ Rust Notes — Obsidian, but Fast
 
-This project is still being completed. The authoritative scope and next stages are in [the plan](docs/PLAN.md); current verification is in [ES.md](ES.md).
+**A blazingly fast Markdown notebook, written in Rust.**
 
-## Run
+[Quick start](#quick-start) · [Features](#why-rust-notes) · [Performance](#performance) · [Roadmap](docs/PARITY.md)
 
-From the extracted Actions application bundle:
+Linux preview · Active development
+
+</div>
+
+A familiar vault workflow, from the file explorer and `[[wiki links]]` to live editing and backlinks. Open an ordinary Markdown folder and keep your notes portable.
+
+![Rust Notes desktop preview](docs/images/rust-notes.png)
+
+## Why Rust Notes?
+
+- **Native throughout.** Rust powers the interface, text editor, Markdown renderer, search, and vault operations.
+- **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, and native Mermaid diagrams bring your notes to life.
+- **Follow your ideas.** Wiki links, backlinks, tags, aliases, properties, bookmarks, a quick switcher, and vault-wide search keep your knowledge connected.
+- **Return to your rhythm.** Daily notes, templates, pinned tabs, named workspaces, recent vaults, and tab restoration after a clean exit.
+- **Keep control of your files.** Plain UTF-8 Markdown and text, atomic saves, external-change protection, recovery snapshots, and recoverable Trash. Workspace state lives outside the vault.
+
+## Quick start
+
+The current preview is built and verified on **Linux x86_64 / X11**.
+
+1. Open [Native Rust Actions](https://github.com/MasihMoafi/rust-notes/actions/workflows/native.yml) and choose a **passing full verification run**.
+2. Download the final `rust-notes-linux-<commit>` artifact and extract its ZIP. Use the `rust-notes-linux-x86_64.tar.gz` inside; earlier candidate and debug artifacts are for testing.
+3. Extract the application bundle and run it from that directory:
 
 ```sh
-# Included sample vault
+tar -xzf rust-notes-linux-x86_64.tar.gz
 ./rust-notes
-
-# Your existing Markdown folder
-./rust-notes "/home/masih/Desktop/o/Main Vault"
-
-# An individual Markdown or plain-text document
-./rust-notes "/path/to/document.md"
-./rust-notes "/path/to/document.txt"
-
-# Set the vault used when launching without a file
-RUST_NOTES_DEFAULT_VAULT="/home/masih/Desktop/o/Main Vault" ./rust-notes
-
-# Index a vault without opening a window or modifying files
-./rust-notes --check-vault "/path/to/vault"
 ```
 
-Builds now run in the private [GitHub Actions workflow](https://github.com/MasihMoafi/rust-notes/actions/workflows/native.yml). Download the application artifact from a passing run, extract `rust-notes-linux-x86_64.tar.gz`, and run `./rust-notes` beside its included `demo-vault`, or pass your own vault path. Local Rust build output has been removed; do not rebuild locally. CI avoids persistent build caches and keeps its artifacts for one day.
+The included `demo-vault` opens by default. Keep it beside the executable, or pass your own folder or document:
 
-The included sample is deliberately separate from the real vault. Opening a vault does not write note content. Edits autosave after 600 ms of inactivity; Ctrl+S saves immediately. External conflicts retain the buffer and refuse an overwrite. Workspace layout is stored outside the vault under XDG_STATE_HOME (or ~/.local/state/rust-notes).
+```sh
+./rust-notes "/path/to/vault"
+./rust-notes "/path/to/note.md"
+./rust-notes "/path/to/document.txt"
+```
 
-## Working now
+Artifacts expire after **one day** and currently require access to the private repository. If none remain, a maintainer can start a new full run from the workflow page.
 
-- Resizable file explorer, tabs, outline, backlinks, and outgoing links.
-- Image-generated, SVG Studio-traced icons, with distinct glyphs for notes, tabs, reading, editing, and menus. [Artwork and proof](assets/icons/README.md).
-- Dark and light themes; the right sidebar collapses at compact widths.
-- Source-preserving inline Markdown editing, source mode, reading preview with proper font weights, split view, formatting, undo/redo, and find/replace.
-- Native YAML properties, aliases/tags and advanced vault search; local/remote images in reading and live views, width hints, attachment refresh, and two-way task checkboxes.
-- Read-only image tabs from the explorer, quick switcher and wiki/Markdown links, with Fit/100% zoom, refresh, history, restart restoration, guarded rename/link updates and recoverable Trash.
-- Filename/content search, quick switcher, command palette, new notes, and vault switching; keyboard opening and switching accept immediate typing.
-- Bottom-left vault chooser with recent vaults, native folder browsing, safe named creation and list removal. Registered files open with their containing vault; each vault retains its workspace and unsaved-work guards.
-- Empty tabs, current-tab file opening, independent tab histories/modes and active-tab reveal through overflow. The header has one mode button and a three-dot menu.
-- Background indexing, native file watching, clean-buffer reload, and tab/layout restoration after a clean exit.
-- Wiki links such as `[[Home]]` and `[[Notes/Idea|label]]`. Ambiguous names require paths.
-- Atomic saves, permission preservation, external-change checks, new-note collision refusal, and unsaved-close protection. Right-click a folder to rename or move it to an existing parent inside the vault; nested notes/images and open-tab history follow the move. Existing destinations, linked folders and stale move plans are refused.
-- Nested heading folds in reading, Source and Live modes. Editing folds preserve source and undo, skip hidden rows during navigation, and reveal anchor/search targets. Live/source quote, list, Setext and root fenced-code rendering follows the measured reference.
-- Cached native syntax colors match the measured dark/light editing palettes; reading/editing code panels share a generated Copy control, with measured reader padding and mode-specific colors.
-- Native tables with aligned columns, inline formatting, wiki links and horizontal scrolling. Live cells support Tab/Shift+Tab/Enter, shared undo, row/column changes, alignment and sorting while preserving Markdown.
-- Native Mermaid fenced diagrams in Live and Reading views, cached by source and theme and rendered away from the UI thread. Clicking a Live diagram exposes its editable Markdown source.
-- Thirteen callout types and their aliases, formatted titles, nested folding and source-preserving type changes. Reading callouts retain native links, tasks, code, tables and images; long nested titles wrap in both themes.
-- File bookmarks with custom titles and ordering, immediate per-vault persistence, guarded rename tracking, and removable missing targets. Bookmarking and removing shortcuts preserve file content.
-- Paste and selection edits have independent undo boundaries; Ctrl+S includes text received in the same frame. Wiki completion uses text queued before Tab/Enter and preserves Enter after a closing delimiter or an unmatched query.
-- Embedded Inter prose, Noto Arabic fallback and DejaVu Sans Mono code fonts; their licenses are retained under assets/fonts. The pinned text-backend changes and remaining bidi limits are documented in [vendor provenance](vendor/UPSTREAM.md).
-- Plain UTF-8 `.md` and `.txt` files; hidden/dependency folders and child symlinks are not indexed.
+Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rust Notes retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
 
 | Shortcut | Action |
 | --- | --- |
+| Ctrl+P | Command palette |
 | Ctrl+O | Quick switcher |
 | Ctrl+N | New note |
-| Ctrl+T | Empty new tab |
-| Ctrl+S | Save |
 | Ctrl+E | Switch reading/editing |
-| Ctrl+W | Save and close; failed saves retain the tab |
-| Ctrl+B / Ctrl+I | Bold / italic selection |
-| Ctrl+F | Find and replace |
-| Ctrl+Tab | Next tab |
-| Ctrl+Q | Quit with unsaved-work protection |
-| Ctrl+P | Commands, including Save a copy and Open vault |
-| Ctrl+; | Add property |
-| Ctrl+Shift+F | Vault search |
-| Ctrl+Z / Ctrl+Y | Undo / redo while editing |
-| Alt+Left / Alt+Right | Back / forward through visited notes |
+| Ctrl+Shift+F | Search the vault |
+| Ctrl+S | Save |
 
-If another program changes a note, save refuses to overwrite it and retains your buffer. Use **Save a copy** to preserve your version, or review the external change before discarding anything.
+## Performance
 
-## Remaining work
+A [verified same-host comparison](https://github.com/MasihMoafi/rust-notes/actions/runs/39704845915) measured serial edit/save acknowledgement:
 
-Full Obsidian parity is the target and remains unfinished. The single [coverage ledger](docs/PARITY.md) records every core plugin and other feature gaps. Daily notes/templates and named workspaces have an optimized Actions candidate awaiting complete verification; native snapshot recovery remains local and uncompiled. Math, graph/canvas, recovery, broader bookmarks, extensions/services/platforms and full visual bidi/desktop IME still need work. Existing Obsidian JavaScript plugins do not execute here.
+| Editor | Median |
+| --- | ---: |
+| **Rust Notes** | **86.49 ms** |
+| Ferrite 0.3.0 | 520.46 ms |
 
-Indexing runs outside rendering, with native file notifications. Release measurements, declared method and limits are in [the plan](docs/PLAN.md) and [desktop benchmark](reports/desktop-benchmark.json). The local comparison uses installed Obsidian 1.5.12 with a different feature set; it does not establish equal-feature performance. The deterministic 5,000-note run is in [vault benchmark](reports/vault-benchmark.json). GUI verification currently covers Linux/X11.
+**About 6× faster in this edit-and-save test.** Both editors used the same 103,300-byte document in source mode on one Linux/Xvfb host. Four alternating rounds collected 100 timed samples plus 20 warmups. Timings cover synthetic input through observing the exact saved bytes, including keyboard-driver and file-polling overhead. Overall speed varies by workload; equivalent-feature Obsidian timings remain unmeasured.
 
-## Checks
+The linked run contains the verification evidence. See the [comparison script](scripts/compare-editors.py) for the method and the [workflow](.github/workflows/native.yml) for the checks.
 
-```sh
-gh workflow run native.yml --repo MasihMoafi/rust-notes
-gh run list --repo MasihMoafi/rust-notes --workflow native.yml --limit 3
-```
+## Project status
 
-Actions runs formatting, Clippy, Rust checks, release builds, native GUI checks and serial editor CPU gates on disposable notes. [Run39658870633](https://github.com/MasihMoafi/rust-notes/actions/runs/39658870633) fully verifies optimized source048fced:133 Rust executions/127 unique,115 full native GUI groups, all32 workflow sections, six CPU conditions and the observer-free Ferrite comparison. That exact executable is installed. Its same-host synthetic edit/save median is90.3ms versus524.3ms for Ferrite0.3.0; this measures that task and configuration, not display latency or full-product superiority. Raw evidence and hashes are in reports/release-verification.json and reports/github-e326f14/.
+Rust Notes is an **independent native implementation**, unaffiliated with Obsidian. Full feature and visual parity is the goal and remains unfinished. Existing Obsidian JavaScript community plugins do not execute here.
+
+Graph, Canvas, math, sync, broader window/tab behavior, and other platforms still need work. The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining gaps; the [development guide](docs/GUIDE.md) explains how to continue the project.
