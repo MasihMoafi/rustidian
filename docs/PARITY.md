@@ -11,6 +11,12 @@ positive/negative cases, visual review and exact Rust executable with each resul
 - User screenshots identify1.14.4; installed isolated reference is
   `/home/masih/.local/opt/Obsidian/Obsidian-1.13.7.AppImage`. Earlier captures used
   1.5.12. Keep version differences visible; inventory the actual running version.
+- A read-only copy of the installed1.14.4 update now runs in a disposable profile
+  on the1.13.7 installer. Actual General settings confirms1.14.4. The archive
+  hash,8 passing Move actions and immutable inventory evidence are recorded in
+  ES.md and reports/obsidian-1.14.4-inventory/:30 core plugin entries,213 commands,
+  20 visible settings categories, daily/template flows and the51-format matrix.
+  The earlier1.13.7 inventory remains unchanged as historical evidence.
 - Official feature discovery: [core plugins](https://help.obsidian.md/plugins),
   [editing and formatting](https://help.obsidian.md/syntax),
   [plugin development](https://docs.obsidian.md/Plugins/Getting+started/Build+a+plugin).
@@ -36,11 +42,13 @@ positive/negative cases, visual review and exact Rust executable with each resul
 | Settings, themes and hotkeys | Working theme/zoom/autosave plus available shortcuts. Full categorized settings, customization, CSS/theme compatibility and remappable shortcuts are incomplete. |
 | Saving and external changes | Atomic/conflict-safe saves and per-vault sessions covered. Snapshot recovery passes all12 early native groups plus startup; its optimized release checks remain pending; concurrent-window editing policy and workspace interchange remain incomplete. |
 | Attachments and non-Markdown | Native images and text documents covered. PDF/audio/video/web embeds, audio capture, attachment management and arbitrary file associations remain incomplete. |
-| Formatting | Five highlight colors are implemented. Math, all footnote behaviors and complete Obsidian-flavored Markdown need direct reference checks. |
+| Formatting | The five user-requested highlight colors are implemented. Actual1.14.4 also exposes Blue/Purple and six native toggle commands; their six marker-based syntaxes, Reading and exact undo/redo now pass an isolated1.14.4 audit in reports/obsidian-1.14.4-highlights/, but native parsing/toggle compatibility remains missing. Editor-only font size commands, math, all footnote behaviors and complete Obsidian-flavored Markdown remain incomplete. |
 
 ## Every core plugin
 
-This list follows the official core-plugin inventory, including disabled plugins.
+This list follows the observed core-plugin inventory, including disabled plugins,
+and retains the historical Format converter row. Actual1.14.4 has30 core entries;
+1.13.7 had31.
 “Covered” below means existing native checks for the stated subset; every row
 still needs the expanded paired reference audit before a parity claim.
 
@@ -57,7 +65,7 @@ still needs the expanded paired reference audit before a parity claim.
 | File explorer | Covered subset; complete menus, sorting and drag/drop audit pending. |
 | File recovery | Native storage/capture/restore is compiled with13 passing recovery behavior tests. All12 early native groups plus startup now pass, including exact Copy/diff/Restore, unopened notes, unreadable storage, dirty/conflict protection, deleted-note recreation, restart, vault isolation, Clear and compact/both-theme controls. Complete optimized release checks and the minor status-message visual correction remain pending. Paired1.13.7 audit verifies exact Copy/Restore, older-version selection, Show changes, settings defaults5min/7days, both cancelled/confirmed Clear, deleted-note recreation and two external versions of a never-opened note with unchanged originals. Actual1.13.7 live-update evidence keeps the displayed list fixed until file choice/reopening. Retain every native workflow and inspect the final optimized screenshots before installation. |
 | Footnotes view | Missing panel; reference syntax/jump/backlink behavior unverified. |
-| Format converter | Legacy plugin present but disabled in the installed1.13.7 inventory; import/conversion workflows unverified. |
+| Format converter | Historical disabled plugin in1.13.7; absent as a plugin in1.14.4, which still exposes Frontmatter migration. Conversion behavior is unverified. |
 | Graph view | Missing; global/local graph, filters, search, groups and navigation. |
 | Note composer | Missing; extract/merge with source/link preservation and undo/cancellation. |
 | Outgoing links | Existing linked-target panel; unlinked mentions and complete actions incomplete. |
@@ -76,7 +84,7 @@ still needs the expanded paired reference audit before a parity claim.
 | Unique note creator | Native creation/settings/import and editor-only internal links compile in512 with passing filesystem/availability tests. all8 creator native checks pass on Cea debug, including settings in both themes/compact, collision/template errors, link/Escape/caret/undo/redo and vault isolation; optimized/full gates remain pending. Paired1.13.7 audits cover same-prefix minute advancement, folder/template/format, missing folders/templates, literal collision errors and bare-name internal links with no file creation, single undo/redo and caret inside brackets. Raw reports obsidian-{note-creators,unique-settings,unique-links,unique-links-configured}-reference.json retain exact outcomes. The complete native creator/link GUI and optimized release checks remain pending. |
 | Web viewer | Missing; browser content conflicts with the current native-only runtime constraint and needs a concrete design decision. |
 | Word count | Existing document counts; selection, CJK/Unicode and settings parity unverified. |
-| Workspaces | Paired1.13.7 reference passes save/load/overwrite/delete/cancel, order/modes/sidebar widths and actual restored-tab clicks with unchanged notes. Native named storage/manager, four commands, dirty-load guards and sidebar width restoration are now written with behavioral checks; exacta104d89 passes all8 focused workspace groups plus startup, including row visibility and width restoration; preview only, not installed because a separate attachments-driver failure blocked that release. Current recovery candidate retains these checks. |
+| Workspaces | Source9feb adds pin metadata to saved tabs; its old exact-schema native assertion fails because it omits pinned:false. The actual data is retained in reports/workspace-pin-schema-9febfbb/. All10 corrected schema/pinned-layout checks and all8 corrected keyboard checks pass on the unchanged optimized app; the complete corrected reuse gate remains pending, with no installation. Paired1.13.7 reference passes save/load/overwrite/delete/cancel, order/modes/sidebar widths and actual restored-tab clicks with unchanged notes. Native named storage/manager, four commands, dirty-load guards and sidebar width restoration are now written with behavioral checks; exacta104d89 passes all8 focused workspace groups plus startup, including row visibility and width restoration; preview only, not installed because a separate attachments-driver failure blocked that release. Current recovery candidate retains these checks. |
 
 ## Community extensions, services and platforms
 

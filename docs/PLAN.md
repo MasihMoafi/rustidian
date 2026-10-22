@@ -62,9 +62,10 @@ Masih wants his familiar Obsidian note workflow and appearance, implemented in R
 
 ## Next file-move contract
 
-Use the passing actual1.13.7 five-action `file-move` reference and the guide's
+Use the passing actual1.14.4 eight-action `file-move` reference and the guide's
 resolved-link lesson. Provide the separate folder picker, existing/root/nested
-moves, collision numbering and link-update choices. Preserve inactive-file
+moves, plain Enter/Shift+Enter creation, current-folder no-op, collision numbering
+and link-update choices. Preserve inactive-file
 navigation, dirty/conflict guards, all aliases/Markdown targets and exact
 unaffected bytes. Reuse the existing guarded rename implementation; keep Rename
 collision behavior distinct. Prove missing native behavior first, then verify

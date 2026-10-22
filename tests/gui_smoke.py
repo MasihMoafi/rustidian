@@ -2425,7 +2425,15 @@ def main():
                 results.append("The generated Collapse All icon collapsed nested folders, which could be reopened without changing the note")
             def keyboard_focus_checks():
                 key("ctrl+t")
+                command("Source editing",available=False)
+                key("Escape")
+                anchor=fixture/"Keyboard mode anchor.md"
+                anchor_source="# Keyboard mode anchor\n"
+                anchor.write_text(anchor_source);time.sleep(.6)
+                open_note("Keyboard mode anchor")
                 command("Source editing")
+                control_bounds("editor-focused")
+                results.append("The mode command stayed unavailable on a blank tab and became available for an actual Markdown document, matching the reference")
                 first = fixture / "Notes/First steps.md"
                 original = first.read_text()
                 open_note("First steps")
@@ -2433,6 +2441,7 @@ def main():
                 type_text("QUICK_OPEN_FOCUS")
                 key("ctrl+s")
                 assert first.read_text() == original + "QUICK_OPEN_FOCUS", repr(first.read_text())
+                assert anchor.read_text()==anchor_source
                 results.append("Quick opening a note accepted immediate keyboard editing without clicking the editor")
                 key("ctrl+shift+f")
                 key("ctrl+a")
@@ -3751,6 +3760,9 @@ def main():
                         (reports / "workspace-load-failure.json").write_text(json.dumps({"expected":expected,"actual_tabs":tab_order(),"stored":stored(),"controls":json.loads((base/"ui-probe.json").read_text())},indent=2)+"\n")
                     assert tab_order() == names, (tab_order(), names)
                     title_contains(Path(names[expected["active"]]).stem)
+                    for saved_tab in expected["tabs"]:
+                        actual_pin=control_bounds("unpin-tab:"+saved_tab["path"],required=False) is not None
+                        assert actual_pin == saved_tab["pinned"], (saved_tab,actual_pin)
                     for side, key_name, width in (("left", "explorer", "left_width"), ("right", "details", "right_width")):
                         bounds = control_bounds("sidebar:" + key_name, required=False)
                         assert (bounds is not None) == expected[side], (side, bounds, expected)
@@ -3797,7 +3809,7 @@ def main():
                 assert len(new_paths) == 1
                 layout_path = new_paths.pop()
                 writing = saved("Writing")
-                assert writing["tabs"] == [{"path":"Workspace A.md","view":"Read","editing_view":"Source"}]
+                assert writing["tabs"] == [{"path":"Workspace A.md","view":"Read","editing_view":"Source","pinned":False}], writing["tabs"]
                 capture("native-workspaces-dark.png")
                 original_metadata = layout_path.read_bytes()
                 paste_text("Unsaved name", held=True)
@@ -3852,6 +3864,22 @@ def main():
                 key("End")
                 assert first.read_text() == first_source and second.read_text() == second_source
                 results.append("Both layouts restored tab order, active file, per-tab modes and sidebar sizes; actual restored tabs displayed and copied the correct document")
+
+                command("Toggle pin")
+                manager();save_layout("Reading");key("Escape")
+                pinned_reading=saved("Reading")
+                assert [tab["pinned"] for tab in pinned_reading["tabs"]]==[False,True]
+                load("Writing");assert_layout(writing)
+                load("Reading");assert_layout(pinned_reading)
+                control_bounds("unpin-tab:Workspace B.md")
+                capture("native-workspaces-pinned-layout.png")
+                command("Toggle pin")
+                manager();save_layout("Reading");key("Escape")
+                reading=saved("Reading")
+                assert [tab["pinned"] for tab in reading["tabs"]]==[False,False]
+                assert first.read_text()==first_source and second.read_text()==second_source
+                (reports/"workspace-pinned-layout.json").write_text(json.dumps({"pinned_layout":pinned_reading,"unpinned_layout":reading},indent=2)+"\n")
+                results.append("Named layouts restored the actual pinned and unpinned tab controls; saving the reversed pin choice preserved both original note bytes")
 
                 key("ctrl+w")
                 command("Workspaces: Save layout")
@@ -4687,6 +4715,7 @@ def main():
             key("ctrl+s")
             assert "RESTORED_SOURCE_EDIT" in (fixture / "Notes/Created in GUI.md").read_text()
             results.append("Clean exit/restart restored selected tab and independent reading/source modes")
+            (reports/"gui-all-baseline.json").write_text(json.dumps({"status":"passed","checks":results.copy()},indent=2)+"\n")
             failure_details = []
             (reports / "gui-all-failures.json").write_text("[]\n")
 

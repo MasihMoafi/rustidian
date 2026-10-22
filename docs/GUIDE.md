@@ -530,13 +530,17 @@ convert an essential-workflow release into a claim of complete Obsidian parity.
 
 ### Audit file moves by resolved destinations
 
-The actual1.13.7 `file-move` audit uses disposable notes, real menu/input actions
-and read-only metadata observation. Its five passing cases cover filtered Escape,
-existing/root/nested destinations and an occupied filename. Keep the rejected
-assumptions and raw evidence beside `obsidian-file-move-reference.json`.
+The actual `file-move` audit now passes eight actions on1.14.4, including
+current-folder no-op, fuzzy selection/cancellation, filtered Escape, existing,
+root and nested destinations, plain-Enter creation and collision numbering.
+The previous1.13.7 five/six/seven-case reports remain in their dated evidence
+folders. `obsidian-file-move-reference.json` binds the current app archive hash
+and its version observed through actual General settings.
 
 - Match the separate `Move file to...` picker: `Type a folder`, `/`, fuzzy folder
-  choices, arrows/Enter, Escape and the new-folder row/Shift+Enter. Moving an
+  choices, arrows/Enter, Escape and the new-folder row. With no matches, plain
+  Enter creates the offered folder; Shift+Enter also creates one. With fuzzy
+  matches, Enter chooses the selected existing folder. Moving an
   inactive file keeps the active document. Cancellation preserves exact bytes.
 - With the reference's default automatic-link setting false, necessary rewrites
   offer Always update/Just once/Do not update. Just once leaves the preference
@@ -549,8 +553,33 @@ assumptions and raw evidence beside `obsidian-file-move-reference.json`.
   content, occupied bytes, open views/history and every affected link.
 - Creation/error/cancellation need contained paths and guarded atomic moves.
   Check hidden/linked/missing parents, concurrent destinations and dirty/external
-  changes before calling the native workflow equivalent. Native implementation
-  of this separate picker/update-choice flow is still pending.
+  changes before calling the native workflow equivalent. Choosing the current
+  folder closes the reference picker without notices, path or byte changes.
+
+Keep physical relocation separate from optional reference rewrites: the file is
+already moved when the three-button prompt appears. Retain the original reference
+snapshot so an external edit during the prompt is rejected by ordinary guarded
+save. Check each old target after relocation and omit rewrites that still resolve
+to the intended file, including valid short names in mixed reference documents.
+Keep editing/scroll identity with the same file across relocation; navigation to
+a different document needs a different identity so undo cannot leak. Folder
+matching must preserve dotted names; do not pass folders through a file matcher
+that removes extensions. Use the existing bounded, nonlinked settings reader.
+
+For the screenshot version, copy the already installed `obsidian-1.14.4.asar`
+read-only into the disposable profile with `--app-asar`; never copy the real
+profile database or change its files. Verify the displayed General version,
+not an app/API field that can be undefined. Settings is a separate native window
+and CDP page: observe that target, close the actual window, then restore the note
+page before continuing. Preserve the three failed identity/location observations
+so a future agent does not repeat them. This update needs no download or local
+build. Cache folder matches until input changes; virtualize visible rows and
+verify the actual1.14.4 dialog position rather than inheriting1.13.7 geometry.
+
+Next native Move implementation is committed only in an isolated local worktree;
+it has not compiled. Ten FS behavior cases, search/tab identity cases and ten native Move assertions
+plus startup are prepared. Current normal9feb release stays independent. The Move preference does
+not establish general Rename preference parity; keep that remaining gap visible.
 
 ### Escape belongs to the editor before focus navigation
 
@@ -603,3 +632,44 @@ labelled two identical light captures as dark/light because it read a stale save
 preference. `set_theme` samples the unobscured ribbon before/after the actual
 palette toggle and keeps the observations; inspect both distinct screenshots.
 A filename or a serialized dark flag is not visual evidence.
+
+### Include pin state in named-layout verification
+
+Source9feb added `SavedTab.pinned`, emitted even when false. The older workspace
+exact-dictionary assertion failed on the correct saved path/modes plus
+`pinned:false`; its immutable negative and observed bytes remain under
+reports/workspace-pin-schema-9febfbb/. Keep the exact path/view/editing checks and
+include the new field. Verify a real pin-true save/load and reversed pin-false
+save/load against the visible tab glyphs, with original note bytes preserved.
+All10 corrected focused checks pass on the unchanged optimized9feb app. The next
+harness-only Actions run can reuse that exact app and CPU example, keeping every
+focused/full/performance gate without compiling Rust again.
+
+### Treat native1.14.4 colors as their own Markdown syntax
+
+The isolated six-command native-highlight audit saves `==🔵text==` for Blue,
+`==🟢text==` for Green, `==🟠text==` for Orange, `==🟣text==` for Purple,
+`==🔴text==` for Red and `==🟡text==` for Yellow. Reading hides the marker and
+renders a `mark` with `data-highlight` set to the color name. Literal inline code
+stays literal; one undo and redo preserve exact bytes. The report under
+reports/obsidian-1.14.4-highlights/ retains computed colors, markup, real Source
+selection and restored original notes. Do not equate this with the older HTML
+Highlightr colors. Native compatibility remains unfinished: audit toggle/remove,
+changing an existing color, Live/caret, link/code/fence and light appearance
+before implementing it; preserve Masih's Cyan alongside the new colors.
+
+### Set up keyboard checks with a real document
+
+The old full fixture requested Source editing immediately after creating an empty
+tab. Actual1.14.4 exposes the analogous mode command on a Markdown view and hides
+it on EmptyView; both sides are observed in the isolated empty-commands audit.
+Keep that availability negative. Prepare Source on a real disposable anchor,
+then quick-open the target and exercise immediate editing, reading, tab switches
+and queued input. All8 corrected focused checks pass on the same optimized9feb
+app. Never fix this fixture by exposing an inactive command or dropping typing
+assertions. Preserve the failed cloud snapshot and the actual reference rows.
+
+The full suite also has17 initial smoke checks before its grouped workflows.
+Keep gui-all-baseline.json and verify its rows plus all per-workflow counts;
+startup alone is not the baseline. This fixes the release check's earlier count
+assumption without discarding any real check.

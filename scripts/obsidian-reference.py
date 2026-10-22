@@ -16,8 +16,9 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview"], default="all")
+parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview", "native-highlights", "empty-commands"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
+parser.add_argument("--app-asar", type=Path, help="Read-only copy of an installed update into the disposable profile")
 arguments = parser.parse_args()
 with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
     base = Path(temporary)
@@ -50,8 +51,17 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
         if arguments.section == "page-preview":
             (vault/'Preview source.md').write_text('# Preview source\n\n[[Preview target|Target preview]]\n')
             (vault/'Preview target.md').write_text('# Preview target\n\nVISIBLE_PREVIEW_DESTINATION\n\n- [ ] Preview task\n')
+    if arguments.section == "native-highlights":
+        (vault / "Native highlights.md").write_text("# Native highlights\n\n`==literal==`\n\nBefore TARGET")
     profile = base / "profile"
     profile.mkdir()
+    update_identity = {}
+    if arguments.app_asar:
+        metadata = arguments.app_asar.lstat()
+        assert arguments.app_asar.is_file() and not arguments.app_asar.is_symlink() and metadata.st_size <= 64*1024*1024
+        update_bytes = arguments.app_asar.read_bytes()
+        (profile / arguments.app_asar.name).write_bytes(update_bytes)
+        update_identity = {"app_asar": str(arguments.app_asar), "app_asar_sha256": hashlib.sha256(update_bytes).hexdigest()}
     (profile / "obsidian.json").write_text(json.dumps({"updateDisabled": True, "vaults": {"0123456789abcdef": {"path": str(vault), "ts": 1, "open": True}}}))
     read_fd, write_fd = os.pipe()
     server = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1440x960x24", "-nolisten", "tcp", "-ac"], pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -109,6 +119,110 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             value = subprocess.check_output(["node", "--input-type=module", "-e", code, target["webSocketDebuggerUrl"], expression], text=True, timeout=8)
             return json.loads(value)
 
+        reference_identity = {"appimage": str(arguments.appimage), **update_identity}
+        if arguments.app_asar:
+            xdo("key", "--clearmodifiers", "ctrl+comma");time.sleep(.5)
+            main_target=target
+            opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            def pages():
+                with opener.open(f"http://127.0.0.1:{debug_port}/json/list",timeout=2) as response:return json.load(response)
+            deadline=time.monotonic()+5
+            settings_target=None
+            while time.monotonic()<deadline:
+                settings_target=next((page for page in pages() if page['type']=='page' and page['id']!=main_target['id']),None)
+                if settings_target:break
+                time.sleep(.1)
+            assert settings_target, "The actual separate settings window must appear"
+            target=settings_target
+            general=evaluate("JSON.stringify((()=>{const e=[...document.querySelectorAll('.vertical-tab-nav-item')].find(e=>e.textContent.trim()==='General');if(!e)return null;const r=e.getBoundingClientRect();return [screenX+r.x+r.width/2,screenY+r.y+r.height/2]})())")
+            assert general, "General settings must be present in the actual reference"
+            xdo("mousemove",*[str(round(v)) for v in general],"click","1");time.sleep(.4)
+            general_text=evaluate("JSON.stringify(document.querySelector('.modal.mod-settings')?.innerText||'')")
+            version=re.search(r"(?:current\s+)?version\s*:?\s*(\d+\.\d+\.\d+)",general_text,re.I)
+            reference_identity.update(observed_general_version=version.group(1) if version else None,general_text=general_text)
+            ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-reference-1.14.4-general.png')
+            xdo("key","Escape");time.sleep(.2)
+            if any(page['id']==settings_target['id'] for page in pages()):
+                xdo("key","--clearmodifiers","ctrl+w");time.sleep(.3)
+            assert all(page['id']!=settings_target['id'] for page in pages()), "Close the isolated settings window before testing notes"
+            target=main_target;xdo("windowfocus",window)
+            print(json.dumps({"reference_identity":reference_identity}),flush=True)
+            assert reference_identity['observed_general_version']==re.search(r"(\d+\.\d+\.\d+)",arguments.app_asar.name).group(1),reference_identity
+
+        if arguments.section == "empty-commands":
+            report={**reference_identity,"profile":"disposable","status":"observed"}
+            originals={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
+            def palette_rows(label):
+                xdo('key','--clearmodifiers','ctrl+p');time.sleep(.2)
+                xdo('type','--clearmodifiers',label);time.sleep(.3)
+                return evaluate("JSON.stringify([...document.querySelectorAll('.suggestion-item')].map(e=>e.textContent.trim()))")
+            try:
+                xdo('key','--clearmodifiers','ctrl+e');time.sleep(.3)
+                label='Toggle Live Preview/Source mode'
+                report['document_rows']=palette_rows(label)
+                assert any(label.lower() in row.lower() for row in report['document_rows']),report
+                xdo('key','Return');time.sleep(.3)
+                report['document_state']=evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")
+                xdo('key','--clearmodifiers','ctrl+t');time.sleep(.4)
+                report['empty_state']=evaluate("JSON.stringify(app.workspace.activeLeaf.getViewState())")
+                report['empty_rows']=palette_rows(label)
+                ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-empty-mode-palette.png')
+                xdo('key','Escape');time.sleep(.2)
+                assert report['empty_state']['type']=='empty',report['empty_state']
+                assert all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
+                report.update(status='observed',original_notes_unchanged=True)
+                print(json.dumps({'section':'empty-commands','document_rows':report['document_rows'],'empty_rows':report['empty_rows']}))
+            finally:(ROOT/'reports/obsidian-empty-commands-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+            raise SystemExit(0)
+
+        if arguments.section == "native-highlights":
+            report={**reference_identity,"profile":"disposable","status":"observed","cases":[]}
+            note=vault/'Native highlights.md';original=note.read_text()
+            originals={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md') if p!=note}
+            def palette(label):
+                xdo('key','--clearmodifiers','ctrl+p');time.sleep(.2)
+                xdo('type','--clearmodifiers',label);time.sleep(.3)
+                selected=evaluate("JSON.stringify(document.querySelector('.suggestion-item.is-selected')?.textContent||'')")
+                assert label.lower() in selected.lower(),(label,selected)
+                xdo('key','Return');time.sleep(.3)
+            def saved(expected=None):
+                deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    value=note.read_text()
+                    if (value!=original if expected is None else value==expected):return value
+                    time.sleep(.05)
+                raise AssertionError(('The reference did not save the expected edit',expected,note.read_text()))
+            try:
+                xdo('key','--clearmodifiers','ctrl+o');time.sleep(.2)
+                xdo('type','--clearmodifiers','Native highlights');time.sleep(.3);xdo('key','Return');time.sleep(.6)
+                xdo('key','--clearmodifiers','ctrl+e');time.sleep(.3)
+                palette('Toggle Live Preview/Source mode')
+                state=evaluate("JSON.stringify(app.workspace.activeLeaf.view.getState())")
+                assert state.get('source') is True,state
+                for color in ('Blue','Green','Orange','Purple','Red','Yellow'):
+                    xdo('key','--clearmodifiers','ctrl+End');xdo('key','--clearmodifiers','ctrl+shift+Left')
+                    assert evaluate("JSON.stringify(app.workspace.activeLeaf.view.editor.getSelection())")=='TARGET'
+                    palette('Toggle '+color.lower()+' highlight')
+                    changed=saved();assert changed.count('TARGET')==1 and '==literal==' in changed
+                    xdo('key','--clearmodifiers','ctrl+e');time.sleep(.4)
+                    rendered=evaluate("JSON.stringify([...document.querySelectorAll('.markdown-preview-view *')].filter(e=>e.textContent==='TARGET'&&e.getBoundingClientRect().height).map(e=>{const s=getComputedStyle(e),r=e.getBoundingClientRect();return {tag:e.tagName,html:e.outerHTML,color:s.color,background:s.backgroundColor,rect:[r.x,r.y,r.width,r.height]}}))")
+                    assert rendered,('The highlighted target must appear in Reading',color)
+                    literal=evaluate("JSON.stringify([...document.querySelectorAll('.markdown-preview-view code')].map(e=>({text:e.textContent,marks:e.querySelectorAll('mark').length})))")
+                    assert any(c['text']=='==literal==' and c['marks']==0 for c in literal),literal
+                    ImageGrab.grab(xdisplay=display).save(ROOT/f'reports/obsidian-native-highlight-{color.lower()}.png')
+                    xdo('key','--clearmodifiers','ctrl+e');time.sleep(.3)
+                    xdo('key','--clearmodifiers','ctrl+z');saved(original)
+                    xdo('key','--clearmodifiers','ctrl+shift+z');saved(changed)
+                    xdo('key','--clearmodifiers','ctrl+z');saved(original)
+                    report['cases'].append({'color':color,'source':changed,'reading':rendered,'literal_code_unchanged':True,'single_undo_redo_exact':True})
+                assert note.read_text()==original
+                assert all(hashlib.sha256((vault/name).read_bytes()).hexdigest()==digest for name,digest in originals.items())
+                report.update(status='passed',original_notes_unchanged=True,fixture_restored=True)
+                print(json.dumps({'section':'native-highlights','status':'passed','colors':[row['color'] for row in report['cases']]}))
+            finally:
+                (ROOT/'reports/obsidian-native-highlights-reference.json').write_text(json.dumps(report,indent=2)+'\n')
+            raise SystemExit(0)
+
         if arguments.section == "page-preview":
             report={'appimage':str(arguments.appimage),'profile':'disposable','status':'observed','cases':[]}
             originals={p.relative_to(vault).as_posix():p.read_bytes() for p in vault.rglob('*.md')}
@@ -151,7 +265,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
             raise SystemExit(0)
 
         if arguments.section in ("file-actions", "file-move"):
-            report={"appimage":str(arguments.appimage),"profile":"disposable","status":"observed","actions":[]}
+            report={**reference_identity,"profile":"disposable","status":"observed","actions":[]}
             original_notes={p.relative_to(vault).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in vault.rglob('*.md')}
             sample=vault/'Notes/Menu sample.md';sample.write_bytes(b'# Menu sample\r\n\r\nKeep exact bytes.\r\n')
             collision=vault/'Notes/Menu sample 1.md';collision.write_bytes(b'KEEP_COLLISION\n')
@@ -198,6 +312,23 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                             if state['targets']==[path,path]:return state
                             time.sleep(.15)
                         raise AssertionError(('Moved links must resolve to the actual destination',path,state))
+                    same_before={p.relative_to(vault).as_posix():p.read_bytes() for p in vault.rglob('*.md')}
+                    report['same_folder_picker']=move('Notes/Menu sample.md','Notes')
+                    assert 'Notes' in report['same_folder_picker']['rows'],report['same_folder_picker']
+                    xdo('key','Return');time.sleep(.6)
+                    report['same_folder_ui']=evaluate("JSON.stringify({modal:!!document.querySelector('.modal-container'),active:app.workspace.activeLeaf?.view.file?.path,notices:[...document.querySelectorAll('.notice')].map(e=>e.textContent)})")
+                    same_after={p.relative_to(vault).as_posix():p.read_bytes() for p in vault.rglob('*.md')}
+                    report['same_folder_unchanged']=same_after==same_before
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-same-folder.png')
+                    assert same_after==same_before,('Same-folder move changed files',sorted(same_after.keys()-same_before.keys()),report['same_folder_ui'])
+                    assert not report['same_folder_ui']['modal'],report['same_folder_ui']
+                    report['actions'].append({'name':'Choose current folder','files_unchanged':True,'picker_closed':True})
+                    report['fuzzy_folder_ui']=move('Notes/Menu sample.md','Move dest')
+                    report['fuzzy_folder_selected']=evaluate("JSON.stringify(document.querySelector('.suggestion-item.is-selected')?.textContent||null)")
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-fuzzy.png')
+                    xdo('key','Escape');time.sleep(.2)
+                    assert sample.read_bytes()==source and not (folder/sample.name).exists()
+                    report['actions'].append({'name':'Fuzzy folder suggestions and cancellation','rows':report['fuzzy_folder_ui']['rows'],'selected':report['fuzzy_folder_selected']})
                     report['cancel_ui']=move('Notes/Menu sample.md','Move destination')
                     assert report['cancel_ui']['rows']==['Move destination']
                     ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-filtered.png')
@@ -218,6 +349,19 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
                     report['resolved_after_once']=linked_to(moved.relative_to(vault).as_posix())
                     assert '|Sample alias]]' in reference.read_text() and '[Sample](' in reference.read_text()
                     report['actions'].append({'name':'Move to existing folder','path':moved.relative_to(vault).as_posix(),'active':evaluate("JSON.stringify(app.workspace.activeLeaf?.view.file?.path||null)"),'reference':reference.read_text()})
+                    report['plain_enter_new_folder_ui']=move(moved.relative_to(vault).as_posix(),'Enter parent/Nested')
+                    xdo('key','Return');time.sleep(.8)
+                    enter_created=vault/'Enter parent/Nested'/sample.name
+                    report['plain_enter_created']=enter_created.is_file()
+                    report['plain_enter_modal']=evaluate("JSON.stringify({buttons:[...document.querySelectorAll('.modal-container button')].map(e=>e.textContent.trim()),inputs:[...document.querySelectorAll('.modal-container input')].map(e=>e.value)})")
+                    ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-plain-enter.png')
+                    assert enter_created.is_file() and enter_created.read_bytes()==source and not moved.exists(),report['plain_enter_modal']
+                    assert report['plain_enter_modal']['buttons']==[]
+                    linked_to(enter_created.relative_to(vault).as_posix())
+                    move(enter_created.relative_to(vault).as_posix(),'Move destination');xdo('key','Return');time.sleep(.6)
+                    assert moved.read_bytes()==source and not enter_created.exists()
+                    linked_to(moved.relative_to(vault).as_posix())
+                    report['actions'].append({'name':'Plain Enter creates the offered new folder','exact_bytes':True,'restored_existing_folder':True})
                     report['new_folder_ui']=move(moved.relative_to(vault).as_posix(),'New parent/Nested')
                     ImageGrab.grab(xdisplay=display).save(ROOT/'reports/obsidian-move-create.png')
                     xdo('key','shift+Return');time.sleep(.8)
