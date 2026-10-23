@@ -2,17 +2,19 @@
 
 <img src="docs/brand/rustidian.svg" alt="Rustidian bookmark R logo" width="112" height="112">
 
-# Rustidian
+# Rustidian: Obsidian but fast.
 
-**Obsidian, but fast. A native Rust Markdown notebook.**
+**A Rust-based Obsidian.**
 
-[Status](#development-status) · [Quick start](#quick-start) · [Features](#why-rustidian) · [Performance](#performance) · [Roadmap](docs/PARITY.md)
+[Download Linux alpha](https://github.com/MasihMoafi/rustidian/releases) · [Quick start](#quick-start) · [Performance](#performance) · [Contribute](CONTRIBUTING.md)
 
 Early alpha · Full Obsidian parity is unfinished
 
 </div>
 
-A familiar vault workflow, from the file explorer and `[[wiki links]]` to live editing and backlinks. Open an ordinary Markdown folder and keep your notes portable.
+I built Rustidian because I wanted a note editor that felt fast. I liked Obsidian, but startup still felt slow after several optimization attempts. Rustidian brings that familiar vault workflow to a native Rust app: ordinary Markdown folders, live editing, linked notes and graphs.
+
+**Try the Linux alpha. Contributors are welcome.**
 
 ## Development status
 
@@ -91,16 +93,8 @@ A separate [paired startup comparison](docs/performance/startup-2026-10-22/READM
 
 The linked run contains the verification evidence. See the [comparison script](scripts/compare-editors.py) for the method and the [workflow](.github/workflows/native.yml) for the checks.
 
-## Project status
-
-Rustidian is an **independent native implementation**, unaffiliated with Obsidian. Full feature and visual parity is the goal and remains unfinished. Existing Obsidian JavaScript community plugins do not execute here.
-
-Graph parity, Canvas, math, sync, broader window/tab behavior, and other platforms still need work. The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining gaps; the [development guide](docs/GUIDE.md) explains how to continue the project.
-
 ## Contributors welcome
-
-I started Rustidian because I never found a note editor I liked that felt fast. Obsidian still felt slow to start after several optimization attempts, so I began building the native Rust notebook I wanted to use.
 
 Help shape it early: Rust/egui development, Markdown editing, file safety, accessibility, platform support and reproducible bug reports all matter. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [coverage ledger](docs/PARITY.md).
 
-[MIT license](LICENSE) · Independent project, unaffiliated with Obsidian.
+[MIT license](LICENSE) · Independent project, unaffiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.
