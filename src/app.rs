@@ -2626,9 +2626,14 @@ impl NotesApp {
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                 ui.horizontal(|ui| {
                     let count = self.tabs.len().max(1) as f32;
-                    let width = (ui.available_width() - 88.0)
-                        .max(80.0)
-                        .min(200.0 * count + 4.0 * (count - 1.0));
+                    // With no tabs the strip takes no room, so New tab sits at the left as in Obsidian.
+                    let width = if self.tabs.is_empty() {
+                        0.0
+                    } else {
+                        (ui.available_width() - 88.0)
+                            .max(80.0)
+                            .min(200.0 * count + 4.0 * (count - 1.0))
+                    };
                     let tab_width = ((width - 4.0 * (count - 1.0)) / count).clamp(32.0, 200.0);
                     let selected = self.tabs.get(self.active);
                     let reveal_key = (

@@ -4209,7 +4209,10 @@ def main():
                 command("Undo close tab",available=False);key("Escape");key("ctrl+shift+t");expect("Gamma","Beta","Alpha")
                 results.append("Closing a blank tab added no file history and an empty-history restore left all existing views unchanged")
                 key("ctrl+w");key("ctrl+w");key("ctrl+w");assert not tabs()
+                empty_new_tab=control_bounds("new-tab")
                 key("ctrl+shift+t");expect("Gamma");mode("Live preview")
+                # With no tabs, New tab sits where the first tab starts, as in Obsidian, not one tab-width in.
+                assert empty_new_tab[0] <= control_bounds("tab-full:Restore Gamma.md")[0] + 2,(empty_new_tab,control_bounds("tab-full:Restore Gamma.md"))
                 key("ctrl+shift+t");expect("Gamma","Beta");mode("Reading")
                 key("ctrl+shift+t");expect("Gamma","Beta","Alpha");mode("Source mode")
                 capture("native-tab-restore-last.png")
