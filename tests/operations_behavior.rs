@@ -308,7 +308,7 @@ fn rename_preflight_rejects_collisions_external_edits_and_escapes() {
         fs::read_to_string(root.path().join("Projects/Ref.md")).unwrap(),
         "External version"
     );
-    assert!(vault.trash_note(Path::new("../Outside.md")).is_err());
+    assert!(vault.trash_entry(Path::new("../Outside.md")).is_err());
 }
 
 #[test]

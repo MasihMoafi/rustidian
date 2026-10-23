@@ -513,19 +513,25 @@ impl Vault {
         outcome
     }
 
-    pub fn trash_note(&mut self, path: &Path) -> Result<()> {
-        let absolute = if self.attachments.iter().any(|attachment| attachment == path) {
+    /// Moves a note, attachment or folder (with everything inside) to the system Trash.
+    pub fn trash_entry(&mut self, path: &Path) -> Result<()> {
+        let folder = self.folders.iter().any(|folder| folder == path);
+        let absolute = if folder || self.attachments.iter().any(|attachment| attachment == path) {
             self.safe_file_path(path, false)?
         } else {
             self.safe_path(path, false)?
         };
-        if !absolute.is_file() {
-            return Err("Choose an existing file.".into());
+        let metadata = std::fs::symlink_metadata(&absolute)
+            .map_err(|_| "Choose an existing file or folder.".to_owned())?;
+        if metadata.file_type().is_symlink() || metadata.is_dir() != folder {
+            return Err("Choose an existing file or folder.".into());
         }
         trash::delete(&absolute)
-            .map_err(|error| format!("Cannot move file to system Trash: {error}"))?;
-        self.notes.retain(|note| note.path != path);
-        self.attachments.retain(|attachment| attachment != path);
+            .map_err(|error| format!("Cannot move to system Trash: {error}"))?;
+        self.notes.retain(|note| !note.path.starts_with(path));
+        self.attachments
+            .retain(|attachment| !attachment.starts_with(path));
+        self.folders.retain(|entry| !entry.starts_with(path));
         self.rebuild_lookup();
         Ok(())
     }

@@ -864,6 +864,15 @@ impl Editor {
         } else {
             None
         };
+        let caret = active_line.as_ref().and(cursor).and_then(|cursor| {
+            (cursor.primary == cursor.secondary).then(|| {
+                tab.document
+                    .text
+                    .char_indices()
+                    .nth(cursor.primary.index.0)
+                    .map_or(tab.document.text.len(), |(i, _)| i)
+            })
+        });
         let selected_match = if find.open {
             find_matches(&tab.document.text, &find.query)
                 .get(find.selected)
@@ -974,7 +983,14 @@ impl Editor {
                     });
                 }
                 table_placements = if live {
-                    tables.prepare(ui, text, &parsed.tables, active_line.as_ref(), &hidden)
+                    tables.prepare(
+                        ui,
+                        text,
+                        &parsed.tables,
+                        active_line.as_ref(),
+                        caret,
+                        &hidden,
+                    )
                 } else {
                     Vec::new()
                 };

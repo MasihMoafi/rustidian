@@ -189,7 +189,17 @@ impl Tree {
                     response.rect,
                 );
                 if response.clicked() {
-                    open = Some(FileAction::Rename(path));
+                    open = Some(FileAction::Rename(path.clone()));
+                    ui.close();
+                }
+                let delete = theme::menu_item(ui, theme::Icon::Trash, "Delete");
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    format!("folder-delete:{}", path.display()),
+                    delete.rect,
+                );
+                if delete.clicked() {
+                    open = Some(FileAction::Trash(path));
                     ui.close();
                 }
             });

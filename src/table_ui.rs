@@ -126,6 +126,7 @@ impl Tables {
         source: &str,
         models: &[Table],
         active_line: Option<&Range<usize>>,
+        caret: Option<usize>,
         hidden: &[Range<usize>],
     ) -> Vec<Placement> {
         if self.views.len() != models.len()
@@ -173,7 +174,15 @@ impl Tables {
                 if active_line.is_some_and(|line| {
                     line.start < view.model.range.end && line.end >= view.model.range.start
                 }) {
-                    return None;
+                    // A caret entering the table edits its cell in place, as in Obsidian;
+                    // only a selection that reaches into the table shows the Markdown source.
+                    match caret.filter(|byte| view.model.range.contains(byte)) {
+                        Some(byte) => {
+                            let (row, column) = view.model.cell_at(byte);
+                            self.focus.get_or_insert((ordinal, row, column));
+                        }
+                        None => return None,
+                    }
                 }
                 let start = source[..view.model.range.start].chars().count();
                 if hidden.iter().any(|range| range.contains(&start)) {

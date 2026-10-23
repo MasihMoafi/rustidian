@@ -2379,7 +2379,7 @@ impl NotesApp {
                                     egui::Popup::menu(&more).show(|ui| {
                                         for (label, dialog) in [
                                             ("Rename or move…", Dialog::RenameNote),
-                                            ("Move to system Trash…", Dialog::TrashNote),
+                                            ("Delete file", Dialog::TrashNote),
                                         ] {
                                             if ui.button(label).clicked() {
                                                 self.ask_file(
@@ -2415,6 +2415,25 @@ impl NotesApp {
                                     if ui.button("Save a copy…").clicked() {
                                         self.ask(Dialog::SaveCopy);
                                         ui.close();
+                                    }
+                                    ui.separator();
+                                    for (label, dialog) in [
+                                        ("Rename or move…", Dialog::RenameNote),
+                                        ("Delete file", Dialog::TrashNote),
+                                    ] {
+                                        let response = ui.button(label);
+                                        crate::ui_probe::record(
+                                            ui.ctx(),
+                                            format!("note-menu:{label}"),
+                                            response.rect,
+                                        );
+                                        if response.clicked() {
+                                            self.ask_file(
+                                                dialog,
+                                                self.tabs[self.active].document.path.clone(),
+                                            );
+                                            ui.close();
+                                        }
                                     }
                                     ui.separator();
                                     for (label, view) in [
@@ -2990,7 +3009,7 @@ impl NotesApp {
             Dialog::OpenVault => "Open vault",
             Dialog::Commands => "Command palette",
             Dialog::RenameNote => "Rename or move",
-            Dialog::TrashNote => "Move file to system Trash",
+            Dialog::TrashNote => "Move to system Trash",
             Dialog::AddProperty => "Add property",
             Dialog::BookmarkTitle => "Edit bookmark title",
             Dialog::Settings => "Settings",
@@ -3346,7 +3365,15 @@ impl NotesApp {
                 }
                 _ => {
                     if dialog == Dialog::TrashNote {
-                        ui.label("The file will be recoverable from your desktop’s Trash.");
+                        ui.label(if self.dialog_path.as_ref().is_some_and(|path| {
+                            self.vault
+                                .as_ref()
+                                .is_some_and(|vault| vault.folders.contains(path))
+                        }) {
+                            "The folder and everything in it will be recoverable from your desktop’s Trash."
+                        } else {
+                            "The file will be recoverable from your desktop’s Trash."
+                        });
                     }
                     if dialog == Dialog::RenameNote {
                         ui.label("Links will be updated. Enter a new path inside this vault.");
@@ -3701,7 +3728,7 @@ impl NotesApp {
                 self.vault
                     .as_mut()
                     .ok_or_else(|| "Open a vault first.".to_owned())
-                    .and_then(|vault| vault.trash_note(&source).map(|()| None))
+                    .and_then(|vault| vault.trash_entry(&source).map(|()| None))
             };
             match result {
                 Ok(Some(outcome)) => {
@@ -3730,8 +3757,9 @@ impl NotesApp {
                     let deleted_active = self
                         .tabs
                         .get(self.active)
-                        .is_some_and(|tab| tab.document.path == source);
-                    self.tabs.retain(|tab| tab.document.path != source);
+                        .is_some_and(|tab| tab.document.path.starts_with(&source));
+                    self.tabs
+                        .retain(|tab| !tab.document.path.starts_with(&source));
                     if deleted_active {
                         self.new_tab();
                     } else {
