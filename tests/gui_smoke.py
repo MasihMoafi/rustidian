@@ -2968,6 +2968,10 @@ def main():
                 original = (fixture / "Home.md").read_bytes()
                 if control_bounds("vault-profile", required=False) is None:
                     command("Toggle left sidebar")
+                # Masih, 23 Oct: the vault name and its gear were cut off under the status bar.
+                status_top = control_bounds("status-bar")[1]
+                for name in ("vault-profile", "open-settings"):
+                    assert control_bounds(name)[3] <= status_top, (name, control_bounds(name), status_top)
 
                 def manager():
                     click_control("vault-profile")

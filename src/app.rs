@@ -1944,32 +1944,42 @@ impl NotesApp {
                             .as_ref()
                             .map(Vault::name)
                             .unwrap_or_else(|| "Open vault…".into());
-                        ui.horizontal(|ui| {
-                            let width = (ui.available_width() - 38.0).max(40.0);
-                            let vault = ui.add_sized(
-                                [width, 30.0],
-                                egui::Button::new((
-                                    theme::icon_image(
-                                        Icon::Disclosure,
-                                        ui.visuals().weak_text_color(),
-                                    )
-                                    .rotate(std::f32::consts::FRAC_PI_2, egui::Vec2::splat(0.5)),
-                                    RichText::new(name).size(13.0),
-                                ))
-                                .frame(false)
-                                .truncate(),
-                            );
-                            crate::ui_probe::record(ui.ctx(), "vault-profile", vault.rect);
-                            if vault.clicked() {
-                                self.manage_vaults();
-                            }
-                            let settings =
-                                icon_button(ui, Icon::Settings, "Open settings · Ctrl+,");
-                            crate::ui_probe::record(ui.ctx(), "open-settings", settings.rect);
-                            if settings.clicked() {
-                                self.ask(Dialog::Settings);
-                            }
-                        });
+                        // A row as tall as its 30 px controls, clear of the status bar: a plain
+                        // `horizontal` row is shorter, and the controls spilled under the bar.
+                        ui.add_space(4.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(ui.available_width(), 30.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                let width = (ui.available_width() - 38.0).max(40.0);
+                                let vault = ui.add_sized(
+                                    [width, 30.0],
+                                    egui::Button::new((
+                                        theme::icon_image(
+                                            Icon::Disclosure,
+                                            ui.visuals().weak_text_color(),
+                                        )
+                                        .rotate(
+                                            std::f32::consts::FRAC_PI_2,
+                                            egui::Vec2::splat(0.5),
+                                        ),
+                                        RichText::new(name).size(13.0),
+                                    ))
+                                    .frame(false)
+                                    .truncate(),
+                                );
+                                crate::ui_probe::record(ui.ctx(), "vault-profile", vault.rect);
+                                if vault.clicked() {
+                                    self.manage_vaults();
+                                }
+                                let settings =
+                                    icon_button(ui, Icon::Settings, "Open settings · Ctrl+,");
+                                crate::ui_probe::record(ui.ctx(), "open-settings", settings.rect);
+                                if settings.clicked() {
+                                    self.ask(Dialog::Settings);
+                                }
+                            },
+                        );
                         ui.separator();
                     },
                 );
@@ -4215,7 +4225,7 @@ impl eframe::App for NotesApp {
         if let Some(kind) = crate::window::title_bar(ui, &self.window_title, file_actions_enabled) {
             self.start_open_picker(kind);
         }
-        egui::Panel::bottom("status")
+        let status = egui::Panel::bottom("status")
             .exact_size(28.0)
             .resizable(false)
             .show(ui, |ui| {
@@ -4272,6 +4282,7 @@ impl eframe::App for NotesApp {
                     });
                 });
             });
+        crate::ui_probe::record(ui.ctx(), "status-bar", status.response.rect);
         if self.dialog.is_none()
             && let Some(error) = self.error.clone()
         {
