@@ -1,19 +1,7 @@
 # Rustidian artwork
 
-The bookmark-shaped R is original artwork generated for this project with the
-built-in image tool. It combines a bookmark, a writing page and the first letter
-of Rustidian. The selected raster is preserved in `rustidian-original.png`.
+Public branding is under review after Masih rejected the bookmark-shaped R on23October2026. Its local raster, SVG and old proof folder were moved to Trash; published copies remain until a reviewed replacement is sent. The current local README uses the product name and actual app screenshot.
 
-SVG Studio's multicolour engine traced that raster into `rustidian.svg`: three
-filled vector paths, transparent background, no embedded raster, fonts, scripts
-or external references. The trace retains the silhouette and open counter while
-flattening the source's subtle shading into three teal fills.
+Three original options were generated with the built-in image tool and converted to real paths through SVG Studio. They are unapproved drafts; exact prompts, originals, conversions and proof are in the local launch-repair report. Do not treat the agent’s preference as Masih’s selection.
 
-The source and SVG were inspected on light and dark surfaces at 24, 48, 128 and
-512 pixels. The current selection is the agent's draft, available for Masih's
-feedback. Reproduction and raw proof remain in the local project reports.
-
-The previously selected personal desktop icon used recolored Obsidian artwork.
-It is preserved locally and is separate from this original project identity.
-[Obsidian's brand guidelines](https://obsidian.md/brand) describe its trademark
-and personal icon-customization terms.
+Masih’s selected personal teal app icon is preserved separately in assets/app-icon/ and is not a public Rustidian brand asset. [Obsidian’s brand guidelines](https://obsidian.md/brand) distinguish personal icon customization from public brand use.

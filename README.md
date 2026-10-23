@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/brand/rustidian.svg" alt="Rustidian bookmark R logo" width="112" height="112">
-
 # Rustidian: Obsidian but fast.
 
 **A Rust-based Obsidian.**
@@ -16,6 +14,16 @@ I built Rustidian because I wanted a note editor that felt fast. I liked Obsidia
 
 **Try the Linux alpha. Contributors are welcome.**
 
+![Verified Rustidian alpha showing its bundled Markdown notebook](docs/images/rust-notes.png)
+
+## Why Rustidian?
+
+- **Native throughout.** Rust powers the interface, text editor, Markdown renderer, search, and vault operations.
+- **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, and native Mermaid diagrams bring your notes to life.
+- **Follow your ideas.** Wiki links, backlinks, tags, aliases, properties, bookmarks, a quick switcher, and vault-wide search keep your knowledge connected.
+- **Return to your rhythm.** Daily notes, templates, pinned tabs, named workspaces, recent vaults, and tab restoration after a clean exit.
+- **Keep control of your files.** Plain UTF-8 Markdown and text, atomic saves, external-change protection, recovery snapshots, and recoverable Trash. Workspace state lives outside the vault.
+
 ## Development status
 
 Rustidian is a work in progress toward a complete, fast Obsidian-style app. The current build covers a subset of that goal.
@@ -29,16 +37,6 @@ Rustidian is a work in progress toward a complete, fast Obsidian-style app. The 
 | Existing Obsidian community plugins | Unsupported; compatibility design remains open |
 
 The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining work. Full parity and existing Obsidian plugin compatibility are unfinished.
-
-![Verified Rustidian alpha showing its bundled Markdown notebook](docs/images/rust-notes.png)
-
-## Why Rustidian?
-
-- **Native throughout.** Rust powers the interface, text editor, Markdown renderer, search, and vault operations.
-- **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, and native Mermaid diagrams bring your notes to life.
-- **Follow your ideas.** Wiki links, backlinks, tags, aliases, properties, bookmarks, a quick switcher, and vault-wide search keep your knowledge connected.
-- **Return to your rhythm.** Daily notes, templates, pinned tabs, named workspaces, recent vaults, and tab restoration after a clean exit.
-- **Keep control of your files.** Plain UTF-8 Markdown and text, atomic saves, external-change protection, recovery snapshots, and recoverable Trash. Workspace state lives outside the vault.
 
 ## Quick start
 
@@ -80,6 +78,8 @@ Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If anot
 
 ## Performance
 
+A [paired startup comparison](docs/performance/startup-2026-10-22/README.md) measured a median complete matching note frame at **0.61 s for the verified Rustidian baseline versus 3.77 s for Obsidian 1.14.4**. Ten balanced warmed pairs used 100 synthetic notes, a 1440×960 software display and screenshot/OCR sampling. The measured baseline precedes the later graph update. Exact versions, original paired screenshots, raw results and limits accompany this bounded result.
+
 A [verified same-host comparison](https://github.com/MasihMoafi/rustidian/actions/runs/39817952278) measured serial edit/save acknowledgement:
 
 | Editor | Median |
@@ -89,12 +89,10 @@ A [verified same-host comparison](https://github.com/MasihMoafi/rustidian/action
 
 **About 5.6× faster in this edit-and-save test.** Both editors used the same 103,300-byte document in source mode on one Linux/Xvfb host. Four alternating rounds collected 100 timed samples plus 20 warmups. Timings cover synthetic input through observing the exact saved bytes, including keyboard-driver and file-polling overhead. Overall speed varies by workload.
 
-A separate [paired startup comparison](docs/performance/startup-2026-10-22/README.md) measured a median complete matching note frame at **0.61 s for the verified Rustidian baseline versus 3.77 s for Obsidian 1.14.4**. Ten balanced warmed pairs used 100 synthetic notes, a 1440×960 software display and screenshot/OCR sampling. The measured baseline precedes the later graph update. Exact versions, original paired screenshots, raw results and limits accompany this bounded result.
-
 The linked run contains the verification evidence. See the [comparison script](scripts/compare-editors.py) for the method and the [workflow](.github/workflows/native.yml) for the checks.
 
 ## Contributors welcome
 
-Help shape it early: Rust/egui development, Markdown editing, file safety, accessibility, platform support and reproducible bug reports all matter. See [CONTRIBUTING.md](CONTRIBUTING.md) and the [coverage ledger](docs/PARITY.md).
+Help close the gaps: reproduce a Markdown rendering mismatch against Obsidian, improve keyboard accessibility, or report a Linux/Wayland issue with exact steps and versions. Rust/egui contributors can start with the incomplete workflows in the [coverage ledger](docs/PARITY.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks.
 
 [MIT license](LICENSE) · Independent project, unaffiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.
