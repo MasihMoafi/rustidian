@@ -4215,8 +4215,8 @@ def main():
                 key("ctrl+w");key("ctrl+w");key("ctrl+w");assert not tabs()
                 empty_new_tab=control_bounds("new-tab")
                 key("ctrl+shift+t");expect("Gamma");mode("Live preview")
-                # With no tabs, New tab sits where the first tab starts, as in Obsidian, not one tab-width in.
-                assert empty_new_tab[0] <= control_bounds("tab-full:Restore Gamma.md")[0] + 2,(empty_new_tab,control_bounds("tab-full:Restore Gamma.md"))
+                # With no tabs, New tab sits where the first tab starts (after the strip's 4 px item gap), as in Obsidian, not one tab-width in.
+                assert empty_new_tab[0] <= control_bounds("tab-full:Restore Gamma.md")[0] + 6,(empty_new_tab,control_bounds("tab-full:Restore Gamma.md"))
                 key("ctrl+shift+t");expect("Gamma","Beta");mode("Reading")
                 key("ctrl+shift+t");expect("Gamma","Beta","Alpha");mode("Source mode")
                 capture("native-tab-restore-last.png")
