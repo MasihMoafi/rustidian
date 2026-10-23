@@ -25,13 +25,24 @@ fn folders_and_files_move_to_trash_with_everything_inside() {
     vault.trash_entry(Path::new("Folder")).unwrap();
     assert!(!root.join("Folder").exists());
     let trashed = data_home.join("Trash/files/Folder");
-    assert_eq!(fs::read_to_string(trashed.join("Sub/B.md")).unwrap(), "# B\n");
+    assert_eq!(
+        fs::read_to_string(trashed.join("Sub/B.md")).unwrap(),
+        "# B\n"
+    );
     assert!(trashed.join("Sub/picture.png").is_file());
     let notes: Vec<_> = vault.notes.iter().map(|note| note.path.clone()).collect();
     assert_eq!(notes, [Path::new("Other.md")]);
-    assert!(vault.folders.iter().all(|folder| !folder.starts_with("Folder")));
+    assert!(
+        vault
+            .folders
+            .iter()
+            .all(|folder| !folder.starts_with("Folder"))
+    );
     assert!(vault.attachments.is_empty());
-    assert_eq!(fs::read_to_string(root.join("Other.md")).unwrap(), "[[A]]\n");
+    assert_eq!(
+        fs::read_to_string(root.join("Other.md")).unwrap(),
+        "[[A]]\n"
+    );
 
     vault.trash_entry(Path::new("Other.md")).unwrap();
     assert!(!root.join("Other.md").exists());
