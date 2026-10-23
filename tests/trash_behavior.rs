@@ -5,8 +5,10 @@ use std::{fs, path::Path};
 // reaches the real desktop Trash and no parallel test sees the variable.
 #[test]
 fn folders_and_files_move_to_trash_with_everything_inside() {
-    let cache = std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache"));
-    let scratch = tempfile::tempdir_in(cache.unwrap()).unwrap();
+    // Under HOME, so the Trash is on the home filesystem (a RAM /tmp is not); a fresh CI runner has no ~/.cache yet.
+    let cache = Path::new(&std::env::var_os("HOME").unwrap()).join(".cache");
+    fs::create_dir_all(&cache).unwrap();
+    let scratch = tempfile::tempdir_in(cache).unwrap();
     let data_home = scratch.path().join("data");
     fs::create_dir(&data_home).unwrap();
     // SAFETY: the only test in this binary, set before any thread reads the environment.
