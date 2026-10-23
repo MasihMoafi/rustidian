@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -231,6 +231,14 @@ def main():
             return None
 
         def click_control(name, button="1", *, hold=0):
+            if name.startswith("settings-") and not name.startswith("settings-page:") and not control_bounds(name, required=False):
+                page = ("Editor" if name == "settings-autosave" else
+                        "Templates" if name.startswith("settings-template-") else
+                        "Daily notes" if name.startswith("settings-daily-") else
+                        "Unique note creator" if name.startswith("settings-unique-") else
+                        "File recovery" if name.startswith("settings-recovery-") else None)
+                if page and control_bounds("settings-page:"+page, required=False):
+                    click_control("settings-page:"+page)
             left, top, right, bottom = control_bounds(name)
             x, y = round((left + right) / 2), round((top + bottom) / 2)
             pointer = ("mousemove", "--sync", str(x), str(y))
@@ -1836,6 +1844,7 @@ def main():
                 assert control_bounds("settings-autosave")
                 key("ctrl+a")
                 key("BackSpace")
+                click_control("settings-page:Appearance")
                 control_bounds("settings-dark")
                 click_control("settings-autosave")
                 state_files = [p for p in (base / "state" / "rust-notes").glob("*.json") if any(path == "Notes/Essential UI.md" for path, _ in json.loads(p.read_text()).get("tabs", []))]
@@ -1863,6 +1872,7 @@ def main():
                 expected += " restored"
                 assert note.read_text() == expected
                 key("ctrl+comma")
+                click_control("settings-page:Editor")
                 assert control_bounds("settings-autosave")
                 click_control("settings-autosave")
                 assert json.loads(state_path.read_text())["autosave_enabled"] is True
@@ -3991,6 +4001,77 @@ def main():
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
 
+            def settings_checks():
+                nonlocal app, window
+                note=fixture/"Notes/Settings controls.md"
+                original="# Heading\n\nA wide paragraph. " + "Unchanged Markdown text. "*30 + "\n"
+                note.write_text(original);open_note("Settings controls");command("Reading view")
+                def state_path():
+                    paths=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Notes/Settings controls.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                    assert len(paths)==1;return paths[0]
+                def editor_settings():
+                    command("Open settings");click_control("settings-page:Editor")
+                def choose(control, label):
+                    click_control(control)
+                    option=control_bounds(control+":"+label)
+                    assert option[3]-option[1]<=30,("Settings menu option should use compact type",option)
+                    if control == "settings-editing-mode":capture("native-settings-editing-mode-menu.png")
+                    click_control(control+":"+label)
+                command("Open settings");click_control("settings-page:Editor")
+                choose("settings-default-view","Reading view")
+                first=control_bounds("settings-default-view");second=control_bounds("settings-editing-mode")
+                pitch=(second[1]+second[3]-first[1]-first[3])/2
+                assert 70<=pitch<=84, ("Reference Settings row pitch is about76px",pitch)
+                selected=control_bounds("settings-page:Editor");other=control_bounds("settings-page:Files and links")
+                xdo("mousemove","1300","900");pause()
+                screen=ImageGrab.grab(xdisplay=display)
+                colors=[screen.getpixel((round(r[0]+2),round((r[1]+r[3])/2)))[:3] for r in (selected,other)]
+                assert sum(abs(a-b) for a,b in zip(*colors))>12,colors
+                capture("native-settings-editor-dark.png")
+                click_control("settings-inline-title");click_control("settings-readable-line-length")
+                choose("settings-default-view","Reading view");choose("settings-editing-mode","Source mode")
+                path=state_path();prefs=json.loads(path.read_text())["editor_preferences"]
+                assert prefs==dict(reading_view=True,source_mode=True,show_mode=True,inline_title=False,readable_line_length=False),prefs
+                key("Escape")
+                assert not control_bounds("note-title",required=False)
+                wide=control_bounds("document-content-width")[0]
+                key("ctrl+t");open_note("Settings controls")
+                assert control_bounds("view-mode:Reading")
+                key("ctrl+e")
+                assert control_bounds("view-mode:Source mode")
+                editor_settings();click_control("settings-show-mode");key("Escape")
+                assert not any(k.startswith("view-mode:") for k in json.loads((base/"ui-probe.json").read_text()))
+                assert note.read_text()==original
+                results.append("Real Editor switches hid the inline title, widened the document, selected Reading/Source for new tabs and hid the mode indicator without altering Markdown")
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window()
+                assert not control_bounds("note-title",required=False)
+                assert json.loads(path.read_text())["editor_preferences"]==dict(reading_view=True,source_mode=True,show_mode=False,inline_title=False,readable_line_length=False)
+                assert control_bounds("document-content-width")[0]==wide
+                editor_settings();held=base/"held-editor-settings.json";path.rename(held);path.mkdir()
+                try:
+                    click_control("settings-inline-title")
+                    assert control_bounds("dialog-error")
+                    capture("native-settings-editor-write-error.png")
+                finally:path.rmdir();held.rename(path)
+                assert json.loads(path.read_text())["editor_preferences"]["inline_title"] is False
+                key("Escape");assert not control_bounds("note-title",required=False)
+                editor_settings();click_control("settings-inline-title");click_control("settings-readable-line-length");click_control("settings-show-mode")
+                choose("settings-default-view","Editing view");choose("settings-editing-mode","Live Preview")
+                key("Escape");assert control_bounds("note-title")
+                assert control_bounds("document-content-width")[0]<wide
+                assert note.read_text()==original
+                results.append("Preferences survived a real restart; a blocked state-file write visibly failed and rolled back, then retry restored the title and line width with exact note bytes intact")
+                def appearance(label):
+                    command("Open settings");click_control("settings-page:Appearance")
+                    click_control("settings-dark");click_control("settings-theme:"+label);key("Escape")
+                    assert json.loads(path.read_text())["dark"] is (label=="Dark")
+                appearance("Light");editor_settings();capture("native-settings-editor-light.png");key("Escape");appearance("Dark")
+                assert note.read_text()==original
+                results.append("Actual Appearance dropdown clicks applied and saved both themes; the Editor page stayed readable and original Markdown stayed unchanged")
+                size=round(control_bounds("document-font-size")[0])
+                for _ in range(abs(size-18)):command("Decrease font size" if size>18 else "Increase font size")
+
             def font_controls_checks():
                 nonlocal app,window
                 close_tabs()
@@ -4027,12 +4108,12 @@ def main():
                 assert note.read_text()==original
                 results.append("Both actual themes used the same enlarged document size in Reading, Live and Source while preserving note bytes and ordinary controls")
                 command("Reading view");command("Open settings");bounds=control_bounds("settings-font-size")
-                xdo("mousemove",str(round(bounds[0]+35)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
                 xdo("key","--clearmodifiers","--repeat","25","--delay","30","Right");key("Escape");font(30)
                 high=title_width();command("Increase font size");font(30);assert title_width()==high
                 capture("native-font-controls-maximum.png")
                 command("Open settings");bounds=control_bounds("settings-font-size")
-                xdo("mousemove",str(round(bounds[0]+35)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
                 xdo("key","--clearmodifiers","--repeat","25","--delay","30","Left");key("Escape");font(10)
                 low=title_width();command("Decrease font size");font(10);assert title_width()==low and low<baseline<high
                 capture("native-font-controls-minimum.png");step_to(18)
@@ -5788,6 +5869,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
                 return
+            if args.section == "settings":
+                settings_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"settings"}))
+                return
             if args.section == "font-controls":
                 font_controls_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -6150,6 +6236,7 @@ def main():
                 note_creator_checks,
                 tab_action_checks,
                 tab_restore_checks,
+                settings_checks,
                 font_controls_checks,
                 workspace_checks,
                 palette_queue_checks,

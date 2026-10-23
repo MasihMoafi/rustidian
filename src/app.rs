@@ -1,5 +1,5 @@
 #[path = "settings_ui.rs"]
-mod settings_ui;
+pub(crate) mod settings_ui;
 
 use crate::{
     file_tree::{FileAction, Tree},
@@ -96,6 +96,7 @@ pub struct NotesApp {
     pub(crate) right_tab: u8,
     pub(crate) ui_zoom: f32,
     pub(crate) document_font_size: u8,
+    pub(crate) editor_preferences: settings_ui::EditorPreferences,
     pub(crate) autosave_enabled: bool,
     vault_manager: crate::vault_manager::Manager,
     open_picker: rust_notes::native_picker::Picker,
@@ -180,6 +181,7 @@ impl NotesApp {
             right_tab: 0,
             ui_zoom: 1.0,
             document_font_size: theme::DEFAULT_DOCUMENT_FONT_SIZE,
+            editor_preferences: Default::default(),
             autosave_enabled: true,
             vault_manager: Default::default(),
             open_picker: Default::default(),
@@ -384,6 +386,7 @@ impl NotesApp {
                         .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
                             size.clamp(10, 30) as u8
                         });
+                        self.editor_preferences = Default::default();
                         self.autosave_enabled = true;
                         ctx.set_zoom_factor(1.0);
                         self.show_bookmarks = false;
@@ -707,7 +710,9 @@ impl NotesApp {
         match document {
             Ok(document) => {
                 if new_tab || self.tabs.is_empty() {
-                    self.tabs.push(Tab::new(document));
+                    let mut tab = Tab::new(document);
+                    self.editor_preferences.apply(&mut tab);
+                    self.tabs.push(tab);
                     self.active = self.tabs.len() - 1;
                 } else if let Err(error) = self.tabs[self.active].open(document) {
                     self.error = Some(error.into());
@@ -886,7 +891,9 @@ impl NotesApp {
     }
 
     fn new_tab(&mut self) {
-        self.tabs.push(Tab::new(Document::blank()));
+        let mut tab = Tab::new(Document::blank());
+        self.editor_preferences.apply(&mut tab);
+        self.tabs.push(tab);
         self.active = self.tabs.len() - 1;
         self.editor.focus = false;
     }
@@ -2483,7 +2490,13 @@ impl NotesApp {
             .show(ui, |ui| {
                 theme::document_style(ui, self.document_font_size);
                 let width = ui.available_width();
-                let content_width = width.min(920.0).min((width - 48.0).max(100.0));
+                let content_width = if self.editor_preferences.readable_line_length {
+                    width.min(920.0)
+                } else {
+                    width
+                }
+                .min((width - 48.0).max(100.0));
+                crate::ui_probe::metric(ui.ctx(), "document-content-width", content_width);
                 let margin = ((width - content_width) / 2.0).max(0.0);
                 if view == View::Split {
                     ui.columns(2, |columns| {
@@ -2513,11 +2526,15 @@ impl NotesApp {
                             |ui| {
                                 ui.set_width(content_width);
                                 ui.add_space(32.0);
-                                if let Some(name) = self.title.show(ui, &tab.document.path, &title)
+                                if self.editor_preferences.inline_title
+                                    && let Some(name) =
+                                        self.title.show(ui, &tab.document.path, &title)
                                 {
                                     renamed_title = Some((tab.document.path.clone(), name));
                                 }
-                                ui.add_space(16.218);
+                                if self.editor_preferences.inline_title {
+                                    ui.add_space(16.218);
+                                }
                                 if matches!(view, View::Live | View::Read) {
                                     add_property = self.properties.show(ui, tab);
                                 }
@@ -3007,7 +3024,23 @@ impl NotesApp {
         let mut select = None;
         let mut run_command = None;
         let mut recovery_action = None;
-        let response = egui::Modal::new(egui::Id::unique("main-dialog")).show(ctx, |ui| {
+        let mut modal = egui::Modal::new(egui::Id::unique("main-dialog"));
+        if dialog == Dialog::Settings {
+            modal = modal.frame(
+                egui::Frame::new()
+                    .fill(if self.dark {
+                        Color32::from_rgb(30, 30, 30)
+                    } else {
+                        Color32::WHITE
+                    })
+                    .stroke(Stroke::new(
+                        1.0,
+                        Color32::from_gray(if self.dark { 60 } else { 210 }),
+                    ))
+                    .corner_radius(10),
+            );
+        }
+        let response = modal.show(ctx, |ui| {
             if dialog == Dialog::Settings {
                 self.settings_ui(ui, ctx, &mut close, &mut recovery_action);
                 return;
@@ -4173,14 +4206,17 @@ impl eframe::App for NotesApp {
                             View::Split => "Split view",
                             View::Graph => "Graph",
                         };
-                        let response =
-                            ui.label(RichText::new(mode).size(11.0).color(theme::accent(ui)));
-                        if crate::ui_probe::enabled() {
-                            crate::ui_probe::record(
-                                &ctx,
-                                format!("view-mode:{mode}"),
-                                response.rect,
-                            );
+                        if self.editor_preferences.show_mode {
+                            let response = ui.add(egui::Label::new(
+                                RichText::new(mode).size(11.0).color(theme::accent(ui)),
+                            ));
+                            if crate::ui_probe::enabled() {
+                                crate::ui_probe::record(
+                                    &ctx,
+                                    format!("view-mode:{mode}"),
+                                    response.rect,
+                                );
+                            }
                         }
                         if let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document)
                             && self.view() != View::Graph

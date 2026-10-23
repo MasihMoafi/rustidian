@@ -58,7 +58,6 @@ pub const ALL: &[Command] = &[
     },
     Command {
         name: OPEN_GRAPH,
-        name: INCREASE_FONT_SIZE,
         shortcut: "",
         scope: Scope::Global,
     },
@@ -66,6 +65,13 @@ pub const ALL: &[Command] = &[
         name: OPEN_LOCAL_GRAPH,
         shortcut: "",
         scope: Scope::Document,
+    },
+    Command {
+        name: INCREASE_FONT_SIZE,
+        shortcut: "",
+        scope: Scope::Global,
+    },
+    Command {
         name: DECREASE_FONT_SIZE,
         shortcut: "",
         scope: Scope::Global,
