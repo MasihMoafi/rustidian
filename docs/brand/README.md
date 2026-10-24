@@ -1,19 +1,7 @@
 # Rustidian artwork
 
-The bookmark-shaped R is original artwork generated for this project with the
-built-in image tool. It combines a bookmark, a writing page and the first letter
-of Rustidian. The selected raster is preserved in `rustidian-original.png`.
+Masih selected the green faceted logo on24October2026 and authorized its use and publication. `rustidian.png` is the exact approved generated PNG, preserving its transparency. The original personal icon remains preserved separately.
 
-SVG Studio's multicolour engine traced that raster into `rustidian.svg`: three
-filled vector paths, transparent background, no embedded raster, fonts, scripts
-or external references. The trace retains the silhouette and open counter while
-flattening the source's subtle shading into three teal fills.
+The image was generated as a sharper-edged edit of Masih’s recolored Obsidian icon. It is a derivative visual, not a claim of an independently cleared trademark. [Obsidian’s brand rules](https://obsidian.md/brand) identify its logo and app icon as trademarks and allow personal customization. User approval of this artwork does not establish permission from Obsidian for public branding. Rustidian is independent and unaffiliated with Obsidian; the source-code MIT license does not grant rights in third-party trademarks.
 
-The source and SVG were inspected on light and dark surfaces at 24, 48, 128 and
-512 pixels. The current selection is the agent's draft, available for Masih's
-feedback. Reproduction and raw proof remain in the local project reports.
-
-The previously selected personal desktop icon used recolored Obsidian artwork.
-It is preserved locally and is separate from this original project identity.
-[Obsidian's brand guidelines](https://obsidian.md/brand) describe its trademark
-and personal icon-customization terms.
+The older bookmark R and three notebook-logo drafts were rejected and removed from the active shortlist.
