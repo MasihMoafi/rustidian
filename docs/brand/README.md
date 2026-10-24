@@ -5,3 +5,5 @@ Masih selected the green faceted logo on24October2026 and authorized its use and
 The image was generated as a sharper-edged edit of Masih’s recolored Obsidian icon. It is a derivative visual, not a claim of an independently cleared trademark. [Obsidian’s brand rules](https://obsidian.md/brand) identify its logo and app icon as trademarks and allow personal customization. User approval of this artwork does not establish permission from Obsidian for public branding. Rustidian is independent and unaffiliated with Obsidian; the source-code MIT license does not grant rights in third-party trademarks.
 
 The older bookmark R and three notebook-logo drafts were rejected and removed from the active shortlist.
+
+The legacy `rustidian-original.png` URL serves the same approved PNG so existing article image links keep working. `rustidian.png` is the canonical asset.
