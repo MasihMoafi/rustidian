@@ -6,6 +6,31 @@ use std::{
 use tempfile::tempdir;
 
 #[test]
+fn immediate_notes_are_empty_indexed_and_never_replace_existing_files_or_directories() {
+    let folder = tempdir().unwrap();
+    fs::write(folder.path().join("Untitled.md"), "Keep original bytes\n").unwrap();
+    fs::create_dir(folder.path().join("Untitled 1.md")).unwrap();
+    let mut vault = Vault::open(folder.path()).unwrap();
+    for name in ["Untitled 2.md", "Untitled 3.md"] {
+        let document = vault.create_untitled().unwrap();
+        assert_eq!(document.path, Path::new(name));
+        assert!(document.text.is_empty() && !document.dirty());
+        assert_eq!(fs::read(folder.path().join(name)).unwrap(), b"");
+        assert!(vault.notes.iter().any(|note| note.path == document.path));
+    }
+    assert_eq!(
+        fs::read_to_string(folder.path().join("Untitled.md")).unwrap(),
+        "Keep original bytes\n"
+    );
+    assert!(folder.path().join("Untitled 1.md").is_dir());
+    // A root that disappears while the app is open must report failure.
+    let gone = tempdir().unwrap();
+    let mut missing = Vault::open(gone.path()).unwrap();
+    drop(gone);
+    assert!(missing.create_untitled().is_err());
+}
+
+#[test]
 fn plain_text_documents_open_and_save_without_bulk_indexing_or_overwriting_external_changes() {
     let folder = tempdir().unwrap();
     fs::write(folder.path().join("Home.md"), "# Home\n").unwrap();

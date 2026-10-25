@@ -263,14 +263,10 @@ impl NotesApp {
             ui.vertical(|ui| {
                 ui.set_width((width - if width < 600.0 { 212.0 } else { 260.0 }).max(140.0));
                 ui.set_min_height(height);
-                ui.horizontal(|ui| {
-                    ui.add_space(ui.available_width() - 38.0);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let button = icon_button(ui, Icon::Close, "Close settings");
-                        crate::ui_probe::record(ctx, "settings-close", button.rect);
-                        *close |= button.clicked();
-                    });
-                });
+                ui.add_space(16.0);
+                let button = theme::dialog_header(ui, "Settings", "Close settings");
+                crate::ui_probe::record(ctx, "settings-close", button.rect);
+                *close |= button.clicked();
                 ui.add_space(12.0);
                 let query = self.dialog_input.to_lowercase();
                 if !self.settings_page.matches(&query) {

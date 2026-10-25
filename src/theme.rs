@@ -215,6 +215,20 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
         style.spacing.button_padding = egui::vec2(10.0, 7.0);
         style.spacing.window_margin = egui::Margin::same(22);
+        style.spacing.scroll = egui::style::ScrollStyle {
+            bar_width: 12.0,
+            floating_width: 8.0,
+            floating_allocated_width: 8.0,
+            handle_min_length: 36.0,
+            foreground_color: true,
+            dormant_background_opacity: 0.12,
+            active_background_opacity: 0.18,
+            interact_background_opacity: 0.25,
+            dormant_handle_opacity: 0.85,
+            active_handle_opacity: 1.0,
+            interact_handle_opacity: 1.0,
+            ..egui::style::ScrollStyle::thin()
+        };
         style.visuals.window_corner_radius = egui::CornerRadius::same(10);
     });
 }
@@ -738,6 +752,68 @@ pub fn dialog_style(ui: &mut egui::Ui) {
         egui::TextStyle::Heading,
         egui::FontId::new(18.0, egui::FontFamily::Name("semibold".into())),
     );
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Button, egui::FontId::proportional(14.0));
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 12.0);
+    ui.spacing_mut().button_padding = egui::vec2(14.0, 8.0);
+}
+
+pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::popup(&ctx.style())
+        .inner_margin(egui::Margin::same(24))
+        .corner_radius(10)
+}
+
+pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.heading(title);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let response = icon_button(ui, Icon::Close, close_label);
+            crate::ui_probe::record(ui.ctx(), "dialog-close", response.rect);
+            response
+        })
+        .inner
+    })
+    .inner
+}
+
+pub fn dialog_actions(
+    ui: &mut egui::Ui,
+    label: &str,
+    destructive: bool,
+) -> (egui::Response, egui::Response) {
+    ui.add_space(8.0);
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let background = if destructive {
+            Color32::from_rgb(180, 45, 55)
+        } else {
+            accent(ui)
+        };
+        let foreground = if destructive || !ui.visuals().dark_mode {
+            Color32::WHITE
+        } else {
+            Color32::from_rgb(17, 21, 23)
+        };
+        let submit = ui.add(
+            egui::Button::new(egui::RichText::new(label).color(foreground))
+                .fill(background)
+                .stroke(egui::Stroke::NONE)
+                .corner_radius(6)
+                .min_size(egui::vec2(0.0, 36.0)),
+        );
+        let cancel = ui.add(
+            egui::Button::new("Cancel")
+                .fill(ui.visuals().window_fill)
+                .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+                .corner_radius(6)
+                .min_size(egui::vec2(0.0, 36.0)),
+        );
+        crate::ui_probe::record(ui.ctx(), "dialog-submit", submit.rect);
+        crate::ui_probe::record(ui.ctx(), "dialog-cancel", cancel.rect);
+        (submit, cancel)
+    })
+    .inner
 }
 
 pub fn menu_style(ui: &mut egui::Ui) {

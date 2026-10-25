@@ -2,7 +2,14 @@
 
 # Rustidian: Obsidian but fast.
 
-<img src="docs/brand/rustidian.png" width="112" height="112" alt="Rustidian green faceted logo">
+<table>
+  <tr>
+    <td align="center"><img src="docs/brand/rustidian.png" width="112" height="112" alt="Rustidian original teal logo"><br><sub>Main · Original teal</sub></td>
+    <td align="center"><img src="docs/brand/themes/love-space.png" width="112" height="112" alt="Rustidian Love Space logo"><br><sub>Love Space</sub></td>
+    <td align="center"><img src="docs/brand/themes/elpis-gold.png" width="112" height="112" alt="Rustidian Elpis Gold logo"><br><sub>Elpis Gold</sub></td>
+    <td align="center"><img src="docs/brand/themes/signature.png" width="112" height="112" alt="Rustidian website-gradient logo"><br><sub>Website gradient</sub></td>
+  </tr>
+</table>
 
 **A native Markdown notebook for Linux. Your files, your folders, no account.**
 

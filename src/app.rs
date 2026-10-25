@@ -22,7 +22,6 @@ use std::{
 #[derive(Clone, Copy, PartialEq)]
 enum Dialog {
     QuickOpen,
-    NewNote,
     NewFolder,
     SaveCopy,
     OpenVault,
@@ -68,7 +67,6 @@ pub struct NotesApp {
     dialog_input: String,
     dialog_path: Option<PathBuf>,
     dialog_focus: bool,
-    dialog_select_all: bool,
     dialog_selected: usize,
     settings_page: settings_ui::Page,
     files: rustidian::search::FileMatcher,
@@ -156,7 +154,6 @@ impl NotesApp {
             dialog_skip_trash: false,
             dialog_path: None,
             dialog_focus: false,
-            dialog_select_all: false,
             dialog_selected: 0,
             settings_page: Default::default(),
             files: rustidian::search::FileMatcher::new(Vec::new()),
@@ -870,7 +867,7 @@ impl NotesApp {
             .get(index)
             .is_some_and(|tab| tab.document.is_blank())
         {
-            self.ask(Dialog::NewNote);
+            self.create_note();
             return false;
         }
         if let (Some(vault), Some(tab)) = (&mut self.vault, self.tabs.get_mut(index)) {
@@ -966,7 +963,6 @@ impl NotesApp {
                 .get(self.active)
                 .map(|tab| tab.document.path.display().to_string())
                 .unwrap_or_default(),
-            Dialog::NewNote => "Untitled.md".into(),
             Dialog::NewFolder => self
                 .tabs
                 .get(self.active)
@@ -990,7 +986,6 @@ impl NotesApp {
         self.dialog_selected = 0;
         self.dialog = Some(dialog);
         self.dialog_focus = true;
-        self.dialog_select_all = dialog == Dialog::NewNote;
     }
 
     fn ask_file(&mut self, dialog: Dialog, path: PathBuf) {
@@ -1263,7 +1258,7 @@ impl NotesApp {
             self.ask(Dialog::QuickOpen);
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::N)) {
-            self.ask(Dialog::NewNote);
+            self.create_note();
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::P)) {
             self.ask(Dialog::Commands);
@@ -1292,15 +1287,10 @@ impl NotesApp {
                     self.show_left = !self.show_left;
                 }
 
-                let new_note = theme::icon_toggle(
-                    ui,
-                    Icon::NewNote,
-                    "New note · Ctrl+N",
-                    self.dialog == Some(Dialog::NewNote),
-                );
+                let new_note = theme::icon_toggle(ui, Icon::NewNote, "New note · Ctrl+N", false);
                 crate::ui_probe::record(ui.ctx(), "ribbon-new-note", new_note.rect);
                 if new_note.clicked() {
-                    self.ask(Dialog::NewNote);
+                    self.create_note();
                 }
                 let graph = ui.add_enabled_ui(self.vault.is_some(), |ui| {
                     theme::icon_toggle(
@@ -1789,15 +1779,10 @@ impl NotesApp {
                             ui.set_min_height(40.0);
                             ui.spacing_mut().item_spacing.x = 2.0;
                             ui.add_space(74.0);
-                            if theme::icon_toggle(
-                                ui,
-                                Icon::NewNote,
-                                "New note · Ctrl+N",
-                                self.dialog == Some(Dialog::NewNote),
-                            )
-                            .clicked()
+                            if theme::icon_toggle(ui, Icon::NewNote, "New note · Ctrl+N", false)
+                                .clicked()
                             {
-                                self.ask(Dialog::NewNote);
+                                self.create_note();
                             }
                             let new_folder = theme::icon_toggle(
                                 ui,
@@ -2279,7 +2264,7 @@ impl NotesApp {
                         );
                         ui.add_space(22.0);
                         if ui.link("Create new note (Ctrl+N)").clicked() {
-                            self.ask(Dialog::NewNote);
+                            self.create_note();
                         }
                         if ui.link("Go to file (Ctrl+O)").clicked() {
                             self.ask(Dialog::QuickOpen);
@@ -2579,6 +2564,9 @@ impl NotesApp {
                                 {
                                     renamed_title = Some((tab.document.path.clone(), name));
                                 }
+                                if self.title.take_body_focus() {
+                                    self.editor.focus = true;
+                                }
                                 if self.editor_preferences.inline_title {
                                     ui.add_space(16.218);
                                 }
@@ -2609,6 +2597,7 @@ impl NotesApp {
                     });
                 }
             });
+        crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
         crate::ui_probe::metric(
             ui.ctx(),
             "document-scroll-y",
@@ -3172,13 +3161,12 @@ impl NotesApp {
         };
         let title = match dialog {
             Dialog::QuickOpen => "Open a file",
-            Dialog::NewNote => "New note",
             Dialog::NewFolder => "New folder",
             Dialog::SaveCopy => "Save a copy",
             Dialog::OpenVault => "Open vault",
             Dialog::Commands => "Command palette",
             Dialog::RenameNote => "Rename or move",
-            Dialog::TrashNote => "Move to system Trash",
+            Dialog::TrashNote => "Move to Trash?",
             Dialog::AddProperty => "Add property",
             Dialog::BookmarkTitle => "Edit bookmark title",
             Dialog::Settings => "Settings",
@@ -3212,7 +3200,8 @@ impl NotesApp {
         let mut select = None;
         let mut run_command = None;
         let mut recovery_action = None;
-        let mut modal = egui::Modal::new(egui::Id::unique("main-dialog"));
+        let mut modal =
+            egui::Modal::new(egui::Id::unique("main-dialog")).frame(theme::dialog_frame(ctx));
         if dialog == Dialog::Settings {
             modal = modal.frame(
                 egui::Frame::new()
@@ -3225,7 +3214,13 @@ impl NotesApp {
                         1.0,
                         Color32::from_gray(if self.dark { 60 } else { 210 }),
                     ))
-                    .corner_radius(10),
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin {
+                        left: 0,
+                        right: 24,
+                        top: 0,
+                        bottom: 0,
+                    }),
             );
         }
         let response = modal.show(ctx, |ui| {
@@ -3240,12 +3235,12 @@ impl NotesApp {
             });
             theme::dialog_style(ui);
             if dialog != Dialog::Commands {
-                ui.heading(title);
-                ui.add_space(10.0);
+                close |= theme::dialog_header(ui, title, "Close dialog").clicked();
+                ui.add_space(8.0);
             }
             let hint = match dialog {
                 Dialog::QuickOpen => "Find a file…",
-                Dialog::NewNote | Dialog::SaveCopy => "Folder/Note.md",
+                Dialog::SaveCopy => "Folder/Note.md",
                 Dialog::NewFolder => "Folder/New folder",
                 Dialog::OpenVault => "/path/to/your/vault",
                 Dialog::Commands => "Select a command…",
@@ -3276,33 +3271,21 @@ impl NotesApp {
             let focus_settled = ui.memory(|memory| {
                 memory.has_focus(input_id) && memory.had_focus_last_frame(input_id)
             });
-            if self.dialog_select_all && !ui.is_sizing_pass() {
-                let mut state =
-                    egui::text_edit::TextEditState::load(ctx, input_id).unwrap_or_default();
-                let end = self.dialog_input.chars().count();
-                let start = Path::new(&self.dialog_input)
-                    .file_name()
-                    .map_or(0, |name| end - name.to_string_lossy().chars().count());
-                state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::two(
-                        egui::text::CCursor::new(start),
-                        egui::text::CCursor::new(end),
-                    )));
-                state.store(ctx, input_id);
-                self.dialog_select_all = false;
-            }
-            if self.dialog_focus && !ui.memory(|memory| memory.has_focus(input_id)) {
+            if dialog != Dialog::TrashNote
+                && self.dialog_focus && !ui.memory(|memory| memory.has_focus(input_id)) {
                 ui.memory_mut(|memory| memory.request_focus(input_id));
             }
-            let input = ui.add_enabled(
-                dialog != Dialog::TrashNote,
-                TextEdit::singleline(&mut self.dialog_input)
+            let input = if dialog == Dialog::TrashNote {
+                let response = ui.strong(&self.dialog_input);
+                crate::ui_probe::record(ctx, "trash-target", response.rect);
+                response
+            } else {
+                ui.add(TextEdit::singleline(&mut self.dialog_input)
                     .id(input_id)
                     .desired_width(f32::INFINITY)
-                    .hint_text(hint),
-            );
-            if self.dialog_focus {
+                    .hint_text(hint))
+            };
+            if self.dialog_focus && dialog != Dialog::TrashNote {
                 // A new Area/menu may still be completing its first layout pass.
                 // Claim before input, then retain focus until it survives a pass.
                 if !ui.memory(|memory| memory.has_focus(input_id)) {
@@ -3314,7 +3297,9 @@ impl NotesApp {
                     ctx.request_repaint();
                 }
             }
-            crate::ui_probe::record(ui.ctx(), "dialog-input", input.rect);
+            if dialog != Dialog::TrashNote {
+                crate::ui_probe::record(ui.ctx(), "dialog-input", input.rect);
+            }
             if input.has_focus() {
                 crate::ui_probe::record(ui.ctx(), "dialog-input-focused", input.rect);
             }
@@ -3558,27 +3543,22 @@ impl NotesApp {
                                 .weak(),
                         );
                     }
-                    submit = enter;
-                    ui.horizontal(|ui| {
-                        submit |= ui
-                            .button(match dialog {
-                                Dialog::OpenVault => "Open folder",
-                                Dialog::NewFolder => "Create folder",
-                                Dialog::RenameNote => "Rename",
-                                Dialog::TrashNote => "Move to Trash",
-                                Dialog::AddProperty => "Add property",
-                                Dialog::SaveCopy => "Save copy",
-                                Dialog::BookmarkTitle => "Save title",
-                                _ => "Create note",
-                            })
-                            .clicked();
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
-                    });
+                    let (action, cancel) = theme::dialog_actions(ui, match dialog {
+                        Dialog::OpenVault => "Open folder",
+                        Dialog::NewFolder => "Create folder",
+                        Dialog::RenameNote => "Rename",
+                        Dialog::TrashNote => "Move to Trash",
+                        Dialog::AddProperty => "Add property",
+                        Dialog::SaveCopy => "Save copy",
+                        Dialog::BookmarkTitle => "Save title",
+                        _ => unreachable!(),
+                    }, dialog == Dialog::TrashNote);
+                    submit = action.clicked() || (enter && !cancel.has_focus());
+                    close |= cancel.clicked() || (enter && cancel.has_focus());
                 }
             }
         });
+        crate::ui_probe::record(ctx, "dialog-bounds", response.response.rect);
         if response.should_close() {
             close = true;
         }
@@ -3617,7 +3597,7 @@ impl NotesApp {
             }
             close = true;
         }
-        if submit {
+        if submit && !close {
             close = self.submit_dialog(dialog);
         }
         if close {
@@ -3627,11 +3607,8 @@ impl NotesApp {
                 if !submit && self.tabs.iter().all(|tab| !tab.document.dirty()) {
                     self.error = None;
                 }
-                self.focus_editor();
             }
-            if dialog == Dialog::InsertTemplate {
-                self.focus_editor();
-            }
+            self.focus_editor();
         }
     }
 
@@ -3990,14 +3967,11 @@ impl NotesApp {
             return false;
         }
         let mut document = Document::new(path);
-        document.text = if dialog == Dialog::SaveCopy {
-            self.tabs
-                .get(self.active)
-                .map(|tab| tab.document.text.clone())
-                .unwrap_or_default()
-        } else {
-            format!("# {}\n\n", document.title())
-        };
+        document.text = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.document.text.clone())
+            .unwrap_or_default();
         let Some(vault) = &mut self.vault else {
             self.error = Some("Open a vault before creating a note.".into());
             return false;
@@ -4159,7 +4133,7 @@ impl NotesApp {
                 self.editor.insert_text(tab, text);
             }
             "Open settings" => self.ask(Dialog::Settings),
-            "New note" => self.ask(Dialog::NewNote),
+            "New note" => self.create_note(),
             "New folder" => self.ask(Dialog::NewFolder),
             "Add property" => self.ask(Dialog::AddProperty),
             "Rename or move file" => {
@@ -4266,6 +4240,39 @@ impl NotesApp {
                 && !tab.document.is_image()
                 && !matches!(tab.view, View::Read | View::Graph)
         })
+    }
+
+    fn create_note(&mut self) {
+        let Some(vault) = &mut self.vault else {
+            self.error = Some("Open a vault before creating a note.".into());
+            return;
+        };
+        match vault.create_untitled() {
+            Ok(document) => {
+                let path = document.path.clone();
+                let title = document.title();
+                self.refresh_file_views();
+                self.dialog = None;
+                self.error = None;
+                self.status = format!("Created {}", path.display());
+                if self
+                    .tabs
+                    .get(self.active)
+                    .is_some_and(|tab| tab.document.is_blank() && !tab.pinned)
+                {
+                    self.tabs[self.active] = Tab::new(document);
+                } else {
+                    self.tabs.push(Tab::new(document));
+                    self.active = self.tabs.len() - 1;
+                }
+                self.set_view(View::Live);
+                if self.editor_preferences.inline_title {
+                    self.editor.focus = false;
+                    self.title.begin_edit(&path, &title);
+                }
+            }
+            Err(error) => self.error = Some(error),
+        }
     }
 
     fn open_daily(&mut self) {

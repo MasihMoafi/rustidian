@@ -111,18 +111,19 @@ pub fn select(ctx: &egui::Context, palette: Palette) {
 
 pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
     let before = *selected;
-    ui.horizontal(|ui| {
-        ui.strong("Palette");
-        let original = ui.selectable_value(selected, Palette::Teal, Palette::Teal.name());
-        crate::ui_probe::record(ui.ctx(), "settings-palette:Original teal", original.rect);
-    });
+    ui.strong("Palette");
     ui.add_space(6.0);
     egui::ScrollArea::horizontal()
         .id_salt("theme-cards")
         .show(ui, |ui| {
-            let width = ((ui.available_width() - 16.0) / 3.0).clamp(116.0, 210.0);
+            let width = ((ui.available_width() - 24.0) / 4.0).clamp(116.0, 210.0);
             ui.horizontal(|ui| {
-                for palette in [Palette::LoveSpace, Palette::ElpisGold, Palette::Signature] {
+                for palette in [
+                    Palette::Teal,
+                    Palette::LoveSpace,
+                    Palette::ElpisGold,
+                    Palette::Signature,
+                ] {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(width, 154.0), egui::Sense::click());
                     let active = *selected == palette;

@@ -319,6 +319,30 @@ impl Vault {
         })
     }
 
+    /// Create an empty note without asking for a name or replacing an existing file.
+    pub fn create_untitled(&mut self) -> Result<Document> {
+        for number in 0..u64::MAX {
+            let name = if number == 0 {
+                "Untitled.md".to_owned()
+            } else {
+                format!("Untitled {number}.md")
+            };
+            let path = PathBuf::from(name);
+            let absolute = self.root.join(&path);
+            if absolute.try_exists().map_err(|error| error.to_string())? {
+                continue;
+            }
+            let mut document = Document::new(path);
+            match self.save(&mut document) {
+                Ok(()) => return Ok(document),
+                // Another window may have created this name. save uses noclobber.
+                Err(_) if absolute.try_exists().unwrap_or(false) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err("Cannot find an unused note name.".into())
+    }
+
     pub fn save(&mut self, document: &mut Document) -> Result<()> {
         if document.is_image() {
             return Err("Images cannot be edited as Markdown.".into());
