@@ -986,8 +986,7 @@ impl Editor {
                 table_placements = if live {
                     tables.prepare(
                         ui,
-                        text,
-                        &tab.document.path,
+                        (&tab.document.path, text),
                         &parsed.tables,
                         active_line.as_ref(),
                         caret,

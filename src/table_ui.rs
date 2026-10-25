@@ -123,13 +123,13 @@ impl Tables {
     pub fn prepare(
         &mut self,
         ui: &egui::Ui,
-        source: &str,
-        from: &std::path::Path,
+        document: (&std::path::Path, &str),
         models: &[Table],
         active_line: Option<&Range<usize>>,
         caret: Option<usize>,
         hidden: &[Range<usize>],
     ) -> Vec<Placement> {
+        let (from, source) = document;
         if self.views.len() != models.len()
             || self.views.iter().zip(models).any(|(view, model)| {
                 view.model.range != model.range || !view.model.is_current(source)
