@@ -9,6 +9,10 @@ on:
         description: 'Run optimized GUI checks only; do not package or upload artifacts'
         type: boolean
         default: false
+      package_after_checks:
+        description: 'Create and retain the Debian package only after selected GUI and package checks pass'
+        type: boolean
+        default: false
       sections:
         description: 'Space-separated native GUI sections'
         type: string
@@ -39,9 +43,10 @@ jobs:
       - name: Install native test tools
         run: |
           sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
-          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils x11-xserver-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
           mkdir -p reports
+          for tool in Xvfb xdotool xclip xset xprop xwininfo; do command -v "$tool"; done
       - name: Formatting
         run: cargo fmt --all -- --check
       - name: Rust behavior checks
@@ -126,6 +131,52 @@ jobs:
             fi
           done
           exit "$gui_status"
+      - name: Check core behavior for the package candidate
+        if: ${{ inputs.gui_only && inputs.package_after_checks }}
+        run: cargo test --locked --release --no-default-features --lib --tests --no-fail-fast 2>&1 | tee reports/package-core-tests.log
+      - name: Create and verify the Debian package
+        if: ${{ inputs.gui_only && inputs.package_after_checks }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUI_SECTIONS: ${{ inputs.sections }}
+        run: |
+          git diff --exit-code 54be6cc016bc5c6e7927c9de99cab436295d2fa9 -- Cargo.toml Cargo.lock
+          gh release download v0.1.0-alpha.2 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/
+          python3 scripts/package-deb.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-amd64.deb
+          python3 tests/debian_package.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --system | tee reports/debian-verification.json
+          python3 - <<'INFO'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          binary=Path('target/release/rustidian')
+          checks={name:json.loads(Path('reports/gui-'+name+'-results.json').read_text()) for name in os.environ['GUI_SECTIONS'].split()}
+          assert checks and all(value['status']=='passed' for value in checks.values())
+          digest=hashlib.sha256(binary.read_bytes()).hexdigest()
+          package=json.loads(Path('reports/debian-verification.json').read_text())
+          assert package['status']=='passed' and package['exact_binary_sha256']==digest
+          info={'source_commit':os.environ['GITHUB_SHA'],'binary_sha256':digest,'version':subprocess.check_output([str(binary.resolve()),'--version'],text=True).strip(),'depends':subprocess.check_output(['dpkg-deb','--field','reports/rustidian-linux-amd64.deb','Depends'],text=True).strip(),'gui_checks':checks,'debian_verification':package,'scope':'Optimized Linux amd64 executable; native X11 workflows on Ubuntu 24.04; native Wayland interaction unverified','run_url':'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'/actions/runs/'+os.environ['GITHUB_RUN_ID']}
+          Path('reports/BUILDINFO.json').write_text(json.dumps(info,indent=2)+'\n')
+          INFO
+          sha256sum reports/rustidian-linux-amd64.deb reports/BUILDINFO.json > reports/SHA256SUMS
+      - name: Retain requested package and selected evidence
+        if: ${{ always() && inputs.gui_only && inputs.package_after_checks }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-verified-${{ github.sha }}
+          path: |
+            reports/rustidian-linux-amd64.deb
+            reports/BUILDINFO.json
+            reports/SHA256SUMS
+            reports/debian-verification.json
+            reports/package-core-tests.log
+            reports/selected-*.log
+            reports/gui-*-results.json
+            reports/gui-failure.png
+            reports/native-table-edge-far-right.png
+            reports/native-form-add-property.png
+            reports/native-graph-global-dark.png
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
       - name: Retain exact candidate and evidence
         if: ${{ always() && !inputs.gui_only }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
