@@ -1,0 +1,27 @@
+name: Rustidian moved-vault metadata
+on:
+  push:
+    branches: ['work/rustidian-paths-20261025']
+permissions:
+  contents: read
+jobs:
+  paths:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Hash the moved project vault with the application toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          cat > "$RUNNER_TEMP/paths.rs" <<'RS'
+          use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, path::Path};
+          fn main() {
+              for name in ["/home/masih/Desktop/p/rust-notes/docs", "/home/masih/Desktop/p/rustidian/docs"] {
+                  let mut hash = DefaultHasher::new();
+                  Path::new(name).hash(&mut hash);
+                  println!("MOVED_VAULT_HASH {} {:016x}", name, hash.finish());
+              }
+          }
+          RS
+          rustup run 1.95.0 rustc "$RUNNER_TEMP/paths.rs" -o "$RUNNER_TEMP/paths"
+          "$RUNNER_TEMP/paths"
