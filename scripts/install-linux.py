@@ -9,7 +9,12 @@ import subprocess
 import tempfile
 
 
-MIME_TYPES = 'text/markdown;text/x-markdown;text/plain;text/rust;text/x-python;text/x-python3;application/json;application/toml;text/html;'
+MIME_TYPES = ('text/markdown;text/x-markdown;text/plain;text/rust;'
+              'text/x-c;text/x-csrc;text/x-chdr;text/x-c++;text/x-c++src;text/x-c++hdr;'
+              'text/x-python;text/x-python3;text/javascript;application/javascript;'
+              'text/x-java;text/x-go;application/x-ruby;application/x-shellscript;'
+              'text/x-shellscript;application/json;application/toml;application/yaml;'
+              'text/yaml;application/xml;text/xml;text/css;text/html;application/sql;')
 
 
 def atomic_copy(source, destination, mode):

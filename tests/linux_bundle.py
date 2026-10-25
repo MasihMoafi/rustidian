@@ -47,11 +47,14 @@ def main():
         assert demo.read_text() == 'User demo edits stay here\n'
         entry = prefix / 'share/applications/rustidian.desktop'
         run('desktop-file-validate', str(entry))
-        source = base / 'Open with.rs'
-        source.write_text('fn main() {}\n')
-        detected_type = run('xdg-mime', 'query', 'filetype', str(source)).stdout.strip()
         registered = next(line.removeprefix('MimeType=') for line in entry.read_text().splitlines() if line.startswith('MimeType=')).split(';')
-        assert detected_type in registered, ('Rust source is missing from Open With', detected_type, registered)
+        for extension, contents in [('rs', 'fn main() {}\n'), ('c', 'int main(void) { return 0; }\n'),
+                                    ('cpp', '#include <iostream>\nint main() { std::cout << "hello"; }\n'),
+                                    ('py', 'print("hello")\n')]:
+            source = base / ('Open with.' + extension)
+            source.write_text(contents)
+            detected_type = run('xdg-mime', 'query', 'filetype', str(source)).stdout.strip()
+            assert detected_type in registered, ('Source is missing from Open With', extension, detected_type, registered)
         # An invalid replacement must fail before changing the installed app.
         protected = (prefix / 'lib/rustidian/rustidian').read_bytes()
         (bundle / 'rustidian').rename(bundle / 'missing-executable')
