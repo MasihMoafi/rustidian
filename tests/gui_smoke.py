@@ -81,7 +81,7 @@ def main():
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
         if args.section in ("palettes", "all"):
             launcher = base / "data/applications/rustidian.desktop"
-            environment["XDG_DATA_DIRS"] = str(base / "system data")
+            environment["XDG_DATA_DIRS"] = str(base / "system data") + os.pathsep + os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
             system_launcher = base / "system data/applications/rustidian.desktop"
             system_launcher.parent.mkdir(parents=True, exist_ok=True)
             original_launcher = "[Desktop Entry]\nType=Application\nName=Rustidian\nExec=/usr/bin/true %f\nIcon=old-teal\nStartupWMClass=rustidian\nActions=Example;\n\n[Desktop Action Example]\nName=Keep this action\nExec=/usr/bin/true\nIcon=keep-action-icon\n"

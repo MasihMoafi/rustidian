@@ -111,6 +111,7 @@ pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
 }
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    palette::select(ctx, palette::current(ctx));
     ctx.options_mut(|options| {
         options.input_options.line_scroll_speed = 150.0;
         options.input_options.wheel_smoothing = false;
