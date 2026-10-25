@@ -133,7 +133,7 @@ jobs:
           exit "$gui_status"
       - name: Check core behavior for the package candidate
         if: ${{ inputs.gui_only && inputs.package_after_checks }}
-        run: cargo test --locked --release --no-default-features --lib --tests --no-fail-fast 2>&1 | tee reports/package-core-tests.log
+        run: CARGO_PROFILE_RELEASE_LTO=false cargo test --locked --release --no-default-features --lib --tests --no-fail-fast 2>&1 | tee reports/package-core-tests.log
       - name: Create and verify the Debian package
         if: ${{ inputs.gui_only && inputs.package_after_checks }}
         env:
