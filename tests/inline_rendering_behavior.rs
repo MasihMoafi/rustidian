@@ -1,4 +1,4 @@
-use rust_notes::{editor::Markdown, inline_style::Style};
+use rustidian::{editor::Markdown, inline_style::Style};
 
 #[test]
 fn document_table_and_callout_content_share_compound_inline_styles() {

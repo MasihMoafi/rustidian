@@ -1,0 +1,90 @@
+name: Rustidian identity and Linux trial
+
+on:
+  push:
+    branches: ['work/rustidian-identity-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.95.0'
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install native test tools
+        run: |
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox zenity python3-pil python3-xlib desktop-file-utils
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          mkdir -p reports
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Prove the profile regression detects the previous namespace
+        run: |
+          cp src/paths.rs "$RUNNER_TEMP/rustidian-paths.rs"
+          trap 'cp "$RUNNER_TEMP/rustidian-paths.rs" src/paths.rs' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/paths.rs')
+          source = path.read_text()
+          start = source.index('pub fn app_directory(')
+          end = source.index('\npub fn wiki_destination', start)
+          previous = 'pub fn app_directory(base: &Path) -> PathBuf { base.join("rust-notes") }\n'
+          path.write_text(source[:start] + previous + source[end:])
+          PY
+          if cargo test --locked --test identity_behavior profile_namespace_keeps_recovery_sessions_and_existing_rustidian_profiles > reports/profile-negative.log 2>&1; then
+            cat reports/profile-negative.log
+            exit 1
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          log = Path('reports/profile-negative.log').read_text()
+          assert 'profile_namespace_keeps_recovery_sessions_and_existing_rustidian_profiles ... FAILED' in log, log
+          assert 'assertion `left == right` failed' in log, log
+          PY
+      - name: Rust behavior checks
+        run: cargo test --locked --all-targets --no-fail-fast 2>&1 | tee reports/rust-tests.log
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
+      - name: Build optimized Rustidian
+        run: |
+          cargo build --locked --release --bin rustidian 2>&1 | tee reports/build.log
+          git rev-parse HEAD > reports/source-commit.txt
+          sha256sum target/release/rustidian > reports/binary.sha256
+          target/release/rustidian --version | tee reports/version.txt
+      - name: Real package and installation checks
+        run: |
+          python3 tests/linux_bundle.py --binary target/release/rustidian 2>&1 | tee reports/package-tests.log
+          python3 scripts/package-linux.py --binary target/release/rustidian --output reports/rustidian-linux-x86_64.tar.gz
+      - name: Exact optimized app workflows
+        run: |
+          gui_status=0
+          for section in essential undo navigation tab-restore settings recovery; do
+            python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1 || gui_status=1
+          done
+          python3 tests/gui_smoke.py --binary target/release/rustidian --open-file md > reports/gui-open-md.log 2>&1 || gui_status=1
+          python3 tests/gui_smoke.py --binary target/release/rustidian --open-file txt > reports/gui-open-txt.log 2>&1 || gui_status=1
+          exit "$gui_status"
+      - name: Retain exact candidate and evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-identity-${{ github.sha }}
+          path: reports/
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error

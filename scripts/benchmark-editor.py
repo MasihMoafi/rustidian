@@ -28,7 +28,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise SystemExit("A native GUI run is active; finish it before measuring.")
-        assert "RUST_NOTES_UI_PROBE" not in os.environ
+        assert "RUSTIDIAN_UI_PROBE" not in os.environ
         paths = ["examples/editor_benchmark.rs", "Cargo.toml", "Cargo.lock"]
         paths += sorted(str(path.relative_to(ROOT)) for path in (ROOT / "src").rglob("*.rs"))
         paths += sorted(str(path.relative_to(ROOT)) for path in (ROOT / "vendor").rglob("*.rs"))

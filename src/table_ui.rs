@@ -3,7 +3,7 @@ use eframe::egui::{
     text::{CCursor, CCursorRange},
     widgets::text_edit::TextEditState,
 };
-use rust_notes::{
+use rustidian::{
     tab::Tab,
     tables::{Action, CellDraft, Table},
 };
@@ -126,6 +126,7 @@ impl Tables {
         source: &str,
         models: &[Table],
         active_line: Option<&Range<usize>>,
+        caret: Option<usize>,
         hidden: &[Range<usize>],
     ) -> Vec<Placement> {
         if self.views.len() != models.len()
@@ -173,7 +174,15 @@ impl Tables {
                 if active_line.is_some_and(|line| {
                     line.start < view.model.range.end && line.end >= view.model.range.start
                 }) {
-                    return None;
+                    // A caret entering the table edits its cell in place, as in Obsidian;
+                    // only a selection that reaches into the table shows the Markdown source.
+                    match caret.filter(|byte| view.model.range.contains(byte)) {
+                        Some(byte) => {
+                            let (row, column) = view.model.cell_at(byte);
+                            self.focus.get_or_insert((ordinal, row, column));
+                        }
+                        None => return None,
+                    }
                 }
                 let start = source[..view.model.range.start].chars().count();
                 if hidden.iter().any(|range| range.contains(&start)) {
@@ -393,7 +402,9 @@ impl Tables {
                                             ui.fonts_mut(|fonts| {
                                                 fonts.layout_no_wrap(
                                                     buffer.as_str().into(),
-                                                    egui::FontId::proportional(18.0),
+                                                    egui::FontId::proportional(
+                                                        crate::theme::document_size(ui, 18.0),
+                                                    ),
                                                     ui.visuals().text_color(),
                                                 )
                                             })
@@ -410,7 +421,9 @@ impl Tables {
                                     inner,
                                     TextEdit::singleline(&mut cell.text)
                                         .id(field_id)
-                                        .font(egui::FontId::proportional(18.0))
+                                        .font(egui::FontId::proportional(
+                                            crate::theme::document_size(ui, 18.0),
+                                        ))
                                         .frame(egui::Frame::NONE)
                                         .margin(0)
                                         .desired_width(inner.width())
@@ -453,7 +466,7 @@ impl Tables {
                                     let caret = TextEditState::load(ui.ctx(), field_id)
                                         .and_then(|state| state.cursor.char_range())
                                         .map_or(0, |range| range.primary.index.0);
-                                    follow = rust_notes::editor::link_at(&cell.text, caret);
+                                    follow = rustidian::editor::link_at(&cell.text, caret);
                                 }
                                 if let Some(direction) = nav {
                                     navigation = Some((key, direction));
@@ -599,7 +612,7 @@ impl Tables {
             self.apply(ui, tab, id, table, action);
         }
         if let Some((table, row, column)) = menu_focus
-            && let Some(model) = rust_notes::editor::Markdown::parse(&tab.document.text)
+            && let Some(model) = rustidian::editor::Markdown::parse(&tab.document.text)
                 .tables
                 .get(table)
         {
@@ -621,7 +634,7 @@ impl Tables {
                 }
                 1 | 2 => {
                     // A changed cell invalidates the original offsets; parse once before the insertion.
-                    let models = rust_notes::editor::Markdown::parse(&tab.document.text).tables;
+                    let models = rustidian::editor::Markdown::parse(&tab.document.text).tables;
                     if let Some(model) = models.get(table) {
                         self.views[table].model = model.clone();
                     }

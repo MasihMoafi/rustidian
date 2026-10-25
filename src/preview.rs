@@ -10,9 +10,9 @@ struct Inline {
     italic: bool,
     code: bool,
     strike: bool,
-    highlight: Option<rust_notes::highlight::Rgba>,
-    native_highlight: Option<rust_notes::highlight::NativeColor>,
-    html: rust_notes::inline_style::Style,
+    highlight: Option<rustidian::highlight::Rgba>,
+    native_highlight: Option<rustidian::highlight::NativeColor>,
+    html: rustidian::inline_style::Style,
     link: Option<String>,
 }
 #[derive(Clone, Default)]
@@ -32,12 +32,12 @@ struct Block {
 }
 #[derive(Clone)]
 struct CalloutBlock {
-    model: rust_notes::callouts::Callout,
+    model: rustidian::callouts::Callout,
     children: Vec<Block>,
     ordinal: usize,
 }
 struct CalloutFrame {
-    model: rust_notes::callouts::Callout,
+    model: rustidian::callouts::Callout,
     parents: Vec<Block>,
     ordinal: usize,
 }
@@ -83,7 +83,7 @@ impl TableCell {
     ) -> Arc<egui::Galley> {
         let mut job = egui::text::LayoutJob::default();
         job.wrap.max_width = width;
-        job.first_row_min_height = 23.4;
+        job.first_row_min_height = crate::theme::document_size(ui, 23.4);
         for part in &self.parts {
             let mut format = inline_format(ui, part, 0, Some(header));
             if let Some(color) = color {
@@ -126,12 +126,12 @@ impl Parsed {
         };
         let mut marked = source.to_owned();
         if source.contains("==") {
-            for range in rust_notes::editor::Markdown::parse(source)
+            for range in rustidian::editor::Markdown::parse(source)
                 .highlights
                 .into_iter()
                 .rev()
             {
-                let native = rust_notes::highlight::NativeColor::prefix(
+                let native = rustidian::highlight::NativeColor::prefix(
                     &source[range.start + 2..range.end - 2],
                 );
                 marked.replace_range(range.end - 2..range.end, "</mark>");
@@ -222,7 +222,7 @@ impl Parsed {
                     let language = match kind {
                         CodeBlockKind::Fenced(language) => {
                             if quote == 0 && list.is_empty() {
-                                original_code = rust_notes::editor::CodeBlock::fenced(
+                                original_code = rustidian::editor::CodeBlock::fenced(
                                     source,
                                     range,
                                     language.to_string(),
@@ -243,8 +243,7 @@ impl Parsed {
                 }
                 Event::Start(Tag::BlockQuote(_)) => {
                     flush(&mut block, &mut parsed.blocks);
-                    if let Some(callout) = rust_notes::callouts::Callout::from_range(source, range)
-                    {
+                    if let Some(callout) = rustidian::callouts::Callout::from_range(source, range) {
                         quote_frames.push(Some(CalloutFrame {
                             model: callout,
                             parents: std::mem::take(&mut parsed.blocks),
@@ -379,19 +378,19 @@ impl Parsed {
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
                 Event::InlineHtml(tag)
-                    if rust_notes::highlight::NativeColor::from_tag(&tag).is_some() =>
+                    if rustidian::highlight::NativeColor::from_tag(&tag).is_some() =>
                 {
                     highlights.push((
-                        rust_notes::inline_style::Element::Mark,
+                        rustidian::inline_style::Element::Mark,
                         style.html,
                         style.highlight,
                         style.native_highlight,
                     ));
                     style.highlight = None;
-                    style.native_highlight = rust_notes::highlight::NativeColor::from_tag(&tag);
+                    style.native_highlight = rustidian::highlight::NativeColor::from_tag(&tag);
                 }
-                Event::InlineHtml(tag) => match rust_notes::inline_style::parse(&tag) {
-                    Some(rust_notes::inline_style::Tag::Open(element, html)) => {
+                Event::InlineHtml(tag) => match rustidian::inline_style::parse(&tag) {
+                    Some(rustidian::inline_style::Tag::Open(element, html)) => {
                         highlights.push((
                             element,
                             style.html,
@@ -404,7 +403,7 @@ impl Parsed {
                             style.native_highlight = None;
                         }
                     }
-                    Some(rust_notes::inline_style::Tag::Close(element))
+                    Some(rustidian::inline_style::Tag::Close(element))
                         if highlights
                             .last()
                             .is_some_and(|(open, _, _, _)| *open == element) =>
@@ -430,7 +429,7 @@ pub fn prepare(text: &str) -> (String, Vec<(String, String)>) {
     let mut output = String::new();
     let mut links = Vec::new();
     let mut previous = 0;
-    for (span, target) in rust_notes::vault::wiki_spans(text) {
+    for (span, target) in rustidian::vault::wiki_spans(text) {
         let destination = format!("rust-note-{}", links.len());
         let label = target
             .split_once('|')
@@ -448,27 +447,27 @@ pub fn prepare(text: &str) -> (String, Vec<(String, String)>) {
 pub fn show(
     ui: &mut egui::Ui,
     cache: &mut CommonMarkCache,
-    tab: &mut rust_notes::tab::Tab,
+    tab: &mut rustidian::tab::Tab,
     anchor: Option<&str>,
-    vault: Option<&rust_notes::vault::Vault>,
+    vault: Option<&rustidian::vault::Vault>,
 ) -> Option<String> {
     // Navigation reuses the tab; its editing path identifies the document and
     // remains stable when that document moves.
     let document_id = egui::Id::unique((tab.id(), tab.editor_path()));
     let text = &tab.document.text;
     let from = &tab.document.path;
-    let body = rust_notes::metadata::frontmatter(text)
+    let body = rustidian::metadata::frontmatter(text)
         .ok()
         .flatten()
         .map_or(0, |properties| properties.range.end);
     let text = &text[body..];
     let (markdown, links) = prepare(text);
-    let markdown = rust_notes::assets::prepare_images(&markdown, |destination| {
+    let markdown = rustidian::assets::prepare_images(&markdown, |destination| {
         let target = links
             .iter()
             .find(|(id, _)| id == destination)
             .map_or(destination, |(_, target)| target);
-        rust_notes::assets::image_uri(vault, from, target)
+        rustidian::assets::image_uri(vault, from, target)
     });
     let id = ui.scope_id().with("reading-blocks");
     let parsed = ui.ctx().data_mut(|data| {
@@ -494,7 +493,7 @@ pub fn show(
             document_id,
         );
         if let Some(ordinal) = task
-            && rust_notes::editor::toggle_task(&mut tab.document.text, ordinal)
+            && rustidian::editor::toggle_task(&mut tab.document.text, ordinal)
         {
             tab.edited();
         }
@@ -777,12 +776,13 @@ fn show_blocks(
                         ui.spacing_mut().item_spacing.x = 9.0;
                         ui.add_space(task_indent);
                         let line_height = galley.rows.first().map_or(29.16, |row| row.height());
+                        let size = crate::theme::document_size(ui, 18.0);
                         let checkbox = ui
                             .allocate_ui_with_layout(
-                                egui::vec2(18.0, line_height),
+                                egui::vec2(size, line_height),
                                 egui::Layout::top_down(egui::Align::Min),
                                 |ui| {
-                                    ui.add_space(((line_height - 18.0) / 2.0).max(0.0));
+                                    ui.add_space(((line_height - size) / 2.0).max(0.0));
                                     crate::theme::checkbox(ui, &mut checked)
                                 },
                             )
@@ -898,15 +898,18 @@ fn inline_format(
     heading: u8,
     table_header: Option<bool>,
 ) -> egui::TextFormat {
-    let size = match heading {
-        1 => 32.436,
-        2 => 28.836,
-        3 => 25.632,
-        4.. => 22.788,
-        _ if part.code && table_header.is_some() => crate::code_ui::FONT_SIZE,
-        _ if part.code => 16.0,
-        _ => 18.0,
-    };
+    let size = crate::theme::document_size(
+        ui,
+        match heading {
+            1 => 32.436,
+            2 => 28.836,
+            3 => 25.632,
+            4.. => 22.788,
+            _ if part.code && table_header.is_some() => crate::code_ui::FONT_SIZE,
+            _ if part.code => 16.0,
+            _ => 18.0,
+        },
+    );
     let family = if part.code {
         egui::FontFamily::Monospace
     } else if heading == 1 || part.html.bold == Some(true) {
@@ -1182,12 +1185,12 @@ mod tests {
         let visible: String = parts.iter().map(|part| part.text.as_str()).collect();
         assert_eq!(visible, "Before  EXISTING after");
         assert!(parts.iter().any(|part| part.text == "EXISTING"
-            && part.native_highlight == Some(rust_notes::highlight::NativeColor::Purple)));
+            && part.native_highlight == Some(rustidian::highlight::NativeColor::Purple)));
     }
 
     #[test]
     fn reader_resolves_native_color_markers_adjacent_spans_and_literal_code() {
-        use rust_notes::highlight::NativeColor;
+        use rustidian::highlight::NativeColor;
         let source = "==🔵TA====🟣RGE====🔵T== and ==🟡[TARGET](Other.md)== plus `==🔴literal==`";
         let parsed = Parsed::new(source);
         assert!(!parsed.fallback);

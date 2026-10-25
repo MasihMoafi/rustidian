@@ -1,9 +1,13 @@
 [package]
-name = "rust-notes"
-version = "0.1.0"
+name = "rustidian"
+version = "0.1.0-alpha.2"
 edition = "2024"
 rust-version = "1.95"
-description = "A native Rust notebook for ordinary Markdown vaults"
+description = "Rustidian — a native Markdown notebook for local vaults"
+repository = "https://github.com/MasihMoafi/rustidian"
+readme = "README.md"
+keywords = ["markdown", "notes", "obsidian", "egui"]
+categories = ["text-editors"]
 license = "MIT"
 
 [dependencies]

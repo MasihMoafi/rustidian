@@ -1,4 +1,4 @@
-use rust_notes::vault::Vault;
+use rustidian::vault::Vault;
 use std::{fs, path::Path, time::Instant};
 
 fn main() {

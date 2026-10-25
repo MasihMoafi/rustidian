@@ -1,6 +1,6 @@
 use crate::{theme, ui_probe};
 use eframe::egui::{self, Align2, FontId, Key, Margin, RichText, Stroke, TextEdit};
-use rust_notes::{operations::LinkUpdates, search::FileMatcher, vault::Vault};
+use rustidian::{operations::LinkUpdates, search::FileMatcher, vault::Vault};
 use std::path::{Path, PathBuf};
 
 #[derive(Default)]

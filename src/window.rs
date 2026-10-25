@@ -8,8 +8,8 @@ pub fn title_bar(
     ui: &mut egui::Ui,
     title: &str,
     file_actions_enabled: bool,
-) -> Option<rust_notes::native_picker::Kind> {
-    use rust_notes::{commands, native_picker::Kind};
+) -> Option<rustidian::native_picker::Kind> {
+    use rustidian::{commands, native_picker::Kind};
     let mut action = None;
     resize_edges(ui);
     let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));

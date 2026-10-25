@@ -1,6 +1,6 @@
 # Text backend provenance
 
-Rust Notes pins cached `egui` and `epaint` 0.37.0 with local Cargo patches.
+Rustidian pins cached `egui` and `epaint` 0.37.0 with local Cargo patches.
 Their published `.cargo_vcs_info.json` identifies egui commit
 `7c0b40402271e8d40cda69f87cf3c2617c2e4382`.
 The other egui ecosystem crates retain their registry versions.
@@ -49,7 +49,7 @@ repository's main branch because the published source commit URL returned 404.
 The crates declare `MIT OR Apache-2.0`; retain both license files when distributing.
 
 
-21 October local folding optimization: `Row::clone_without_visuals` copies logical glyphs and layout metadata without copying the rendered vertex/index buffers. Rust Notes uses it only for zero-height folded rows, whose visuals are empty. Visible rows and the retained original font galley stay unchanged. Logical cursor/selection data survives, and the tessellator can skip empty hidden meshes even without coarse culling. This extension is local, not an upstream claim; patch: `patches/fold-row-without-visuals.patch`. The native editor regression asserts hidden meshes are absent, glyphs preserved and visible visuals unchanged, and demonstrably fails before the fix.
+21 October local folding optimization: `Row::clone_without_visuals` copies logical glyphs and layout metadata without copying the rendered vertex/index buffers. Rustidian uses it only for zero-height folded rows, whose visuals are empty. Visible rows and the retained original font galley stay unchanged. Logical cursor/selection data survives, and the tessellator can skip empty hidden meshes even without coarse culling. This extension is local, not an upstream claim; patch: `patches/fold-row-without-visuals.patch`. The native editor regression asserts hidden meshes are absent, glyphs preserved and visible visuals unchanged, and demonstrably fails before the fix.
 
 22 October color emoji: application font families now append licensed Noto Color
 Emoji and enable epaint's native color-font support. Local fallback resolution

@@ -1,4 +1,4 @@
-use rust_notes::editor::{Markdown, find_matches, surround};
+use rustidian::editor::{Markdown, find_matches, surround};
 
 #[test]
 fn wiki_alias_visibility_uses_original_byte_offsets_for_escaped_table_delimiters() {
@@ -21,7 +21,7 @@ fn wiki_alias_visibility_uses_original_byte_offsets_for_escaped_table_delimiters
 
 #[test]
 fn toggling_native_tasks_preserves_source_and_ignores_code_and_properties() {
-    use rust_notes::editor::toggle_task;
+    use rustidian::editor::toggle_task;
     let source = "---\nexample: '- [ ] Property'\n---\n\n- [ ] فارسی task\n- [X] Done\n\n`- [ ] Inline`\n```md\n- [ ] Code\n```\n";
     let mut text = source.to_owned();
     assert!(toggle_task(&mut text, 0));
@@ -35,11 +35,11 @@ fn toggling_native_tasks_preserves_source_and_ignores_code_and_properties() {
     assert!(toggle_task(&mut text, 0));
     assert!(text.contains("- [ ] فارسی task"));
 }
-use rust_notes::editor::{complete_link, link_completion};
+use rustidian::editor::{complete_link, link_completion};
 
 #[test]
 fn link_under_cursor_uses_character_offsets_and_ignores_code() {
-    use rust_notes::editor::link_at;
+    use rustidian::editor::link_at;
     assert_eq!(
         link_at("你好 [[Home|Go home]]", 9).as_deref(),
         Some("Home|Go home")
@@ -227,7 +227,7 @@ fn formatting_and_find_keep_unicode_and_reject_empty_search() {
 
 #[test]
 fn enter_continues_lists_tasks_quotes_and_exits_empty_items() {
-    use rust_notes::editor::markdown_enter;
+    use rustidian::editor::markdown_enter;
     for (source, expected) in [
         ("- First", "- First\n- "),
         ("  * Nested", "  * Nested\n  * "),
@@ -266,7 +266,7 @@ fn enter_continues_lists_tasks_quotes_and_exits_empty_items() {
 #[test]
 fn live_heading_positions_exclude_yaml_and_setext_underlines() {
     let source = "---\ntitle: Metadata\n---\n\n# Body\n\nSetext\n======\n";
-    let parsed = rust_notes::editor::Markdown::parse(source);
+    let parsed = rustidian::editor::Markdown::parse(source);
     assert_eq!(
         parsed.heading_starts,
         vec![

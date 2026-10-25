@@ -788,5 +788,17 @@
       "reproduction": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/home/masih/Desktop/p/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
       "selectedRationale": "Connected open circles remain recognizable at18px alongside the existing thin rounded Files and Bookmark icons. Original and trace proofs inspected; actual app verification pending."
     }
+  },
+  "toolbarViewports": {
+    "new-tab": {
+      "traced": "artwork/traced-new-tab.svg",
+      "native": "new-tab.svg",
+      "viewBox": "70 70 116 116"
+    },
+    "settings": {
+      "traced": "artwork/traced-vault.svg",
+      "native": "settings.svg",
+      "viewBox": "64 64 116 116"
+    }
   }
 }

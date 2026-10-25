@@ -19,7 +19,13 @@ pub fn location() -> Option<PathBuf> {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
-        .map(|base| base.join("rust-notes/vaults.json"))
+        .map(|base| crate::paths::app_directory(&base).join("vaults.json"))
+}
+
+pub fn default_vault() -> Option<PathBuf> {
+    std::env::var_os("RUSTIDIAN_DEFAULT_VAULT")
+        .or_else(|| std::env::var_os("RUST_NOTES_DEFAULT_VAULT"))
+        .map(PathBuf::from)
 }
 
 /// CLI and native Open share the same document-to-vault policy.

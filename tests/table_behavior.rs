@@ -1,5 +1,5 @@
 use pulldown_cmark::Alignment;
-use rust_notes::{
+use rustidian::{
     editor::Markdown,
     tables::{Action, Table},
 };
@@ -229,4 +229,19 @@ fn sorting_uses_displayed_markdown_and_stably_orders_numeric_cells() {
         .unwrap();
     assert_eq!(table(&source).cell(&source, 1, 1), "`10`");
     assert_eq!(table(&source).cell(&source, 4, 1), "**2**");
+}
+
+#[test]
+fn a_caret_inside_the_source_maps_to_the_cell_it_is_in() {
+    let source = "Intro\n\n| day | AW (h) | subject |\n| :-- | --: | :-- |\n| Fri · Oct 23 | 3h | SDD, Study |\n| Total | 0 | |\n";
+    let model = table(source);
+    let at = |needle: &str, offset: usize| source.find(needle).unwrap() + offset;
+    assert_eq!(model.cell_at(at("3h", 1)), (1, 1));
+    assert_eq!(model.cell_at(at("Fri", 0)), (1, 0));
+    assert_eq!(model.cell_at(at("| Fri", 0)), (1, 0));
+    assert_eq!(model.cell_at(at("Study", 2)), (1, 2));
+    assert_eq!(model.cell_at(at("subject", 0)), (0, 2));
+    assert_eq!(model.cell_at(at("--: |", 1)), (0, 1));
+    assert_eq!(model.cell_at(at("Total", 0)), (2, 0));
+    assert_eq!(model.cell_at(source.len() - 2), (2, 2));
 }

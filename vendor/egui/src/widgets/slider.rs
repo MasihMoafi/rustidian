@@ -591,7 +591,10 @@ impl Slider<'_> {
             self.set_value(old_value);
         }
 
-        let mut response = ui.allocate_response(self.core.desired_size(ui), Sense::drag());
+        let mut response = ui.allocate_response(self.core.desired_size(ui), Sense::click_and_drag());
+        if response.clicked() {
+            response.request_focus();
+        }
         self.slider_ui(ui, &response);
 
         let value = self.get_value();

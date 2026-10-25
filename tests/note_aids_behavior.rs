@@ -1,5 +1,5 @@
 use chrono::{DateTime, FixedOffset};
-use rust_notes::{
+use rustidian::{
     note_aids::{Config, moment_format},
     vault::Vault,
 };
@@ -301,7 +301,7 @@ fn concurrent_unique_creations_keep_two_distinct_files() {
 
 #[test]
 fn random_note_selects_only_markdown_even_after_saving_text_documents() {
-    use rust_notes::{note_aids::random_note, vault::Document};
+    use rustidian::{note_aids::random_note, vault::Document};
     let base = tempfile::tempdir().unwrap();
     let mut vault = Vault::open(base.path()).unwrap();
     assert!(random_note(&vault).is_none());

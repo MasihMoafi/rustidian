@@ -51,24 +51,24 @@ def main():
     output = Path("target/release")
     bundle = source.parent / "reused-app"
     import tarfile
-    with tarfile.open(reports / "rust-notes-candidate-linux-x86_64.tar.gz") as archive:
+    with tarfile.open(reports / "rustidian-candidate-linux-x86_64.tar.gz") as archive:
         for member in archive.getmembers():
             path = Path(member.name)
             assert not path.is_absolute() and ".." not in path.parts
             assert member.isfile() or member.isdir()
-            assert path.parts[0] in ("rust-notes", "demo-vault") or (
+            assert path.parts[0] in ("rustidian", "demo-vault") or (
                 member.isfile() and len(path.parts) == 3 and path.parts[:2] == ("assets", "fonts")
                 and path.name.startswith("LICENSE-") and path.suffix == ".txt"
             )
         archive.extractall(bundle, filter="data")
-    binary = bundle / "rust-notes"
+    binary = bundle / "rustidian"
     assert hashlib.sha256(binary.read_bytes()).hexdigest() == (reports / "candidate.sha256").read_text().split()[0]
     for file in (bundle / "demo-vault").rglob("*"):
         if file.is_file():
             assert file.read_bytes() == (Path("demo-vault") / file.relative_to(bundle / "demo-vault")).read_bytes()
     output.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(binary, output / "rust-notes")
-    (output / "rust-notes").chmod(0o755)
+    shutil.copy2(binary, output / "rustidian")
+    (output / "rustidian").chmod(0o755)
     benchmark = reports / "editor-benchmark-candidate.tar.gz"
     if benchmark.exists():
         unchanged((reports / "benchmark-source-commit.txt").read_text().strip())

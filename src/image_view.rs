@@ -1,5 +1,5 @@
 use eframe::egui::{self, Align, Layout, ScrollArea, Vec2};
-use rust_notes::tab::ImageScale;
+use rustidian::tab::ImageScale;
 use std::path::Path;
 
 pub fn show(ui: &mut egui::Ui, absolute: &Path, id: egui::Id, scale: ImageScale) {

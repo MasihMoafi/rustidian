@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     tab::View,
     vault::Vault,
     workspaces::{Layout, SavedTab, Workspaces},
@@ -155,8 +155,8 @@ fn names_layouts_and_separate_vault_locations_are_validated() {
         .unwrap();
     assert_eq!(store.entries()[0].name, "یادداشت / Writing");
     assert_ne!(
-        rust_notes::workspaces::location(Path::new("/vault/a")),
-        rust_notes::workspaces::location(Path::new("/vault/b"))
+        rustidian::workspaces::location(Path::new("/vault/a")),
+        rustidian::workspaces::location(Path::new("/vault/b"))
     );
 }
 

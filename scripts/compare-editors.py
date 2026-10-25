@@ -83,9 +83,9 @@ def main():
         "ui_probe_during_measurement": False,
         "units": "milliseconds", "warmups": 5, "samples_per_round": 25,
         "source_bytes": len(corpus()), "corpus_sha256": hashlib.sha256(corpus()).hexdigest(),
-        "versions": {"ferrite": "v0.3.0", "rust-notes": source_commit},
+        "versions": {"ferrite": "v0.3.0", "rustidian": source_commit},
         "harness_commit": harness_commit,
-        "binary_sha256": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in [("rust-notes", args.ours), ("ferrite", args.ferrite)]},
+        "binary_sha256": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in [("rustidian", args.ours), ("ferrite", args.ferrite)]},
         "cpu": subprocess.check_output(["lscpu"], text=True),
         "limitations": ["Combined edit/save response, not display latency or internal CPU time.",
                         "Includes common xdotool subprocess and 1ms file polling overhead.",
@@ -108,7 +108,7 @@ def main():
                 try:
                     display = ":" + xvfb.stdout.readline().strip()
                     assert display != ":"
-                    for round_number, order in enumerate([("rust-notes", "ferrite"), ("ferrite", "rust-notes")]):
+                    for round_number, order in enumerate([("rustidian", "ferrite"), ("ferrite", "rustidian")]):
                         for name in order:
                             profile = base / f"{round_number}-{name}"
                             vault = profile / "vault"
@@ -118,7 +118,7 @@ def main():
                             note.write_bytes(expected)
                             env = {**os.environ, "DISPLAY": display, "LIBGL_ALWAYS_SOFTWARE": "1",
                                    "XDG_STATE_HOME": str(profile / "state"), "XDG_DATA_HOME": str(profile / "data"),
-                                   "XDG_CONFIG_HOME": str(profile / "config"), "RUST_NOTES_UI_PROBE": str(profile / "probe.json"),
+                                   "XDG_CONFIG_HOME": str(profile / "config"), "RUSTIDIAN_UI_PROBE": str(profile / "probe.json"),
                                    "FERRITE_DATA_DIR": str(profile / "ferrite")}
                             env.pop("WAYLAND_DISPLAY", None)
                             portable = profile / "ferrite"
@@ -147,14 +147,14 @@ def main():
                                 time.sleep(.1)
                                 return window
 
-                            binary = args.ours if name == "rust-notes" else args.ferrite
-                            command = [str(binary.resolve()), str(vault if name == "rust-notes" else note)]
+                            binary = args.ours if name == "rustidian" else args.ferrite
+                            command = [str(binary.resolve()), str(vault if name == "rustidian" else note)]
                             with (reports / f"{round_number}-{name}.log").open("w") as output:
                                 app = subprocess.Popen(command, cwd=profile, env=env, stdout=output, stderr=output)
                                 recorder = None
                                 try:
                                     window = ready_window(app)
-                                    if name == "rust-notes":
+                                    if name == "rustidian":
                                         def palette(text):
                                             xdo("key", "--clearmodifiers", "ctrl+p")
                                             time.sleep(.2)
@@ -179,7 +179,7 @@ def main():
                                             time.sleep(.01)
                                         else:
                                             raise AssertionError("Filtered settings must settle before the single setup click")
-                                        sessions = list((profile / "state/rust-notes").glob("*.json"))
+                                        sessions = list((profile / "state/rustidian").glob("*.json"))
                                         assert len(sessions) <= 1
                                         assert all(json.loads(path.read_text())["autosave_enabled"] is True for path in sessions)
                                         x1, y1, x2, y2 = bounds
@@ -201,12 +201,12 @@ def main():
                                         time.sleep(.3)
                                         xdo("key", "--clearmodifiers", "ctrl+q")
                                         app.wait(timeout=5)
-                                        sessions = list((profile / "state/rust-notes").glob("*.json"))
+                                        sessions = list((profile / "state/rustidian").glob("*.json"))
                                         assert len(sessions) == 1
                                         session = json.loads(sessions[0].read_text())
                                         assert session["autosave_enabled"] is False
                                         assert session["tabs"][session["active"]] == ["Home.md", "Source"]
-                                        env.pop("RUST_NOTES_UI_PROBE")
+                                        env.pop("RUSTIDIAN_UI_PROBE")
                                         (profile / "probe.json").unlink()
                                         app = subprocess.Popen(command, cwd=profile, env=env, stdout=output, stderr=output)
                                         window = ready_window(app)
@@ -271,7 +271,7 @@ def main():
                                     if probe.exists():
                                         (reports / f"{round_number}-{name}-failure-controls.json").write_bytes(probe.read_bytes())
                                     report["failed_native_stage"] = {"app":name,"round":round_number,"error":repr(failure),
-                                        "sessions":[json.loads(path.read_text()) for path in (profile / "state/rust-notes").glob("*.json")]}
+                                        "sessions":[json.loads(path.read_text()) for path in (profile / "state/rustidian").glob("*.json")]}
                                     preserve()
                                     raise
                                 finally:
@@ -288,16 +288,16 @@ def main():
                     xvfb.terminate()
                     xvfb.wait(timeout=5)
         summaries = {}
-        for name in ["rust-notes", "ferrite"]:
+        for name in ["rustidian", "ferrite"]:
             samples = sorted(sample for run in report["rounds"] if run["app"] == name for sample in run["samples_ms"])
             assert len(samples) == 50
             summaries[name] = {"median_ms": statistics.median(samples), "p95_ms": samples[math.ceil(.95 * len(samples)) - 1]}
         report["summary"] = summaries
-        report["meets_observed_target"] = all(summaries["rust-notes"][metric] <= summaries["ferrite"][metric] for metric in ["median_ms", "p95_ms"])
+        report["meets_observed_target"] = all(summaries["rustidian"][metric] <= summaries["ferrite"][metric] for metric in ["median_ms", "p95_ms"])
         report["status"] = "completed"
         print(json.dumps({"summary": summaries, "meets_observed_target": report["meets_observed_target"]}))
         if not report["meets_observed_target"]:
-            raise SystemExit("Rust Notes missed the observed median/p95 edit-and-save target; retain measurements and investigate.")
+            raise SystemExit("Rustidian missed the observed median/p95 edit-and-save target; retain measurements and investigate.")
     except Exception as error:
         report["status"] = "failed"
         report["error"] = str(error)

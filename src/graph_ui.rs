@@ -2,7 +2,7 @@ use crate::{theme, ui_probe};
 use eframe::egui::{
     self, Align, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
 };
-use rust_notes::{
+use rustidian::{
     graph::{Graph, Group, Kind, Options, View},
     graph_layout::{Camera, Forces, Geometry},
     vault::Vault,
@@ -204,7 +204,7 @@ impl Manager {
             ui.horizontal(|ui| {
                 let title = root.as_deref().map_or_else(
                     || "Graph view".to_owned(),
-                    |path| format!("Graph of {}", rust_notes::vault::file_title(path)),
+                    |path| format!("Graph of {}", rustidian::vault::file_title(path)),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if local {

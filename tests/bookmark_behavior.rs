@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     bookmarks::{Bookmark, Bookmarks},
     vault::Vault,
 };

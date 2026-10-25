@@ -13,8 +13,12 @@ fn qualified(prefix: Option<String>, name: String) -> String {
 
 fn destination() -> Option<&'static PathBuf> {
     static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
-    PATH.get_or_init(|| std::env::var_os("RUST_NOTES_UI_PROBE").map(PathBuf::from))
-        .as_ref()
+    PATH.get_or_init(|| {
+        std::env::var_os("RUSTIDIAN_UI_PROBE")
+            .or_else(|| std::env::var_os("RUST_NOTES_UI_PROBE"))
+            .map(PathBuf::from)
+    })
+    .as_ref()
 }
 
 pub fn record(ctx: &egui::Context, name: impl Into<String>, rect: egui::Rect) {

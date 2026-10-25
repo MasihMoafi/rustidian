@@ -70,7 +70,7 @@ fn rasterize(request: &GlyphRasterizerRequest<'_>) -> Option<RasterizedGlyph> {
 
 pub fn install(ctx: &egui::Context) {
     ctx.add_glyph_rasterizer(
-        GlyphRasterizer::new("rust-notes.noto-highlight-markers", rasterize)
+        GlyphRasterizer::new("rustidian.noto-highlight-markers", rasterize)
             .with_priority(FontPriority::Highest),
     );
 }

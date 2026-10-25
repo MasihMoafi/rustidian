@@ -1237,6 +1237,14 @@ fn events(
     }
 
     for event in &events {
+        let separate_edit = matches!(event, Event::Paste(value) if !value.is_empty())
+            || (!cursor_range.is_empty() && matches!(event, Event::Text(_) | Event::Cut));
+        if separate_edit {
+            state
+                .undoer
+                .lock()
+                .add_undo(&(cursor_range, text.as_str().to_owned()));
+        }
         let did_mutate_text = match event {
             // First handle events that only changes the selection cursor, not the text:
             event if cursor_range.on_event(os, event, galley, id) => None,
@@ -1506,6 +1514,12 @@ fn events(
                 CursorMutation::ImeCompositionCursorRange(new_cursor_range) => {
                     cursor_range = new_cursor_range;
                 }
+            }
+            if separate_edit {
+                let current = (cursor_range, text.as_str().to_owned());
+                let mut history = state.undoer.lock();
+                history.feed_state(ui.input(|input| input.time), &current);
+                history.add_undo(&current);
             }
         }
     }

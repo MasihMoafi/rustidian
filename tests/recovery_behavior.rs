@@ -1,4 +1,4 @@
-use rust_notes::recovery::{Config, History};
+use rustidian::recovery::{Config, History};
 use std::{fs, path::Path};
 
 fn history(base: &Path) -> History {
@@ -10,14 +10,14 @@ fn a_note_absent_when_selected_can_be_recreated_but_a_new_collision_is_preserved
     let base = tempfile::tempdir().unwrap();
     let root = base.path().join("vault");
     fs::create_dir(&root).unwrap();
-    let mut vault = rust_notes::vault::Vault::open(&root).unwrap();
+    let mut vault = rustidian::vault::Vault::open(&root).unwrap();
     let store = history(base.path());
     let config = Config::default();
     let path = Path::new("Notes/Deleted.md");
     let original = "# Deleted\r\nسلام\r\n";
     store.record(path, original, 1_000, &config, true).unwrap();
     let id = store.versions(path).unwrap()[0].id;
-    let expected = rust_notes::vault::Document::new(path.to_owned());
+    let expected = rustidian::vault::Document::new(path.to_owned());
     let restored = store
         .restore(&mut vault, &expected, id, 2_000, &config)
         .unwrap();
@@ -52,8 +52,8 @@ fn settings_import_is_read_only_and_vault_history_locations_are_distinct() {
     assert_eq!(Config::from_obsidian(&second).unwrap(), Config::default());
     assert!(!second.join(".obsidian").exists());
     assert_ne!(
-        rust_notes::paths::state_file(&first, "recovery", "redb"),
-        rust_notes::paths::state_file(&second, "recovery", "redb")
+        rustidian::paths::state_file(&first, "recovery", "redb"),
+        rustidian::paths::state_file(&second, "recovery", "redb")
     );
     fs::write(&settings, b"{\"intervalMinutes\":-1}").unwrap();
     assert!(Config::from_obsidian(&first).is_err());
@@ -80,7 +80,7 @@ fn lowering_the_interval_releases_a_deferred_capture_without_another_edit() {
         .unwrap();
     let (sender, events) = std::sync::mpsc::channel();
     let mut recorder =
-        rust_notes::recovery_capture::Recorder::start(store.clone(), config.clone(), move || {
+        rustidian::recovery_capture::Recorder::start(store.clone(), config.clone(), move || {
             let _ = sender.send(());
         });
     assert!(recorder.capture(path, "deferred", &config));
@@ -107,7 +107,7 @@ fn lowering_the_interval_releases_a_deferred_capture_without_another_edit() {
 
 #[test]
 fn line_changes_reconstruct_both_exact_inputs_including_unicode_and_crlf() {
-    use rust_notes::recovery::{Change, changes};
+    use rustidian::recovery::{Change, changes};
     for (before, after) in [
         ("", ""),
         ("same\r\n", "same\r\n"),
@@ -143,7 +143,7 @@ fn restore_preserves_displaced_bytes_and_refuses_dirty_stale_or_missing_destinat
     let path = Path::new("Home.md");
     let disk = root.join(path);
     fs::write(&disk, "# Current\r\n").unwrap();
-    let mut vault = rust_notes::vault::Vault::open(&root).unwrap();
+    let mut vault = rustidian::vault::Vault::open(&root).unwrap();
     let expected = vault.read(path).unwrap();
     let store = history(base.path());
     let config = Config::default();
@@ -204,7 +204,7 @@ fn background_capture_coalesces_to_latest_saved_bytes_and_clear_cancels_deferred
     };
     let (wake, events) = std::sync::mpsc::channel();
     let recorder =
-        rust_notes::recovery_capture::Recorder::start(store.clone(), config.clone(), move || {
+        rustidian::recovery_capture::Recorder::start(store.clone(), config.clone(), move || {
             let _ = wake.send(());
         });
     let wait_for = |text: &str| {

@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     navigation::History,
     vault::{Document, Vault},
 };

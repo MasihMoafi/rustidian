@@ -1,6 +1,6 @@
 //! Native, cached syntax colors; source text and Markdown ranges stay unchanged.
 use eframe::egui::{self, Color32};
-use rust_notes::editor::Markdown;
+use rustidian::editor::Markdown;
 use std::{ops::Range, sync::OnceLock};
 use syntect::{
     easy::HighlightLines,

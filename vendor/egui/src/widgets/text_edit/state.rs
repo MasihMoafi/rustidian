@@ -11,6 +11,14 @@ use crate::{
 
 pub type TextEditUndoer = crate::util::undoer::Undoer<(CCursorRange, String)>;
 
+fn default_text_undoer() -> TextEditUndoer {
+    TextEditUndoer::with_settings(crate::util::undoer::Settings {
+        stable_time: 0.5,
+        auto_save_interval: 1.0,
+        ..Default::default()
+    })
+}
+
 /// The text edit state stored between frames.
 ///
 /// Attention: You also need to `store` the updated state.
@@ -32,7 +40,7 @@ pub type TextEditUndoer = crate::util::undoer::Undoer<(CCursorRange, String)>;
 /// output.state.store(ui.ctx(), output.response.id);
 /// # });
 /// ```
-#[derive(Clone, Default)]
+#[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct TextEditState {
@@ -62,6 +70,19 @@ pub struct TextEditState {
     pub(crate) reported_selection: Option<CCursorRange>,
 }
 
+impl Default for TextEditState {
+    fn default() -> Self {
+        Self {
+            cursor: Default::default(),
+            cursor_purpose: Default::default(),
+            undoer: Arc::new(Mutex::new(default_text_undoer())),
+            text_offset: Vec2::ZERO,
+            last_interaction_time: 0.0,
+            reported_selection: None,
+        }
+    }
+}
+
 impl TextEditState {
     pub fn load(ctx: &Context, id: Id) -> Option<Self> {
         ctx.data_mut(|d| d.get_persisted(id))
@@ -86,7 +107,7 @@ impl TextEditState {
     }
 
     pub fn clear_undoer(&mut self) {
-        self.set_undoer(TextEditUndoer::default());
+        self.set_undoer(default_text_undoer());
     }
 
     /// Move through text changes without turning cursor-only snapshots into edits.

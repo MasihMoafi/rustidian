@@ -23,6 +23,7 @@ pub mod tab;
 pub mod tables;
 pub mod vault;
 pub mod vaults;
+pub mod watcher;
 pub mod workspaces;
 
 pub const APP_NAME: &str = "Rustidian";

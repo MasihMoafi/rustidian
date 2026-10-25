@@ -1,0 +1,30 @@
+name: Report a bug
+description: Help make Rustidian reliable with a small reproducible example.
+title: "[Bug]: "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Rustidian version
+      description: Run rustidian --version. If using the first alpha, include its release tag.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Linux distribution and version, X11 or Wayland, and GPU if rendering is affected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps and a small example
+      description: Include the steps and expected versus actual behavior. Use synthetic Markdown; keep private notes and profiles out of reports.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or terminal output
+      description: Optional. Remove personal information before sharing.

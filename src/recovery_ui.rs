@@ -1,6 +1,6 @@
 use crate::{theme, ui_probe};
 use eframe::egui::{self, Align, FontId, Layout, RichText, ScrollArea, TextEdit};
-use rust_notes::{
+use rustidian::{
     recovery::{Change, History, Version},
     recovery_capture::Recorder,
     vault::{Document, Vault},
@@ -30,7 +30,7 @@ pub struct Manager {
     pub open: bool,
     history: Option<History>,
     files: Vec<PathBuf>,
-    matcher: Option<rust_notes::search::FileMatcher>,
+    matcher: Option<rustidian::search::FileMatcher>,
     path: Option<PathBuf>,
     versions: Vec<Version>,
     selected: Option<u64>,
@@ -109,7 +109,7 @@ impl Manager {
         });
         self.input = path
             .as_ref()
-            .map(|p| rust_notes::paths::display_path(p))
+            .map(|p| rustidian::paths::display_path(p))
             .unwrap_or_default();
         self.path = path;
         self.selected = None;
@@ -163,7 +163,7 @@ impl Manager {
                 let changes = text
                     .as_ref()
                     .map(|text| {
-                        rust_notes::recovery::changes(text, current.as_deref().unwrap_or_default())
+                        rustidian::recovery::changes(text, current.as_deref().unwrap_or_default())
                     })
                     .unwrap_or_default();
                 Ok(Loaded {
@@ -185,7 +185,7 @@ impl Manager {
             match receiver.try_recv() {
                 Ok(Ok(loaded)) => {
                     if let Some(files) = loaded.files {
-                        self.matcher = Some(rust_notes::search::FileMatcher::new(files.clone()));
+                        self.matcher = Some(rustidian::search::FileMatcher::new(files.clone()));
                         self.files = files;
                     }
                     self.path = loaded.path;

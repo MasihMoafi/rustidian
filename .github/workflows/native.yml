@@ -106,11 +106,11 @@ jobs:
       - name: Preserve an existing debug app for early disposable checks
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
-          if [ -x target/debug/rust-notes ]; then
-            mkdir -p "$RUNNER_TEMP/rust-notes-functional"
-            tar -czf "$RUNNER_TEMP/rust-notes-functional/rust-notes-functional.tar.gz" -C target/debug rust-notes -C "$GITHUB_WORKSPACE" demo-vault LICENSE assets/fonts/LICENSE-*.txt
-            sha256sum target/debug/rust-notes > "$RUNNER_TEMP/rust-notes-functional/functional.sha256"
-            git rev-parse HEAD > "$RUNNER_TEMP/rust-notes-functional/binary-source-commit.txt"
+          if [ -x target/debug/rustidian ]; then
+            mkdir -p "$RUNNER_TEMP/rustidian-functional"
+            tar -czf "$RUNNER_TEMP/rustidian-functional/rustidian-functional.tar.gz" -C target/debug rustidian -C "$GITHUB_WORKSPACE" demo-vault LICENSE assets/fonts/LICENSE-*.txt
+            sha256sum target/debug/rustidian > "$RUNNER_TEMP/rustidian-functional/functional.sha256"
+            git rev-parse HEAD > "$RUNNER_TEMP/rustidian-functional/binary-source-commit.txt"
           fi
       - name: Keep the existing debug app for one day
         if: ${{ inputs.reuse_run_id == '' }}
@@ -118,18 +118,18 @@ jobs:
         with:
           name: functional-native-${{ github.sha }}
           retention-days: 1
-          path: ${{ runner.temp }}/rust-notes-functional/
+          path: ${{ runner.temp }}/rustidian-functional/
           if-no-files-found: ignore
       - name: Check new workflows before optimized compilation
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
-          test -x target/debug/rust-notes
+          test -x target/debug/rustidian
           early_status=0
           trap 'early_status=1' ERR
           set +e
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section hover 2>&1 | tee reports/early-hover-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section system-open 2>&1 | tee reports/early-system-open-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rust-notes --section graph 2>&1 | tee reports/early-graph-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rustidian --section hover 2>&1 | tee reports/early-hover-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rustidian --section system-open 2>&1 | tee reports/early-system-open-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/debug/rustidian --section graph 2>&1 | tee reports/early-graph-gui.log
           exit "$early_status"
       - name: Preserve early native diagnostics
         if: ${{ always() && !cancelled() && inputs.reuse_run_id == '' }}
@@ -158,10 +158,10 @@ jobs:
         id: build_candidate
         if: ${{ inputs.reuse_run_id == '' }}
         run: |
-          cargo build --locked --release --bin rust-notes --example editor_benchmark 2>&1 | tee reports/candidate-build.log
-          sha256sum target/release/rust-notes > reports/candidate.sha256
+          cargo build --locked --release --bin rustidian --example editor_benchmark 2>&1 | tee reports/candidate-build.log
+          sha256sum target/release/rustidian > reports/candidate.sha256
           git rev-parse HEAD > reports/binary-source-commit.txt
-          tar -czf reports/rust-notes-candidate-linux-x86_64.tar.gz -C target/release rust-notes -C "$GITHUB_WORKSPACE" demo-vault LICENSE assets/fonts/LICENSE-*.txt
+          python3 scripts/package-linux.py --binary target/release/rustidian --output reports/rustidian-candidate-linux-x86_64.tar.gz
       - name: Restore an unchanged optimized candidate
         id: restore_candidate
         if: ${{ inputs.reuse_run_id != '' }}
@@ -173,7 +173,7 @@ jobs:
           command -v gh
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --check-source
           timeout 25s gh run view "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json headSha > "$RUNNER_TEMP/source-run.json"
-          timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rust-notes-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
+          timeout 180s gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "rustidian-linux-$REUSE_COMMIT" --dir "$RUNNER_TEMP/candidate-source"
           python3 scripts/reuse-actions-candidate.py --source-commit "$REUSE_COMMIT" --artifact-dir "$RUNNER_TEMP/candidate-source" --run-metadata "$RUNNER_TEMP/source-run.json"
       - name: Make the optimized app available before the long GUI checks
         if: ${{ !inputs.diagnostic_only && inputs.reuse_run_id == '' && steps.build_candidate.outcome == 'success' }}
@@ -182,7 +182,7 @@ jobs:
           name: application-native-${{ github.sha }}
           retention-days: 1
           path: |
-            reports/rust-notes-candidate-linux-x86_64.tar.gz
+            reports/rustidian-candidate-linux-x86_64.tar.gz
             reports/candidate.sha256
             reports/binary-source-commit.txt
             reports/candidate-build.log
@@ -193,34 +193,35 @@ jobs:
           trap 'gui_status=1' ERR
           set +e
           if [ '${{ inputs.verification_scope }}' = 'graph' ]; then
-            /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section graph 2>&1 | tee reports/graph-gui.log
+            /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section graph 2>&1 | tee reports/graph-gui.log
             exit "$gui_status"
           fi
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section palette-queued 2>&1 | tee reports/palette-queued-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section unicode-queued 2>&1 | tee reports/unicode-queued-gui.log
-          RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section attachments 2>&1 | tee reports/attachments-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tasks 2>&1 | tee reports/task-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section system-open 2>&1 | tee reports/system-open-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section graph 2>&1 | tee reports/graph-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section emoji 2>&1 | tee reports/emoji-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section vaults 2>&1 | tee reports/vaults-gui.log
-          RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section note-creators 2>&1 | tee reports/note-creators-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tab-actions 2>&1 | tee reports/tab-actions-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section tab-restore 2>&1 | tee reports/tab-restore-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-copy 2>&1 | tee reports/file-copy-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section file-move 2>&1 | tee reports/file-move-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section native-highlights 2>&1 | tee reports/native-highlights-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section page-preview 2>&1 | tee reports/page-preview-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section quick-ranking 2>&1 | tee reports/quick-ranking-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section inline-styles 2>&1 | tee reports/inline-styles-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section colors 2>&1 | tee reports/colors-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section recovery 2>&1 | tee reports/recovery-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section palette-queued 2>&1 | tee reports/palette-queued-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section unicode-queued 2>&1 | tee reports/unicode-queued-gui.log
+          RUSTIDIAN_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section attachments 2>&1 | tee reports/attachments-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section navigation 2>&1 | tee reports/navigation-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section chrome 2>&1 | tee reports/chrome-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section diagrams 2>&1 | tee reports/diagrams-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section tasks 2>&1 | tee reports/task-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section table-edit 2>&1 | tee reports/table-edit-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section system-open 2>&1 | tee reports/system-open-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section graph 2>&1 | tee reports/graph-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section emoji 2>&1 | tee reports/emoji-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section vaults 2>&1 | tee reports/vaults-gui.log
+          RUSTIDIAN_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section note-aids 2>&1 | tee reports/note-aids-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section note-creators 2>&1 | tee reports/note-creators-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section tab-actions 2>&1 | tee reports/tab-actions-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section tab-restore 2>&1 | tee reports/tab-restore-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section font-controls 2>&1 | tee reports/font-controls-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section file-copy 2>&1 | tee reports/file-copy-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section file-move 2>&1 | tee reports/file-move-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section native-highlights 2>&1 | tee reports/native-highlights-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section page-preview 2>&1 | tee reports/page-preview-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section quick-ranking 2>&1 | tee reports/quick-ranking-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section inline-styles 2>&1 | tee reports/inline-styles-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section colors 2>&1 | tee reports/colors-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section workspaces 2>&1 | tee reports/workspaces-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section recovery 2>&1 | tee reports/recovery-gui.log
           exit "$gui_status"
       - name: Keep the focused candidate and native evidence available
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
@@ -279,10 +280,10 @@ jobs:
           gui_status=0
           trap 'gui_status=1' ERR
           set +e
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault --section chrome 2>&1 | tee reports/chrome-release-gui.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file md 2>&1 | tee reports/file-open-markdown-release.log
-          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --open-file txt 2>&1 | tee reports/file-open-text-release.log
-          RUST_NOTES_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rust-notes --default-vault 2>&1 | tee reports/native-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section chrome 2>&1 | tee reports/chrome-release-gui.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --open-file md 2>&1 | tee reports/file-open-markdown-release.log
+          /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --open-file txt 2>&1 | tee reports/file-open-text-release.log
+          RUSTIDIAN_TRACE_COMMANDS=1 /usr/bin/python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault 2>&1 | tee reports/native-gui.log
           exit "$gui_status"
       - name: Serial editor CPU measurements
         if: ${{ !inputs.diagnostic_only && !cancelled() && (steps.build_candidate.outcome == 'success' || steps.restore_candidate.outcome == 'success') }}
@@ -338,19 +339,19 @@ jobs:
           /usr/bin/python3 scripts/compare-editors.py --self-check
           extra=()
           if [ '${{ inputs.diagnostic_only }}' = 'true' ]; then extra+=(--trace-keys); fi
-          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rust-notes --ours-source-commit "$(cat reports/binary-source-commit.txt)" --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" "${extra[@]}" | tee reports/editor-comparison.log
+          /usr/bin/python3 scripts/compare-editors.py --ours target/release/rustidian --ours-source-commit "$(cat reports/binary-source-commit.txt)" --ferrite "$(cat "$RUNNER_TEMP/ferrite-comparison/binary-path")" "${extra[@]}" | tee reports/editor-comparison.log
       - name: Package the verified Linux application
         if: ${{ !inputs.diagnostic_only && success() }}
         run: |
-          sha256sum target/release/rust-notes > reports/release.sha256
-          mv reports/rust-notes-candidate-linux-x86_64.tar.gz reports/rust-notes-linux-x86_64.tar.gz
-          sha256sum reports/rust-notes-linux-x86_64.tar.gz > reports/bundle.sha256
+          sha256sum target/release/rustidian > reports/release.sha256
+          mv reports/rustidian-candidate-linux-x86_64.tar.gz reports/rustidian-linux-x86_64.tar.gz
+          sha256sum reports/rustidian-linux-x86_64.tar.gz > reports/bundle.sha256
           df -h .
       - name: Keep the application and evidence for one day
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rust-notes-linux-${{ github.sha }}
+          name: rustidian-linux-${{ github.sha }}
           path: reports/
           retention-days: 1
           compression-level: 6

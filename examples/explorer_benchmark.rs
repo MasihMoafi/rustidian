@@ -10,7 +10,7 @@ mod theme;
 mod ui_probe;
 
 use eframe::egui;
-use rust_notes::vault::Vault;
+use rustidian::vault::Vault;
 use std::{fs, time::Instant};
 
 fn main() {

@@ -1,4 +1,4 @@
-use rust_notes::{callouts::Kind, editor::Markdown};
+use rustidian::{callouts::Kind, editor::Markdown};
 
 #[test]
 fn callouts_use_parser_structure_and_preserve_nested_unicode_crlf_ranges() {

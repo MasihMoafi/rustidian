@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     graph::{Graph, Options},
     graph_layout::{Camera, Forces, Geometry},
     vault::Vault,
@@ -59,14 +59,14 @@ fn empty_single_node_and_nonfinite_forces_are_bounded() {
     };
     assert_eq!(invalid.normalized(), Forces::default());
     let graph = Graph {
-        nodes: vec![rust_notes::graph::Node {
+        nodes: vec![rustidian::graph::Node {
             path: "Only.md".into(),
             label: "Only".into(),
-            kind: rust_notes::graph::Kind::Note,
+            kind: rustidian::graph::Kind::Note,
         }],
         edges: vec![],
     };
-    let view = rust_notes::graph::View {
+    let view = rustidian::graph::View {
         nodes: vec![0],
         ..Default::default()
     };

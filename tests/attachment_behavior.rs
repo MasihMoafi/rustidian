@@ -1,9 +1,9 @@
-use rust_notes::vault::Vault;
+use rustidian::vault::Vault;
 use std::{fs, path::Path};
 
 #[test]
 fn live_images_keep_unicode_source_ranges_sizes_and_code_exclusions() {
-    use rust_notes::assets::embedded_images;
+    use rustidian::assets::embedded_images;
     let source = "فارسی 🦀\n\n![[Assets/Image.png|180x90]]\n\n![Caption](../Image.png)\n\n`![[Inline.png]]`\n\\![[Escaped.png]]\n```md\n![[Code.png]]\n```\n";
     let images = embedded_images(source);
     assert_eq!(images.len(), 2);
@@ -21,7 +21,7 @@ fn live_images_keep_unicode_source_ranges_sizes_and_code_exclusions() {
 
 #[test]
 fn image_display_rewrites_inline_and_reference_images_but_leaves_code_unchanged() {
-    use rust_notes::assets::prepare_images;
+    use rustidian::assets::prepare_images;
     let source = "![Caption|180](Assets/image.png)\n\n![Reference][photo]\n\n[photo]: Assets/image.png\n\n`![Example](Assets/image.png)`\n\n```md\n![Literal](Assets/image.png)\n```";
     let display = prepare_images(source, |target| {
         (target == "Assets/image.png").then(|| "file:///vault/Assets/image.png".into())

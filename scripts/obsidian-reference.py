@@ -20,7 +20,7 @@ parser.add_argument("--section", choices=["all", "callouts", "navigation", "hove
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 parser.add_argument("--app-asar", type=Path, help="Read-only copy of an installed update into the disposable profile")
 arguments = parser.parse_args()
-with tempfile.TemporaryDirectory(prefix="rust-notes-reference-") as temporary:
+with tempfile.TemporaryDirectory(prefix="rustidian-reference-") as temporary:
     base = Path(temporary)
     vault = base / "Reference Vault"
     shutil.copytree(ROOT / "demo-vault", vault)

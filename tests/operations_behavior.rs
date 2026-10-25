@@ -1,4 +1,4 @@
-use rust_notes::vault::Vault;
+use rustidian::vault::Vault;
 use std::{fs, path::Path};
 
 #[test]
@@ -147,7 +147,7 @@ fn table_wiki_aliases_resolve_and_moves_preserve_their_escaped_delimiters() {
     fs::write(dir.path().join("Home.md"), "Home stays exact.\n").unwrap();
     fs::write(dir.path().join("Table.md"), source).unwrap();
     let mut vault = Vault::open(dir.path()).unwrap();
-    assert_eq!(rust_notes::vault::wiki_links(source), ["Home|Home note"]);
+    assert_eq!(rustidian::vault::wiki_links(source), ["Home|Home note"]);
     assert_eq!(vault.backlinks(Path::new("Home.md")).len(), 1);
     let plan = vault
         .plan_rename(Path::new("Home.md"), Path::new("New Home.md"))
@@ -308,7 +308,7 @@ fn rename_preflight_rejects_collisions_external_edits_and_escapes() {
         fs::read_to_string(root.path().join("Projects/Ref.md")).unwrap(),
         "External version"
     );
-    assert!(vault.trash_note(Path::new("../Outside.md")).is_err());
+    assert!(vault.trash_entry(Path::new("../Outside.md")).is_err());
 }
 
 #[test]

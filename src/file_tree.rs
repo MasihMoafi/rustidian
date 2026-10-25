@@ -1,6 +1,6 @@
 use crate::theme;
 use eframe::egui::{self, Color32, FontId, RichText, Stroke};
-use rust_notes::vault::Vault;
+use rustidian::vault::Vault;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -189,7 +189,17 @@ impl Tree {
                     response.rect,
                 );
                 if response.clicked() {
-                    open = Some(FileAction::Rename(path));
+                    open = Some(FileAction::Rename(path.clone()));
+                    ui.close();
+                }
+                let delete = theme::menu_item(ui, theme::Icon::Trash, "Delete");
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    format!("folder-delete:{}", path.display()),
+                    delete.rect,
+                );
+                if delete.clicked() {
+                    open = Some(FileAction::Trash(path));
                     ui.close();
                 }
             });
@@ -226,7 +236,7 @@ impl Tree {
                 slot
             };
             let path = &self.files[index];
-            let title = rust_notes::vault::file_title(path);
+            let title = rustidian::vault::file_title(path);
             let selected = active == Some(path.as_path());
             let response = file_row(ui, path, &title, selected);
             crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);

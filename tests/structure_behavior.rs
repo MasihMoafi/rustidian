@@ -1,4 +1,4 @@
-use rust_notes::structure::{find_anchor, outline};
+use rustidian::structure::{find_anchor, outline};
 
 #[test]
 fn outline_and_anchor_navigation_handle_formatted_unicode_and_setext_headings() {

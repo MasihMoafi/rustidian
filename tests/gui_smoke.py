@@ -47,11 +47,11 @@ def run_checks(checks, on_failure, *, count_checks=None, on_success=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", default="target/debug/rust-notes")
+    parser.add_argument("--binary", default="target/debug/rustidian")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -60,7 +60,7 @@ def main():
         fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit("A GUI run is already active; wait for its result.")
-    with tempfile.TemporaryDirectory(prefix="rust-notes-gui-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="rustidian-gui-") as temporary:
         base = Path(temporary)
         fixture = Path(temporary) / ("demo-vault" if args.default_vault else "Test Vault")
         shutil.copytree(ROOT / "demo-vault", fixture)
@@ -78,10 +78,10 @@ def main():
         with os.fdopen(read_fd) as display_file:
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
-        environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUST_NOTES_UI_PROBE=str(base / "ui-probe.json"))
+        environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
-            DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rust-notes-gui-no-bus-{os.getpid()}")
+            DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
         display_ready = False
         for _ in range(30):
             geometry = subprocess.run(
@@ -113,7 +113,7 @@ def main():
         window_manager = None
         unicode_keyboard = None
         try:
-            if os.environ.get("RUST_NOTES_STABLE_UNICODE", "1") == "1":
+            if os.environ.get("RUSTIDIAN_STABLE_UNICODE", "1") == "1":
                 unicode_keyboard = UnicodeKeyboard(environment, Path(__file__).read_text())
         except Exception:
             server.terminate()
@@ -121,7 +121,7 @@ def main():
             log.close()
             xvfb_log.close()
             raise
-        environment.pop("RUST_NOTES_DEFAULT_VAULT",None)
+        environment.pop("RUSTIDIAN_DEFAULT_VAULT",None)
         if args.section == "chrome" and shutil.which("openbox"):
             window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
                 stdout=log, stderr=log)
@@ -133,7 +133,7 @@ def main():
             startup_path.write_text(startup_text)
             launch_command = [str(ROOT / args.binary), str(startup_path)]
         if args.default_vault:
-            bundled_binary = base / "rust-notes"
+            bundled_binary = base / "rustidian"
             shutil.copy2(ROOT / args.binary, bundled_binary)
             launch_command = [str(bundled_binary)]
         def launch_app(command):
@@ -231,6 +231,14 @@ def main():
             return None
 
         def click_control(name, button="1", *, hold=0):
+            if name.startswith("settings-") and not name.startswith("settings-page:") and not control_bounds(name, required=False):
+                page = ("Editor" if name == "settings-autosave" else
+                        "Templates" if name.startswith("settings-template-") else
+                        "Daily notes" if name.startswith("settings-daily-") else
+                        "Unique note creator" if name.startswith("settings-unique-") else
+                        "File recovery" if name.startswith("settings-recovery-") else None)
+                if page and control_bounds("settings-page:"+page, required=False):
+                    click_control("settings-page:"+page)
             left, top, right, bottom = control_bounds(name)
             x, y = round((left + right) / 2), round((top + bottom) / 2)
             pointer = ("mousemove", "--sync", str(x), str(y))
@@ -359,7 +367,7 @@ def main():
 
             def command(value, *, available=True):
                 def trace(stage):
-                    if os.environ.get("RUST_NOTES_TRACE_COMMANDS") == "1":
+                    if os.environ.get("RUSTIDIAN_TRACE_COMMANDS") == "1":
                         with (reports/"command-sequence.jsonl").open("a") as output:
                             controls=json.loads((base/"ui-probe.json").read_text())
                             relevant={name:bounds for name,bounds in controls.items() if name.startswith(("command:","dialog","workspace","pending-","editor","tab-full:"))}
@@ -431,6 +439,29 @@ def main():
                 else:
                     xdo("mousemove", "650", "300", "click", "1")
                 key("ctrl+End")
+
+            def undo_checks():
+                note = fixture / "Home.md"
+                original = note.read_text()
+                open_note("Home")
+                for mode in ("Source editing", "Live preview"):
+                    command(mode)
+                    editor_end()
+                    type_text("FIRST_UNDO_GROUP")
+                    time.sleep(.35)  # Together with type_text: >500 ms, <1 second.
+                    type_text("SECOND_UNDO_GROUP")
+                    key("ctrl+z")
+                    key("ctrl+s")
+                    assert note.read_text() == original + "FIRST_UNDO_GROUP", (mode, "Undo reverted earlier typing", note.read_text()[-120:])
+                    key("ctrl+y")
+                    key("ctrl+s")
+                    assert note.read_text() == original + "FIRST_UNDO_GROUPSECOND_UNDO_GROUP", (mode, "Redo")
+                    key("ctrl+z")
+                    key("ctrl+z")
+                    key("ctrl+s")
+                    assert note.read_text() == original, (mode, "second Undo")
+                    results.append(mode + ": paused typing undoes one group at a time, redo restores it and exact original bytes survive")
+                capture("native-undo-groups.png")
 
             def callout_checks():
                 source = (ROOT / "tests/fixtures/callouts.md").read_text()
@@ -841,7 +872,7 @@ def main():
 
                 xdo("key", "--clearmodifiers", "ctrl+q")
                 app.wait(timeout=10)
-                state = json.loads(next((base / "state/rust-notes").glob("*.json")).read_text())
+                state = json.loads(next((base / "state/rustidian").glob("*.json")).read_text())
                 assert ["Assets/Renamed viewer[1].png", "Read"] in state["tabs"], state
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -1574,7 +1605,7 @@ def main():
                 results.append("Properties-note preview edits preserved exact frontmatter and the same first-Live-editor history behavior, with metadata and task bytes restored")
                 command("Open settings");type_text("autosave")
                 click_control("settings-autosave",hold=.15)
-                sessions=[path for path in (base/"state/rust-notes").glob("*.json") if any(name=="Preview folder/Preview target.md" for name,_ in json.loads(path.read_text()).get("tabs",[]))]
+                sessions=[path for path in (base/"state/rustidian").glob("*.json") if any(name=="Preview folder/Preview target.md" for name,_ in json.loads(path.read_text()).get("tabs",[]))]
                 assert len(sessions)==1,sessions
                 session_path=sessions[0]
                 wait_autosave(base/"state",False,session_path=session_path)
@@ -1648,7 +1679,12 @@ def main():
                 note = fixture / "Notes/Navigation UI.md"
                 target = fixture / "Notes/Linked target.md"
                 file_uri = target.as_uri()
-                source = "# Navigation UI\n\n[[Notes/Linked target|Wiki target]]\n\n[Open target](Linked%20target.md#Section%20two)\n\n[Open file](" + file_uri + ")\n"
+                evidence = base / "Outside evidence/record #1.json"
+                evidence.parent.mkdir()
+                evidence.write_text('{"proof":"original evidence"}\n')
+                attachment = fixture / "Notes/record.json"
+                attachment.write_text('{"attachment":"original evidence"}\n')
+                source = "# Navigation UI\n\n[[Notes/Linked target|Wiki target]]\n\n[Open target](Linked%20target.md#Section%20two)\n\n[Open file](" + file_uri + ")\n\n[Open relative evidence](../../Outside%20evidence/record%20%231.json)\n\n[Open attachment](record.json)\n\n[Open absolute evidence](" + evidence.as_uri().removeprefix("file://") + ")\n"
                 note.write_text(source)
                 target_source = "# Linked target\n\n" + "Introduction paragraph.\n\n" * 45 + "## Section two\n\nDestination text.\n"
                 target.write_text(target_source)
@@ -1700,14 +1736,20 @@ def main():
                 title_contains("Navigation UI")
                 command("Reading view")
                 requests = reports / "browser-requests.txt"
-                before_requests = requests.read_text() if requests.exists() else ""
-                click_link(3)
-                deadline = time.monotonic() + 3
-                while (not requests.exists() or requests.read_text() == before_requests) and time.monotonic() < deadline:
-                    time.sleep(.05)
-                assert requests.exists() and file_uri in requests.read_text()[len(before_requests):], "File URIs must reach the desktop file handler"
-                title_contains("Navigation UI")
+                for block, expected_uri in [(3, file_uri), (4, evidence.as_uri()), (5, attachment.as_uri()), (6, evidence.as_uri())]:
+                    before_requests = requests.read_text() if requests.exists() else ""
+                    click_link(block)
+                    deadline = time.monotonic() + 3
+                    while (not requests.exists() or requests.read_text() == before_requests) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert requests.exists() and expected_uri in requests.read_text()[len(before_requests):], f"File link {block} must reach the desktop file handler"
+                    title_contains("Navigation UI")
+                    time.sleep(.4)
+                    assert not control_bounds("page-preview-create", required=False), "An existing file must not offer to create a missing note"
                 assert not fixture.joinpath("file:").exists(), "A URI must not create spurious notes"
+                assert evidence.read_text() == '{"proof":"original evidence"}\n'
+                assert attachment.read_text() == '{"attachment":"original evidence"}\n'
+                assert not attachment.with_suffix(".json.md").exists()
                 assert note.read_text() == source
                 assert target.read_text() == target_source
                 capture("native-navigation.png")
@@ -1836,9 +1878,10 @@ def main():
                 assert control_bounds("settings-autosave")
                 key("ctrl+a")
                 key("BackSpace")
+                click_control("settings-page:Appearance")
                 control_bounds("settings-dark")
                 click_control("settings-autosave")
-                state_files = [p for p in (base / "state" / "rust-notes").glob("*.json") if any(path == "Notes/Essential UI.md" for path, _ in json.loads(p.read_text()).get("tabs", []))]
+                state_files = [p for p in (base / "state" / "rustidian").glob("*.json") if any(path == "Notes/Essential UI.md" for path, _ in json.loads(p.read_text()).get("tabs", []))]
                 assert len(state_files) == 1
                 state_path = state_files[0]
                 assert json.loads(state_path.read_text())["autosave_enabled"] is False
@@ -1863,6 +1906,7 @@ def main():
                 expected += " restored"
                 assert note.read_text() == expected
                 key("ctrl+comma")
+                click_control("settings-page:Editor")
                 assert control_bounds("settings-autosave")
                 click_control("settings-autosave")
                 assert json.loads(state_path.read_text())["autosave_enabled"] is True
@@ -2958,6 +3002,10 @@ def main():
                 original = (fixture / "Home.md").read_bytes()
                 if control_bounds("vault-profile", required=False) is None:
                     command("Toggle left sidebar")
+                # Masih, 23 Oct: the vault name and its gear were cut off under the status bar.
+                status_top = control_bounds("status-bar")[1]
+                for name in ("vault-profile", "open-settings"):
+                    assert control_bounds(name)[3] <= status_top, (name, control_bounds(name), status_top)
 
                 def manager():
                     click_control("vault-profile")
@@ -2977,7 +3025,7 @@ def main():
                     assert control_bounds("vault-manager", required=False) is None
 
                 def roots():
-                    return json.loads((base / "data/rust-notes/vaults.json").read_text())["roots"]
+                    return json.loads((base / "data/rustidian/vaults.json").read_text())["roots"]
 
                 manager()
                 assert control_bounds(f"vault-recent:{fixture}")
@@ -3016,7 +3064,7 @@ def main():
                 assert list(created.iterdir()) == []
                 assert roots()[0] == str(created)
                 # Leaving the first vault has now persisted its session.
-                fixture_state = max((base / "state/rust-notes").glob("*.json"), key=lambda path: path.stat().st_mtime_ns)
+                fixture_state = max((base / "state/rustidian").glob("*.json"), key=lambda path: path.stat().st_mtime_ns)
                 key("ctrl+n")
                 type_text("Home")
                 key("Return")
@@ -3120,7 +3168,7 @@ def main():
                 shared = base / "Other window vault"
                 shared.mkdir()
                 (shared / "Home.md").write_text("# Other window\n")
-                catalog = base / "data/rust-notes/vaults.json"
+                catalog = base / "data/rustidian/vaults.json"
                 updated = json.loads(catalog.read_text())
                 updated["roots"].insert(0, str(shared))
                 pending_catalog = catalog.with_suffix(".pending")
@@ -3465,7 +3513,7 @@ def main():
                 command("Bookmark current file")
 
                 def state_with(target):
-                    for state_path in (base / "state/rust-notes").glob("*.json"):
+                    for state_path in (base / "state/rustidian").glob("*.json"):
                         state = json.loads(state_path.read_text())
                         if any(item["path"] == target for item in state.get("bookmarks", {}).get("items", [])):
                             return state_path, state
@@ -3790,7 +3838,7 @@ def main():
                 root_numbered=fixture/"Move source 1.md"
                 assert root_numbered.read_bytes()==edited
                 assert reference.read_bytes()==b"[[Move source 1|Alias]]\r\n"
-                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Move source 1.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                sessions=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Move source 1.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1 and json.loads(sessions[0].read_text())["always_update_links"] is True
                 # A different filename is needed so the short link actually requires updating.
                 reference.write_bytes(b"[[Move source 1|Alias]]\r\n")
@@ -3825,7 +3873,7 @@ def main():
                 command("Open vault");key("ctrl+a");type_text(str(second));key("Return");title_contains("Move Second Vault")
                 command("Open settings");key("ctrl+a");type_text("automatically")
                 click_control("settings-update-move-links",hold=.15)
-                second_sessions=[p for p in (base/"state/rust-notes").glob("*.json") if p!=sessions[0] and json.loads(p.read_text()).get("always_update_links") is True]
+                second_sessions=[p for p in (base/"state/rustidian").glob("*.json") if p!=sessions[0] and json.loads(p.read_text()).get("always_update_links") is True]
                 assert len(second_sessions)==1
                 click_control("settings-update-move-links",hold=.15)
                 assert json.loads(second_sessions[0].read_text())["always_update_links"] is False
@@ -3913,7 +3961,7 @@ def main():
                 expected_pins={"Pinned first.md":True,"Pinned second.md":False}
                 assert pinned()==expected_pins
                 xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
-                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Pinned first.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                sessions=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Pinned first.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1
                 session_path=sessions[0]
                 def persisted_pins():
@@ -3991,6 +4039,160 @@ def main():
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
 
+            def settings_checks():
+                nonlocal app, window
+                note=fixture/"Notes/Settings controls.md"
+                original="# Heading\n\nA wide paragraph. " + "Unchanged Markdown text. "*30 + "\n"
+                note.write_text(original);open_note("Settings controls");command("Reading view")
+                def state_path():
+                    paths=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Notes/Settings controls.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                    assert len(paths)==1;return paths[0]
+                def editor_settings():
+                    command("Open settings");click_control("settings-page:Editor")
+                def choose(control, label):
+                    click_control(control)
+                    option=control_bounds(control+":"+label)
+                    assert option[3]-option[1]<=30,("Settings menu option should use compact type",option)
+                    if control == "settings-editing-mode":capture("native-settings-editing-mode-menu.png")
+                    click_control(control+":"+label)
+                command("Open settings");click_control("settings-page:Editor")
+                choose("settings-default-view","Reading view")
+                first=control_bounds("settings-default-view");second=control_bounds("settings-editing-mode")
+                pitch=(second[1]+second[3]-first[1]-first[3])/2
+                assert 70<=pitch<=84, ("Reference Settings row pitch is about76px",pitch)
+                selected=control_bounds("settings-page:Editor");other=control_bounds("settings-page:Files and links")
+                xdo("mousemove","1300","900");pause()
+                screen=ImageGrab.grab(xdisplay=display)
+                colors=[screen.getpixel((round(r[0]+2),round((r[1]+r[3])/2)))[:3] for r in (selected,other)]
+                assert sum(abs(a-b) for a,b in zip(*colors))>12,colors
+                capture("native-settings-editor-dark.png")
+                click_control("settings-inline-title");click_control("settings-readable-line-length")
+                choose("settings-default-view","Reading view");choose("settings-editing-mode","Source mode")
+                path=state_path();prefs=json.loads(path.read_text())["editor_preferences"]
+                assert prefs==dict(reading_view=True,source_mode=True,show_mode=True,inline_title=False,readable_line_length=False),prefs
+                key("Escape")
+                assert not control_bounds("note-title",required=False)
+                wide=control_bounds("document-content-width")[0]
+                key("ctrl+t");open_note("Settings controls")
+                assert control_bounds("view-mode:Reading")
+                key("ctrl+e")
+                assert control_bounds("view-mode:Source mode")
+                editor_settings();click_control("settings-show-mode");key("Escape")
+                assert not any(k.startswith("view-mode:") for k in json.loads((base/"ui-probe.json").read_text()))
+                assert note.read_text()==original
+                results.append("Real Editor switches hid the inline title, widened the document, selected Reading/Source for new tabs and hid the mode indicator without altering Markdown")
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window()
+                assert not control_bounds("note-title",required=False)
+                assert json.loads(path.read_text())["editor_preferences"]==dict(reading_view=True,source_mode=True,show_mode=False,inline_title=False,readable_line_length=False)
+                assert control_bounds("document-content-width")[0]==wide
+                editor_settings();held=base/"held-editor-settings.json";path.rename(held);path.mkdir()
+                try:
+                    click_control("settings-inline-title")
+                    assert control_bounds("dialog-error")
+                    capture("native-settings-editor-write-error.png")
+                finally:path.rmdir();held.rename(path)
+                assert json.loads(path.read_text())["editor_preferences"]["inline_title"] is False
+                key("Escape");assert not control_bounds("note-title",required=False)
+                editor_settings();click_control("settings-inline-title");click_control("settings-readable-line-length");click_control("settings-show-mode")
+                choose("settings-default-view","Editing view");choose("settings-editing-mode","Live Preview")
+                key("Escape");assert control_bounds("note-title")
+                assert control_bounds("document-content-width")[0]<wide
+                assert note.read_text()==original
+                results.append("Preferences survived a real restart; a blocked state-file write visibly failed and rolled back, then retry restored the title and line width with exact note bytes intact")
+                def appearance(label):
+                    command("Open settings");click_control("settings-page:Appearance")
+                    click_control("settings-dark");click_control("settings-theme:"+label);key("Escape")
+                    assert json.loads(path.read_text())["dark"] is (label=="Dark")
+                appearance("Light");editor_settings();capture("native-settings-editor-light.png");key("Escape");appearance("Dark")
+                assert note.read_text()==original
+                results.append("Actual Appearance dropdown clicks applied and saved both themes; the Editor page stayed readable and original Markdown stayed unchanged")
+                size=round(control_bounds("document-font-size")[0])
+                for _ in range(abs(size-18)):command("Decrease font size" if size>18 else "Increase font size")
+
+            def font_controls_checks():
+                nonlocal app,window
+                close_tabs()
+                note=fixture/"Font controls.md"
+                original="# Font controls\n\nA paragraph with **bold**, a [link](Home.md) and `code`.\n\n- [ ] Font task\n\n| Name | Value |\n| --- | --- |\n| Keep | Text |\n\n```rust\nlet keep = 1;\n```\n"
+                note.write_text(original);open_note("Font controls");command("Reading view")
+                def font(expected):
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline:
+                        actual=control_bounds("document-font-size")[0]
+                        if actual==expected:return
+                        time.sleep(.03)
+                    raise AssertionError(("Rendered document font size",expected,actual))
+                def title_width():
+                    bounds=control_bounds("note-title");return bounds[2]-bounds[0]
+                def step_to(size):
+                    actual=round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size-actual)):command("Increase font size" if size>actual else "Decrease font size")
+                    font(size)
+                font(18);baseline=title_width();chrome=control_bounds("tab-full:Font controls.md")
+                paragraph=control_bounds("reading-block:1");height=paragraph[3]-paragraph[1]
+                command("Increase font size");font(19)
+                enlarged=control_bounds("reading-block:1")
+                assert title_width()>baseline and enlarged[3]-enlarged[1]>height
+                assert control_bounds("tab-full:Font controls.md")==chrome and note.read_text()==original
+                command("Decrease font size");font(18);assert abs(title_width()-baseline)<.1
+                results.append("Actual palette font commands changed Reading glyph and line bounds by one pixel, preserved the tab's bounds and left all Markdown bytes unchanged")
+                for dark in (False,True):
+                    set_theme(dark);command("Increase font size");font(19)
+                    for mode in ("Reading view","Live preview","Source editing"):
+                        command(mode);font(19);assert title_width()>baseline
+                        capture("native-font-controls-"+("dark" if dark else "light")+"-"+mode.split()[0].lower()+".png")
+                    command("Decrease font size");font(18)
+                assert note.read_text()==original
+                results.append("Both actual themes used the same enlarged document size in Reading, Live and Source while preserving note bytes and ordinary controls")
+                command("Reading view");command("Open settings");bounds=control_bounds("settings-font-size")
+                xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                xdo("key","--clearmodifiers","--repeat","25","--delay","30","Right");key("Escape");font(30)
+                high=title_width();command("Increase font size");font(30);assert title_width()==high
+                capture("native-font-controls-maximum.png")
+                command("Open settings");bounds=control_bounds("settings-font-size")
+                xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                xdo("key","--clearmodifiers","--repeat","25","--delay","30","Left");key("Escape");font(10)
+                low=title_width();command("Decrease font size");font(10);assert title_width()==low and low<baseline<high
+                capture("native-font-controls-minimum.png");step_to(18)
+                results.append("The actual settings slider reached both observed 10/30 pixel boundaries and the corresponding palette commands could not step beyond either limit")
+                command("Source editing");editor_end();type_text("UNDO_FONT_PROOF");key("ctrl+s")
+                assert note.read_text()==original+"UNDO_FONT_PROOF"
+                command("Increase font size");font(19);key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                key("ctrl+y");key("ctrl+s");assert note.read_text()==original+"UNDO_FONT_PROOF"
+                key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                results.append("Source font changes returned editor focus and left existing text Undo/Redo intact, with exact saved bytes after each action")
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window();title_contains("Font controls");font(19)
+                editor_end();type_text("RESTART_FONT_PROOF");key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                results.append("A clean native restart restored document font size and mode; real focused editing still undid and saved unchanged bytes")
+                other=base/"Font preferences vault";other.mkdir();(other/".obsidian").mkdir()
+                appearance=b'{"baseFontSize":22,"unrelated":"keep"}';(other/".obsidian/appearance.json").write_bytes(appearance)
+                (other/"Home.md").write_text("# Other font vault\n\nKeep.\n")
+                def switch(root):
+                    command("Open vault");modified_shortcut(xdo,"a");paste_text(str(root),held=True);key("Return");title_contains(root.name)
+                switch(other);open_note("Home");font(22);command("Decrease font size");font(21)
+                switch(fixture);title_contains("Font controls");font(19)
+                switch(other);title_contains("Home");font(21)
+                assert (other/".obsidian/appearance.json").read_bytes()==appearance
+                switch(fixture);title_contains("Font controls");font(19)
+                results.append("A new vault imported its guarded Obsidian font preference, retained its independent native setting across switches and preserved the original settings bytes")
+                state_files=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Font controls.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                assert len(state_files)==1;state=state_files[0];held=base/"held-font-state.json";state.rename(held);state.mkdir()
+                try:
+                    command("Increase font size");font(19);assert title_width()>baseline
+                    capture("native-font-controls-write-error.png")
+                finally:state.rmdir();held.rename(state)
+                command("Increase font size");font(20);command("Decrease font size");font(19)
+                assert json.loads(state.read_text())["document_font_size"]==19
+                results.append("An actual preference-write failure rolled font size back; retry after restoring the writable state succeeded without changing note contents")
+                step_to(18);command("Reading view");click_control("task:0");key("ctrl+s")
+                checked=original.replace("- [ ] Font task","- [x] Font task");assert note.read_text()==checked
+                command("Source editing");key("ctrl+z");key("ctrl+s");assert note.read_text()==original
+                command("Reading view");font(18);assert abs(title_width()-baseline)<.1
+                assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
+                results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
+
             def tab_restore_checks():
                 close_tabs()
                 originals={name:f"# Restore {name}\n\n{name.upper()}_ORIGINAL\n" for name in ("Alpha","Beta","Gamma")}
@@ -4045,7 +4247,10 @@ def main():
                 command("Undo close tab",available=False);key("Escape");key("ctrl+shift+t");expect("Gamma","Beta","Alpha")
                 results.append("Closing a blank tab added no file history and an empty-history restore left all existing views unchanged")
                 key("ctrl+w");key("ctrl+w");key("ctrl+w");assert not tabs()
+                empty_new_tab=control_bounds("new-tab")
                 key("ctrl+shift+t");expect("Gamma");mode("Live preview")
+                # With no tabs, New tab sits where the first tab starts (after the strip's 4 px item gap), as in Obsidian, not one tab-width in.
+                assert empty_new_tab[0] <= control_bounds("tab-full:Restore Gamma.md")[0] + 6,(empty_new_tab,control_bounds("tab-full:Restore Gamma.md"))
                 key("ctrl+shift+t");expect("Gamma","Beta");mode("Reading")
                 key("ctrl+shift+t");expect("Gamma","Beta","Alpha");mode("Source mode")
                 capture("native-tab-restore-last.png")
@@ -4146,7 +4351,7 @@ def main():
                     key("Escape")
 
                 configure(folder="Creator output",format="[Pair-]YYYYMMDDHHmm",template="Creator templates/Unique template.md")
-                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Creator origin.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                sessions=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Creator origin.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1
                 session_path=sessions[0]
                 expected={"folder":"Creator output","format":"[Pair-]YYYYMMDDHHmm","template":"Creator templates/Unique template.md"}
@@ -4322,7 +4527,7 @@ def main():
                 setting("settings-template-time", "HH:mm")
                 capture("native-note-aids-settings.png")
                 key("Escape")
-                states = [(p, json.loads(p.read_text())) for p in (base / "state/rust-notes").glob("*.json")]
+                states = [(p, json.loads(p.read_text())) for p in (base / "state/rustidian").glob("*.json")]
                 matching = [(p, state) for p, state in states if state.get("note_aids", {}).get("templates", {}).get("folder") == "Templates" and any(path == today + ".md" for path, _ in state["tabs"])]
                 assert len(matching) == 1, "Identify the actual vault's saved settings before checking persistence"
                 session_path = matching[0][0]
@@ -4473,7 +4678,7 @@ def main():
                 type_text("Save note")
                 assert control_bounds("command:Save note"), "The existing-command positive control must work"
                 key("Escape")
-                storage = base / "state/rust-notes/workspaces"
+                storage = base / "state/rustidian/workspaces"
                 before_paths = set(storage.glob("*.json"))
 
                 def manager():
@@ -4690,7 +4895,7 @@ def main():
 
                 command("Source editing")
                 command("Open settings");type_text("autosave")
-                session_files=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Workspace A.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                session_files=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Workspace A.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(session_files)==1
                 session_path=session_files[0]
                 if json.loads(session_path.read_text())["autosave_enabled"]:
@@ -4757,7 +4962,7 @@ def main():
                 left,top,right,bottom=control_bounds("settings-recovery-interval")
                 xdo("mousemove",str(round((left+right)/2)),str(round((top+bottom)/2)),"click","--repeat","2","--delay","70","1")
                 key("ctrl+a");type_text("0");key("Return");key("Tab")
-                sessions=[p for p in (base/"state/rust-notes").glob("*.json") if any(path=="Recovery target.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                sessions=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Recovery target.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1
                 session_path=sessions[0]
                 assert json.loads(session_path.read_text())["recovery_config"]["intervalMinutes"]==0
@@ -4863,7 +5068,7 @@ def main():
                 results.append("Changed notes created a second snapshot; older selection, visible additions/removals and Restore preserved exact bytes plus the displaced version")
 
                 history(2)
-                store=base/"state/rust-notes/recovery"/session_path.with_suffix(".redb").name
+                store=base/"state/rustidian/recovery"/session_path.with_suffix(".redb").name
                 permissions=store.stat().st_mode & 0o777
                 owner=subprocess.Popen(["xclip","-selection","clipboard","-in","-quiet"],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,env=environment)
                 try:
@@ -5003,7 +5208,7 @@ def main():
                 results.append("The existing quick switcher and real editor opened, saved and undid a file before testing system Open")
 
                 def roots():
-                    return json.loads((base / "data/rust-notes/vaults.json").read_text())["roots"]
+                    return json.loads((base / "data/rustidian/vaults.json").read_text())["roots"]
 
                 def picker_window(title, required=True):
                     deadline = time.monotonic() + (8 if required else .1)
@@ -5150,7 +5355,7 @@ def main():
                 choose("file", note, "palette")
                 title_contains("Open existing control")
                 assert roots()[0] == str(fixture)
-                session_path = next(path for path in (base / "state/rust-notes").glob("*.json") if "Notes/Open existing control.md" in path.read_text())
+                session_path = next(path for path in (base / "state/rustidian").glob("*.json") if "Notes/Open existing control.md" in path.read_text())
                 autosave_before = json.loads(session_path.read_text())["autosave_enabled"]
                 def autosave(enabled):
                     command("Open settings");type_text("autosave")
@@ -5519,7 +5724,7 @@ def main():
                     os.kill(app.pid,signal.SIGCONT)
                 pause();pause();key("ctrl+s")
                 actual=note.read_text()
-                (reports/"unicode-keyboard-calibration.json").write_text(json.dumps({"stable_keymap":os.environ.get("RUST_NOTES_STABLE_UNICODE","1")=="1","expected":original+suffix,"actual":actual,"exact":actual==original+suffix},ensure_ascii=False,indent=2)+"\n")
+                (reports/"unicode-keyboard-calibration.json").write_text(json.dumps({"stable_keymap":os.environ.get("RUSTIDIAN_STABLE_UNICODE","1")=="1","expected":original+suffix,"actual":actual,"exact":actual==original+suffix},ensure_ascii=False,indent=2)+"\n")
                 capture("native-unicode-keyboard.png")
                 assert actual==original+suffix,repr(actual)
                 results.append("ASCII typing and queued Persian, Greek and ZWNJ key events saved exact bytes through the same native editor")
@@ -5704,6 +5909,21 @@ def main():
                 quick_ranking_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
+                return
+            if args.section == "undo":
+                undo_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"undo"}))
+                return
+            if args.section == "settings":
+                settings_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"settings"}))
+                return
+            if args.section == "font-controls":
+                font_controls_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"font-controls"}))
                 return
             if args.section == "tab-restore":
                 tab_restore_checks()
@@ -5974,7 +6194,7 @@ def main():
             command("Source editing")
             xdo("key", "--clearmodifiers", "ctrl+q")
             app.wait(timeout=5)
-            session_files = list((base / "state/rust-notes").glob("*.json"))
+            session_files = list((base / "state/rustidian").glob("*.json"))
             assert len(session_files) == 1
             session = json.loads(session_files[0].read_text())
             assert len(session["tabs"]) == 2 and session["active"] == 1
@@ -6025,6 +6245,7 @@ def main():
                 task_checks,
                 task_clip_checks,
                 essential_checks,
+                undo_checks,
                 color_checks,
                 native_highlight_checks,
                 navigation_checks,
@@ -6062,6 +6283,8 @@ def main():
                 note_creator_checks,
                 tab_action_checks,
                 tab_restore_checks,
+                settings_checks,
+                font_controls_checks,
                 workspace_checks,
                 palette_queue_checks,
                 unicode_queue_checks,

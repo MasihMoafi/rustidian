@@ -4,7 +4,7 @@ use nucleo_matcher::{
     Config, Matcher,
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
-use rust_notes::workspaces::{Layout as SavedLayout, Workspaces};
+use rustidian::workspaces::{Layout as SavedLayout, Workspaces};
 use std::path::Path;
 
 pub struct Manager {

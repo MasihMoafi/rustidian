@@ -328,7 +328,7 @@ impl Vault {
                 format!("Note was removed or cannot be read. Your changes are still open: {e}")
             })?;
             if &current != original {
-                return Err("This note changed outside Rust Notes. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
+                return Err("This note changed outside Rustidian. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
             }
             Some(
                 fs::metadata(&absolute)
@@ -350,7 +350,7 @@ impl Vault {
             // Recheck after writing the temporary file to catch changes during a long write.
             if fs::read_to_string(&absolute).ok().as_ref() != document.original.as_ref() {
                 return Err(
-                    "This note changed outside Rust Notes during save. Nothing was overwritten."
+                    "This note changed outside Rustidian during save. Nothing was overwritten."
                         .into(),
                 );
             }
@@ -491,6 +491,41 @@ impl Vault {
         }
         let matching = self.names.get(target.file_name()?.to_str()?)?;
         (matching.len() == 1).then(|| self.notes[matching[0]].path.clone())
+    }
+
+    /// Existing attachments and files outside the vault belong to the desktop file handler.
+    /// Resolving them must not create notes, change the vault, or follow a symlink escape.
+    pub fn external_file_uri(&self, from: &Path, target: &str) -> Option<String> {
+        let target = crate::paths::decode(target.split('|').next()?.split('#').next()?.trim())?;
+        let candidate = self
+            .root
+            .join(from.parent().unwrap_or(Path::new("")))
+            .join(target);
+        let mut lexical = PathBuf::new();
+        for part in candidate.components() {
+            match part {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if !lexical.pop() {
+                        return None;
+                    }
+                }
+                part => lexical.push(part.as_os_str()),
+            }
+        }
+        let file = lexical.canonicalize().ok()?;
+        if file != lexical || !file.is_file() {
+            return None;
+        }
+        if file.starts_with(&self.root)
+            && (is_text_document(&file) || crate::assets::is_image(&file))
+        {
+            return None;
+        }
+        Some(format!(
+            "file://{}",
+            crate::paths::markdown_destination(Path::new(""), &file)
+        ))
     }
 
     pub fn open_link(&mut self, from: &Path, target: &str) -> Result<Document> {

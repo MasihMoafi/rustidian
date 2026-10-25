@@ -46,10 +46,10 @@ fn main() {
         text::{CCursor, CCursorRange},
         widgets::text_edit::TextEditState,
     };
-    use rust_notes::{search::FileMatcher, tab::Tab, vault::Vault};
+    use rustidian::{search::FileMatcher, tab::Tab, vault::Vault};
     use std::{fs, path::Path, time::Instant};
 
-    assert!(std::env::var_os("RUST_NOTES_UI_PROBE").is_none());
+    assert!(std::env::var_os("RUSTIDIAN_UI_PROBE").is_none());
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     assert!(
         arguments
@@ -84,9 +84,9 @@ fn main() {
         theme::apply(&ctx, true);
         let id = egui::Id::unique("benchmark-editor");
         if folded {
-            let sections = rust_notes::folding::Sections::new(
+            let sections = rustidian::folding::Sections::new(
                 &source,
-                &rust_notes::editor::Markdown::parse(&source),
+                &rustidian::editor::Markdown::parse(&source),
             );
             let collapsed: std::collections::HashSet<String> = sections
                 .0

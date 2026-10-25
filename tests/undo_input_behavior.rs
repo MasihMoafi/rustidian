@@ -97,3 +97,98 @@ fn queued_typing_then_undo_keeps_event_order_and_a_caret_move_alone_changes_no_t
     frame(&ctx, id, &mut text, 0.3, vec![key(Key::Z)]);
     assert_eq!(text, "BeforeX");
 }
+
+#[test]
+fn ordinary_edits_keep_independent_undo_and_redo_groups() {
+    for (name, time, event, replace, expected) in [
+        (
+            "pause",
+            0.7,
+            Event::Text(" second".into()),
+            false,
+            "first second",
+        ),
+        (
+            "paste",
+            0.2,
+            Event::Paste(" second".into()),
+            false,
+            "first second",
+        ),
+        (
+            "replacement",
+            0.2,
+            Event::Text("second".into()),
+            true,
+            "second",
+        ),
+        ("cut", 0.2, Event::Cut, true, ""),
+    ] {
+        let ctx = egui::Context::default();
+        let id = egui::Id::unique(name);
+        let mut text = "Original note: ".to_owned();
+        frame(&ctx, id, &mut text, 0.0, vec![]);
+        let mut state = TextEditState::load(&ctx, id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(cursor(text.chars().count())));
+        state.store(&ctx, id);
+        frame(&ctx, id, &mut text, 0.1, vec![Event::Text("first".into())]);
+        if replace {
+            let mut state = TextEditState::load(&ctx, id).unwrap();
+            state.cursor.set_char_range(Some(CCursorRange::two(
+                CCursor::new("Original note: ".chars().count()),
+                CCursor::new(text.chars().count()),
+            )));
+            state.store(&ctx, id);
+        }
+        frame(&ctx, id, &mut text, time, vec![event]);
+        assert_eq!(text, format!("Original note: {expected}"), "{name}");
+        frame(&ctx, id, &mut text, time + 0.1, vec![key(Key::Z)]);
+        assert_eq!(
+            text, "Original note: first",
+            "{name}: retain earlier typing"
+        );
+        frame(&ctx, id, &mut text, time + 0.2, vec![key(Key::Y)]);
+        assert_eq!(text, format!("Original note: {expected}"), "{name}: redo");
+        frame(&ctx, id, &mut text, time + 0.3, vec![key(Key::Z)]);
+        frame(&ctx, id, &mut text, time + 0.4, vec![key(Key::Z)]);
+        assert_eq!(text, "Original note: ", "{name}: second undo");
+        frame(
+            &ctx,
+            id,
+            &mut text,
+            time + 0.5,
+            vec![Event::Paste("branch".into())],
+        );
+        frame(&ctx, id, &mut text, time + 0.6, vec![key(Key::Y)]);
+        assert_eq!(
+            text, "Original note: branch",
+            "{name}: a new edit must discard the old redo branch"
+        );
+    }
+}
+
+#[test]
+fn uninterrupted_typing_retains_intermediate_undo_points() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::unique("continuous-typing");
+    let mut text = String::new();
+    frame(&ctx, id, &mut text, 0.0, vec![]);
+    for n in 1..=12 {
+        frame(
+            &ctx,
+            id,
+            &mut text,
+            f64::from(n) / 10.0,
+            vec![Event::Text("x".into())],
+        );
+    }
+    frame(&ctx, id, &mut text, 1.3, vec![key(Key::Z)]);
+    assert!(
+        !text.is_empty() && text.len() < 12,
+        "Undo must retain earlier continuous typing: {text:?}"
+    );
+    frame(&ctx, id, &mut text, 1.4, vec![key(Key::Y)]);
+    assert_eq!(text, "xxxxxxxxxxxx");
+}

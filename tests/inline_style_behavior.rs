@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     highlight::{Color, NativeColor},
     inline_style::{Element, Style, Tag, color, parse},
 };

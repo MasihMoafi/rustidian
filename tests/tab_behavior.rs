@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     tab::{Tab, View},
     vault::Vault,
 };
@@ -60,7 +60,7 @@ fn closed_views_detect_new_disk_bytes_without_holding_the_old_document() {
 
 #[test]
 fn empty_views_do_not_enter_closed_file_history() {
-    let blank = Tab::new(rust_notes::vault::Document::blank());
+    let blank = Tab::new(rustidian::vault::Document::blank());
     assert!(blank.into_closed().is_none());
 }
 
@@ -117,7 +117,7 @@ fn refreshed_graph_tabs_stay_graphs_until_a_note_is_opened() {
 
 #[test]
 fn a_graph_without_a_file_can_be_closed_and_restored() {
-    use rust_notes::vault::Document;
+    use rustidian::vault::Document;
     let mut tab = Tab::new(Document::blank());
     tab.set_view(View::Graph);
     let id = tab.id();
@@ -209,7 +209,7 @@ fn file_moves_keep_editing_identity_but_navigation_changes_it() {
 
 #[test]
 fn plain_text_opens_in_source_mode_and_markdown_keeps_live_mode() {
-    use rust_notes::vault::Document;
+    use rustidian::vault::Document;
     let mut tab = Tab::new(Document::new("Read me.txt".into()));
     assert_eq!(tab.view, View::Source);
     tab.toggle_reading();
@@ -253,7 +253,7 @@ fn navigation_reuses_the_tab_and_histories_and_modes_are_independent() {
 }
 #[test]
 fn reading_toggle_returns_to_the_previous_editing_mode() {
-    use rust_notes::vault::Document;
+    use rustidian::vault::Document;
     let mut tab = Tab::new(Document::blank());
     tab.set_view(View::Source);
     tab.toggle_reading();
@@ -268,7 +268,7 @@ fn reading_toggle_returns_to_the_previous_editing_mode() {
 
 #[test]
 fn closing_others_preserves_selected_and_pinned_views_in_visual_order() {
-    use rust_notes::{tab::other_tab_indices, vault::Document};
+    use rustidian::{tab::other_tab_indices, vault::Document};
     let mut tabs: Vec<_> = ["A", "B", "C", "D"]
         .into_iter()
         .map(|name| Tab::new(Document::new(format!("{name}.md").into())))
@@ -280,7 +280,7 @@ fn closing_others_preserves_selected_and_pinned_views_in_visual_order() {
 
 #[test]
 fn closing_others_has_no_targets_when_all_other_views_are_pinned() {
-    use rust_notes::{tab::other_tab_indices, vault::Document};
+    use rustidian::{tab::other_tab_indices, vault::Document};
     let mut tabs = vec![
         Tab::new(Document::new("Pinned.md".into())),
         Tab::new(Document::blank()),
@@ -293,7 +293,7 @@ fn closing_others_has_no_targets_when_all_other_views_are_pinned() {
 
 #[test]
 fn stale_selected_view_never_targets_the_remaining_tabs() {
-    use rust_notes::{tab::other_tab_indices, vault::Document};
+    use rustidian::{tab::other_tab_indices, vault::Document};
     let closed = Tab::new(Document::blank()).id();
     let tabs = vec![Tab::new(Document::new("Keep.md".into()))];
     assert!(other_tab_indices(&tabs, closed).is_empty());

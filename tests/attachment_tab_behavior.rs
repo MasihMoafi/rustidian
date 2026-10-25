@@ -1,5 +1,5 @@
-use rust_notes::vault::Vault;
-use rust_notes::{
+use rustidian::vault::Vault;
+use rustidian::{
     paths,
     search::FileMatcher,
     tab::{ImageScale, Tab, View},

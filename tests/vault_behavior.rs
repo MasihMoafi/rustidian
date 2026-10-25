@@ -1,4 +1,4 @@
-use rust_notes::vault::{Document, Vault, headings, wiki_links};
+use rustidian::vault::{Document, Vault, headings, wiki_links};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -303,7 +303,7 @@ fn opening_a_vault_is_read_only_and_invalid_utf8_is_reported() {
 fn follows_or_creates_links_without_overwriting_or_guessing_ambiguous_names() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("Home.md"), "# Existing\n").unwrap();
-    let mut vault = rust_notes::vault::Vault::open(root.path()).unwrap();
+    let mut vault = rustidian::vault::Vault::open(root.path()).unwrap();
     let existing = vault.open_link("Home.md".as_ref(), "Home").unwrap();
     assert_eq!(existing.text, "# Existing\n");
     let created = vault

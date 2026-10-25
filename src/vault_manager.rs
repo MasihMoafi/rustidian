@@ -1,6 +1,6 @@
 use crate::{theme, ui_probe};
 use eframe::egui::{self, Align, FontId, Layout, RichText, ScrollArea, TextEdit};
-use rust_notes::{
+use rustidian::{
     native_picker::{Kind, Picker},
     vaults::{self, Vaults},
 };
@@ -280,7 +280,7 @@ impl Manager {
                             Page::Home => {
                                 ui.vertical_centered(|ui| {
                                     ui.label(
-                                        RichText::new(rust_notes::APP_NAME).size(24.0).strong(),
+                                        RichText::new(rustidian::APP_NAME).size(24.0).strong(),
                                     );
                                 });
                                 ui.add_space(28.0);

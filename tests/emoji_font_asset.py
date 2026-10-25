@@ -117,7 +117,7 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     provenance = json.loads((FONTS / "NotoColorEmoji.provenance.json").read_text())
-    with tempfile.TemporaryDirectory(prefix="rust-notes-emoji-font-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="rustidian-emoji-font-") as temporary:
         path = reconstruct_font(Path(temporary) / "NotoColorEmoji.ttf", provenance)
         check_glyphs(path, provenance, args.output)
 

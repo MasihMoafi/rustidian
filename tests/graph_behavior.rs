@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     graph::{Graph, Group, Kind, Options, View},
     vault::Vault,
 };

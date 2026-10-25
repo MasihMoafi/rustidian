@@ -43,10 +43,30 @@ pub fn state_file(root: &Path, group: &str, extension: &str) -> Option<PathBuf> 
     let mut hash = DefaultHasher::new();
     root.hash(&mut hash);
     Some(
-        base.join("rust-notes")
+        app_directory(&base)
             .join(group)
             .join(format!("{:016x}.{extension}", hash.finish())),
     )
+}
+
+/// Keep settings and recovery when upgrading, including windows still running.
+pub fn app_directory(base: &Path) -> PathBuf {
+    let current = base.join("rustidian");
+    let previous = base.join("rust-notes");
+    if current.exists() || !previous.is_dir() {
+        return current;
+    }
+    if let Err(error) = std::fs::rename(&previous, &current) {
+        eprintln!(
+            "Cannot move existing Rustidian settings: {error}. Using their previous location."
+        );
+        return previous;
+    }
+    #[cfg(unix)]
+    if let Err(error) = std::os::unix::fs::symlink("rustidian", &previous) {
+        eprintln!("Cannot keep the settings link for an older running window: {error}");
+    }
+    current
 }
 
 pub fn wiki_destination(path: &Path) -> String {

@@ -1,4 +1,4 @@
-use rust_notes::{editor::Markdown, folding::Sections};
+use rustidian::{editor::Markdown, folding::Sections};
 use std::collections::HashSet;
 
 #[test]

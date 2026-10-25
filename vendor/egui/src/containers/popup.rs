@@ -656,6 +656,9 @@ impl<'a> Popup<'a> {
             inner
         });
 
+        // A foreground parent can raise itself on press, obscuring its own menu.
+        ctx.move_to_top(response.response.layer_id);
+
         // Only a click whose press started while the popup was already open may close it.
         // Otherwise a popup opened on a pointer *press* (e.g. a right-press context menu)
         // would immediately close again on the following *release*.

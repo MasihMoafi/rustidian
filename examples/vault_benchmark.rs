@@ -1,4 +1,4 @@
-use rust_notes::{editor::Markdown, vault::Vault};
+use rustidian::{editor::Markdown, vault::Vault};
 use std::{path::Path, time::Instant};
 
 fn main() {

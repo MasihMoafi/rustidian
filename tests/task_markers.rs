@@ -1,4 +1,4 @@
-use rust_notes::editor::{Markdown, toggle_task};
+use rustidian::editor::{Markdown, toggle_task};
 
 #[test]
 fn live_task_ranges_preserve_nested_unicode_crlf_and_ignore_non_tasks() {

@@ -1,5 +1,5 @@
 use eframe::egui;
-use rust_notes::callouts::{Callout, Kind};
+use rustidian::callouts::{Callout, Kind};
 
 const TITLE_GAP: f32 = 4.0;
 

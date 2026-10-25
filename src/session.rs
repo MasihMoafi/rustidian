@@ -1,6 +1,6 @@
 use crate::{app::NotesApp, theme};
 use eframe::egui;
-use rust_notes::{
+use rustidian::{
     tab::{Tab, View},
     vault::{Document, Vault},
 };
@@ -21,21 +21,25 @@ struct Session {
     #[serde(default)]
     sort_descending: bool,
     #[serde(default)]
-    bookmarks: rust_notes::bookmarks::Bookmarks,
+    bookmarks: rustidian::bookmarks::Bookmarks,
     #[serde(default)]
     bookmarks_open: bool,
     #[serde(default)]
     right_tab: u8,
     #[serde(default = "default_zoom")]
     ui_zoom: f32,
+    #[serde(default)]
+    document_font_size: Option<u8>,
+    #[serde(default)]
+    editor_preferences: Option<crate::app::settings_ui::EditorPreferences>,
     #[serde(default = "default_autosave")]
     autosave_enabled: bool,
     #[serde(default)]
-    note_aids: Option<rust_notes::note_aids::Config>,
+    note_aids: Option<rustidian::note_aids::Config>,
     #[serde(default = "default_sidebars")]
     sidebar_widths: [f32; 2],
     #[serde(default)]
-    recovery_config: Option<rust_notes::recovery::Config>,
+    recovery_config: Option<rustidian::recovery::Config>,
     #[serde(default)]
     always_update_links: Option<bool>,
 }
@@ -52,7 +56,7 @@ fn default_autosave() -> bool {
 }
 
 fn location(root: &Path) -> Option<PathBuf> {
-    rust_notes::paths::state_file(root, "", "json")
+    rustidian::paths::state_file(root, "", "json")
 }
 
 impl Session {
@@ -116,6 +120,12 @@ impl NotesApp {
             1.0
         };
         self.autosave_enabled = session.autosave_enabled;
+        if let Some(size) = session.document_font_size {
+            self.document_font_size = size.clamp(10, 30);
+        }
+        if let Some(preferences) = session.editor_preferences {
+            self.editor_preferences = preferences;
+        }
         if let Some(config) = session.note_aids {
             self.note_aids = config;
         }
@@ -169,6 +179,8 @@ impl NotesApp {
             bookmarks_open: self.show_bookmarks,
             right_tab: self.right_tab,
             ui_zoom: self.ui_zoom,
+            document_font_size: Some(self.document_font_size),
+            editor_preferences: Some(self.editor_preferences.clone()),
             autosave_enabled: self.autosave_enabled,
             note_aids: Some(self.note_aids.clone()),
             sidebar_widths: self.sidebar_widths,
@@ -196,7 +208,7 @@ mod tests {
 
     #[test]
     fn restoration_keeps_the_selected_duplicate_path_view_after_skipping_missing_files() {
-        use rust_notes::{tab::View, vault::Vault};
+        use rustidian::{tab::View, vault::Vault};
         let root = tempfile::tempdir().unwrap();
         let bytes = b"# Home\r\n";
         std::fs::write(root.path().join("Home.md"), bytes).unwrap();
@@ -233,6 +245,7 @@ mod tests {
         assert!(state.bookmarks.items.is_empty());
         assert!(!state.bookmarks_open);
         assert!(state.note_aids.is_none());
+        assert_eq!(state.document_font_size, None);
         assert!(state.pinned.is_empty());
         assert_eq!(state.sidebar_widths, [300.0, 234.0]);
         let restored: Session =

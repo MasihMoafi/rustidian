@@ -10,6 +10,31 @@ pub const DARK_TEXT: Color32 = Color32::from_rgb(233, 229, 220);
 pub const DARK_MUTED: Color32 = Color32::from_rgb(155, 165, 165);
 pub const LIGHT_MUTED: Color32 = Color32::from_rgb(101, 112, 113);
 pub const DARK_FAINT: Color32 = Color32::from_rgb(104, 115, 117);
+pub const DEFAULT_DOCUMENT_FONT_SIZE: u8 = 18;
+
+/// Apply document typography inside its own UI, leaving window controls unchanged.
+pub fn document_style(ui: &mut egui::Ui, size: u8) {
+    let scale = f32::from(size) / f32::from(DEFAULT_DOCUMENT_FONT_SIZE);
+    let style = ui.style_mut();
+    for (kind, base) in [
+        (TextStyle::Body, 18.0),
+        (TextStyle::Heading, 32.436),
+        (TextStyle::Monospace, 16.0),
+    ] {
+        if let Some(font) = style.text_styles.get_mut(&kind) {
+            font.size = if kind == TextStyle::Body {
+                f32::from(size)
+            } else {
+                base * scale
+            };
+        }
+    }
+    crate::ui_probe::metric(ui.ctx(), "document-font-size", f32::from(size));
+}
+
+pub fn document_size(ui: &egui::Ui, size: f32) -> f32 {
+    size * (TextStyle::Body.resolve(ui.style()).size / f32::from(DEFAULT_DOCUMENT_FONT_SIZE))
+}
 
 pub fn hover_fill(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode {
@@ -289,7 +314,7 @@ pub enum Icon {
     Split,
     Save,
     Commands,
-    Vault,
+    Settings,
     Appearance,
     Outline,
     More,
@@ -348,7 +373,7 @@ impl Icon {
         Self::Split,
         Self::Save,
         Self::Commands,
-        Self::Vault,
+        Self::Settings,
         Self::Appearance,
         Self::Outline,
         Self::More,
@@ -503,9 +528,9 @@ impl Icon {
                 "bytes://icons/commands.svg",
                 include_bytes!("../assets/icons/commands.svg"),
             ),
-            Self::Vault => (
-                "bytes://icons/vault.svg",
-                include_bytes!("../assets/icons/vault.svg"),
+            Self::Settings => (
+                "bytes://icons/settings.svg",
+                include_bytes!("../assets/icons/settings.svg"),
             ),
             Self::Appearance => (
                 "bytes://icons/appearance.svg",
@@ -638,7 +663,9 @@ pub fn disclosure(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
 }
 
 pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
-    let (rect, mut response) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+    let scale = document_size(ui, 1.0);
+    let (rect, mut response) =
+        ui.allocate_exact_size(egui::vec2(18.0, 18.0) * scale, egui::Sense::click());
     if response.clicked() {
         *checked = !*checked;
         response.mark_changed();
@@ -656,7 +683,7 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
         };
         ui.painter().rect(
             rect,
-            5.0,
+            5.0 * scale,
             if *checked {
                 color
             } else {
@@ -668,9 +695,9 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
         if *checked {
             ui.painter().add(egui::Shape::line(
                 vec![
-                    rect.min + egui::vec2(4.0, 9.0),
-                    rect.min + egui::vec2(7.5, 12.5),
-                    rect.min + egui::vec2(14.0, 5.0),
+                    rect.min + egui::vec2(4.0, 9.0) * scale,
+                    rect.min + egui::vec2(7.5, 12.5) * scale,
+                    rect.min + egui::vec2(14.0, 5.0) * scale,
                 ],
                 Stroke::new(1.8, ui.visuals().window_fill),
             ));
@@ -756,6 +783,41 @@ pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn document_font_controls_change_glyphs_without_resizing_other_ui() {
+        use eframe::egui;
+        for dark in [false, true] {
+            let ctx = egui::Context::default();
+            super::apply(&ctx, dark);
+            let mut widths = Vec::new();
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let before = ui.label("Navigation").rect.width();
+                let button_font = egui::TextStyle::Button.resolve(ui.style());
+                for size in [10, 18, 30] {
+                    let width = ui
+                        .scope(|ui| {
+                            super::document_style(ui, size);
+                            assert_eq!(
+                                egui::TextStyle::Body.resolve(ui.style()).size,
+                                f32::from(size)
+                            );
+                            assert_eq!(egui::TextStyle::Button.resolve(ui.style()), button_font);
+                            if size == 18 {
+                                assert_eq!(super::document_size(ui, 32.436), 32.436);
+                            }
+                            ui.label("Document text").rect.width()
+                        })
+                        .inner;
+                    widths.push(width);
+                    assert_eq!(egui::TextStyle::Body.resolve(ui.style()).size, 18.0);
+                }
+                assert_eq!(ui.label("Navigation").rect.width(), before);
+            })
+            .drop_without_applying_deltas();
+            assert!(widths[0] < widths[1] && widths[1] < widths[2], "{widths:?}");
+        }
+    }
+
     #[test]
     fn wheel_steps_are_immediate_and_leave_no_smoothing_tail() {
         use eframe::egui::{self, Event, Modifiers, MouseWheelSource, MouseWheelUnit, TouchPhase};

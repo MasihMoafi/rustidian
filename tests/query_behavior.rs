@@ -1,4 +1,4 @@
-use rust_notes::{query::Query, vault::Vault};
+use rustidian::{query::Query, vault::Vault};
 use std::fs;
 
 #[test]

@@ -34,7 +34,7 @@ def memory_tree(pid):
     visit(pid)
     return {"processes": observations, **{key: sum(row[key] for row in observations) for key in ["rss_kib", "pss_kib", "private_kib"]}}
 
-with tempfile.TemporaryDirectory(prefix="rust-notes-benchmark-") as temporary:
+with tempfile.TemporaryDirectory(prefix="rustidian-benchmark-") as temporary:
     base = Path(temporary)
     vault = base / "Benchmark Vault"
     shutil.copytree(ROOT / "demo-vault", vault)
@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix="rust-notes-benchmark-") as temporary:
                 while time.monotonic() < deadline:
                     assert app.poll() is None, f"{kind} exited before its window appeared"
                     try:
-                        window = xdo("search", "--onlyvisible", "--name", "Rust Notes$" if kind == "native" else "Obsidian").splitlines()[0]
+                        window = xdo("search", "--onlyvisible", "--name", "Rustidian$" if kind == "native" else "Obsidian").splitlines()[0]
                         break
                     except (subprocess.CalledProcessError, IndexError): time.sleep(0.02)
                 assert window, f"{kind} did not show a window"

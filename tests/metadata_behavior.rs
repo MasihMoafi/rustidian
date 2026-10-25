@@ -1,4 +1,4 @@
-use rust_notes::metadata::{analyze, frontmatter, remove_property, set_property};
+use rustidian::metadata::{analyze, frontmatter, remove_property, set_property};
 use serde_yaml_ng::Value;
 
 #[test]

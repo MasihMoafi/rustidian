@@ -1,4 +1,4 @@
-use rust_notes::{
+use rustidian::{
     editor::{Markdown, surround, wrap},
     highlight::{Color, mark_color},
 };
@@ -108,7 +108,7 @@ fn color_parser_rejects_executable_or_unknown_styles_and_ignores_code_and_yaml()
 
 #[test]
 fn native_color_toggles_keep_unicode_selection_and_repeat_exactly() {
-    use rust_notes::highlight::{NativeColor, toggle_native};
+    use rustidian::highlight::{NativeColor, toggle_native};
     for color in NativeColor::ALL {
         let original = "Before فارسی TARGET after\r\n";
         let start = original[..original.find("TARGET").unwrap()].chars().count();
@@ -138,7 +138,7 @@ fn native_color_toggles_keep_unicode_selection_and_repeat_exactly() {
 
 #[test]
 fn native_caret_toggle_formats_the_word_and_retains_the_interior_caret() {
-    use rust_notes::highlight::{NativeColor, toggle_native};
+    use rustidian::highlight::{NativeColor, toggle_native};
     for caret in [3, 6] {
         let mut text = "TARGET".to_owned();
         let highlighted = toggle_native(&mut text, caret..caret, NativeColor::Blue);
@@ -154,7 +154,7 @@ fn native_caret_toggle_formats_the_word_and_retains_the_interior_caret() {
 
 #[test]
 fn native_color_changes_at_the_caret_do_not_insert_or_select_other_text() {
-    use rust_notes::highlight::{NativeColor, toggle_native};
+    use rustidian::highlight::{NativeColor, toggle_native};
     let mut text = "Before ==🔵TARGET==".to_owned();
     let caret = text[..text.find("T==").unwrap()].chars().count();
     assert_eq!(
@@ -166,7 +166,7 @@ fn native_color_changes_at_the_caret_do_not_insert_or_select_other_text() {
 
 #[test]
 fn native_partial_color_change_splits_the_old_span_without_touching_its_neighbors() {
-    use rust_notes::highlight::{NativeColor, toggle_native};
+    use rustidian::highlight::{NativeColor, toggle_native};
     let mut text = "Before ==🔵TARGET== after\r\n".to_owned();
     let start = text[..text.find("RGE").unwrap()].chars().count();
     let selected = toggle_native(&mut text, start..start + 3, NativeColor::Purple);
@@ -203,7 +203,7 @@ fn native_partial_color_change_splits_the_old_span_without_touching_its_neighbor
 
 #[test]
 fn yellow_native_marker_is_distinct_from_the_generic_yellow_highlight() {
-    use rust_notes::highlight::{NativeColor, toggle_native};
+    use rustidian::highlight::{NativeColor, toggle_native};
     let mut text = "Before ==TARGET==".to_owned();
     let selected = toggle_native(&mut text, 9..15, NativeColor::Yellow);
     assert_eq!(text, "Before ==🟡TARGET==");
@@ -237,12 +237,12 @@ fn native_markers_remain_literal_in_code_yaml_destinations_escapes_and_odd_delim
     }
     let parsed = Markdown::parse("==🟡[TARGET](Other.md)==");
     assert!(parsed.spans.iter().any(|span| span.style.link
-        && span.style.native_highlight == Some(rust_notes::highlight::NativeColor::Yellow)));
+        && span.style.native_highlight == Some(rustidian::highlight::NativeColor::Yellow)));
 }
 
 #[test]
 fn an_empty_native_mark_reverses_and_accepts_text_without_swallowing_the_next_mark() {
-    use rust_notes::highlight::{NativeColor, toggle_native};
+    use rustidian::highlight::{NativeColor, toggle_native};
     let original = "Before  ==🟣EXISTING== after";
     let mut text = original.to_owned();
     let cursor = toggle_native(&mut text, 7..7, NativeColor::Blue);

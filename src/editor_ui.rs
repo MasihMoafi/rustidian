@@ -3,7 +3,7 @@ use eframe::egui::{
     text::{CCursor, CCursorRange, LayoutJob},
     widgets::text_edit::TextEditState,
 };
-use rust_notes::{
+use rustidian::{
     editor::{Markdown, complete_link, find_matches, link_at, link_completion, wrap},
     highlight::Color,
     search::FileMatcher,
@@ -35,7 +35,7 @@ pub struct Editor {
     selection: Option<(u64, CCursorRange)>,
     source: String,
     parsed: Markdown,
-    sections: rust_notes::folding::Sections,
+    sections: rustidian::folding::Sections,
     folded_layout: Option<FoldedLayout>,
     tables: crate::table_ui::Tables,
     completion_key: String,
@@ -56,8 +56,8 @@ fn histories(root: &std::path::Path) -> egui::Id {
 pub fn record_document_edit(
     ctx: &egui::Context,
     root: &std::path::Path,
-    before: &rust_notes::vault::Document,
-    after: &rust_notes::vault::Document,
+    before: &rustidian::vault::Document,
+    after: &rustidian::vault::Document,
 ) {
     let mut state = ctx.data_mut(|data| {
         data.get_temp_mut_or_default::<Histories>(histories(root))
@@ -90,7 +90,7 @@ pub fn relocate_histories(
             .collect();
         for path in moving {
             if let Some(state) = entries.remove(&path) {
-                entries.insert(rust_notes::paths::moved_path(&path, from, to, true), state);
+                entries.insert(rustidian::paths::moved_path(&path, from, to, true), state);
             }
         }
     });
@@ -117,7 +117,7 @@ struct PendingEdit {
 
 enum Edit {
     Highlight(Color),
-    NativeHighlight(rust_notes::highlight::NativeColor),
+    NativeHighlight(rustidian::highlight::NativeColor),
     Insert { text: String, caret_back: usize },
 }
 
@@ -193,20 +193,20 @@ impl<'a> PositionedText<'a> {
 fn embedded_images(
     ui: &egui::Ui,
     text: &str,
-    vault: Option<&rust_notes::vault::Vault>,
+    vault: Option<&rustidian::vault::Vault>,
     from: &std::path::Path,
 ) -> Vec<LiveImage> {
     if !text.contains("![") {
         return Vec::new();
     }
     let width_limit = (ui.available_width() - 4.0).max(1.0);
-    rust_notes::assets::embedded_images(text)
+    rustidian::assets::embedded_images(text)
         .into_iter()
         .filter_map(|image| {
             if text[image.range.clone()].contains('\n') {
                 return None;
             }
-            let uri = rust_notes::assets::image_uri(vault, from, &image.target)?;
+            let uri = rustidian::assets::image_uri(vault, from, &image.target)?;
             let natural = match ui
                 .ctx()
                 .try_load_image(&uri, egui::load::SizeHint::Width(width_limit.ceil() as u32))
@@ -234,7 +234,7 @@ fn embedded_images(
 fn live_images(
     ui: &egui::Ui,
     text: &str,
-    vault: Option<&rust_notes::vault::Vault>,
+    vault: Option<&rustidian::vault::Vault>,
     from: &std::path::Path,
     parsed: &Markdown,
     active_line: Option<&Range<usize>>,
@@ -479,7 +479,7 @@ impl Editor {
         self.edit(tab, Edit::Highlight(color));
     }
 
-    pub fn native_highlight(&mut self, tab: &Tab, color: rust_notes::highlight::NativeColor) {
+    pub fn native_highlight(&mut self, tab: &Tab, color: rustidian::highlight::NativeColor) {
         self.edit(tab, Edit::NativeHighlight(color));
     }
 
@@ -524,7 +524,7 @@ impl Editor {
         id: egui::Id,
         find: &mut Find,
         files: &mut FileMatcher,
-        vault: Option<&rust_notes::vault::Vault>,
+        vault: Option<&rustidian::vault::Vault>,
     ) -> Option<String> {
         if let Some(vault) = vault {
             let mut local = TextEditState::load(ui.ctx(), id).unwrap_or_default();
@@ -555,7 +555,7 @@ impl Editor {
             }
             ui.ctx().request_repaint();
         }
-        let live = tab.view == rust_notes::tab::View::Live;
+        let live = tab.view == rustidian::tab::View::Live;
         let callout_input = ui.input(|input| input.events.iter().any(|event| matches!(
             event,
             egui::Event::Text(_) | egui::Event::Paste(_) | egui::Event::Cut | egui::Event::Ime(_)
@@ -564,7 +564,7 @@ impl Editor {
         let mut callout_change = None;
         let mut follow = None;
         let header_end = if live {
-            rust_notes::metadata::frontmatter(&tab.document.text)
+            rustidian::metadata::frontmatter(&tab.document.text)
                 .ok()
                 .flatten()
                 .map_or(0, |properties| properties.range.end)
@@ -702,7 +702,7 @@ impl Editor {
                         let caret = complete_link(
                             &mut tab.document.text,
                             &completion,
-                            &rust_notes::paths::wiki_destination(path),
+                            &rustidian::paths::wiki_destination(path),
                         );
                         set_cursor(ui.ctx(), id, caret);
                         tab.edited();
@@ -721,7 +721,7 @@ impl Editor {
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             if let Some(selection) = state.cursor.char_range() {
                 let selection = selection.as_sorted_char_range();
-                if let Some(range) = rust_notes::editor::markdown_enter(
+                if let Some(range) = rustidian::editor::markdown_enter(
                     &mut tab.document.text,
                     selection.start.0..selection.end.0,
                 ) {
@@ -788,7 +788,7 @@ impl Editor {
                     let selection_range = selection.as_sorted_char_range();
                     let characters = selection_range.start.0..selection_range.end.0;
                     let range = if let Some(Edit::NativeHighlight(color)) = operation {
-                        rust_notes::highlight::toggle_native(
+                        rustidian::highlight::toggle_native(
                             &mut tab.document.text,
                             characters,
                             *color,
@@ -814,7 +814,7 @@ impl Editor {
         }
         if self.source != tab.document.text {
             self.parsed = Markdown::parse(&tab.document.text);
-            self.sections = rust_notes::folding::Sections::new(&tab.document.text, &self.parsed);
+            self.sections = rustidian::folding::Sections::new(&tab.document.text, &self.parsed);
             self.source.clone_from(&tab.document.text);
         }
         let folds_id = id.with("editing-folds");
@@ -864,6 +864,15 @@ impl Editor {
         } else {
             None
         };
+        let caret = active_line.as_ref().and(cursor).and_then(|cursor| {
+            (cursor.primary == cursor.secondary).then(|| {
+                tab.document
+                    .text
+                    .char_indices()
+                    .nth(cursor.primary.index.0)
+                    .map_or(tab.document.text.len(), |(i, _)| i)
+            })
+        });
         let selected_match = if find.open {
             find_matches(&tab.document.text, &find.query)
                 .get(find.selected)
@@ -922,7 +931,7 @@ impl Editor {
                 };
                 let updated_sections;
                 let current_sections = if text != source && !collapsed.is_empty() {
-                    updated_sections = rust_notes::folding::Sections::new(text, parsed);
+                    updated_sections = rustidian::folding::Sections::new(text, parsed);
                     &updated_sections
                 } else {
                     sections
@@ -974,7 +983,14 @@ impl Editor {
                     });
                 }
                 table_placements = if live {
-                    tables.prepare(ui, text, &parsed.tables, active_line.as_ref(), &hidden)
+                    tables.prepare(
+                        ui,
+                        text,
+                        &parsed.tables,
+                        active_line.as_ref(),
+                        caret,
+                        &hidden,
+                    )
                 } else {
                     Vec::new()
                 };
@@ -1102,7 +1118,7 @@ impl Editor {
                     .desired_rows(1)
                     .min_size(egui::vec2(0.0, minimum_height))
                     .frame(egui::Frame::NONE)
-                    .font(FontId::proportional(18.0))
+                    .font(FontId::proportional(crate::theme::document_size(ui, 18.0)))
                     .layouter(&mut layouter)
                     .event_filter(egui::EventFilter {
                         tab: true,
@@ -1160,7 +1176,7 @@ impl Editor {
             updated_parsed = None;
         }
         if let Some(parsed) = updated_parsed {
-            self.sections = rust_notes::folding::Sections::new(&tab.document.text, &parsed);
+            self.sections = rustidian::folding::Sections::new(&tab.document.text, &parsed);
             self.parsed = parsed;
             self.source.clone_from(&tab.document.text);
         }
@@ -1205,9 +1221,10 @@ impl Editor {
                 let point = positioned
                     .at(character)
                     .translate(output.galley_pos.to_vec2());
+                let size = crate::theme::document_size(ui, 18.0);
                 let rect = egui::Rect::from_center_size(
-                    egui::pos2(point.min.x + 9.0, point.center().y),
-                    egui::vec2(18.0, 18.0),
+                    egui::pos2(point.min.x + size / 2.0, point.center().y),
+                    egui::vec2(size, size),
                 );
                 if !rect.intersects(task_clip) {
                     continue;
@@ -1223,7 +1240,7 @@ impl Editor {
                 crate::ui_probe::record(ui.ctx(), format!("task-live:{ordinal}"), response.rect);
                 if response.clicked() {
                     crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
-                    if rust_notes::editor::toggle_task(&mut tab.document.text, ordinal) {
+                    if rustidian::editor::toggle_task(&mut tab.document.text, ordinal) {
                         crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
                         ui.memory_mut(|memory| memory.request_focus(id));
                         tab.edited();
@@ -1500,7 +1517,7 @@ impl Editor {
                         for (index, path) in candidates.iter().enumerate() {
                             let response = ui.add(
                                 egui::Button::new(
-                                    RichText::new(rust_notes::paths::display_path(path)).size(14.0),
+                                    RichText::new(rustidian::paths::display_path(path)).size(14.0),
                                 )
                                 .selected(index == self.completion_selected)
                                 .frame_when_inactive(false)
@@ -1525,7 +1542,7 @@ impl Editor {
                 let caret = complete_link(
                     &mut tab.document.text,
                     &completion,
-                    &rust_notes::paths::wiki_destination(&path),
+                    &rustidian::paths::wiki_destination(&path),
                 );
                 set_cursor(ui.ctx(), id, caret);
                 ui.memory_mut(|m| m.request_focus(id));
@@ -1566,7 +1583,7 @@ fn set_cursor_range(ctx: &egui::Context, id: egui::Id, range: CCursorRange) {
 
 fn retain_visible_images(
     images: &mut Vec<LiveImage>,
-    sections: &rust_notes::folding::Sections,
+    sections: &rustidian::folding::Sections,
     collapsed: &HashSet<String>,
 ) {
     if collapsed.is_empty() {
@@ -1620,7 +1637,7 @@ fn reveal_callouts(
 
 enum CalloutAction {
     Follow(String),
-    Kind(usize, rust_notes::callouts::Kind),
+    Kind(usize, rustidian::callouts::Kind),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1725,7 +1742,7 @@ fn paint_callouts(
                     ui.memory_mut(|memory| memory.surrender_focus(output.response.id));
                 }
                 header.context_menu(|ui| {
-                    for kind in rust_notes::callouts::Kind::ALL {
+                    for kind in rustidian::callouts::Kind::ALL {
                         let response = ui.selectable_label(kind == callout.kind, kind.identifier());
                         crate::ui_probe::record(
                             ui.ctx(),
@@ -1847,7 +1864,7 @@ fn collapse_rows(galley: &mut Arc<egui::Galley>, hidden: &[Range<usize>]) {
 fn paint_heading_folds(
     ui: &mut egui::Ui,
     positioned: &PositionedText<'_>,
-    sections: &rust_notes::folding::Sections,
+    sections: &rustidian::folding::Sections,
     collapsed: &mut HashSet<String>,
 ) {
     let output = positioned.output;
@@ -1998,7 +2015,7 @@ fn paint_code_blocks<'a>(
     ui: &egui::Ui,
     positioned: &PositionedText<'_>,
     source: &str,
-    blocks: impl Iterator<Item = (usize, &'a rust_notes::editor::CodeBlock)>,
+    blocks: impl Iterator<Item = (usize, &'a rustidian::editor::CodeBlock)>,
     live: bool,
     active_line: Option<&Range<usize>>,
     background: egui::layers::ShapeIdx,
@@ -2210,6 +2227,7 @@ fn layout(
     } = decorations;
     let mut job = LayoutJob::default();
     job.wrap.max_width = width;
+    let font_scale = crate::theme::document_size(ui, 1.0);
     let colors = crate::syntax::highlights(ui, text, parsed);
     let callout_heights: Vec<_> = if live {
         parsed
@@ -2287,6 +2305,7 @@ fn layout(
             } else {
                 18.0
             };
+            let size = size * font_scale;
             let family = if style.code {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
@@ -2358,19 +2377,19 @@ fn layout(
                     callout_heights
                         .iter()
                         .find(|(range, _)| range.contains(&start))
-                        .map_or(29.16, |(_, height)| *height)
+                        .map_or_else(|| 29.16 * font_scale, |(_, height)| *height)
                 } else if live && style.property {
                     0.01
                 } else if let Some(image) = image.filter(|_| !active) {
                     image.size.y + 16.0
                 } else if style.block_code {
-                    crate::code_ui::LINE_HEIGHT
+                    crate::code_ui::LINE_HEIGHT * font_scale
                 } else if section == "\n" {
-                    29.16
+                    29.16 * font_scale
                 } else if style.heading > 0 {
-                    size.max(24.0) * 1.2
+                    size.max(24.0 * font_scale) * 1.2
                 } else {
-                    29.16
+                    29.16 * font_scale
                 }),
                 valign: if image.is_some() && active {
                     egui::Align::Min
@@ -2589,7 +2608,7 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
         let source = "## Parent π\n\nHIDDEN\n\n## Sibling\nVISIBLE";
-        let sections = rust_notes::folding::Sections::new(source, &Markdown::parse(source));
+        let sections = rustidian::folding::Sections::new(source, &Markdown::parse(source));
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let mut galley = ui.fonts_mut(|fonts| {
                 fonts.layout_no_wrap(source.into(), FontId::proportional(18.0), Color32::WHITE)

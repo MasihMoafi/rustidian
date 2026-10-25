@@ -1,4 +1,4 @@
-use rust_notes::search::FileMatcher;
+use rustidian::search::FileMatcher;
 use std::path::PathBuf;
 
 #[test]
@@ -31,7 +31,7 @@ fn ordered_queries_keep_aliases_unicode_paths_and_deduplication() {
     )
     .unwrap();
     std::fs::write(root.path().join("Notes/Thinking cat.md"), "# Cat\n").unwrap();
-    let vault = rust_notes::vault::Vault::open(root.path()).unwrap();
+    let vault = rustidian::vault::Vault::open(root.path()).unwrap();
     let mut matcher = FileMatcher::from_notes(&vault.notes);
     for query in ["Thinking circle", "Notes/Thinking circle", "یادداشت فارسی"] {
         assert_eq!(
@@ -49,7 +49,7 @@ fn folder_matching_keeps_dotted_names_root_and_current_folder() {
     for folder in ["Version 1.2", "Other", "Nested/Folder"] {
         std::fs::create_dir_all(root.path().join(folder)).unwrap();
     }
-    let vault = rust_notes::vault::Vault::open(root.path()).unwrap();
+    let vault = rustidian::vault::Vault::open(root.path()).unwrap();
     let mut matcher = FileMatcher::folders(&vault, std::path::Path::new("Other"));
     assert_eq!(matcher.rank("", 20)[0], PathBuf::from("Other"));
     assert_eq!(matcher.rank("1.2", 20), vec![PathBuf::from("Version 1.2")]);
@@ -104,7 +104,7 @@ fn aliases_are_fuzzy_matched_without_duplicate_file_results() {
     )
     .unwrap();
     std::fs::write(root.path().join("Other.md"), "# Other\n").unwrap();
-    let vault = rust_notes::vault::Vault::open(root.path()).unwrap();
+    let vault = rustidian::vault::Vault::open(root.path()).unwrap();
     let mut matcher = FileMatcher::from_notes(&vault.notes);
     assert_eq!(
         matcher.rank("thnkrm", 10),

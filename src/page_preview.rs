@@ -1,7 +1,7 @@
 use crate::{preview, theme, ui_probe};
 use eframe::egui::{self, Margin, Rect};
 use egui_commonmark::CommonMarkCache;
-use rust_notes::{
+use rustidian::{
     tab::Tab,
     vault::{Document, Vault},
 };
@@ -73,6 +73,7 @@ impl Manager {
         tabs: &[Tab],
         active: usize,
         blocked: bool,
+        document_font_size: u8,
     ) -> Option<Action> {
         let request = ctx.data_mut(|data| {
             let id = egui::Id::unique("page-preview-request");
@@ -116,14 +117,22 @@ impl Manager {
                     .pending
                     .as_ref()
                     .is_some_and(|(_, started)| now - started >= 0.3);
+                if ready
+                    && vault
+                        .external_file_uri(&request.from, &request.target)
+                        .is_some()
+                {
+                    self.close();
+                    return None;
+                }
                 if ready {
                     let path = vault.resolve_destination(&request.from, &request.target);
                     if path.is_none() {
                         let raw = request.target.split(['#', '|']).next().unwrap_or("").trim();
                         let decoded =
-                            rust_notes::paths::decode(raw).unwrap_or_else(|| raw.to_owned());
+                            rustidian::paths::decode(raw).unwrap_or_else(|| raw.to_owned());
                         if decoded.is_empty()
-                            || rust_notes::assets::is_image(Path::new(&decoded))
+                            || rustidian::assets::is_image(Path::new(&decoded))
                             || !Path::new(&decoded).components().all(|component| {
                                 matches!(component, std::path::Component::Normal(_))
                             })
@@ -214,6 +223,7 @@ impl Manager {
                 ui.set_max_height(height + frame.total_margin().sum().y);
                 let content_width = width - frame.total_margin().sum().x;
                 frame.show(ui, |ui| {
+                    crate::theme::document_style(ui, document_font_size);
                     ui.set_width(content_width);
                     let corner = Rect::from_center_size(
                         egui::pos2(ui.max_rect().right() + 16.0, ui.min_rect().top() - 16.0),

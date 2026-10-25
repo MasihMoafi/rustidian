@@ -1,9 +1,55 @@
-use rust_notes::{
+use rustidian::{
     commands::{self, Scope},
     vault::Vault,
     vaults::resolve_input,
 };
 use std::{fs, path::Path};
+
+#[test]
+fn existing_file_links_use_encoded_desktop_uris_without_creating_or_escaping_notes() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("Vault");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("Home.md"), "# Home\n").unwrap();
+    let outside = base.path().join("record #1.json");
+    fs::write(&outside, "original evidence").unwrap();
+    let mut vault = Vault::open(&root).unwrap();
+    let uri = format!(
+        "file://{}/record%20%231.json",
+        base.path().canonicalize().unwrap().display()
+    );
+    assert_eq!(
+        vault.external_file_uri(Path::new("Home.md"), "../record%20%231.json"),
+        Some(uri)
+    );
+    for target in ["Home.md", "../Missing.json", ".."] {
+        assert!(
+            vault
+                .external_file_uri(Path::new("Home.md"), target)
+                .is_none()
+        );
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, root.join("Escaping.json")).unwrap();
+        assert!(
+            vault
+                .external_file_uri(Path::new("Home.md"), "Escaping.json")
+                .is_none()
+        );
+    }
+    // The external opening route does not relax the vault's read/write boundary.
+    assert!(
+        vault
+            .open_link(Path::new("Home.md"), "../record%20%231.json")
+            .is_err()
+    );
+    assert_eq!(fs::read_to_string(outside).unwrap(), "original evidence");
+    assert_eq!(
+        fs::read_dir(&root).unwrap().count(),
+        if cfg!(unix) { 2 } else { 1 }
+    );
+}
 
 #[test]
 fn file_input_selects_the_requested_document_and_its_folder() {

@@ -1,0 +1,22 @@
+name: Obsidian workflow gap
+description: Show one workflow Rustidian should handle better.
+title: "[Parity]: "
+body:
+  - type: input
+    id: versions
+    attributes:
+      label: Rustidian and Obsidian versions
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: What are you trying to do?
+      description: Describe one useful task, the steps in both apps and where Rustidian differs. A small synthetic note or screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: What would make this work for you?
+      description: Describe the result you need, including any keyboard, accessibility or file compatibility requirements.

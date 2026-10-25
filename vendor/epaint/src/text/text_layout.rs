@@ -1756,7 +1756,7 @@ fn bidi_levels(text: &str) -> Option<Vec<u8>> {
     if text.is_ascii() {
         return None;
     }
-    // Rust Notes uses the same LTR paragraph direction as the reference editor.
+    // Rustidian uses the same LTR paragraph direction as the reference editor.
     // Resolve RTL runs within that base; auto-detecting from the first letter
     // incorrectly moves Markdown markers and punctuation across the paragraph.
     let info = unicode_bidi::BidiInfo::new(text, Some(unicode_bidi::Level::ltr()));

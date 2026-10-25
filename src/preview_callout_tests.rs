@@ -1,7 +1,7 @@
 //! Exercise fold state through the Reading renderer and real egui pointer events.
 use eframe::egui;
 use egui_commonmark::CommonMarkCache;
-use rust_notes::{tab::Tab, vault::Document};
+use rustidian::{tab::Tab, vault::Document};
 
 fn document(path: &str, text: &str) -> Document {
     let mut document = Document::new(path.into());

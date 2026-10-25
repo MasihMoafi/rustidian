@@ -105,6 +105,26 @@ impl Table {
         })
     }
 
+    /// The cell a source position belongs to; the separator line counts as the header.
+    pub fn cell_at(&self, byte: usize) -> (usize, usize) {
+        let row = self
+            .rows
+            .iter()
+            .rposition(|row| row.line.start <= byte)
+            .unwrap_or(0);
+        let cells = if row == 0 && byte >= self.rows[0].line.end {
+            &self.separator.cells
+        } else {
+            &self.rows[row].cells
+        };
+        let column = cells
+            .iter()
+            .rposition(|cell| cell.start <= byte)
+            .unwrap_or(0)
+            .min(self.alignments.len() - 1);
+        (row, column)
+    }
+
     pub fn cell<'a>(&self, source: &'a str, row: usize, column: usize) -> &'a str {
         self.rows
             .get(row)

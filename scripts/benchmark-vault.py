@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(prefix="rust-notes-corpus-") as temporary:
+with tempfile.TemporaryDirectory(prefix="rustidian-corpus-") as temporary:
     root = Path(temporary)
     total_bytes = 0
     for number in range(5000):

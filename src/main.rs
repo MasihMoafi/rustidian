@@ -21,17 +21,27 @@ mod vault_manager;
 mod window;
 mod workspace_ui;
 
-use rust_notes::vaults::resolve_input;
+use rustidian::vaults::resolve_input;
 use std::{path::PathBuf, time::Instant};
 
 fn main() -> eframe::Result {
     let started = Instant::now();
     let mut arguments = std::env::args_os().skip(1);
     let first = arguments.next();
-    if first.as_deref() == Some(std::ffi::OsStr::new("--help")) {
+    if first
+        .as_deref()
+        .is_some_and(|arg| arg == "--version" || arg == "-V")
+    {
+        println!("{} {}", rustidian::APP_NAME, env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if first
+        .as_deref()
+        .is_some_and(|arg| arg == "--help" || arg == "-h")
+    {
         println!(
-            "{} — native Markdown notebook\n\nUsage: rust-notes [VAULT_FOLDER | FILE.md | FILE.txt]\n       rust-notes --check-vault VAULT_FOLDER\n\nRUST_NOTES_DEFAULT_VAULT selects the default vault; otherwise opens the included demo vault. Ctrl+P opens commands.",
-            rust_notes::APP_NAME
+            "{} — native Markdown notebook\n\nUsage: rustidian [VAULT_FOLDER | FILE.md | FILE.txt]\n       rustidian --check-vault VAULT_FOLDER\n\nRUSTIDIAN_DEFAULT_VAULT selects the default vault; otherwise opens the included demo vault. Ctrl+P opens commands.",
+            rustidian::APP_NAME
         );
         return Ok(());
     }
@@ -40,7 +50,7 @@ fn main() -> eframe::Result {
             eprintln!("Pass a vault folder after --check-vault");
             std::process::exit(2);
         };
-        match rust_notes::vault::Vault::open(&PathBuf::from(root)) {
+        match rustidian::vault::Vault::open(&PathBuf::from(root)) {
             Ok(vault) => {
                 println!(
                     "vault={} notes={} index_us={} warnings={}",
@@ -60,7 +70,7 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
-    let default_vault = std::env::var_os("RUST_NOTES_DEFAULT_VAULT").map(PathBuf::from);
+    let default_vault = rustidian::vaults::default_vault();
     let input = first
         .map(PathBuf::from)
         .or_else(|| default_vault.clone())
@@ -72,7 +82,7 @@ fn main() -> eframe::Result {
                 .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo-vault"))
         });
     let registered = if input.is_file() {
-        rust_notes::vaults::Vaults::open().ok()
+        rustidian::vaults::Vaults::open().ok()
     } else {
         None
     };
@@ -86,8 +96,8 @@ fn main() -> eframe::Result {
     };
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(rust_notes::APP_NAME)
-            .with_app_id("rust-notes")
+            .with_title(rustidian::APP_NAME)
+            .with_app_id("rustidian")
             .with_decorations(false)
             .with_inner_size([1380.0, 900.0])
             .with_min_inner_size([860.0, 560.0]),
@@ -95,7 +105,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        rust_notes::APP_NAME,
+        rustidian::APP_NAME,
         options,
         Box::new(move |cc| {
             Ok(Box::new(app::NotesApp::new(
