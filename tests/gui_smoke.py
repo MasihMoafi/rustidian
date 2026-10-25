@@ -4474,14 +4474,14 @@ def main():
                     command("Decrease font size");font(18)
                 assert note.read_text()==original
                 results.append("Both actual themes used the same enlarged document size in Reading, Live and Source while preserving note bytes and ordinary controls")
-                command("Reading view");command("Open settings");bounds=control_bounds("settings-font-size")
-                xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                command("Reading view");command("Open settings")
+                click_control("settings-font-size",hold=.15)
                 for _ in range(25):key("Right")
                 key("Escape");font(30)
                 high=title_width();command("Increase font size");font(30);assert title_width()==high
                 capture("native-font-controls-maximum.png")
-                command("Open settings");bounds=control_bounds("settings-font-size")
-                xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
+                command("Open settings")
+                click_control("settings-font-size",hold=.15)
                 for _ in range(25):key("Left")
                 key("Escape");font(10)
                 low=title_width();command("Decrease font size");font(10);assert title_width()==low and low<baseline<high
