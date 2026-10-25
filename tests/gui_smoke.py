@@ -2205,6 +2205,16 @@ def main():
                 def background_color():
                     header = control_bounds("button:More options")
                     return ImageGrab.grab(xdisplay=display).getpixel((round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                def expect_background(expected):
+                    deadline = time.monotonic() + 3
+                    while True:
+                        actual = background_color()
+                        if max(abs(a-b) for a,b in zip(actual,expected)) <= 2:
+                            return
+                        assert app.poll() is None, "App exited before presenting its restored palette"
+                        if time.monotonic() >= deadline:
+                            raise AssertionError(("Native background did not present the selected palette", actual, expected))
+                        time.sleep(.05)
                 palettes = [("Love Space", "love-space"), ("Elpis Gold", "elpis-gold"), ("Signature", "signature")]
                 for dark in (True, False):
                     set_theme(dark)
@@ -2216,15 +2226,14 @@ def main():
                         states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
                         state = next(state for state in states if any(path == "Notes/Palette sample.md" for path, _ in state.get("tabs", [])))
                         assert state["palette"] == value and state["dark"] == dark, state
-                        background = background_color()
                         expected = {("love-space", True):(29,23,27), ("elpis-gold", True):(28,27,23), ("signature", True):(31,31,40), ("love-space", False):(251,245,245), ("elpis-gold", False):(251,248,239), ("signature", False):(252,245,242)}[(value, dark)]
-                        assert max(abs(a-b) for a,b in zip(background,expected)) <= 2, (value,dark,background,expected)
+                        expect_background(expected)
                         capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")
                         assert note.read_text() == source
                     results.append(("Dark" if dark else "Light") + " palettes apply the requested native colors, save the actual selection and preserve Markdown")
                 xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
-                assert max(abs(a-b) for a,b in zip(background_color(), (252,245,242))) <= 2, "Restart must visibly restore Signature light, not merely leave a saved JSON value"
+                expect_background((252,245,242))
                 command("Open settings"); click_control("settings-page:Appearance")
                 capture("native-palettes-restored.png")
                 states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]

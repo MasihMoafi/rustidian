@@ -43,7 +43,11 @@ jobs:
           tar -czf reports/rustidian-functional.tar.gz -C target/debug rustidian
           gui_status=0
           for section in tab-drag table-resize trash-options palettes; do
-            python3 tests/gui_smoke.py --binary target/debug/rustidian --section "$section" > "reports/debug-$section.log" 2>&1 || gui_status=1
+            if ! python3 tests/gui_smoke.py --binary target/debug/rustidian --section "$section" > "reports/debug-$section.log" 2>&1; then
+              gui_status=1
+              tail -n 80 "reports/debug-$section.log"
+              if test -f "reports/gui-$section-failure-app.log"; then tail -n 80 "reports/gui-$section-failure-app.log"; fi
+            fi
           done
           python3 tests/gui_smoke.py --binary target/debug/rustidian --open-file rs > reports/debug-open-rs.log 2>&1 || gui_status=1
           exit "$gui_status"
