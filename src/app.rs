@@ -2848,6 +2848,15 @@ impl NotesApp {
                                                 response.request_focus();
                                             }
                                             if response.has_focus() {
+                                                ui.memory_mut(|memory| {
+                                                    memory.set_focus_lock_filter(
+                                                        response.id,
+                                                        egui::EventFilter {
+                                                            horizontal_arrows: true,
+                                                            ..Default::default()
+                                                        },
+                                                    );
+                                                });
                                                 let target = ui.input_mut(|input| {
                                                     if input.consume_key(
                                                         egui::Modifiers::NONE,

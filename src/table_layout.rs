@@ -85,6 +85,15 @@ pub fn handles(ui: &mut egui::Ui, from: &Path, table: usize, outer: egui::Rect, 
             next = Some(width + pointer.x - start);
         }
         if response.has_focus() {
+            ui.memory_mut(|memory| {
+                memory.set_focus_lock_filter(
+                    id,
+                    egui::EventFilter {
+                        horizontal_arrows: true,
+                        ..Default::default()
+                    },
+                );
+            });
             if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::ArrowLeft)) {
                 next = Some(*width - 8.0);
             }

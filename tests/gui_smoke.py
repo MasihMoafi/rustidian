@@ -2202,6 +2202,9 @@ def main():
                 note = fixture / "Notes/Palette sample.md"
                 note.write_text(source)
                 command("Refresh vault"); open_note("Palette sample")
+                def background_color():
+                    header = control_bounds("button:More options")
+                    return ImageGrab.grab(xdisplay=display).getpixel((round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
                 palettes = [("Love Space", "love-space"), ("Elpis Gold", "elpis-gold"), ("Signature", "signature")]
                 for dark in (True, False):
                     set_theme(dark)
@@ -2213,9 +2216,7 @@ def main():
                         states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
                         state = next(state for state in states if any(path == "Notes/Palette sample.md" for path, _ in state.get("tabs", [])))
                         assert state["palette"] == value and state["dark"] == dark, state
-                        picture = ImageGrab.grab(xdisplay=display)
-                        header = control_bounds("button:More options")
-                        background = picture.getpixel((round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                        background = background_color()
                         expected = {("love-space", True):(29,23,27), ("elpis-gold", True):(28,27,23), ("signature", True):(31,31,40), ("love-space", False):(251,245,245), ("elpis-gold", False):(251,248,239), ("signature", False):(252,245,242)}[(value, dark)]
                         assert max(abs(a-b) for a,b in zip(background,expected)) <= 2, (value,dark,background,expected)
                         capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")
@@ -2223,6 +2224,7 @@ def main():
                     results.append(("Dark" if dark else "Light") + " palettes apply the requested native colors, save the actual selection and preserve Markdown")
                 xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
+                assert max(abs(a-b) for a,b in zip(background_color(), (252,245,242))) <= 2, "Restart must visibly restore Signature light, not merely leave a saved JSON value"
                 command("Open settings"); click_control("settings-page:Appearance")
                 capture("native-palettes-restored.png")
                 states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
@@ -2248,7 +2250,10 @@ def main():
                         for distance in (100, -60):
                             current = control_bounds(name)
                             x = round((current[0] + current[2]) / 2)
-                            xdo("mousemove", "--sync", str(x), str(y), "mousedown", "1")
+                            xdo("mousemove", "--sync", str(x), str(y))
+                            pause()
+                            xdo("mousedown", "1")
+                            time.sleep(.1)
                             try:
                                 for step in range(1, 11):
                                     xdo("mousemove", "--sync", str(round(x + distance * step / 10)), str(y))
@@ -6530,6 +6535,8 @@ def main():
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))
         except BaseException:
+            log.flush()
+            shutil.copyfile(reports / "gui-smoke.log", reports / f"gui-{args.section}-failure-app.log")
             capture("gui-failure.png")
             capture(f"gui-{args.section}-failure.png")
             candidates = [path for path in fixture.rglob("*") if path.is_file() and path.suffix.lower() in (".md", ".txt")]
