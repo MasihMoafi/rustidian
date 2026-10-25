@@ -1,4 +1,4 @@
-# Rust Notes resource rules
+# Rustidian resource rules
 
 Use [reference-driven-product](../skills/reference-driven-product/SKILL.md) for the current reference, feedback, OSS comparison and rebuild-guide work. On21October2026 Masih expanded the target to every Obsidian feature: exercise the reference, implement the corresponding workflow, verify it, then repeat. [docs/PARITY.md](docs/PARITY.md) records coverage and remaining gaps. This supersedes the earlier optional graph/drawings/plugin scope. Keep all resource and data restrictions below.
 

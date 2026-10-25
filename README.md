@@ -4,9 +4,9 @@
 
 <img src="docs/brand/rustidian.png" width="112" height="112" alt="Rustidian green faceted logo">
 
-**A Rust-based Obsidian.**
+**A native Markdown notebook for Linux. Your files, your folders, no account.**
 
-[Download Linux alpha](https://github.com/MasihMoafi/rustidian/releases) · [Quick start](#quick-start) · [Performance](#performance) · [Contribute](CONTRIBUTING.md)
+[Download Linux alpha](https://github.com/MasihMoafi/rustidian/releases) · [Quick start](#quick-start) · [Performance](#performance) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
 
 Early alpha · Full Obsidian parity is unfinished
 
@@ -16,7 +16,44 @@ I built Rustidian because I wanted a note editor that felt fast. I liked Obsidia
 
 **Try the Linux alpha. Contributors are welcome.**
 
-![Verified Rustidian alpha showing its bundled Markdown notebook](docs/images/rust-notes.png)
+![Verified Rustidian alpha showing its bundled Markdown notebook](docs/images/rustidian.png)
+
+## Quick start
+
+The Linux x86_64 alpha is verified on X11; broader platform coverage remains open.
+
+**Upgrading from alpha.1?** This package uses the `rustidian` command and includes the incremental undo, file-watcher fallback and file-link repairs. Existing settings, recent vaults and recovery are retained. For an older download, use the [alpha.1 instructions](https://github.com/MasihMoafi/rustidian/releases/tag/v0.1.0-alpha.1).
+
+Download `rustidian-linux-x86_64.tar.gz` and its matching `.sha256` file from [Releases](https://github.com/MasihMoafi/rustidian/releases), then:
+
+```sh
+sha256sum --check rustidian-linux-x86_64.tar.gz.sha256
+tar -xzf rustidian-linux-x86_64.tar.gz
+./rustidian
+```
+
+The bundled demo opens immediately. To add Rustidian to your applications menu, run `python3 install.py`; it installs for your user without root. You can also run it from the extracted folder:
+
+```sh
+./rustidian "/path/to/vault copy"
+./rustidian "/path/to/note.md"
+./rustidian --version
+```
+
+**Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases, math and other gaps are listed below. Keep Obsidian available for workflows the alpha does not cover.
+
+Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rustidian retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+P | Command palette |
+| Ctrl+O | Quick switcher |
+| Ctrl+Shift+O | Open an existing file |
+| Ctrl+Alt+O | Open an existing folder as a vault |
+| Ctrl+N | New note |
+| Ctrl+E | Switch reading/editing |
+| Ctrl+Shift+F | Search the vault |
+| Ctrl+S | Save |
 
 ## Why Rustidian?
 
@@ -40,44 +77,6 @@ Rustidian is a work in progress toward a complete, fast Obsidian-style app. The 
 
 The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining work. Full parity and existing Obsidian plugin compatibility are unfinished.
 
-## Quick start
-
-The current preview is built and verified on **Linux x86_64 / X11**.
-
-1. Download the Linux archive and `SHA256SUMS` from [Releases](https://github.com/MasihMoafi/rustidian/releases).
-2. Verify the archive, extract it and run the application from that directory:
-
-```sh
-sha256sum --check SHA256SUMS
-tar -xzf rustidian-v0.1.0-alpha.1-linux-x86_64.tar.gz
-./rust-notes
-```
-
-The included `demo-vault` opens by default. Keep it beside the executable, or pass your own folder or document:
-
-```sh
-./rust-notes "/path/to/vault"
-./rust-notes "/path/to/note.md"
-./rust-notes "/path/to/document.txt"
-```
-
-The File menu provides **Open file…** and **Open folder…**; the separate vault chooser keeps recent vaults and creation.
-
-The Linux alpha includes exact build information and checksums. The published package is built from `6347d49`; newer work on the main branch may differ. Maintainers can also use the final optimized package from [Native Rust Actions](https://github.com/MasihMoafi/rustidian/actions/workflows/native.yml). Actions artifacts expire after **one day**; debug candidates are for disposable checks.
-
-Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rustidian retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
-
-| Shortcut | Action |
-| --- | --- |
-| Ctrl+P | Command palette |
-| Ctrl+O | Quick switcher |
-| Ctrl+Shift+O | Open an existing file |
-| Ctrl+Alt+O | Open an existing folder as a vault |
-| Ctrl+N | New note |
-| Ctrl+E | Switch reading/editing |
-| Ctrl+Shift+F | Search the vault |
-| Ctrl+S | Save |
-
 ## Performance
 
 A [paired startup comparison](docs/performance/startup-2026-10-22/README.md) measured a median complete matching note frame at **0.61 s for the verified Rustidian baseline versus 3.77 s for Obsidian 1.14.4**. Ten balanced warmed pairs used 100 synthetic notes, a 1440×960 software display and screenshot/OCR sampling. The measured baseline precedes the later graph update. Exact versions, original paired screenshots, raw results and limits accompany this bounded result.
@@ -95,6 +94,8 @@ The linked run contains the verification evidence. See the [comparison script](s
 
 ## Contributors welcome
 
-Help close the gaps: reproduce a Markdown rendering mismatch against Obsidian, improve keyboard accessibility, or report a Linux/Wayland issue with exact steps and versions. Rust/egui contributors can start with the incomplete workflows in the [coverage ledger](docs/PARITY.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks.
+Try one useful workflow: open a copied vault, edit and save a note, follow a link, then reopen it. [Report what broke](https://github.com/MasihMoafi/rustidian/issues/new?template=bug_report.yml) with `rustidian --version`, your Linux/display setup and a small example. For a difference from Obsidian, use the [workflow gap form](https://github.com/MasihMoafi/rustidian/issues/new?template=parity_gap.yml).
+
+Rust/egui contributors can start with Markdown rendering, keyboard access or Linux/Wayland testing. [CONTRIBUTING.md](CONTRIBUTING.md) explains setup and checks; the [coverage ledger](docs/PARITY.md) records remaining work. If Rustidian is useful to you, a [GitHub star](https://github.com/MasihMoafi/rustidian) helps others discover it.
 
 [MIT license](LICENSE) · Independent project, unaffiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.

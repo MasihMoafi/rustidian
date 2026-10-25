@@ -1,5 +1,9 @@
 # Obsidian parity coverage
 
+## Identity and Linux trial — 25 October 2026
+
+The Rustidian alpha.2 executable, command, desktop identity and packages use one name. [Actions verification](https://github.com/MasihMoafi/rustidian/actions/runs/40161237943) passes270 Rust checks, Clippy, real package/installer checks and54 native checks across9 optimized workflows. Migration retains existing session/recovery/recent-vault state and supports older running windows. The installer, version command, quick start and issue forms improve the trial/reporting path. Full Obsidian feature and visual parity remain unfinished.
+
 Current contract,21October2026: reproduce every Obsidian feature and interaction
 in native Rust, with faster equivalent work. This is the coverage ledger linked
 from PLAN.md and GUIDE.md. A source implementation or passing suite is evidence,

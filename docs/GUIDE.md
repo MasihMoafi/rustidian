@@ -15,7 +15,7 @@ before resuming. Never infer delivery from a source commit or chat title.
 
 ## 1. Protect data and identify the real app
 
-The private source repository is `MasihMoafi/rustidian`. `reports/` contains local
+The public source repository is `MasihMoafi/rustidian`. `reports/` contains local
 raw evidence and private copies; it is ignored and must stay out of uploads.
 Personal AGENTS.md, actual note contents and copied-vault screenshots are private.
 Stage explicit project files only. Reviewed private source/Actions work has been
@@ -30,8 +30,8 @@ Preserve unrelated work, selected artwork and the exact bundled `demo-vault/Home
 bytes, including its trailing space. Clean only owned rebuildable outputs with
 recoverable Trash. Never remove selected app artifacts or another effort’s work.
 
-The legacy launcher is `~/.local/bin/rust-note-editor`; the installed executable
-is `~/.local/lib/rust-notes/rust-notes`. Inspect the launcher, hash that executable
+The legacy launcher is `~/.local/bin/rustidian`; the installed executable
+is `~/.local/lib/rustidian/rustidian`. Inspect the launcher, hash that executable
 and read the actual process’s `/proc/<pid>/exe`. A still-running old process does
 not update when the on-disk executable changes. Keep the last verified executable
 and its receipt as rollback before replacing anything.
@@ -178,7 +178,7 @@ check fresh timestamps and actual job/step conclusions before reporting or
 cancelling. Do not cancel because an old snapshot still names an earlier phase.
 
 The optimized artifact is `application-native-<full-sha>`; the full evidence
-artifact is `rust-notes-linux-<full-sha>`. Fetch only required entries where
+artifact is `rustidian-linux-<full-sha>`. Fetch only required entries where
 practical, check ZIP CRC/source/build log/checksums and compare every ordinary
 bundled file with that source. “Functional” artifacts can be debug builds and
 are not release or timing approval. Keep license files with the app.
@@ -186,7 +186,7 @@ are not release or timing approval. Keep license files with the app.
 A focused local GUI command on the exact downloaded executable is:
 
 ```sh
-nice -n 19 python3 tests/gui_smoke.py --binary /absolute/path/to/rust-notes --default-vault --section page-preview
+nice -n 19 python3 tests/gui_smoke.py --binary /absolute/path/to/rustidian --default-vault --section page-preview
 ```
 
 The executable must be accompanied by its exact expected sample files when
