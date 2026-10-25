@@ -49,9 +49,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rustidian")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
-    parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
+    parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -129,7 +129,7 @@ def main():
         launch_command = [str(ROOT / args.binary), str(fixture)]
         if args.open_file:
             startup_path = fixture / f"Open me سلام.{args.open_file}"
-            startup_text = "# File opening\n\nOriginal text سلام\n"
+            startup_text = "fn main() {\n    // Original text سلام\n    let value = 42;\n    println!(\"Hello\");\n}\n" if args.open_file == "rs" else "# File opening\n\nOriginal text سلام\n"
             startup_path.write_text(startup_text)
             launch_command = [str(ROOT / args.binary), str(startup_path)]
         if args.default_vault:
@@ -1084,7 +1084,7 @@ def main():
                 results.append("All three generated window controls show immediate visible hover feedback")
 
                 file_menu("Notes/First steps.md")
-                for label in ["Open in new tab", "Make a copy", "Bookmark…", "Copy path", "Rename…", "Delete"]:
+                for label in ["Open in new tab", "Make a copy", "Bookmark…", "Copy path", "Rename…", "D  Delete"]:
                     left, top, right, bottom = control_bounds("menu:" + label)
                     assert 24 <= bottom-top <= 30 and 190 <= right-left <= 240, (label, right-left, bottom-top)
                 capture("native-file-context-menu.png")
@@ -1148,12 +1148,12 @@ def main():
                 assert not (fixture / copied).exists()
                 assert (fixture / "Menu renamed.md").read_bytes() == originals["Home.md"]
                 file_menu("Menu renamed.md")
-                click_control("menu:Delete")
+                click_control("menu:D  Delete")
                 control_bounds("dialog-input")
                 key("Escape")
                 assert (fixture / "Menu renamed.md").exists(), "Cancel must preserve the note"
                 file_menu("Menu renamed.md")
-                click_control("menu:Delete")
+                click_control("menu:D  Delete")
                 control_bounds("dialog-input")
                 key("Return")
                 title_contains("New tab")
@@ -2144,6 +2144,134 @@ def main():
                 assert note.read_text() == source
                 assert not (fixture / "Never open.md").exists()
                 results.append("Reading code matched all seven measured token colors in both themes, kept plain blocks uncolored and empty blocks visible, and rejected text input")
+
+            def trash_options_checks():
+                nonlocal app, window
+                source = "# Contextual deletion\n\nKeep this text.\n"
+                first = fixture / "Notes/Trash first.md"
+                second = fixture / "Notes/Trash second.md"
+                first.write_text(source)
+                second.write_text(source)
+                time.sleep(.6)
+                open_note("Trash first")
+                command("Source editing")
+                key("ctrl+End")
+                type_text("d")
+                key("ctrl+s")
+                assert first.read_text() == source + "d", "An ordinary D must type text, not delete a file"
+                file_menu("Notes/Trash first.md")
+                control_bounds("menu:D  Delete")
+                key("d")
+                control_bounds("trash-dont-ask")
+                capture("native-trash-confirmation.png")
+                click_control("trash-dont-ask")
+                key("Escape")
+                assert first.exists()
+                file_menu("Notes/Trash first.md")
+                key("d")
+                control_bounds("trash-dont-ask")
+                click_control("trash-dont-ask")
+                key("Return")
+                assert not first.exists()
+                assert any(path.read_bytes() == (source + "d").encode() for path in (base / "data/Trash/files").iterdir() if path.is_file())
+                results.append("D types normally outside menus; its visible menu mnemonic opens recoverable Trash, and cancelling does not save the skip-confirmation choice")
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=10)
+                app = launch_app(launch_command)
+                window = ready_window()
+                file_menu("Notes/Trash second.md")
+                key("d")
+                assert not second.exists()
+                assert control_bounds("trash-dont-ask", required=False) is None
+                command("Open settings")
+                click_control("settings-page:Files and links")
+                click_control("settings-confirm-trash")
+                key("Escape")
+                second.write_text(source)
+                time.sleep(.6)
+                file_menu("Notes/Trash second.md")
+                key("d")
+                control_bounds("trash-dont-ask")
+                key("Escape")
+                assert second.read_text() == source
+                results.append("Confirmed skip preference survives a real restart, and Settings restores the confirmation without changing the surviving note")
+
+            def palette_checks():
+                nonlocal app, window
+                source = "# Palette sample\n\n[[Home]] and **clear text**.\n\n- [x] Keep contrast\n\n| Palette | Status |\n| --- | --- |\n| Native | Ready for review |\n"
+                note = fixture / "Notes/Palette sample.md"
+                note.write_text(source)
+                command("Refresh vault"); open_note("Palette sample")
+                palettes = [("Love Space", "love-space"), ("Elpis Gold", "elpis-gold"), ("Signature", "signature")]
+                for dark in (True, False):
+                    set_theme(dark)
+                    for label, value in palettes:
+                        command("Open settings"); click_control("settings-page:Appearance")
+                        click_control("settings-palette:" + label)
+                        capture("native-palettes-" + ("dark" if dark else "light") + "-" + value + ".png")
+                        key("Escape")
+                        states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
+                        state = next(state for state in states if any(path == "Notes/Palette sample.md" for path, _ in state.get("tabs", [])))
+                        assert state["palette"] == value and state["dark"] == dark, state
+                        picture = ImageGrab.grab(xdisplay=display)
+                        header = control_bounds("button:More options")
+                        background = picture.getpixel((round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                        expected = {("love-space", True):(29,23,27), ("elpis-gold", True):(28,27,23), ("signature", True):(31,31,40), ("love-space", False):(251,245,245), ("elpis-gold", False):(251,248,239), ("signature", False):(252,245,242)}[(value, dark)]
+                        assert max(abs(a-b) for a,b in zip(background,expected)) <= 2, (value,dark,background,expected)
+                        capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")
+                        assert note.read_text() == source
+                    results.append(("Dark" if dark else "Light") + " palettes apply the requested native colors, save the actual selection and preserve Markdown")
+                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                command("Open settings"); click_control("settings-page:Appearance")
+                capture("native-palettes-restored.png")
+                states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
+                assert any(state.get("palette") == "signature" and state["dark"] is False for state in states)
+                click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
+                assert note.read_text() == source
+                results.append("Real restart restores the selected palette and base scheme; Original teal remains available")
+
+            def table_resize_checks():
+                nonlocal app, window
+                source = "# Resize tables\n\n| Item | Value |\n| --- | --- |\n| Short | A longer value that must remain readable |\n\n> | Nested | Value |\n> | --- | --- |\n> | Quote | Safe |\n"
+                note = fixture / "Notes/Resize tables.md"
+                note.write_text(source)
+                time.sleep(.6)
+                open_note("Resize tables")
+                for mode in ("Live preview", "Reading view"):
+                    command(mode)
+                    capture("native-table-resize-" + mode.split()[0].lower() + "-before.png")
+                    for table in (0, 1):
+                        name = f"table-resize:{table}:0"
+                        original = control_bounds(name)
+                        x, y = round((original[0] + original[2]) / 2), round((original[1] + original[3]) / 2)
+                        for distance in (100, -60):
+                            current = control_bounds(name)
+                            x = round((current[0] + current[2]) / 2)
+                            xdo("mousemove", "--sync", str(x), str(y), "mousedown", "1")
+                            try:
+                                for step in range(1, 11):
+                                    xdo("mousemove", "--sync", str(round(x + distance * step / 10)), str(y))
+                                    time.sleep(.025)
+                            finally:
+                                xdo("mouseup", "1")
+                            pause()
+                            updated = control_bounds(name)
+                            assert abs((updated[0] + updated[2] - current[0] - current[2]) / 2 - distance) < 12, (mode, table, current, updated, distance)
+                            assert note.read_text() == source, "Resizing a table must not rewrite Markdown"
+                    capture("native-table-resize-" + mode.split()[0].lower() + "-after.png")
+                    results.append(mode + " resizes ordinary and callout table columns in both directions without changing note bytes")
+                before = control_bounds("table-resize:0:0")
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=10)
+                app = launch_app(launch_command)
+                window = ready_window()
+                open_note("Resize tables")
+                command("Reading view")
+                after = control_bounds("table-resize:0:0")
+                assert abs(before[0] - after[0]) < 2, (before, after)
+                assert note.read_text() == source
+                results.append("Table widths survive a real restart in workspace state while the Markdown remains byte-for-byte unchanged")
 
             def table_input_checks():
                 source = "# Table input\n\n| A | B |\n| --- | --- |\n| old | 1 |\n| other | 2 |\n\nAfter\n"
@@ -4193,6 +4321,86 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
                 results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
 
+            def tab_drag_checks(*, keys_only=False):
+                nonlocal app, window
+                close_tabs()
+                contents = {name: f"# Drag {name}\n\nKeep {name}.\n" for name in ("Alpha", "Beta", "Gamma", "Delta")}
+                for name, source in contents.items():
+                    (fixture / f"Drag {name}.md").write_text(source)
+                command("Refresh vault")
+                for index, name in enumerate(contents):
+                    if index:
+                        key("ctrl+t")
+                    open_note("Drag " + name)
+                def order():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return [name.removeprefix("tab-full:Drag ").removesuffix(".md") for name, rect in sorted(controls.items(), key=lambda item: item[1][0]) if name.startswith("tab-full:Drag ")]
+                def keyboard():
+                    names = order()
+                    click_control("tab-full:Drag " + names[0] + ".md")
+                    key("Right"); title_contains("Drag " + names[1])
+                    key("Left"); title_contains("Drag " + names[0])
+                    key("End"); title_contains("Drag " + names[-1])
+                    key("Right"); title_contains("Drag " + names[0])
+                    key("Home"); title_contains("Drag " + names[0])
+                    command("Source editing"); editor_end(); key("Left"); key("Right")
+                    title_contains("Drag " + names[0])
+                    results.append("Left/Right and Home/End navigate the focused tab bar; arrows in the editor keep the same document selected")
+                if keys_only:
+                    keyboard()
+                    return
+                def drag(name, target, after=False, outside=False, cancel=False):
+                    source = control_bounds(f"tab-full:Drag {name}.md")
+                    destination = control_bounds(f"tab-full:Drag {target}.md")
+                    start = (source[0] + 20, (source[1] + source[3]) / 2)
+                    end = (destination[2] - 35 if after else destination[0] + 12, destination[3] + 180 if outside else start[1])
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", "1")
+                    try:
+                        for step in range(1, 21):
+                            point = [round(start[axis] + (end[axis] - start[axis]) * step / 20) for axis in (0, 1)]
+                            xdo("mousemove", "--sync", str(point[0]), str(point[1]))
+                            time.sleep(.025)
+                        if cancel:
+                            key("Escape")
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+                capture("native-tab-drag-before.png")
+                assert order() == list(contents), order()
+                drag("Alpha", "Gamma", after=True)
+                assert order() == ["Beta", "Gamma", "Alpha", "Delta"], ("Dragging right did not reorder tabs", order())
+                title_contains("Drag Alpha")
+                drag("Delta", "Beta")
+                assert order() == ["Delta", "Beta", "Gamma", "Alpha"], ("Dragging left did not reorder tabs", order())
+                title_contains("Drag Delta")
+                results.append("Real pointer drags reordered background tabs in both directions and kept the dragged document selected")
+                click_control("tab-full:Drag Beta.md")
+                command("Toggle pin")
+                drag("Beta", "Alpha", after=True)
+                assert order() == ["Delta", "Gamma", "Alpha", "Beta"], order()
+                control_bounds("unpin-tab:Drag Beta.md")
+                before = order()
+                drag("Gamma", "Delta", outside=True)
+                assert order() == before, "Dropping outside the tab strip must preserve order"
+                drag("Gamma", "Delta", cancel=True)
+                assert order() == before, "Escape must cancel the drag"
+                results.append("Pinned tabs retained their pin after moving; outside drops and Escape cancelled without changing tab order")
+                capture("native-tab-drag-after.png")
+                click_control("tab-full:Drag Alpha.md")
+                command("Source editing")
+                editor_end(); type_text("UNDO_AFTER_DRAG"); key("ctrl+z"); key("ctrl+s")
+                assert all((fixture / f"Drag {name}.md").read_text() == source for name, source in contents.items())
+                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                assert order() == before, (before, order())
+                title_contains("Drag Alpha")
+                control_bounds("unpin-tab:Drag Beta.md")
+                click_control("tab-full:Drag Delta.md"); title_contains("Drag Delta"); key("ctrl+w")
+                assert order() == ["Gamma", "Alpha", "Beta"], order()
+                keyboard()
+                click_control("tab-full:Drag Beta.md"); command("Toggle pin")
+                results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
+
             def tab_restore_checks():
                 close_tabs()
                 originals={name:f"# Restore {name}\n\n{name.upper()}_ORIGINAL\n" for name in ("Alpha","Beta","Gamma")}
@@ -5803,6 +6011,31 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "persian"}))
                 return
+            if args.section == "palettes":
+                palette_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
+                return
+            if args.section == "tab-keys":
+                tab_drag_checks(keys_only=True)
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-keys"}))
+                return
+            if args.section == "tab-drag":
+                tab_drag_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-drag"}))
+                return
+            if args.section == "trash-options":
+                trash_options_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "trash-options"}))
+                return
+            if args.section == "table-resize":
+                table_resize_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "table-resize"}))
+                return
             if args.section == "table-input":
                 table_input_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -6276,6 +6509,9 @@ def main():
                 table_edit_checks,
                 table_link_checks,
                 table_input_checks,
+                table_resize_checks,
+                trash_options_checks,
+                palette_checks,
                 callout_checks,
                 bookmark_checks,
                 persian_checks,
@@ -6283,6 +6519,7 @@ def main():
                 note_creator_checks,
                 tab_action_checks,
                 tab_restore_checks,
+                tab_drag_checks,
                 settings_checks,
                 font_controls_checks,
                 workspace_checks,

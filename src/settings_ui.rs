@@ -183,6 +183,7 @@ impl NotesApp {
         ui.set_width(width);
         let before = (
             self.dark,
+            self.palette,
             self.ui_zoom,
             self.document_font_size,
             self.editor_preferences.clone(),
@@ -190,6 +191,7 @@ impl NotesApp {
             self.note_aids.clone(),
             self.recovery_config.clone(),
             self.always_update_links,
+            self.confirm_trash,
         );
         let mut changed = false;
         ui.horizontal_top(|ui| {
@@ -283,6 +285,9 @@ impl NotesApp {
                             changed |= self.editor_settings(ui);
                             return;
                         }
+                        if self.settings_page == Page::Appearance {
+                            changed |= crate::palette::picker(ui, &mut self.palette, self.dark);
+                        }
                         group(ui, |ui| match self.settings_page {
                             Page::Appearance => {
                                 changed |=
@@ -368,6 +373,14 @@ impl NotesApp {
                                     "Update links when moving or renaming files.",
                                     "settings-update-move-links",
                                     &mut self.always_update_links,
+                                );
+                                ui.separator();
+                                changed |= toggle(
+                                    ui,
+                                    "Confirm before moving to Trash",
+                                    "Show a confirmation before moving files or folders to the system Trash.",
+                                    "settings-confirm-trash",
+                                    &mut self.confirm_trash,
                                 );
                             }
                             Page::Hotkeys => {
@@ -556,6 +569,7 @@ impl NotesApp {
             if let Err(error) = self.write_session() {
                 (
                     self.dark,
+                    self.palette,
                     self.ui_zoom,
                     self.document_font_size,
                     self.editor_preferences,
@@ -563,11 +577,13 @@ impl NotesApp {
                     self.note_aids,
                     self.recovery_config,
                     self.always_update_links,
+                    self.confirm_trash,
                 ) = before;
                 self.error = Some(format!("Settings weren’t saved: {error}"));
             } else {
                 self.settings_saved();
             }
+            crate::palette::select(ctx, self.palette);
             theme::apply(ctx, self.dark);
             ctx.set_zoom_factor(self.ui_zoom);
             ctx.request_repaint();

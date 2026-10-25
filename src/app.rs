@@ -45,6 +45,8 @@ enum Pending {
     RestoreSnapshot(Box<crate::recovery_ui::Restore>),
 }
 
+struct DraggedTab(u64);
+
 pub struct NotesApp {
     pub(crate) vault: Option<Vault>,
     tree: Tree,
@@ -58,6 +60,9 @@ pub struct NotesApp {
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
+    pub(crate) palette: crate::palette::Palette,
+    pub(crate) confirm_trash: bool,
+    dialog_skip_trash: bool,
     cache: CommonMarkCache,
     dialog: Option<Dialog>,
     dialog_input: String,
@@ -143,9 +148,12 @@ impl NotesApp {
             show_left: true,
             show_right: false,
             dark: true,
+            palette: Default::default(),
             cache: CommonMarkCache::default(),
             dialog: None,
             dialog_input: String::new(),
+            confirm_trash: true,
+            dialog_skip_trash: false,
             dialog_path: None,
             dialog_focus: false,
             dialog_select_all: false,
@@ -914,6 +922,7 @@ impl NotesApp {
     }
 
     fn ask(&mut self, dialog: Dialog) {
+        self.dialog_skip_trash = false;
         self.template_source = (dialog == Dialog::InsertTemplate)
             .then(|| {
                 self.tabs
@@ -988,6 +997,10 @@ impl NotesApp {
         self.ask(dialog);
         self.dialog_input = path.display().to_string();
         self.dialog_path = Some(path);
+        if dialog == Dialog::TrashNote && !self.confirm_trash && self.apply_dialog(dialog) {
+            self.dialog = None;
+            self.focus_editor();
+        }
     }
 
     fn save_all(&mut self) -> bool {
@@ -1418,9 +1431,7 @@ impl NotesApp {
                         vaults::resolve_input(&absolute, default.as_deref(), roots)?
                     };
                 if target.1.is_none() {
-                    return Err(
-                        "Choose an existing Markdown (.md) or plain-text (.txt) file.".into(),
-                    );
+                    return Err("Choose an existing Markdown, text or source-code file.".into());
                 }
                 Ok(target)
             })(),
@@ -2230,11 +2241,7 @@ impl NotesApp {
     }
 
     fn content(&mut self, ui: &mut egui::Ui) {
-        let background = if self.dark {
-            theme::DARK_BG
-        } else {
-            Color32::from_rgb(247, 246, 242)
-        };
+        let background = ui.visuals().window_fill;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(background))
             .show(ui, |ui| {
@@ -2391,7 +2398,12 @@ impl NotesApp {
                                             ("Rename or move…", Dialog::RenameNote),
                                             ("Delete file", Dialog::TrashNote),
                                         ] {
-                                            if ui.button(label).clicked() {
+                                            let activated = if dialog == Dialog::TrashNote {
+                                                theme::delete_menu_item(ui, label).1
+                                            } else {
+                                                ui.button(label).clicked()
+                                            };
+                                            if activated {
                                                 self.ask_file(
                                                     dialog,
                                                     self.tabs[self.active].document.path.clone(),
@@ -2431,13 +2443,19 @@ impl NotesApp {
                                         ("Rename or move…", Dialog::RenameNote),
                                         ("Delete file", Dialog::TrashNote),
                                     ] {
-                                        let response = ui.button(label);
+                                        let (response, activated) = if dialog == Dialog::TrashNote {
+                                            theme::delete_menu_item(ui, label)
+                                        } else {
+                                            let response = ui.button(label);
+                                            let activated = response.clicked();
+                                            (response, activated)
+                                        };
                                         crate::ui_probe::record(
                                             ui.ctx(),
                                             format!("note-menu:{label}"),
                                             response.rect,
                                         );
-                                        if response.clicked() {
+                                        if activated {
                                             self.ask_file(
                                                 dialog,
                                                 self.tabs[self.active].document.path.clone(),
@@ -2629,6 +2647,7 @@ impl NotesApp {
         crate::ui_probe::metric(ui.ctx(), "tab-count", self.tabs.len() as f32);
         let mut close = None;
         let mut pin = None;
+        let mut moved = None;
         egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 0))
@@ -2676,15 +2695,39 @@ impl NotesApp {
                                     ui.add_space(7.0);
                                     ui.horizontal(|ui| {
                                         for (index, tab) in self.tabs.iter().enumerate() {
-                                            let (rect, response) = ui.allocate_exact_size(
-                                                egui::vec2(tab_width, 33.0),
-                                                egui::Sense::click(),
+                                            let (_, rect) =
+                                                ui.allocate_space(egui::vec2(tab_width, 33.0));
+                                            let response = ui.interact(
+                                                rect,
+                                                ui.scope_id().with(("tab", tab.id())),
+                                                egui::Sense::click_and_drag(),
                                             );
+                                            response.dnd_set_drag_payload(DraggedTab(tab.id()));
+                                            if response.drag_started() {
+                                                self.active = index;
+                                                self.editor.focus = false;
+                                                response.request_focus();
+                                            }
+                                            response.widget_info(|| {
+                                                egui::WidgetInfo::selected(
+                                                    egui::Role::Tab,
+                                                    ui.is_enabled(),
+                                                    index == self.active,
+                                                    tab.title(),
+                                                )
+                                            });
                                             let active = index == self.active;
                                             let show_close = tab.pinned
                                                 || active
                                                 || ui.rect_contains_pointer(rect);
-                                            if active && reveal_active {
+                                            if active
+                                                && reveal_active
+                                                && !egui::DragAndDrop::has_payload_of_type::<
+                                                    DraggedTab,
+                                                >(
+                                                    ui.ctx()
+                                                )
+                                            {
                                                 ui.scroll_to_rect_animation(
                                                     rect,
                                                     Some(Align::Center),
@@ -2801,8 +2844,51 @@ impl NotesApp {
                                                 }
                                             } else if response.clicked() {
                                                 self.active = index;
-                                                self.editor.focus =
-                                                    !matches!(tab.view, View::Read | View::Graph);
+                                                self.editor.focus = false;
+                                                response.request_focus();
+                                            }
+                                            if response.has_focus() {
+                                                let target = ui.input_mut(|input| {
+                                                    if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::ArrowLeft,
+                                                    ) {
+                                                        Some(
+                                                            (index + self.tabs.len() - 1)
+                                                                % self.tabs.len(),
+                                                        )
+                                                    } else if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::ArrowRight,
+                                                    ) {
+                                                        Some((index + 1) % self.tabs.len())
+                                                    } else if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::Home,
+                                                    ) {
+                                                        Some(0)
+                                                    } else if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::End,
+                                                    ) {
+                                                        Some(self.tabs.len() - 1)
+                                                    } else {
+                                                        None
+                                                    }
+                                                });
+                                                if let Some(target) = target {
+                                                    self.active = target;
+                                                    self.editor.focus = false;
+                                                    ui.memory_mut(|memory| {
+                                                        memory.request_focus(
+                                                            ui.scope_id().with((
+                                                                "tab",
+                                                                self.tabs[target].id(),
+                                                            )),
+                                                        )
+                                                    });
+                                                    ui.ctx().request_repaint();
+                                                }
                                             }
                                             response.context_menu(|ui| {
                                                 theme::menu_style(ui);
@@ -2833,6 +2919,31 @@ impl NotesApp {
                                                     ui.close();
                                                 }
                                             });
+                                            if response.dnd_hover_payload::<DraggedTab>().is_some()
+                                            {
+                                                let after = ui
+                                                    .input(|input| input.pointer.latest_pos())
+                                                    .is_some_and(|pointer| {
+                                                        pointer.x > rect.center().x
+                                                    });
+                                                let x =
+                                                    if after { rect.right() } else { rect.left() };
+                                                ui.painter().line_segment(
+                                                    [
+                                                        egui::pos2(x, rect.top() + 3.0),
+                                                        egui::pos2(x, rect.bottom() - 3.0),
+                                                    ],
+                                                    Stroke::new(3.0, theme::accent(ui)),
+                                                );
+                                                if let Some(payload) =
+                                                    response.dnd_release_payload::<DraggedTab>()
+                                                {
+                                                    moved = Some((
+                                                        payload.0,
+                                                        index + usize::from(after),
+                                                    ));
+                                                }
+                                            }
                                             if active {
                                                 ui.painter().line_segment(
                                                     [rect.left_bottom(), rect.right_bottom()],
@@ -2841,6 +2952,29 @@ impl NotesApp {
                                             }
                                         }
                                     });
+                                    if egui::DragAndDrop::has_payload_of_type::<DraggedTab>(
+                                        ui.ctx(),
+                                    ) && let Some(pointer) =
+                                        ui.input(|input| input.pointer.latest_pos())
+                                    {
+                                        let clip = ui.clip_rect();
+                                        if (clip.top()..=clip.bottom()).contains(&pointer.y) {
+                                            let direction = if pointer.x < clip.left() + 24.0 {
+                                                1.0
+                                            } else if pointer.x > clip.right() - 24.0 {
+                                                -1.0
+                                            } else {
+                                                0.0
+                                            };
+                                            if direction != 0.0 {
+                                                ui.scroll_with_delta(egui::vec2(
+                                                    direction * 12.0,
+                                                    0.0,
+                                                ));
+                                                ui.ctx().request_repaint();
+                                            }
+                                        }
+                                    }
                                 });
                         },
                     );
@@ -2855,6 +2989,17 @@ impl NotesApp {
                     }
                 });
             });
+        if let Some((id, slot)) = moved
+            && let Some(from) = self.tabs.iter().position(|tab| tab.id() == id)
+        {
+            let to = slot.saturating_sub(usize::from(from < slot));
+            if from != to {
+                let tab = self.tabs.remove(from);
+                self.tabs.insert(to, tab);
+                self.active = to;
+                self.persist_session();
+            }
+        }
         if let Some(index) = close {
             self.request_close_tab(index);
         }
@@ -3390,6 +3535,10 @@ impl NotesApp {
                             "The file will be recoverable from your desktop’s Trash."
                         });
                     }
+                    if dialog == Dialog::TrashNote {
+                        let response = ui.checkbox(&mut self.dialog_skip_trash, "Don’t ask again");
+                        crate::ui_probe::record(ui.ctx(), "trash-dont-ask", response.rect);
+                    }
                     if dialog == Dialog::RenameNote {
                         ui.label("Links will be updated. Enter a new path inside this vault.");
                     }
@@ -3768,6 +3917,9 @@ impl NotesApp {
                     };
                 }
                 Ok(None) => {
+                    if self.dialog_skip_trash {
+                        self.confirm_trash = false;
+                    }
                     let active_id = self.tabs.get(self.active).map(Tab::id);
                     let deleted_active = self
                         .tabs
@@ -4200,6 +4352,11 @@ impl eframe::App for NotesApp {
             })
         });
         self.background(&ctx);
+        if crate::table_layout::take_changed(&ctx)
+            && let Err(error) = self.write_session()
+        {
+            self.error = Some(format!("Table widths weren’t saved: {error}"));
+        }
         self.shortcuts(&ctx);
         let title = format!(
             "{} — {} — {}",

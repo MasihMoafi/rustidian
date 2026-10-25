@@ -887,6 +887,7 @@ impl Editor {
         let tables = &mut self.tables;
         let mut table_placements = Vec::new();
         let from = &tab.document.path;
+        let plain_text = tab.document.is_plain_text();
         let mut images = if live {
             live_images(ui, source, vault, from, parsed, active_line.as_ref())
         } else {
@@ -986,6 +987,7 @@ impl Editor {
                     tables.prepare(
                         ui,
                         text,
+                        &tab.document.path,
                         &parsed.tables,
                         active_line.as_ref(),
                         caret,
@@ -994,18 +996,22 @@ impl Editor {
                 } else {
                     Vec::new()
                 };
-                let job = layout(
-                    ui,
-                    text,
-                    parsed,
-                    width,
-                    Decorations {
-                        live,
-                        active_line: active_line.as_ref(),
-                        matched: selected_match.as_ref(),
-                        images: &images,
-                    },
-                );
+                let job = if plain_text {
+                    crate::syntax::source_job(ui, text, from, width, selected_match.as_ref())
+                } else {
+                    layout(
+                        ui,
+                        text,
+                        parsed,
+                        width,
+                        Decorations {
+                            live,
+                            active_line: active_line.as_ref(),
+                            matched: selected_match.as_ref(),
+                            images: &images,
+                        },
+                    )
+                };
                 let original = ui.fonts_mut(|fonts| fonts.layout_job(job));
                 let decorated = !hidden.is_empty() || !table_placements.is_empty();
                 let image_layout: Vec<_> = if !decorated {

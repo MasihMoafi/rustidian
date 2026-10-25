@@ -115,9 +115,7 @@ impl Document {
     }
 
     pub fn is_plain_text(&self) -> bool {
-        self.path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+        !self.is_blank() && !self.is_image() && !is_markdown(&self.path)
     }
 
     pub fn title(&self) -> String {
@@ -203,7 +201,7 @@ impl Vault {
                 continue;
             }
             if !is_markdown(entry.path()) {
-                if crate::assets::is_image(entry.path()) {
+                if is_text_document(entry.path()) || crate::assets::is_image(entry.path()) {
                     attachments.push(entry.path().strip_prefix(&self.root).unwrap().into());
                 }
                 continue;
@@ -229,7 +227,7 @@ impl Vault {
 
     pub(crate) fn safe_path(&self, relative: &Path, create_parents: bool) -> Result<PathBuf> {
         if !is_text_document(relative) {
-            return Err("Documents must use the .md or .txt extension.".into());
+            return Err("Choose a supported Markdown, text or source-code file.".into());
         }
         self.safe_file_path(relative, create_parents)
     }
@@ -289,6 +287,9 @@ impl Vault {
     pub fn read(&self, path: &Path) -> Result<Document> {
         let absolute = self.safe_path(path, false)?;
         let text = fs::read_to_string(absolute).map_err(|e| format!("Cannot read note: {e}"))?;
+        if text.contains('\0') {
+            return Err("This file contains binary data and cannot be edited as text.".into());
+        }
         Ok(Document {
             path: path.into(),
             original: Some(text.clone()),
@@ -365,6 +366,13 @@ impl Vault {
     }
 
     fn index_note(&mut self, path: PathBuf, text: String) {
+        if !is_markdown(&path) {
+            if !self.attachments.contains(&path) {
+                self.attachments.push(path);
+                self.attachments.sort();
+            }
+            return;
+        }
         let note = Note::new(path.clone(), text);
         if let Some(existing) = self.notes.iter_mut().find(|note| note.path == path) {
             *existing = note;
@@ -645,10 +653,115 @@ pub fn is_markdown(path: &Path) -> bool {
 }
 
 pub fn is_text_document(path: &Path) -> bool {
-    is_markdown(path)
-        || path
-            .extension()
-            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"))
+    if let Some(name) = path.file_name().and_then(|name| name.to_str())
+        && [
+            "makefile",
+            "dockerfile",
+            "cmakelists.txt",
+            "justfile",
+            "license",
+        ]
+        .iter()
+        .any(|candidate| name.eq_ignore_ascii_case(candidate))
+    {
+        return true;
+    }
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "txt"
+                    | "rs"
+                    | "py"
+                    | "pyw"
+                    | "js"
+                    | "mjs"
+                    | "cjs"
+                    | "jsx"
+                    | "ts"
+                    | "tsx"
+                    | "c"
+                    | "h"
+                    | "cpp"
+                    | "cc"
+                    | "cxx"
+                    | "hpp"
+                    | "hxx"
+                    | "cs"
+                    | "java"
+                    | "kt"
+                    | "kts"
+                    | "go"
+                    | "rb"
+                    | "php"
+                    | "swift"
+                    | "m"
+                    | "mm"
+                    | "scala"
+                    | "clj"
+                    | "cljs"
+                    | "ex"
+                    | "exs"
+                    | "erl"
+                    | "hrl"
+                    | "hs"
+                    | "lua"
+                    | "r"
+                    | "jl"
+                    | "pl"
+                    | "pm"
+                    | "ps1"
+                    | "psm1"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "fish"
+                    | "bat"
+                    | "cmd"
+                    | "html"
+                    | "htm"
+                    | "css"
+                    | "scss"
+                    | "sass"
+                    | "less"
+                    | "xml"
+                    | "xsl"
+                    | "xsd"
+                    | "json"
+                    | "jsonc"
+                    | "toml"
+                    | "yaml"
+                    | "yml"
+                    | "ini"
+                    | "cfg"
+                    | "conf"
+                    | "properties"
+                    | "env"
+                    | "sql"
+                    | "graphql"
+                    | "gql"
+                    | "proto"
+                    | "tex"
+                    | "bib"
+                    | "rst"
+                    | "adoc"
+                    | "log"
+                    | "csv"
+                    | "tsv"
+                    | "nix"
+                    | "zig"
+                    | "v"
+                    | "sv"
+                    | "vhd"
+                    | "vhdl"
+                    | "svelte"
+                    | "vue"
+                    | "elm"
+                    | "dart"
+                    | "ipynb"
+            )
+        })
 }
 
 pub fn file_title(path: &Path) -> String {

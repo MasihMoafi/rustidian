@@ -224,6 +224,72 @@ pub fn code_tokens(ui: &egui::Ui, body: &str, language: &str, reading: bool) -> 
     })
 }
 
+pub fn source_job(
+    ui: &egui::Ui,
+    text: &str,
+    path: &std::path::Path,
+    width: f32,
+    matched: Option<&Range<usize>>,
+) -> egui::text::LayoutJob {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let language = match extension {
+        "mjs" | "cjs" | "jsx" => "js",
+        "tsx" => "ts",
+        "pyw" => "py",
+        "jsonc" => "json",
+        _ => extension,
+    };
+    let tokens = code_tokens(ui, text, language, false);
+    let byte = |character| {
+        text.char_indices()
+            .nth(character)
+            .map_or(text.len(), |(byte, _)| byte)
+    };
+    let matched = matched.map(|range| byte(range.start)..byte(range.end));
+    let mut boundaries = vec![0, text.len()];
+    for token in &tokens {
+        boundaries.extend([token.range.start, token.range.end]);
+    }
+    if let Some(range) = &matched {
+        boundaries.extend([range.start, range.end]);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = width;
+    let mut token = 0;
+    for range in boundaries.windows(2) {
+        while token < tokens.len() && tokens[token].range.end <= range[0] {
+            token += 1;
+        }
+        let color = tokens
+            .get(token)
+            .filter(|token| token.range.contains(&range[0]))
+            .map_or(ui.visuals().text_color(), |token| token.color);
+        job.append(
+            &text[range[0]..range[1]],
+            0.0,
+            egui::TextFormat {
+                font_id: egui::FontId::monospace(crate::theme::document_size(ui, 16.0)),
+                color,
+                background: if matched
+                    .as_ref()
+                    .is_some_and(|matched| matched.contains(&range[0]))
+                {
+                    ui.visuals().selection.bg_fill
+                } else {
+                    Color32::TRANSPARENT
+                },
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

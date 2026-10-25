@@ -8,11 +8,13 @@ mod file_tree;
 mod graph_ui;
 mod image_view;
 mod page_preview;
+mod palette;
 mod preview;
 mod properties_ui;
 mod recovery_ui;
 mod session;
 mod syntax;
+mod table_layout;
 mod table_ui;
 mod theme;
 mod title_ui;
@@ -40,7 +42,7 @@ fn main() -> eframe::Result {
         .is_some_and(|arg| arg == "--help" || arg == "-h")
     {
         println!(
-            "{} — native Markdown notebook\n\nUsage: rustidian [VAULT_FOLDER | FILE.md | FILE.txt]\n       rustidian --check-vault VAULT_FOLDER\n\nRUSTIDIAN_DEFAULT_VAULT selects the default vault; otherwise opens the included demo vault. Ctrl+P opens commands.",
+            "{} — native Markdown notebook and text editor\n\nUsage: rustidian [VAULT_FOLDER | FILE]\n       rustidian --check-vault VAULT_FOLDER\n\nOpen Markdown, plain text and supported source-code files. RUSTIDIAN_DEFAULT_VAULT selects the default vault; otherwise opens the included demo vault. Ctrl+P opens commands.",
             rustidian::APP_NAME
         );
         return Ok(());

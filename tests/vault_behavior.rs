@@ -8,28 +8,59 @@ use tempfile::tempdir;
 #[test]
 fn plain_text_documents_open_and_save_without_bulk_indexing_or_overwriting_external_changes() {
     let folder = tempdir().unwrap();
-    let filename = Path::new("Notes سلام.TXT");
-    let path = folder.path().join(filename);
-    fs::write(&path, "# Literal text\n\nسلام\n").unwrap();
     fs::write(folder.path().join("Home.md"), "# Home\n").unwrap();
+    let names = [
+        "Notes سلام.TXT",
+        "main.rs",
+        "script.py",
+        "app.ts",
+        "page.html",
+        "config.json",
+        "project.toml",
+        "Makefile",
+    ];
+    for name in names {
+        fs::write(folder.path().join(name), "// Literal text\r\nسلام\r\n").unwrap();
+    }
     let mut vault = Vault::open(folder.path()).unwrap();
-    assert_eq!(vault.notes.len(), 1);
-    assert_eq!(vault.notes[0].path, Path::new("Home.md"));
-    let mut document = vault.open_document(filename).unwrap();
-    assert!(document.is_plain_text());
-    document.text.push_str("Saved text\n");
-    vault.save(&mut document).unwrap();
+    for name in names {
+        let filename = Path::new(name);
+        let path = folder.path().join(filename);
+        assert!(
+            vault.attachments.iter().any(|entry| entry == filename),
+            "{name} must appear in navigation"
+        );
+        let mut document = vault.open_document(filename).unwrap();
+        assert!(document.is_plain_text());
+        assert_eq!(document.text, "// Literal text\r\nسلام\r\n");
+        document.text.push_str("Saved text\r\n");
+        vault.save(&mut document).unwrap();
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            "// Literal text\r\nسلام\r\nSaved text\r\n".as_bytes()
+        );
+        assert!(!document.dirty());
+        document.text.push_str("Unsaved text\n");
+        fs::write(&path, "External change\n").unwrap();
+        assert!(vault.save(&mut document).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "External change\n");
+        assert!(document.dirty());
+    }
     assert_eq!(
-        fs::read_to_string(&path).unwrap(),
-        "# Literal text\n\nسلام\nSaved text\n"
+        vault.notes.len(),
+        1,
+        "Source code must not enter the Markdown graph/search index on save"
     );
-    assert!(!document.dirty());
-    document.text.push_str("Unsaved text\n");
-    fs::write(&path, "External change\n").unwrap();
-    assert!(vault.save(&mut document).is_err());
-    assert_eq!(fs::read_to_string(&path).unwrap(), "External change\n");
-    assert!(document.dirty());
-    assert!(vault.read(Path::new("../escape.txt")).is_err());
+    assert_eq!(vault.notes[0].path, Path::new("Home.md"));
+    fs::write(folder.path().join("binary.rs"), b"text\0binary").unwrap();
+    assert!(vault.open_document(Path::new("binary.rs")).is_err());
+    fs::write(folder.path().join("invalid.py"), [0xff, 0xfe]).unwrap();
+    assert!(vault.open_document(Path::new("invalid.py")).is_err());
+    assert_eq!(
+        fs::read(folder.path().join("binary.rs")).unwrap(),
+        b"text\0binary"
+    );
+    assert!(vault.read(Path::new("../escape.rs")).is_err());
 }
 
 #[test]

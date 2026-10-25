@@ -37,11 +37,7 @@ pub fn document_size(ui: &egui::Ui, size: f32) -> f32 {
 }
 
 pub fn hover_fill(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        Color32::from_rgb(34, 41, 44)
-    } else {
-        Color32::from_rgb(220, 224, 219)
-    }
+    ui.visuals().widgets.hovered.weak_bg_fill
 }
 
 /// Paint the current response without waiting for another layout pass.
@@ -74,11 +70,7 @@ pub fn set_line_height(galley: &mut std::sync::Arc<egui::Galley>, line_height: f
 }
 
 pub fn accent(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        ACCENT
-    } else {
-        Color32::from_rgb(14, 117, 124)
-    }
+    ui.visuals().hyperlink_color
 }
 
 pub fn marker(ui: &egui::Ui) -> Color32 {
@@ -90,6 +82,9 @@ pub fn marker(ui: &egui::Ui) -> Color32 {
 }
 
 pub fn interactive(ui: &egui::Ui) -> Color32 {
+    if crate::palette::current(ui.ctx()) != crate::palette::Palette::Teal {
+        return accent(ui);
+    }
     if ui.visuals().dark_mode {
         Color32::from_rgb(23, 127, 131)
     } else {
@@ -173,6 +168,24 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(7);
     visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
+    let palette = crate::palette::current(ctx);
+    if palette != crate::palette::Palette::Teal {
+        let accent = palette.accent(dark);
+        visuals.panel_fill = palette.side(dark);
+        visuals.extreme_bg_color = visuals.panel_fill;
+        visuals.window_fill = palette.background(dark);
+        visuals.code_bg_color = visuals.panel_fill;
+        visuals.hyperlink_color = accent;
+        visuals.selection.bg_fill = accent.gamma_multiply(0.3);
+        visuals.selection.stroke = Stroke::new(1.0, accent);
+        visuals.widgets.inactive.bg_fill = visuals.panel_fill;
+        let strength = if dark { 0.2 } else { 0.1 };
+        visuals.widgets.hovered.weak_bg_fill =
+            accent.gamma_multiply(strength) + visuals.window_fill.gamma_multiply(1.0 - strength);
+        visuals.widgets.hovered.bg_fill = visuals.widgets.hovered.weak_bg_fill;
+        visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.3);
+        visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
+    }
     ctx.set_visuals(visuals);
     ctx.all_styles_mut(|style| {
         style.animation_time = 0.0;
@@ -675,7 +688,7 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     });
     if ui.is_rect_visible(rect) {
         let color = if *checked {
-            Color32::from_rgb(23, 127, 131)
+            interactive(ui)
         } else if response.hovered() {
             ui.visuals().weak_text_color()
         } else {
@@ -732,6 +745,23 @@ pub fn menu_style(ui: &mut egui::Ui) {
     }
     ui.spacing_mut().item_spacing.y = 1.0;
     ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+}
+
+pub fn delete_menu_item(ui: &mut egui::Ui, label: &str) -> (egui::Response, bool) {
+    let response = menu_item(ui, Icon::Trash, &format!("D  {label}"));
+    let shortcut = ui.input_mut(|input| {
+        input.modifiers.matches_exact(egui::Modifiers::NONE)
+            && input.consume_key(egui::Modifiers::NONE, egui::Key::D)
+    });
+    if shortcut {
+        ui.input_mut(|input| {
+            input.events.retain(
+                |event| !matches!(event, egui::Event::Text(text) if text.eq_ignore_ascii_case("d")),
+            )
+        });
+    }
+    let activated = response.clicked() || shortcut;
+    (response, activated)
 }
 
 pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {

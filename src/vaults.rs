@@ -41,7 +41,9 @@ pub fn resolve_input(
         return Ok((absolute, None));
     }
     if !absolute.is_file() || !crate::vault::is_text_document(&absolute) {
-        return Err("Choose a vault folder, Markdown file (.md) or plain-text file (.txt).".into());
+        return Err(
+            "Choose a vault folder or a supported Markdown, text or source-code file.".into(),
+        );
     }
     let root = default_vault
         .and_then(|vault| vault.canonicalize().ok())

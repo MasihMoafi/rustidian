@@ -36,7 +36,7 @@ impl Picker {
             }
             Kind::File => {
                 command.args([
-                    "--file-filter=Markdown and text | *.md *.MD *.txt *.TXT",
+                    "--file-filter=Notes and source code | *.md *.MD *.txt *.TXT *.rs *.py *.js *.ts *.json *.toml *.yaml *.yml *.html *.css *.c *.cpp *.h *.sh",
                     "--file-filter=All files | *",
                 ]);
             }

@@ -1049,6 +1049,25 @@ fn show_table(
         heights.push(height + 9.0);
         cells.push(shaped_row);
     }
+    let resized = crate::table_layout::widths(ui.ctx(), from, ordinal, &widths);
+    if resized != widths {
+        widths = resized;
+        for (row, cells) in cells.iter_mut().enumerate() {
+            let mut height = 23.4_f32;
+            for (column, (galley, content_width, _, code_ranges)) in cells.iter_mut().enumerate() {
+                let mut job = (*galley.job).clone();
+                job.wrap.max_width = (widths[column] - 17.0).max(1.0);
+                *galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                crate::theme::set_line_height(
+                    galley,
+                    if code_ranges.is_empty() { 23.4 } else { 23.625 },
+                );
+                *content_width = galley.size().x;
+                height = height.max(galley.size().y);
+            }
+            heights[row] = height + 9.0;
+        }
+    }
     let border = ui.visuals().widgets.noninteractive.bg_stroke;
     let mut follow = None;
     egui::ScrollArea::horizontal()
@@ -1160,6 +1179,7 @@ fn show_table(
                     .line_segment([egui::pos2(start.x, y), egui::pos2(x, y)], stroke);
                 y += height;
             }
+            crate::table_layout::handles(ui, from, ordinal, outer, &widths);
         });
     follow
 }

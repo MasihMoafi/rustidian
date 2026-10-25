@@ -430,11 +430,7 @@ impl Properties {
         let add = ui
             .scope(|ui| {
                 ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
-                let fill = if ui.visuals().dark_mode {
-                    egui::Color32::from_rgb(34, 41, 44)
-                } else {
-                    egui::Color32::from_rgb(220, 230, 225)
-                };
+                let fill = crate::theme::hover_fill(ui);
                 ui.add(
                     egui::Button::new(RichText::new("+ Add property").size(15.75))
                         .fill(fill)
