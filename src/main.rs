@@ -8,7 +8,6 @@ mod file_tree;
 mod graph_ui;
 mod image_view;
 mod page_preview;
-mod palette;
 mod preview;
 mod properties_ui;
 mod recovery_ui;

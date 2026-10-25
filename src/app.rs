@@ -60,7 +60,7 @@ pub struct NotesApp {
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
-    pub(crate) palette: crate::palette::Palette,
+    pub(crate) palette: theme::palette::Palette,
     pub(crate) confirm_trash: bool,
     dialog_skip_trash: bool,
     cache: CommonMarkCache,

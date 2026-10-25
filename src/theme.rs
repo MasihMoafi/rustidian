@@ -3,6 +3,9 @@ use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle, Visuals
 #[path = "emoji_glyphs.rs"]
 mod emoji_glyphs;
 
+#[path = "palette.rs"]
+pub mod palette;
+
 pub const ACCENT: Color32 = Color32::from_rgb(101, 183, 182);
 pub const DARK_BG: Color32 = Color32::from_rgb(23, 27, 29);
 pub const DARK_SIDE: Color32 = Color32::from_rgb(17, 21, 23);
@@ -82,7 +85,7 @@ pub fn marker(ui: &egui::Ui) -> Color32 {
 }
 
 pub fn interactive(ui: &egui::Ui) -> Color32 {
-    if crate::palette::current(ui.ctx()) != crate::palette::Palette::Teal {
+    if palette::current(ui.ctx()) != palette::Palette::Teal {
         return accent(ui);
     }
     if ui.visuals().dark_mode {
@@ -168,8 +171,8 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(7);
     visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
-    let palette = crate::palette::current(ctx);
-    if palette != crate::palette::Palette::Teal {
+    let palette = palette::current(ctx);
+    if palette != palette::Palette::Teal {
         let accent = palette.accent(dark);
         visuals.panel_fill = palette.side(dark);
         visuals.extreme_bg_color = visuals.panel_fill;

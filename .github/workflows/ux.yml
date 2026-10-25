@@ -24,6 +24,8 @@ jobs:
       LIBGL_ALWAYS_SOFTWARE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - name: Install native test tools
         run: |
           sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
@@ -52,9 +54,15 @@ jobs:
           sha256sum target/release/rustidian > reports/binary.sha256
           target/release/rustidian --version | tee reports/version.txt
       - name: Real package and installation checks
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          git diff --exit-code 54be6cc016bc5c6e7927c9de99cab436295d2fa9 -- Cargo.toml Cargo.lock
+          gh release download v0.1.0-alpha.2 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/
           python3 tests/linux_bundle.py --binary target/release/rustidian 2>&1 | tee reports/package-tests.log
-          python3 scripts/package-linux.py --binary target/release/rustidian --output reports/rustidian-linux-x86_64.tar.gz
+          python3 scripts/package-linux.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-x86_64.tar.gz
+          python3 tests/debian_package.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --system 2>&1 | tee reports/debian-tests.log
+          python3 scripts/package-deb.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-amd64.deb
       - name: Exact optimized app workflows
         run: |
           gui_status=0

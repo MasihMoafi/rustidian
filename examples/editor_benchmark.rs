@@ -28,6 +28,10 @@ mod preview;
 mod syntax;
 #[cfg(not(test))]
 #[allow(dead_code)]
+#[path = "../src/table_layout.rs"]
+mod table_layout;
+#[cfg(not(test))]
+#[allow(dead_code)]
 #[path = "../src/table_ui.rs"]
 mod table_ui;
 #[cfg(not(test))]

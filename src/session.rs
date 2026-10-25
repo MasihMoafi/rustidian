@@ -19,7 +19,7 @@ struct Session {
     right: bool,
     dark: bool,
     #[serde(default)]
-    palette: crate::palette::Palette,
+    palette: theme::palette::Palette,
     #[serde(default)]
     sort_descending: bool,
     #[serde(default)]
@@ -123,7 +123,7 @@ impl NotesApp {
         self.right_tab = session.right_tab.min(2);
         self.dark = session.dark;
         self.palette = session.palette;
-        crate::palette::select(ctx, self.palette);
+        theme::palette::select(ctx, self.palette);
         self.ui_zoom = if session.ui_zoom.is_finite() {
             session.ui_zoom.clamp(0.75, 1.5)
         } else {

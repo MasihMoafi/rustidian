@@ -286,7 +286,7 @@ impl NotesApp {
                             return;
                         }
                         if self.settings_page == Page::Appearance {
-                            changed |= crate::palette::picker(ui, &mut self.palette, self.dark);
+                            changed |= theme::palette::picker(ui, &mut self.palette, self.dark);
                         }
                         group(ui, |ui| match self.settings_page {
                             Page::Appearance => {
@@ -583,7 +583,7 @@ impl NotesApp {
             } else {
                 self.settings_saved();
             }
-            crate::palette::select(ctx, self.palette);
+            theme::palette::select(ctx, self.palette);
             theme::apply(ctx, self.dark);
             ctx.set_zoom_factor(self.ui_zoom);
             ctx.request_repaint();
