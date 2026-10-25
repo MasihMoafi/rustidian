@@ -1,27 +1,84 @@
-name: Rustidian moved-vault metadata
+name: Rustidian release archive
 on:
   push:
     branches: ['work/rustidian-paths-20261025']
 permissions:
   contents: read
+  actions: read
 jobs:
-  paths:
+  package:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Hash the moved project vault with the application toolchain
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Retrieve the verified executable and matching notices
         shell: bash
         run: |
-          rustup toolchain install 1.95.0 --profile minimal
-          cat > "$RUNNER_TEMP/paths.rs" <<'RS'
-          use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, path::Path};
-          fn main() {
-              for name in ["/home/masih/Desktop/p/rust-notes/docs", "/home/masih/Desktop/p/rustidian/docs"] {
-                  let mut hash = DefaultHasher::new();
-                  Path::new(name).hash(&mut hash);
-                  println!("MOVED_VAULT_HASH {} {:016x}", name, hash.finish());
-              }
-          }
-          RS
-          rustup run 1.95.0 rustc "$RUNNER_TEMP/paths.rs" -o "$RUNNER_TEMP/paths"
-          "$RUNNER_TEMP/paths"
+          gh run download 40161237943 --repo MasihMoafi/rustidian --name rustidian-identity-166cd1da823aee62127bc14ad6f0d87f921898d3 --dir "$RUNNER_TEMP/verified"
+          gh release download v0.1.0-alpha.1 --repo MasihMoafi/rustidian --pattern THIRD_PARTY_NOTICES.txt --dir "$RUNNER_TEMP/notices"
+      - name: Package without changing the verified executable
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import hashlib,json,os,shutil,tarfile
+          verified=Path(os.environ['RUNNER_TEMP'])/'verified'
+          bundle=Path(os.environ['RUNNER_TEMP'])/'bundle'
+          release=Path('release');release.mkdir()
+          source='166cd1da823aee62127bc14ad6f0d87f921898d3'
+          binary_sha='1e2e37019f1ece68a2928bea6c0e3e9a8b3a78248f6f173d404bf651b4b4e2d7'
+          assert (verified/'source-commit.txt').read_text().strip()==source
+          package=verified/'rustidian-linux-x86_64.tar.gz'
+          with package.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==(verified/(package.name+'.sha256')).read_text().split()[0]
+          with tarfile.open(package) as archive:archive.extractall(bundle,filter='data')
+          with (bundle/'rustidian').open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()==binary_sha
+          notices=Path(os.environ['RUNNER_TEMP'])/'notices/THIRD_PARTY_NOTICES.txt'
+          with notices.open('rb') as stream:assert hashlib.file_digest(stream,'sha256').hexdigest()=='f63a6a19f1cca09c4b21dd8276953cd1a91ec979e1c67f3e98cab93ee1fde969'
+          shutil.copy2(notices,bundle/'THIRD_PARTY_NOTICES.txt')
+          info={'version':'v0.1.0-alpha.2','source_commit':source,'application_sha256':binary_sha,'actions_run':'https://github.com/MasihMoafi/rustidian/actions/runs/40161237943','platform':'Built on Ubuntu24.04 for Linux x86_64; X11 native workflows verified. Wayland compiled but not reverified in this build.','package':'Exact verified optimized executable, tested installer and demo, build information and matching third-party notices.','known_limits':'Early alpha. Full Obsidian parity and JavaScript plugins remain unfinished; Canvas, Bases and math are incomplete.','startup_measurement':'Published measurements describe an earlier baseline, not this executable.'}
+          (bundle/'BUILDINFO.json').write_text(json.dumps(info,indent=2)+'\n')
+          package=release/'rustidian-linux-x86_64.tar.gz'
+          with tarfile.open(package,'w:gz') as archive:
+              for path in sorted(bundle.iterdir()):archive.add(path,arcname=path.name)
+          for name in ['BUILDINFO.json','THIRD_PARTY_NOTICES.txt']:shutil.copy2(bundle/name,release/name)
+          sums=[]
+          for path in [package,release/'BUILDINFO.json',release/'THIRD_PARTY_NOTICES.txt']:
+              with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+              sums.append(digest+'  '+path.name+'\n')
+              if path==package:(release/(path.name+'.sha256')).write_text(sums[-1])
+          (release/'SHA256SUMS').write_text(''.join(sums))
+          with tarfile.open(package) as archive:
+              assert hashlib.file_digest(archive.extractfile('rustidian'),'sha256').hexdigest()==binary_sha
+              assert 'BUILDINFO.json' in archive.getnames() and 'THIRD_PARTY_NOTICES.txt' in archive.getnames()
+          print('Verified release archive:',package.stat().st_size,'bytes; executable unchanged.')
+          PYTHON
+      - name: Render the public README for review
+        shell: bash
+        run: |
+          command -v google-chrome
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          Path('markdown-request.json').write_text(json.dumps({'text':Path('README.md').read_text(),'mode':'gfm','context':'MasihMoafi/rustidian'}))
+          PYTHON
+          gh api markdown --method POST --input markdown-request.json > readme-body.html
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import re
+          body=Path('readme-body.html').read_text()
+          body=body.replace('src="docs/','src="../docs/')
+          css='body{font:16px/1.65 system-ui;margin:0;color:#1f2328;background:white}main{max-width:900px;margin:auto;padding:24px}h1,h2{line-height:1.3}h1{font-size:30px}a{color:#0969da}img{max-width:100%;height:auto}pre{overflow:auto;padding:16px;background:#f6f8fa}table{display:block;overflow:auto;border-collapse:collapse;max-width:100%}td,th{padding:8px;border:1px solid #d1d9e0;text-align:left}h2{margin-top:32px}@media(max-width:600px){main{padding:20px}h1{font-size:26px}}'
+          Path('release/README-review.html').write_text('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rustidian README</title><style>'+css+'</style><main>'+body+'</main>')
+          PYTHON
+          google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --virtual-time-budget=2000 --window-size=1200,7000 --screenshot="$PWD/release/readme-desktop.png" "file://$PWD/release/README-review.html"
+          google-chrome --headless --no-sandbox --disable-gpu --hide-scrollbars --virtual-time-budget=2000 --window-size=390,12000 --screenshot="$PWD/release/readme-mobile.png" "file://$PWD/release/README-review.html"
+      - name: Retain the prepared release and review for one day
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-release-prepared
+          path: release/
+          retention-days: 1
+          compression-level: 1
