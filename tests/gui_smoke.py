@@ -103,6 +103,9 @@ def main():
             assert server.poll() is None, (reports / "gui-xvfb.log").read_text()
             time.sleep(.1)
         assert display_ready, f"Private X server {display} did not accept a connection"
+        # Thermal SIGSTOP can span a key release. Keep the private display from
+        # inventing held-key repeats when the owned process group resumes.
+        subprocess.run(["xset", "r", "off"], env=environment, check=True)
         log = (reports / "gui-smoke.log").open("w")
         if args.section in ("navigation", "all"):
             browser = base / "browser-stub"
@@ -4473,12 +4476,14 @@ def main():
                 results.append("Both actual themes used the same enlarged document size in Reading, Live and Source while preserving note bytes and ordinary controls")
                 command("Reading view");command("Open settings");bounds=control_bounds("settings-font-size")
                 xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
-                xdo("key","--clearmodifiers","--repeat","25","--delay","30","Right");key("Escape");font(30)
+                for _ in range(25):key("Right")
+                key("Escape");font(30)
                 high=title_width();command("Increase font size");font(30);assert title_width()==high
                 capture("native-font-controls-maximum.png")
                 command("Open settings");bounds=control_bounds("settings-font-size")
                 xdo("mousemove",str(round(bounds[2]-20)),str(round((bounds[1]+bounds[3])/2)),"click","1")
-                xdo("key","--clearmodifiers","--repeat","25","--delay","30","Left");key("Escape");font(10)
+                for _ in range(25):key("Left")
+                key("Escape");font(10)
                 low=title_width();command("Decrease font size");font(10);assert title_width()==low and low<baseline<high
                 capture("native-font-controls-minimum.png");step_to(18)
                 results.append("The actual settings slider reached both observed 10/30 pixel boundaries and the corresponding palette commands could not step beyond either limit")

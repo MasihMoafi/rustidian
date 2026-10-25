@@ -198,12 +198,9 @@ fn background_capture_coalesces_to_latest_saved_bytes_and_clear_cancels_deferred
     use std::time::{Duration, Instant};
     let base = tempfile::tempdir().unwrap();
     let store = history(base.path());
-    let config = Config {
-        interval_minutes: 0.01,
-        keep_days: 7.0,
-    };
+    let config = Config::default();
     let (wake, events) = std::sync::mpsc::channel();
-    let recorder =
+    let mut recorder =
         rustidian::recovery_capture::Recorder::start(store.clone(), config.clone(), move || {
             let _ = wake.send(());
         });
@@ -229,9 +226,19 @@ fn background_capture_coalesces_to_latest_saved_bytes_and_clear_cancels_deferred
     wait_for("first");
     assert!(recorder.capture(Path::new("Home.md"), "superseded", &config));
     assert!(recorder.capture(Path::new("Home.md"), "latest\r\nسلام", &config));
+    // Release the queued replacements explicitly, independent of CI scheduling
+    // and database latency consuming a short snapshot interval.
+    assert!(recorder.configure(&Config {
+        interval_minutes: 0.0,
+        ..config.clone()
+    }));
     wait_for("latest\r\nسلام");
     assert_eq!(store.versions(Path::new("Home.md")).unwrap().len(), 2);
-    assert!(recorder.capture(Path::new("Home.md"), "deferred", &config));
+    let deferred_config = Config {
+        interval_minutes: 0.01,
+        ..config
+    };
+    assert!(recorder.capture(Path::new("Home.md"), "deferred", &deferred_config));
     recorder
         .clear()
         .unwrap()
