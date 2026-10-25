@@ -391,7 +391,15 @@ def main():
                 else:
                     trace("query-not-selected")
                     capture("command-query-not-selected.png")
-                    raise AssertionError(("Requested command availability/result differs",value,available,matches))
+                    actual_query = None
+                    if control_bounds("dialog-input-focused", required=False):
+                        xdo("key", "--clearmodifiers", "ctrl+a", "ctrl+c")
+                        time.sleep(.15)
+                        try:
+                            actual_query = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, text=True, timeout=2)
+                        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                            pass
+                    raise AssertionError(("Requested command availability/result differs",value,available,matches,actual_query))
                 trace("query")
                 key("Return")
                 if not available:
@@ -2233,6 +2241,22 @@ def main():
                 assert second.read_text() == source
                 results.append("Confirmed skip preference survives a real restart, and Settings restores the confirmation without changing the surviving note")
 
+            def palette_ready():
+                # Wait for rendered, colored logos rather than capturing loader spinners.
+                for _ in range(50):
+                    cards = [control_bounds("settings-palette:" + name) for name in ("Original teal", "Love Space", "Elpis Gold", "Signature")]
+                    image = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    counts = []
+                    for left, top, right, bottom in cards:
+                        center = (left+right)/2
+                        crop = image.crop((round(center-24),round(top+8),round(center+24),round(top+68)))
+                        counts.append(sum(max(pixel)-min(pixel)>35 for pixel in pixel_data(crop)))
+                    if min(counts) >= 60:
+                        return
+                    assert app.poll() is None, "App exited before drawing palette logos"
+                    time.sleep(.1)
+                raise AssertionError(("Palette logos did not finish drawing in their visible cards", counts, cards))
+
             def note_dialog_checks():
                 original = {path: path.read_bytes() for path in fixture.rglob("*.md")}
                 key("ctrl+n")
@@ -2273,6 +2297,8 @@ def main():
                     submit = control_bounds("dialog-submit")
                     assert cancel[2] < submit[0], (name, "Cancel precedes the primary action", cancel, submit)
                     assert min(cancel[3]-cancel[1], submit[3]-submit[1]) >= 32, (name, cancel, submit)
+                    bounds = control_bounds("dialog-bounds"); button = control_bounds("dialog-close")
+                    assert 23 <= bounds[2]-button[2] <= 27 and 23 <= button[1]-bounds[1] <= 27, (name, bounds, button)
                     capture("native-form-" + name.lower().replace(" ", "-") + ".png")
                     click_control("dialog-cancel")
                     assert control_bounds("dialog-input", required=False) is None
@@ -2299,9 +2325,10 @@ def main():
                 for dark in (True, False):
                     set_theme(dark)
                     command("Open settings")
+                    palette_ready()
                     bounds = control_bounds("dialog-bounds")
                     button = control_bounds("settings-close")
-                    assert bounds[2]-button[2] >= 16 and button[1]-bounds[1] >= 16, ("Settings close must be inside its padded header", bounds, button)
+                    assert 23 <= bounds[2]-button[2] <= 27 and 23 <= button[1]-bounds[1] <= 27, ("Settings close must use the shared 24px header inset", bounds, button)
                     capture("native-settings-header-" + ("dark" if dark else "light") + ".png")
                     click_control("settings-close")
                     assert control_bounds("settings-close", required=False) is None
@@ -2328,19 +2355,29 @@ def main():
                             raise AssertionError(("Native background did not present the selected palette", actual, expected))
                         time.sleep(.05)
                 palettes = [("Original teal", "teal"), ("Love Space", "love-space"), ("Elpis Gold", "elpis-gold"), ("Signature", "signature")]
+                # Start away from the default so the first Teal click is a real change.
+                command("Open settings"); click_control("settings-page:Appearance"); palette_ready()
+                click_control("settings-palette:Love Space"); key("Escape")
                 for dark in (True, False):
                     set_theme(dark)
                     for label, value in palettes:
-                        command("Open settings"); click_control("settings-page:Appearance")
+                        command("Open settings"); click_control("settings-page:Appearance"); palette_ready()
                         click_control("settings-palette:" + label)
+                        palette_ready()
                         cards = [control_bounds("settings-palette:" + name) for name, _ in palettes]
                         assert max(card[1] for card in cards)-min(card[1] for card in cards) <= 1, cards
                         assert all(left[2] < right[0] for left, right in zip(cards, cards[1:])), cards
                         capture("native-palettes-" + ("dark" if dark else "light") + "-" + value + ".png")
                         key("Escape")
-                        states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
-                        state = next(state for state in states if any(path == "Notes/Palette sample.md" for path, _ in state.get("tabs", [])))
-                        assert state["palette"] == value and state["dark"] == dark, state
+                        state = None
+                        for _ in range(40):
+                            states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
+                            state = next((state for state in states if any(path == "Notes/Palette sample.md" for path, _ in state.get("tabs", []))), None)
+                            if state and state.get("palette") == value and state.get("dark") == dark:
+                                break
+                            assert app.poll() is None, "App exited before persisting its palette"
+                            time.sleep(.1)
+                        assert state and state["palette"] == value and state["dark"] == dark, state
                         expected = {("teal", True):(23,27,29), ("teal", False):(247,246,242), ("love-space", True):(29,23,27), ("elpis-gold", True):(28,27,23), ("signature", True):(31,31,40), ("love-space", False):(251,245,245), ("elpis-gold", False):(251,248,239), ("signature", False):(252,245,242)}[(value, dark)]
                         expect_background(expected)
                         capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")

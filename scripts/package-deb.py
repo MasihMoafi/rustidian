@@ -1,4 +1,4 @@
-"""Build an Ubuntu 24.04 amd64 package without changing the verified executable."""
+"""Build an amd64 Debian package without changing the verified executable."""
 import argparse
 import hashlib
 import os
@@ -49,6 +49,11 @@ def main():
     identity = subprocess.check_output([str(binary), '--version'], text=True).strip()
     if not identity.startswith('Rustidian ') or args.revision < 1:
         parser.error('Expected a Rustidian executable and positive package revision')
+    versions = re.findall(r'\bGLIBC_(\d+(?:\.\d+)+)\b', subprocess.check_output(
+        ['readelf', '--version-info', '--wide', str(binary)], text=True))
+    if not versions:
+        parser.error('Cannot determine the executable\'s glibc requirement')
+    glibc = '.'.join(map(str, max([(2, 39), *[tuple(map(int, version.split('.'))) for version in versions]])))
     upstream = identity.split(' ', 1)[1].replace('-alpha.', '~alpha.')
     if not re.fullmatch(r'[0-9][A-Za-z0-9.+~]*', upstream):
         parser.error('Unsupported version string: ' + upstream)
@@ -75,7 +80,7 @@ def main():
         desktop.write_text('[Desktop Entry]\nType=Application\nName=Rustidian\nComment=Local Markdown notes and source code\nExec=rustidian %f\nIcon=rustidian\nTerminal=false\nCategories=Office;TextEditor;\nKeywords=Markdown;Notes;Code;\nStartupWMClass=rustidian\nMimeType=' + mime_types + '\n')
         subprocess.run(['desktop-file-validate', str(desktop)], check=True)
         size = sum(path.stat().st_size for path in (package / 'usr').rglob('*') if path.is_file())
-        dependencies = 'libc6 (>= 2.39), libstdc++6, libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libxkbcommon0, libwayland-client0, libegl1, libgl1, python3, zenity'
+        dependencies = 'libc6 (>= ' + glibc + '), libstdc++6, libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libxkbcommon0, libwayland-client0, libegl1, libgl1, python3, zenity'
         (package / 'DEBIAN/control').write_text('Package: rustidian\nVersion: ' + upstream + '-' + str(args.revision) + '\nArchitecture: amd64\nSection: editors\nPriority: optional\nMaintainer: Rustidian contributors\nInstalled-Size: ' + str((size + 1023) // 1024) + '\nDepends: ' + dependencies + '\nHomepage: https://github.com/MasihMoafi/rustidian\nDescription: Native Markdown notebook and source text editor\n Local vaults, linked notes and native editing. Early Linux alpha.\n Obsidian community plugins are not supported.\n')
         environment = dict(os.environ, SOURCE_DATE_EPOCH=os.environ.get('SOURCE_DATE_EPOCH', '0'))
         subprocess.run(['dpkg-deb', '--root-owner-group', '-Zgzip', '-z3', '--build', str(package), str(args.output.resolve())], check=True, env=environment)

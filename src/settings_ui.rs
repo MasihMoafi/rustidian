@@ -261,9 +261,9 @@ impl NotesApp {
                 });
             ui.add_space(16.0);
             ui.vertical(|ui| {
-                ui.set_width((width - if width < 600.0 { 212.0 } else { 260.0 }).max(140.0));
+                ui.set_width((ui.available_width() - 24.0).max(140.0));
                 ui.set_min_height(height);
-                ui.add_space(16.0);
+                ui.add_space(24.0);
                 let button = theme::dialog_header(ui, "Settings", "Close settings");
                 crate::ui_probe::record(ctx, "settings-close", button.rect);
                 *close |= button.clicked();

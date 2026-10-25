@@ -2508,10 +2508,6 @@ impl NotesApp {
         crate::editor_ui::find_bar(ui, &mut self.find, tab, id);
         let mut follow = None;
         let anchor = self.pending_anchor.take();
-        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-        ui.spacing_mut().scroll.bar_width = 6.0;
-        ui.spacing_mut().scroll.bar_inner_margin = 4.0;
-        ui.spacing_mut().scroll.bar_outer_margin = 2.0;
         let mut add_property = false;
         let mut renamed_title = None;
         let title = tab.document.title();
@@ -3214,13 +3210,7 @@ impl NotesApp {
                         1.0,
                         Color32::from_gray(if self.dark { 60 } else { 210 }),
                     ))
-                    .corner_radius(10)
-                    .inner_margin(egui::Margin {
-                        left: 0,
-                        right: 24,
-                        top: 0,
-                        bottom: 0,
-                    }),
+                    .corner_radius(10),
             );
         }
         let response = modal.show(ctx, |ui| {

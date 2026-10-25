@@ -760,7 +760,7 @@ pub fn dialog_style(ui: &mut egui::Ui) {
 }
 
 pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
-    egui::Frame::popup(&ctx.style())
+    egui::Frame::popup(&ctx.global_style())
         .inner_margin(egui::Margin::same(24))
         .corner_radius(10)
 }

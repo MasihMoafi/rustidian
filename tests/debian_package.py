@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -30,6 +31,11 @@ def main():
         run('dpkg-deb', '--extract', str(package), str(extracted))
         binary = extracted / 'usr/lib/rustidian/rustidian'
         assert hashlib.sha256(binary.read_bytes()).hexdigest() == original
+        declared = re.search(r'libc6 \(>= ([\d.]+)\)', run('dpkg-deb', '--field', str(package), 'Depends').stdout)
+        assert declared, 'The package must declare its glibc minimum'
+        symbols = run('objdump', '--dynamic-syms', str(binary)).stdout
+        for required in set(re.findall(r'GLIBC_([\d.]+)', symbols)):
+            run('dpkg', '--compare-versions', declared[1], 'ge', required)
         launcher = extracted / 'usr/bin/rustidian'
         assert run(str(launcher), '--version').stdout.startswith('Rustidian ')
         home = base / 'isolated home'; home.mkdir()
