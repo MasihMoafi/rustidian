@@ -5221,6 +5221,9 @@ def main():
                 capture("native-workspaces-restored-reading.png")
                 click_control("tab-full:Workspace B.md", hold=.15)
                 title_contains("Workspace B")
+                # Clicking a tab retains tab-bar focus for Left/Right navigation.
+                # Focus the restored document before checking its selection.
+                click_control("editor")
                 control_bounds("editor-focused")
                 modified_shortcut(xdo,"a");modified_shortcut(xdo,"c")
                 assert xdo("getwindowname",window).startswith("Workspace B")
