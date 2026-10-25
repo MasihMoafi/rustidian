@@ -81,7 +81,7 @@ def main():
         subprocess.run(['desktop-file-validate', str(desktop)], check=True)
         size = sum(path.stat().st_size for path in (package / 'usr').rglob('*') if path.is_file())
         dependencies = 'libc6 (>= ' + glibc + '), libstdc++6, libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libxkbcommon0, libwayland-client0, libegl1, libgl1, python3, zenity'
-        (package / 'DEBIAN/control').write_text('Package: rustidian\nVersion: ' + upstream + '-' + str(args.revision) + '\nArchitecture: amd64\nSection: editors\nPriority: optional\nMaintainer: Rustidian contributors\nInstalled-Size: ' + str((size + 1023) // 1024) + '\nDepends: ' + dependencies + '\nHomepage: https://github.com/MasihMoafi/rustidian\nDescription: Native Markdown notebook and source text editor\n Local vaults, linked notes and native editing. Early Linux alpha.\n Obsidian community plugins are not supported.\n')
+        (package / 'DEBIAN/control').write_text('Package: rustidian\nVersion: ' + upstream + '-' + str(args.revision) + '\nArchitecture: amd64\nSection: editors\nPriority: optional\nMaintainer: Rustidian contributors\nInstalled-Size: ' + str((size + 1023) // 1024) + '\nDepends: ' + dependencies + '\nHomepage: https://github.com/MasihMoafi/rustidian\nDescription: Native Markdown notebook and source text editor\n Local vaults, linked notes and native editing.\n Obsidian community plugins are not supported.\n')
         environment = dict(os.environ, SOURCE_DATE_EPOCH=os.environ.get('SOURCE_DATE_EPOCH', '0'))
         subprocess.run(['dpkg-deb', '--root-owner-group', '-Zgzip', '-z3', '--build', str(package), str(args.output.resolve())], check=True, env=environment)
     with args.output.open('rb') as incoming:

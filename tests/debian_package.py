@@ -17,14 +17,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--notices', type=Path, required=True)
+    parser.add_argument('--package', type=Path, help='Check this exact existing package instead of rebuilding it')
     parser.add_argument('--system', action='store_true')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     original = hashlib.sha256(args.binary.read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix='rustidian-debian-check-') as temporary:
         base = Path(temporary)
-        package = base / 'rustidian.deb'
-        run('python3', str(root / 'scripts/package-deb.py'), '--binary', str(args.binary), '--notices', str(args.notices), '--output', str(package))
+        package = args.package.resolve() if args.package else base / 'rustidian.deb'
+        if not args.package:
+            run('python3', str(root / 'scripts/package-deb.py'), '--binary', str(args.binary), '--notices', str(args.notices), '--output', str(package))
+        package_digest = hashlib.sha256(package.read_bytes()).hexdigest()
         assert run('dpkg-deb', '--field', str(package), 'Package').stdout.strip() == 'rustidian'
         assert run('dpkg-deb', '--field', str(package), 'Architecture').stdout.strip() == 'amd64'
         extracted = base / 'extracted package'
@@ -59,16 +62,18 @@ def main():
             try:
                 run('sudo', 'dpkg', '--install', str(package))
                 assert run('/usr/bin/rustidian', '--version').stdout.startswith('Rustidian ')
-                run('python3', str(root/'scripts/package-deb.py'), '--binary', str(args.binary), '--notices', str(args.notices), '--output', str(package), '--revision', '2')
-                run('sudo', 'dpkg', '--install', str(package))
+                upgraded = base / 'rustidian-upgrade.deb'
+                run('python3', str(root/'scripts/package-deb.py'), '--binary', str(args.binary), '--notices', str(args.notices), '--output', str(upgraded), '--revision', '2')
+                run('sudo', 'dpkg', '--install', str(upgraded))
                 assert run('dpkg-query', '--show', '--showformat=${Version}', 'rustidian').stdout.endswith('-2')
                 run('sudo', 'dpkg', '--remove', 'rustidian')
                 assert not Path('/usr/bin/rustidian').exists()
                 run('sudo', 'dpkg', '--purge', 'rustidian')
             finally:
                 subprocess.run(['sudo', 'dpkg', '--purge', 'rustidian'], capture_output=True)
+        assert hashlib.sha256(package.read_bytes()).hexdigest() == package_digest, 'Lifecycle checks modified the delivery package'
         assert all(path.read_bytes() == expected for path, expected in protected.items())
-        print(json.dumps({'status':'passed','system_install_upgrade_remove_purge':args.system,'exact_binary_sha256':original,'user_notes_recovery_and_demo_retained':True}))
+        print(json.dumps({'status':'passed','system_install_upgrade_remove_purge':args.system,'exact_binary_sha256':original,'package_sha256':package_digest,'user_notes_recovery_and_demo_retained':True}))
 
 
 if __name__ == '__main__':
