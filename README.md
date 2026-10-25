@@ -13,7 +13,9 @@
 
 **A native Markdown notebook for Linux. Your files, your folders, no account.**
 
-[Download Linux alpha](https://github.com/MasihMoafi/rustidian/releases) · [Quick start](#quick-start) · [Performance](#performance) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
+**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-amd64.deb)**
+
+[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
 
 Early alpha · Full Obsidian parity is unfinished
 
@@ -27,14 +29,22 @@ I built Rustidian for myself because every note editor I tried felt too slow, es
 
 ## Quick start
 
-The Linux x86_64 alpha is verified on X11; broader platform coverage remains open.
+Linux x86_64, **glibc 2.43 or newer**. Native UI checks use X11; Wayland is enabled, with broader coverage still open. Check your system with `ldd --version`.
 
-**Upgrading from alpha.1?** This package uses the `rustidian` command and includes the incremental undo, file-watcher fallback and file-link repairs. Existing settings, recent vaults and recovery are retained. For an older download, use the [alpha.1 instructions](https://github.com/MasihMoafi/rustidian/releases/tag/v0.1.0-alpha.1).
-
-Download `rustidian-linux-x86_64.tar.gz` and its matching `.sha256` file from [Releases](https://github.com/MasihMoafi/rustidian/releases), then:
+Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/SHA256SUMS), then run:
 
 ```sh
-sha256sum --check rustidian-linux-x86_64.tar.gz.sha256
+sha256sum --check --ignore-missing SHA256SUMS
+sudo apt install ./rustidian-linux-amd64.deb
+rustidian
+```
+
+The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. **The current build does not support Ubuntu 24.04's older glibc.**
+
+For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-x86_64.tar.gz) and the same checksums:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
 tar -xzf rustidian-linux-x86_64.tar.gz
 ./rustidian
 ```
@@ -48,6 +58,8 @@ The bundled demo opens immediately. To add Rustidian to your applications menu, 
 ```
 
 **Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases, math and other gaps are listed below. Keep Obsidian available for workflows the alpha does not cover.
+
+**Why don't Obsidian plugins work?** Rustidian's interface is native Rust with egui/eframe. Obsidian plugins require Obsidian's JavaScript API and often its browser DOM and CSS. Running them needs a compatibility runtime or individual feature ports; copying plugin folders is insufficient.
 
 Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rustidian retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
 

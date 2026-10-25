@@ -32,7 +32,7 @@ pub fn file_row(ui: &mut egui::Ui, path: &Path, title: &str, selected: bool) -> 
         let fill = if response.hovered() {
             theme::hover_fill(ui)
         } else if selected {
-            Color32::from_rgba_unmultiplied(23, 127, 131, 40)
+            theme::interactive(ui).gamma_multiply(0.16)
         } else {
             theme::hover_fill(ui)
         };
@@ -192,13 +192,13 @@ impl Tree {
                     open = Some(FileAction::Rename(path.clone()));
                     ui.close();
                 }
-                let delete = theme::menu_item(ui, theme::Icon::Trash, "Delete");
+                let (delete, activated) = theme::delete_menu_item(ui, "Delete");
                 crate::ui_probe::record(
                     ui.ctx(),
                     format!("folder-delete:{}", path.display()),
                     delete.rect,
                 );
-                if delete.clicked() {
+                if activated {
                     open = Some(FileAction::Trash(path));
                     ui.close();
                 }
@@ -275,7 +275,7 @@ impl Tree {
                     open = Some(FileAction::Rename(path.clone()));
                     ui.close();
                 }
-                if theme::menu_item(ui, theme::Icon::Trash, "Delete").clicked() {
+                if theme::delete_menu_item(ui, "Delete").1 {
                     open = Some(FileAction::Trash(path.clone()));
                     ui.close();
                 }

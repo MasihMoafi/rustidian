@@ -260,7 +260,9 @@ impl Manager {
         let mut select_version = None;
         let mut close = false;
         if self.open {
-            let modal = egui::Modal::new(egui::Id::unique("file-recovery")).show(ctx, |ui| {
+            let dialog =
+                egui::Modal::new(egui::Id::unique("file-recovery")).frame(theme::dialog_frame(ctx));
+            let modal = dialog.show(ctx, |ui| {
                 theme::dialog_style(ui);
                 ui.set_width(786.0_f32.min((ctx.content_rect().width() - 48.0).max(280.0)));
                 let height = (ctx.content_rect().height() - 190.0).clamp(220.0, 580.0);
@@ -559,19 +561,18 @@ impl Manager {
         if self.confirm_clear {
             let mut cancel = false;
             let mut clear = false;
-            let modal = egui::Modal::new(egui::Id::unique("clear-local-history")).show(ctx, |ui| {
+            let dialog = egui::Modal::new(egui::Id::unique("clear-local-history"))
+                .frame(theme::dialog_frame(ctx));
+            let modal = dialog.show(ctx, |ui| {
                 theme::dialog_style(ui);
                 ui.set_width(390.0);
-                ui.heading("Clear history?");
+                cancel |= theme::dialog_header(ui, "Clear history?", "Close dialog").clicked();
                 ui.label("This will permanently delete all local snapshots for this vault.");
-                ui.horizontal(|ui| {
-                    let button = ui.button("Cancel");
-                    ui_probe::record(ctx, "recovery-clear-cancel", button.rect);
-                    cancel = button.clicked();
-                    let button = ui.button("Clear");
-                    ui_probe::record(ctx, "recovery-clear-confirm", button.rect);
-                    clear = button.clicked();
-                });
+                let (confirm, dismiss) = theme::dialog_actions(ui, "Clear", true);
+                ui_probe::record(ctx, "recovery-clear-cancel", dismiss.rect);
+                ui_probe::record(ctx, "recovery-clear-confirm", confirm.rect);
+                cancel |= dismiss.clicked();
+                clear = confirm.clicked();
             });
             if cancel || modal.should_close() {
                 self.confirm_clear = false;

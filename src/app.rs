@@ -22,7 +22,6 @@ use std::{
 #[derive(Clone, Copy, PartialEq)]
 enum Dialog {
     QuickOpen,
-    NewNote,
     NewFolder,
     SaveCopy,
     OpenVault,
@@ -45,6 +44,8 @@ enum Pending {
     RestoreSnapshot(Box<crate::recovery_ui::Restore>),
 }
 
+struct DraggedTab(u64);
+
 pub struct NotesApp {
     pub(crate) vault: Option<Vault>,
     tree: Tree,
@@ -58,12 +59,14 @@ pub struct NotesApp {
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
+    pub(crate) palette: theme::palette::Palette,
+    pub(crate) confirm_trash: bool,
+    dialog_skip_trash: bool,
     cache: CommonMarkCache,
     dialog: Option<Dialog>,
     dialog_input: String,
     dialog_path: Option<PathBuf>,
     dialog_focus: bool,
-    dialog_select_all: bool,
     dialog_selected: usize,
     settings_page: settings_ui::Page,
     files: rustidian::search::FileMatcher,
@@ -74,7 +77,7 @@ pub struct NotesApp {
     started: Instant,
     first_frame: bool,
     window_title: String,
-    ctx: egui::Context,
+    pub(crate) ctx: egui::Context,
     loading: Option<Receiver<Result<Vault, String>>>,
     watcher: Option<Box<dyn notify::Watcher>>,
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
@@ -143,12 +146,14 @@ impl NotesApp {
             show_left: true,
             show_right: false,
             dark: true,
+            palette: Default::default(),
             cache: CommonMarkCache::default(),
             dialog: None,
             dialog_input: String::new(),
+            confirm_trash: true,
+            dialog_skip_trash: false,
             dialog_path: None,
             dialog_focus: false,
-            dialog_select_all: false,
             dialog_selected: 0,
             settings_page: Default::default(),
             files: rustidian::search::FileMatcher::new(Vec::new()),
@@ -862,7 +867,7 @@ impl NotesApp {
             .get(index)
             .is_some_and(|tab| tab.document.is_blank())
         {
-            self.ask(Dialog::NewNote);
+            self.create_note();
             return false;
         }
         if let (Some(vault), Some(tab)) = (&mut self.vault, self.tabs.get_mut(index)) {
@@ -914,6 +919,7 @@ impl NotesApp {
     }
 
     fn ask(&mut self, dialog: Dialog) {
+        self.dialog_skip_trash = false;
         self.template_source = (dialog == Dialog::InsertTemplate)
             .then(|| {
                 self.tabs
@@ -957,7 +963,6 @@ impl NotesApp {
                 .get(self.active)
                 .map(|tab| tab.document.path.display().to_string())
                 .unwrap_or_default(),
-            Dialog::NewNote => "Untitled.md".into(),
             Dialog::NewFolder => self
                 .tabs
                 .get(self.active)
@@ -981,13 +986,16 @@ impl NotesApp {
         self.dialog_selected = 0;
         self.dialog = Some(dialog);
         self.dialog_focus = true;
-        self.dialog_select_all = dialog == Dialog::NewNote;
     }
 
     fn ask_file(&mut self, dialog: Dialog, path: PathBuf) {
         self.ask(dialog);
         self.dialog_input = path.display().to_string();
         self.dialog_path = Some(path);
+        if dialog == Dialog::TrashNote && !self.confirm_trash && self.submit_dialog(dialog) {
+            self.dialog = None;
+            self.focus_editor();
+        }
     }
 
     fn save_all(&mut self) -> bool {
@@ -1250,7 +1258,7 @@ impl NotesApp {
             self.ask(Dialog::QuickOpen);
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::N)) {
-            self.ask(Dialog::NewNote);
+            self.create_note();
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::P)) {
             self.ask(Dialog::Commands);
@@ -1279,15 +1287,10 @@ impl NotesApp {
                     self.show_left = !self.show_left;
                 }
 
-                let new_note = theme::icon_toggle(
-                    ui,
-                    Icon::NewNote,
-                    "New note · Ctrl+N",
-                    self.dialog == Some(Dialog::NewNote),
-                );
+                let new_note = theme::icon_toggle(ui, Icon::NewNote, "New note · Ctrl+N", false);
                 crate::ui_probe::record(ui.ctx(), "ribbon-new-note", new_note.rect);
                 if new_note.clicked() {
-                    self.ask(Dialog::NewNote);
+                    self.create_note();
                 }
                 let graph = ui.add_enabled_ui(self.vault.is_some(), |ui| {
                     theme::icon_toggle(
@@ -1418,9 +1421,7 @@ impl NotesApp {
                         vaults::resolve_input(&absolute, default.as_deref(), roots)?
                     };
                 if target.1.is_none() {
-                    return Err(
-                        "Choose an existing Markdown (.md) or plain-text (.txt) file.".into(),
-                    );
+                    return Err("Choose an existing Markdown, text or source-code file.".into());
                 }
                 Ok(target)
             })(),
@@ -1497,7 +1498,7 @@ impl NotesApp {
         }
         let mut open = None;
         let mut action = None;
-        ScrollArea::vertical()
+        theme::sidebar_scroll()
             .id_salt("bookmarks")
             .max_height((ui.available_height() - 64.0).max(0.0))
             .show(ui, |ui| {
@@ -1778,15 +1779,10 @@ impl NotesApp {
                             ui.set_min_height(40.0);
                             ui.spacing_mut().item_spacing.x = 2.0;
                             ui.add_space(74.0);
-                            if theme::icon_toggle(
-                                ui,
-                                Icon::NewNote,
-                                "New note · Ctrl+N",
-                                self.dialog == Some(Dialog::NewNote),
-                            )
-                            .clicked()
+                            if theme::icon_toggle(ui, Icon::NewNote, "New note · Ctrl+N", false)
+                                .clicked()
                             {
-                                self.ask(Dialog::NewNote);
+                                self.create_note();
                             }
                             let new_folder = theme::icon_toggle(
                                 ui,
@@ -1838,6 +1834,7 @@ impl NotesApp {
                             .desired_width(f32::INFINITY)
                             .font(FontId::proportional(14.0)),
                     );
+                    crate::ui_probe::record(ui.ctx(), "search-input", input.rect);
                     if self.search_focus {
                         input.request_focus();
                         self.search_focus = false;
@@ -1857,7 +1854,7 @@ impl NotesApp {
                                 .small()
                                 .weak(),
                         );
-                        ScrollArea::vertical()
+                        let scroll = theme::sidebar_scroll()
                             .id_salt("search-results")
                             .max_height((ui.available_height() - 64.0).max(0.0))
                             .show_rows(ui, 52.0, results.len(), |ui, rows| {
@@ -1897,6 +1894,7 @@ impl NotesApp {
                                     );
                                 }
                             });
+                        crate::ui_probe::record(ui.ctx(), "search-viewport", scroll.inner_rect);
                     }
                 } else {
                     ui.label(
@@ -1911,7 +1909,7 @@ impl NotesApp {
                         .weak(),
                     );
                     ui.add_space(8.0);
-                    let mut tree_scroll = ScrollArea::vertical()
+                    let mut tree_scroll = theme::sidebar_scroll()
                         .id_salt("file-tree")
                         .max_height((ui.available_height() - 64.0).max(0.0));
                     if self.reset_tree_scroll {
@@ -2059,7 +2057,7 @@ impl NotesApp {
                     }
                 });
                 ui.add_space(10.0);
-                ScrollArea::vertical().show(ui, |ui| {
+                theme::sidebar_scroll().show(ui, |ui| {
                     if self.right_tab == 0 {
                         ui.horizontal(|ui| {
                             ui.add(theme::icon_image(
@@ -2230,11 +2228,7 @@ impl NotesApp {
     }
 
     fn content(&mut self, ui: &mut egui::Ui) {
-        let background = if self.dark {
-            theme::DARK_BG
-        } else {
-            Color32::from_rgb(247, 246, 242)
-        };
+        let background = ui.visuals().window_fill;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(background))
             .show(ui, |ui| {
@@ -2272,7 +2266,7 @@ impl NotesApp {
                         );
                         ui.add_space(22.0);
                         if ui.link("Create new note (Ctrl+N)").clicked() {
-                            self.ask(Dialog::NewNote);
+                            self.create_note();
                         }
                         if ui.link("Go to file (Ctrl+O)").clicked() {
                             self.ask(Dialog::QuickOpen);
@@ -2391,7 +2385,12 @@ impl NotesApp {
                                             ("Rename or move…", Dialog::RenameNote),
                                             ("Delete file", Dialog::TrashNote),
                                         ] {
-                                            if ui.button(label).clicked() {
+                                            let activated = if dialog == Dialog::TrashNote {
+                                                theme::delete_menu_item(ui, label).1
+                                            } else {
+                                                ui.button(label).clicked()
+                                            };
+                                            if activated {
                                                 self.ask_file(
                                                     dialog,
                                                     self.tabs[self.active].document.path.clone(),
@@ -2431,13 +2430,19 @@ impl NotesApp {
                                         ("Rename or move…", Dialog::RenameNote),
                                         ("Delete file", Dialog::TrashNote),
                                     ] {
-                                        let response = ui.button(label);
+                                        let (response, activated) = if dialog == Dialog::TrashNote {
+                                            theme::delete_menu_item(ui, label)
+                                        } else {
+                                            let response = ui.button(label);
+                                            let activated = response.clicked();
+                                            (response, activated)
+                                        };
                                         crate::ui_probe::record(
                                             ui.ctx(),
                                             format!("note-menu:{label}"),
                                             response.rect,
                                         );
-                                        if response.clicked() {
+                                        if activated {
                                             self.ask_file(
                                                 dialog,
                                                 self.tabs[self.active].document.path.clone(),
@@ -2505,10 +2510,6 @@ impl NotesApp {
         crate::editor_ui::find_bar(ui, &mut self.find, tab, id);
         let mut follow = None;
         let anchor = self.pending_anchor.take();
-        ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
-        ui.spacing_mut().scroll.bar_width = 6.0;
-        ui.spacing_mut().scroll.bar_inner_margin = 4.0;
-        ui.spacing_mut().scroll.bar_outer_margin = 2.0;
         let mut add_property = false;
         let mut renamed_title = None;
         let title = tab.document.title();
@@ -2561,6 +2562,9 @@ impl NotesApp {
                                 {
                                     renamed_title = Some((tab.document.path.clone(), name));
                                 }
+                                if self.title.take_body_focus() {
+                                    self.editor.focus = true;
+                                }
                                 if self.editor_preferences.inline_title {
                                     ui.add_space(16.218);
                                 }
@@ -2591,6 +2595,7 @@ impl NotesApp {
                     });
                 }
             });
+        crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
         crate::ui_probe::metric(
             ui.ctx(),
             "document-scroll-y",
@@ -2629,6 +2634,7 @@ impl NotesApp {
         crate::ui_probe::metric(ui.ctx(), "tab-count", self.tabs.len() as f32);
         let mut close = None;
         let mut pin = None;
+        let mut moved = None;
         egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 0))
@@ -2676,15 +2682,39 @@ impl NotesApp {
                                     ui.add_space(7.0);
                                     ui.horizontal(|ui| {
                                         for (index, tab) in self.tabs.iter().enumerate() {
-                                            let (rect, response) = ui.allocate_exact_size(
-                                                egui::vec2(tab_width, 33.0),
-                                                egui::Sense::click(),
+                                            let (_, rect) =
+                                                ui.allocate_space(egui::vec2(tab_width, 33.0));
+                                            let response = ui.interact(
+                                                rect,
+                                                ui.scope_id().with(("tab", tab.id())),
+                                                egui::Sense::click_and_drag(),
                                             );
+                                            response.dnd_set_drag_payload(DraggedTab(tab.id()));
+                                            if response.drag_started() {
+                                                self.active = index;
+                                                self.editor.focus = false;
+                                                response.request_focus();
+                                            }
+                                            response.widget_info(|| {
+                                                egui::WidgetInfo::selected(
+                                                    egui::Role::Tab,
+                                                    ui.is_enabled(),
+                                                    index == self.active,
+                                                    tab.title(),
+                                                )
+                                            });
                                             let active = index == self.active;
                                             let show_close = tab.pinned
                                                 || active
                                                 || ui.rect_contains_pointer(rect);
-                                            if active && reveal_active {
+                                            if active
+                                                && reveal_active
+                                                && !egui::DragAndDrop::has_payload_of_type::<
+                                                    DraggedTab,
+                                                >(
+                                                    ui.ctx()
+                                                )
+                                            {
                                                 ui.scroll_to_rect_animation(
                                                     rect,
                                                     Some(Align::Center),
@@ -2801,8 +2831,60 @@ impl NotesApp {
                                                 }
                                             } else if response.clicked() {
                                                 self.active = index;
-                                                self.editor.focus =
-                                                    !matches!(tab.view, View::Read | View::Graph);
+                                                self.editor.focus = false;
+                                                response.request_focus();
+                                            }
+                                            if response.has_focus() {
+                                                ui.memory_mut(|memory| {
+                                                    memory.set_focus_lock_filter(
+                                                        response.id,
+                                                        egui::EventFilter {
+                                                            horizontal_arrows: true,
+                                                            ..Default::default()
+                                                        },
+                                                    );
+                                                });
+                                                let target = ui.input_mut(|input| {
+                                                    if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::ArrowLeft,
+                                                    ) {
+                                                        Some(
+                                                            (index + self.tabs.len() - 1)
+                                                                % self.tabs.len(),
+                                                        )
+                                                    } else if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::ArrowRight,
+                                                    ) {
+                                                        Some((index + 1) % self.tabs.len())
+                                                    } else if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::Home,
+                                                    ) {
+                                                        Some(0)
+                                                    } else if input.consume_key(
+                                                        egui::Modifiers::NONE,
+                                                        Key::End,
+                                                    ) {
+                                                        Some(self.tabs.len() - 1)
+                                                    } else {
+                                                        None
+                                                    }
+                                                });
+                                                if let Some(target) = target {
+                                                    self.active = target;
+                                                    self.editor.focus = false;
+                                                    ui.memory_mut(|memory| {
+                                                        memory.request_focus(
+                                                            ui.scope_id().with((
+                                                                "tab",
+                                                                self.tabs[target].id(),
+                                                            )),
+                                                        )
+                                                    });
+                                                    ui.ctx().request_repaint();
+                                                }
                                             }
                                             response.context_menu(|ui| {
                                                 theme::menu_style(ui);
@@ -2833,6 +2915,31 @@ impl NotesApp {
                                                     ui.close();
                                                 }
                                             });
+                                            if response.dnd_hover_payload::<DraggedTab>().is_some()
+                                            {
+                                                let after = ui
+                                                    .input(|input| input.pointer.latest_pos())
+                                                    .is_some_and(|pointer| {
+                                                        pointer.x > rect.center().x
+                                                    });
+                                                let x =
+                                                    if after { rect.right() } else { rect.left() };
+                                                ui.painter().line_segment(
+                                                    [
+                                                        egui::pos2(x, rect.top() + 3.0),
+                                                        egui::pos2(x, rect.bottom() - 3.0),
+                                                    ],
+                                                    Stroke::new(3.0, theme::accent(ui)),
+                                                );
+                                                if let Some(payload) =
+                                                    response.dnd_release_payload::<DraggedTab>()
+                                                {
+                                                    moved = Some((
+                                                        payload.0,
+                                                        index + usize::from(after),
+                                                    ));
+                                                }
+                                            }
                                             if active {
                                                 ui.painter().line_segment(
                                                     [rect.left_bottom(), rect.right_bottom()],
@@ -2841,6 +2948,29 @@ impl NotesApp {
                                             }
                                         }
                                     });
+                                    if egui::DragAndDrop::has_payload_of_type::<DraggedTab>(
+                                        ui.ctx(),
+                                    ) && let Some(pointer) =
+                                        ui.input(|input| input.pointer.latest_pos())
+                                    {
+                                        let clip = ui.clip_rect();
+                                        if (clip.top()..=clip.bottom()).contains(&pointer.y) {
+                                            let direction = if pointer.x < clip.left() + 24.0 {
+                                                1.0
+                                            } else if pointer.x > clip.right() - 24.0 {
+                                                -1.0
+                                            } else {
+                                                0.0
+                                            };
+                                            if direction != 0.0 {
+                                                ui.scroll_with_delta(egui::vec2(
+                                                    direction * 12.0,
+                                                    0.0,
+                                                ));
+                                                ui.ctx().request_repaint();
+                                            }
+                                        }
+                                    }
                                 });
                         },
                     );
@@ -2855,6 +2985,17 @@ impl NotesApp {
                     }
                 });
             });
+        if let Some((id, slot)) = moved
+            && let Some(from) = self.tabs.iter().position(|tab| tab.id() == id)
+        {
+            let to = slot.saturating_sub(usize::from(from < slot));
+            if from != to {
+                let tab = self.tabs.remove(from);
+                self.tabs.insert(to, tab);
+                self.active = to;
+                self.persist_session();
+            }
+        }
         if let Some(index) = close {
             self.request_close_tab(index);
         }
@@ -2878,8 +3019,9 @@ impl NotesApp {
                 ctx.request_repaint();
             } else {
                 let mut cancel = false;
-                let response =
-                    egui::Modal::new(egui::Id::unique("system-open-picker")).show(ctx, |ui| {
+                let response = egui::Modal::new(egui::Id::unique("system-open-picker"))
+                    .frame(theme::dialog_frame(ctx))
+                    .show(ctx, |ui| {
                         theme::dialog_style(ui);
                         ui.set_width(400.0);
                         ui.heading(match kind {
@@ -2903,7 +3045,8 @@ impl NotesApp {
             return;
         }
         if let Some(pending) = self.pending.clone() {
-            let response = egui::Modal::new(egui::Id::unique("unsaved-changes")).show(ctx, |ui| {
+            let response = egui::Modal::new(egui::Id::unique("unsaved-changes"))
+            .frame(theme::dialog_frame(ctx)).show(ctx, |ui| {
                 theme::dialog_style(ui);
                 ui.set_width(440.0);
                 ui.heading("Keep your changes?");
@@ -3018,13 +3161,12 @@ impl NotesApp {
         };
         let title = match dialog {
             Dialog::QuickOpen => "Open a file",
-            Dialog::NewNote => "New note",
             Dialog::NewFolder => "New folder",
             Dialog::SaveCopy => "Save a copy",
             Dialog::OpenVault => "Open vault",
             Dialog::Commands => "Command palette",
             Dialog::RenameNote => "Rename or move",
-            Dialog::TrashNote => "Move to system Trash",
+            Dialog::TrashNote => "Move to Trash?",
             Dialog::AddProperty => "Add property",
             Dialog::BookmarkTitle => "Edit bookmark title",
             Dialog::Settings => "Settings",
@@ -3058,23 +3200,13 @@ impl NotesApp {
         let mut select = None;
         let mut run_command = None;
         let mut recovery_action = None;
-        let mut modal = egui::Modal::new(egui::Id::unique("main-dialog"));
+        let mut modal =
+            egui::Modal::new(egui::Id::unique("main-dialog")).frame(theme::dialog_frame(ctx));
         if dialog == Dialog::Settings {
-            modal = modal.frame(
-                egui::Frame::new()
-                    .fill(if self.dark {
-                        Color32::from_rgb(30, 30, 30)
-                    } else {
-                        Color32::WHITE
-                    })
-                    .stroke(Stroke::new(
-                        1.0,
-                        Color32::from_gray(if self.dark { 60 } else { 210 }),
-                    ))
-                    .corner_radius(10),
-            );
+            modal = modal.frame(theme::dialog_frame(ctx).inner_margin(0));
         }
         let response = modal.show(ctx, |ui| {
+            theme::dialog_style(ui);
             if dialog == Dialog::Settings {
                 self.settings_ui(ui, ctx, &mut close, &mut recovery_action);
                 return;
@@ -3084,14 +3216,13 @@ impl NotesApp {
             } else {
                 500.0
             });
-            theme::dialog_style(ui);
             if dialog != Dialog::Commands {
-                ui.heading(title);
-                ui.add_space(10.0);
+                close |= theme::dialog_header(ui, title, "Close dialog").clicked();
+                ui.add_space(8.0);
             }
             let hint = match dialog {
                 Dialog::QuickOpen => "Find a file…",
-                Dialog::NewNote | Dialog::SaveCopy => "Folder/Note.md",
+                Dialog::SaveCopy => "Folder/Note.md",
                 Dialog::NewFolder => "Folder/New folder",
                 Dialog::OpenVault => "/path/to/your/vault",
                 Dialog::Commands => "Select a command…",
@@ -3122,33 +3253,21 @@ impl NotesApp {
             let focus_settled = ui.memory(|memory| {
                 memory.has_focus(input_id) && memory.had_focus_last_frame(input_id)
             });
-            if self.dialog_select_all && !ui.is_sizing_pass() {
-                let mut state =
-                    egui::text_edit::TextEditState::load(ctx, input_id).unwrap_or_default();
-                let end = self.dialog_input.chars().count();
-                let start = Path::new(&self.dialog_input)
-                    .file_name()
-                    .map_or(0, |name| end - name.to_string_lossy().chars().count());
-                state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::two(
-                        egui::text::CCursor::new(start),
-                        egui::text::CCursor::new(end),
-                    )));
-                state.store(ctx, input_id);
-                self.dialog_select_all = false;
-            }
-            if self.dialog_focus && !ui.memory(|memory| memory.has_focus(input_id)) {
+            if dialog != Dialog::TrashNote
+                && self.dialog_focus && !ui.memory(|memory| memory.has_focus(input_id)) {
                 ui.memory_mut(|memory| memory.request_focus(input_id));
             }
-            let input = ui.add_enabled(
-                dialog != Dialog::TrashNote,
-                TextEdit::singleline(&mut self.dialog_input)
+            let input = if dialog == Dialog::TrashNote {
+                let response = ui.strong(&self.dialog_input);
+                crate::ui_probe::record(ctx, "trash-target", response.rect);
+                response
+            } else {
+                ui.add(TextEdit::singleline(&mut self.dialog_input)
                     .id(input_id)
                     .desired_width(f32::INFINITY)
-                    .hint_text(hint),
-            );
-            if self.dialog_focus {
+                    .hint_text(hint))
+            };
+            if self.dialog_focus && dialog != Dialog::TrashNote {
                 // A new Area/menu may still be completing its first layout pass.
                 // Claim before input, then retain focus until it survives a pass.
                 if !ui.memory(|memory| memory.has_focus(input_id)) {
@@ -3160,7 +3279,9 @@ impl NotesApp {
                     ctx.request_repaint();
                 }
             }
-            crate::ui_probe::record(ui.ctx(), "dialog-input", input.rect);
+            if dialog != Dialog::TrashNote {
+                crate::ui_probe::record(ui.ctx(), "dialog-input", input.rect);
+            }
             if input.has_focus() {
                 crate::ui_probe::record(ui.ctx(), "dialog-input-focused", input.rect);
             }
@@ -3390,6 +3511,10 @@ impl NotesApp {
                             "The file will be recoverable from your desktop’s Trash."
                         });
                     }
+                    if dialog == Dialog::TrashNote {
+                        let response = ui.checkbox(&mut self.dialog_skip_trash, "Don’t ask again");
+                        crate::ui_probe::record(ui.ctx(), "trash-dont-ask", response.rect);
+                    }
                     if dialog == Dialog::RenameNote {
                         ui.label("Links will be updated. Enter a new path inside this vault.");
                     }
@@ -3400,27 +3525,22 @@ impl NotesApp {
                                 .weak(),
                         );
                     }
-                    submit = enter;
-                    ui.horizontal(|ui| {
-                        submit |= ui
-                            .button(match dialog {
-                                Dialog::OpenVault => "Open folder",
-                                Dialog::NewFolder => "Create folder",
-                                Dialog::RenameNote => "Rename",
-                                Dialog::TrashNote => "Move to Trash",
-                                Dialog::AddProperty => "Add property",
-                                Dialog::SaveCopy => "Save copy",
-                                Dialog::BookmarkTitle => "Save title",
-                                _ => "Create note",
-                            })
-                            .clicked();
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
-                    });
+                    let (action, cancel) = theme::dialog_actions(ui, match dialog {
+                        Dialog::OpenVault => "Open folder",
+                        Dialog::NewFolder => "Create folder",
+                        Dialog::RenameNote => "Rename",
+                        Dialog::TrashNote => "Move to Trash",
+                        Dialog::AddProperty => "Add property",
+                        Dialog::SaveCopy => "Save copy",
+                        Dialog::BookmarkTitle => "Save title",
+                        _ => unreachable!(),
+                    }, dialog == Dialog::TrashNote);
+                    submit = action.clicked() || (enter && !cancel.has_focus());
+                    close |= cancel.clicked() || (enter && cancel.has_focus());
                 }
             }
         });
+        crate::ui_probe::record(ctx, "dialog-bounds", response.response.rect);
         if response.should_close() {
             close = true;
         }
@@ -3459,7 +3579,7 @@ impl NotesApp {
             }
             close = true;
         }
-        if submit {
+        if submit && !close {
             close = self.submit_dialog(dialog);
         }
         if close {
@@ -3469,11 +3589,8 @@ impl NotesApp {
                 if !submit && self.tabs.iter().all(|tab| !tab.document.dirty()) {
                     self.error = None;
                 }
-                self.focus_editor();
             }
-            if dialog == Dialog::InsertTemplate {
-                self.focus_editor();
-            }
+            self.focus_editor();
         }
     }
 
@@ -3768,6 +3885,9 @@ impl NotesApp {
                     };
                 }
                 Ok(None) => {
+                    if self.dialog_skip_trash {
+                        self.confirm_trash = false;
+                    }
                     let active_id = self.tabs.get(self.active).map(Tab::id);
                     let deleted_active = self
                         .tabs
@@ -3829,14 +3949,11 @@ impl NotesApp {
             return false;
         }
         let mut document = Document::new(path);
-        document.text = if dialog == Dialog::SaveCopy {
-            self.tabs
-                .get(self.active)
-                .map(|tab| tab.document.text.clone())
-                .unwrap_or_default()
-        } else {
-            format!("# {}\n\n", document.title())
-        };
+        document.text = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.document.text.clone())
+            .unwrap_or_default();
         let Some(vault) = &mut self.vault else {
             self.error = Some("Open a vault before creating a note.".into());
             return false;
@@ -3998,7 +4115,7 @@ impl NotesApp {
                 self.editor.insert_text(tab, text);
             }
             "Open settings" => self.ask(Dialog::Settings),
-            "New note" => self.ask(Dialog::NewNote),
+            "New note" => self.create_note(),
             "New folder" => self.ask(Dialog::NewFolder),
             "Add property" => self.ask(Dialog::AddProperty),
             "Rename or move file" => {
@@ -4107,6 +4224,39 @@ impl NotesApp {
         })
     }
 
+    fn create_note(&mut self) {
+        let Some(vault) = &mut self.vault else {
+            self.error = Some("Open a vault before creating a note.".into());
+            return;
+        };
+        match vault.create_untitled() {
+            Ok(document) => {
+                let path = document.path.clone();
+                let title = document.title();
+                self.refresh_file_views();
+                self.dialog = None;
+                self.error = None;
+                self.status = format!("Created {}", path.display());
+                if self
+                    .tabs
+                    .get(self.active)
+                    .is_some_and(|tab| tab.document.is_blank() && !tab.pinned)
+                {
+                    self.tabs[self.active] = Tab::new(document);
+                } else {
+                    self.tabs.push(Tab::new(document));
+                    self.active = self.tabs.len() - 1;
+                }
+                self.set_view(View::Live);
+                if self.editor_preferences.inline_title {
+                    self.editor.focus = false;
+                    self.title.begin_edit(&path, &title);
+                }
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
     fn open_daily(&mut self) {
         self.open_created_note(rustidian::note_aids::Config::create_daily);
     }
@@ -4200,6 +4350,11 @@ impl eframe::App for NotesApp {
             })
         });
         self.background(&ctx);
+        if crate::table_layout::take_changed(&ctx)
+            && let Err(error) = self.write_session()
+        {
+            self.error = Some(format!("Table widths weren’t saved: {error}"));
+        }
         self.shortcuts(&ctx);
         let title = format!(
             "{} — {} — {}",

@@ -19,6 +19,8 @@ struct Session {
     right: bool,
     dark: bool,
     #[serde(default)]
+    palette: theme::palette::Palette,
+    #[serde(default)]
     sort_descending: bool,
     #[serde(default)]
     bookmarks: rustidian::bookmarks::Bookmarks,
@@ -42,6 +44,10 @@ struct Session {
     recovery_config: Option<rustidian::recovery::Config>,
     #[serde(default)]
     always_update_links: Option<bool>,
+    #[serde(default)]
+    confirm_trash: Option<bool>,
+    #[serde(default)]
+    table_layouts: crate::table_layout::Layouts,
 }
 
 fn default_sidebars() -> [f32; 2] {
@@ -88,6 +94,7 @@ impl Session {
 // The persisted state contains paths and layout, never unsaved note contents.
 impl NotesApp {
     pub(crate) fn restore_session(&mut self, ctx: &egui::Context) -> bool {
+        crate::table_layout::restore(ctx, Default::default());
         let Some(vault) = &self.vault else {
             return false;
         };
@@ -102,6 +109,7 @@ impl NotesApp {
         };
         (self.tabs, self.active) = session.restore_tabs(vault);
         self.show_left = session.left;
+        crate::table_layout::restore(ctx, session.table_layouts);
         self.show_right = session.right;
         self.sidebar_widths = if session.sidebar_widths.iter().all(|width| width.is_finite()) {
             [
@@ -114,12 +122,15 @@ impl NotesApp {
         self.restore_sidebars = [true; 2];
         self.right_tab = session.right_tab.min(2);
         self.dark = session.dark;
+        self.palette = session.palette;
+        theme::palette::select(ctx, self.palette);
         self.ui_zoom = if session.ui_zoom.is_finite() {
             session.ui_zoom.clamp(0.75, 1.5)
         } else {
             1.0
         };
         self.autosave_enabled = session.autosave_enabled;
+        self.confirm_trash = session.confirm_trash.unwrap_or(true);
         if let Some(size) = session.document_font_size {
             self.document_font_size = size.clamp(10, 30);
         }
@@ -174,6 +185,7 @@ impl NotesApp {
             left: self.show_left,
             right: self.show_right,
             dark: self.dark,
+            palette: self.palette,
             sort_descending: self.sort_descending,
             bookmarks: self.bookmarks.clone(),
             bookmarks_open: self.show_bookmarks,
@@ -186,6 +198,8 @@ impl NotesApp {
             sidebar_widths: self.sidebar_widths,
             recovery_config: Some(self.recovery_config.clone()),
             always_update_links: Some(self.always_update_links),
+            confirm_trash: Some(self.confirm_trash),
+            table_layouts: crate::table_layout::snapshot(&self.ctx),
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {

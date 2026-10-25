@@ -141,23 +141,15 @@ impl Manager {
         let mut selected = self.poll_picker();
         let mut close = false;
         let mut forget = None;
-        let response = egui::Modal::new(egui::Id::unique("vault-manager")).show(ctx, |ui| {
+        let modal =
+            egui::Modal::new(egui::Id::unique("vault-manager")).frame(theme::dialog_frame(ctx));
+        let response = modal.show(ctx, |ui| {
             theme::dialog_style(ui);
-            for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
-                ui.style_mut()
-                    .text_styles
-                    .insert(style, FontId::proportional(13.0));
-            }
             ui.set_width(740.0);
             ui_probe::record(ctx, "vault-manager", ui.max_rect());
-            ui.horizontal(|ui| {
-                ui.heading("Open another vault");
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let button = theme::icon_button(ui, theme::Icon::Close, "Close vault chooser");
-                    ui_probe::record(ctx, "vault-manager-close", button.rect);
-                    close |= button.clicked();
-                });
-            });
+            let button = theme::dialog_header(ui, "Open another vault", "Close vault chooser");
+            ui_probe::record(ctx, "vault-manager-close", button.rect);
+            close |= button.clicked();
             ui.add_space(16.0);
             ui.add_enabled_ui(!loading && !self.picker.active(), |ui| {
                 ui.horizontal_top(|ui| {

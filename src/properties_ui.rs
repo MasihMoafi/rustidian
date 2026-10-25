@@ -121,6 +121,14 @@ pub struct Properties {
 impl Properties {
     /// Returns true when the user requests another property.
     pub fn show(&mut self, ui: &mut egui::Ui, tab: &mut Tab) -> bool {
+        ui.scope(|ui| {
+            crate::theme::interface_style(ui);
+            self.show_contents(ui, tab)
+        })
+        .inner
+    }
+
+    fn show_contents(&mut self, ui: &mut egui::Ui, tab: &mut Tab) -> bool {
         let parsed = match metadata::frontmatter(&tab.document.text) {
             Ok(Some(parsed)) => parsed,
             Ok(None) => return false,
@@ -153,12 +161,7 @@ impl Properties {
         let heading = ui
             .scope(|ui| {
                 ui.spacing_mut().button_padding = egui::Vec2::ZERO;
-                ui.add(
-                    egui::Button::new(
-                        RichText::new("Properties").size(crate::theme::document_size(ui, 18.0)),
-                    )
-                    .frame_when_inactive(false),
-                )
+                ui.add(egui::Button::new(RichText::new("Properties")).frame_when_inactive(false))
             })
             .inner;
         crate::ui_probe::record(ui.ctx(), "properties:toggle", heading.rect);
@@ -430,13 +433,9 @@ impl Properties {
         let add = ui
             .scope(|ui| {
                 ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
-                let fill = if ui.visuals().dark_mode {
-                    egui::Color32::from_rgb(34, 41, 44)
-                } else {
-                    egui::Color32::from_rgb(220, 230, 225)
-                };
+                let fill = crate::theme::hover_fill(ui);
                 ui.add(
-                    egui::Button::new(RichText::new("+ Add property").size(15.75))
+                    egui::Button::new("+ Add property")
                         .fill(fill)
                         .corner_radius(6)
                         .min_size(egui::vec2(0.0, 31.5)),

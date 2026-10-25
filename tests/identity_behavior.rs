@@ -1,5 +1,7 @@
 use rustidian::paths::app_directory;
-use std::{fs, process::Command};
+use std::fs;
+#[cfg(feature = "desktop")]
+use std::process::Command;
 
 #[test]
 fn profile_namespace_keeps_recovery_sessions_and_existing_rustidian_profiles() {
@@ -64,6 +66,7 @@ fn profile_namespace_keeps_recovery_sessions_and_existing_rustidian_profiles() {
 }
 
 #[test]
+#[cfg(feature = "desktop")]
 fn cli_identifies_the_app_without_a_display_and_rejects_a_missing_vault() {
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_rustidian"))

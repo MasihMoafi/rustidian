@@ -3,6 +3,9 @@ use eframe::egui::{self, Color32, FontFamily, FontId, Stroke, TextStyle, Visuals
 #[path = "emoji_glyphs.rs"]
 mod emoji_glyphs;
 
+#[path = "palette.rs"]
+pub mod palette;
+
 pub const ACCENT: Color32 = Color32::from_rgb(101, 183, 182);
 pub const DARK_BG: Color32 = Color32::from_rgb(23, 27, 29);
 pub const DARK_SIDE: Color32 = Color32::from_rgb(17, 21, 23);
@@ -11,6 +14,29 @@ pub const DARK_MUTED: Color32 = Color32::from_rgb(155, 165, 165);
 pub const LIGHT_MUTED: Color32 = Color32::from_rgb(101, 112, 113);
 pub const DARK_FAINT: Color32 = Color32::from_rgb(104, 115, 117);
 pub const DEFAULT_DOCUMENT_FONT_SIZE: u8 = 18;
+
+pub fn sidebar_scroll() -> egui::ScrollArea {
+    egui::ScrollArea::vertical().auto_shrink([false, false])
+}
+
+fn interface_fonts(style: &mut egui::Style) {
+    for (kind, font) in [
+        (TextStyle::Body, FontId::proportional(14.0)),
+        (TextStyle::Button, FontId::proportional(14.0)),
+        (TextStyle::Small, FontId::proportional(12.0)),
+        (
+            TextStyle::Heading,
+            FontId::new(18.0, FontFamily::Name("semibold".into())),
+        ),
+        (TextStyle::Monospace, FontId::monospace(14.0)),
+    ] {
+        style.text_styles.insert(kind, font);
+    }
+}
+
+pub fn interface_style(ui: &mut egui::Ui) {
+    interface_fonts(ui.style_mut());
+}
 
 /// Apply document typography inside its own UI, leaving window controls unchanged.
 pub fn document_style(ui: &mut egui::Ui, size: u8) {
@@ -22,6 +48,11 @@ pub fn document_style(ui: &mut egui::Ui, size: u8) {
         (TextStyle::Monospace, 16.0),
     ] {
         if let Some(font) = style.text_styles.get_mut(&kind) {
+            font.family = match kind {
+                TextStyle::Heading => FontFamily::Name("bold".into()),
+                TextStyle::Monospace => FontFamily::Monospace,
+                _ => FontFamily::Proportional,
+            };
             font.size = if kind == TextStyle::Body {
                 f32::from(size)
             } else {
@@ -37,11 +68,7 @@ pub fn document_size(ui: &egui::Ui, size: f32) -> f32 {
 }
 
 pub fn hover_fill(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        Color32::from_rgb(34, 41, 44)
-    } else {
-        Color32::from_rgb(220, 224, 219)
-    }
+    ui.visuals().widgets.hovered.weak_bg_fill
 }
 
 /// Paint the current response without waiting for another layout pass.
@@ -74,11 +101,7 @@ pub fn set_line_height(galley: &mut std::sync::Arc<egui::Galley>, line_height: f
 }
 
 pub fn accent(ui: &egui::Ui) -> Color32 {
-    if ui.visuals().dark_mode {
-        ACCENT
-    } else {
-        Color32::from_rgb(14, 117, 124)
-    }
+    ui.visuals().hyperlink_color
 }
 
 pub fn marker(ui: &egui::Ui) -> Color32 {
@@ -90,6 +113,9 @@ pub fn marker(ui: &egui::Ui) -> Color32 {
 }
 
 pub fn interactive(ui: &egui::Ui) -> Color32 {
+    if palette::current(ui.ctx()) != palette::Palette::Teal {
+        return accent(ui);
+    }
     if ui.visuals().dark_mode {
         Color32::from_rgb(23, 127, 131)
     } else {
@@ -109,6 +135,7 @@ pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
 }
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    palette::select(ctx, palette::current(ctx));
     ctx.options_mut(|options| {
         options.input_options.line_scroll_speed = 150.0;
         options.input_options.wheel_smoothing = false;
@@ -173,32 +200,46 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(7);
     visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
+    let palette = palette::current(ctx);
+    if palette != palette::Palette::Teal {
+        let accent = palette.accent(dark);
+        visuals.panel_fill = palette.side(dark);
+        visuals.extreme_bg_color = visuals.panel_fill;
+        visuals.window_fill = palette.background(dark);
+        visuals.code_bg_color = visuals.panel_fill;
+        visuals.hyperlink_color = accent;
+        visuals.selection.bg_fill = accent.gamma_multiply(0.3);
+        visuals.selection.stroke = Stroke::new(1.0, accent);
+        visuals.widgets.inactive.bg_fill = visuals.panel_fill;
+        let strength = if dark { 0.2 } else { 0.1 };
+        visuals.widgets.hovered.weak_bg_fill =
+            accent.gamma_multiply(strength) + visuals.window_fill.gamma_multiply(1.0 - strength);
+        visuals.widgets.hovered.bg_fill = visuals.widgets.hovered.weak_bg_fill;
+        visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.3);
+        visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
+    }
     ctx.set_visuals(visuals);
     ctx.all_styles_mut(|style| {
         style.animation_time = 0.0;
         style.scroll_animation = egui::style::ScrollAnimation::none();
-        style
-            .text_styles
-            .insert(TextStyle::Body, FontId::new(18.0, FontFamily::Proportional));
-        style.text_styles.insert(
-            TextStyle::Button,
-            FontId::new(14.0, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Small,
-            FontId::new(12.0, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Heading,
-            FontId::new(32.436, FontFamily::Name("bold".into())),
-        );
-        style.text_styles.insert(
-            TextStyle::Monospace,
-            FontId::new(16.0, FontFamily::Monospace),
-        );
+        interface_fonts(style);
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
         style.spacing.button_padding = egui::vec2(10.0, 7.0);
         style.spacing.window_margin = egui::Margin::same(22);
+        style.spacing.scroll = egui::style::ScrollStyle {
+            bar_width: 6.0,
+            floating_width: 6.0,
+            floating_allocated_width: 6.0,
+            handle_min_length: 36.0,
+            foreground_color: true,
+            dormant_background_opacity: 0.04,
+            active_background_opacity: 0.07,
+            interact_background_opacity: 0.10,
+            dormant_handle_opacity: if dark { 0.48 } else { 0.62 },
+            active_handle_opacity: if dark { 0.58 } else { 0.72 },
+            interact_handle_opacity: 0.75,
+            ..egui::style::ScrollStyle::thin()
+        };
         style.visuals.window_corner_radius = egui::CornerRadius::same(10);
     });
 }
@@ -675,7 +716,7 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
     });
     if ui.is_rect_visible(rect) {
         let color = if *checked {
-            Color32::from_rgb(23, 127, 131)
+            interactive(ui)
         } else if response.hovered() {
             ui.visuals().weak_text_color()
         } else {
@@ -715,13 +756,69 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
 }
 
 pub fn dialog_style(ui: &mut egui::Ui) {
-    ui.style_mut()
-        .text_styles
-        .insert(egui::TextStyle::Body, egui::FontId::proportional(14.0));
-    ui.style_mut().text_styles.insert(
-        egui::TextStyle::Heading,
-        egui::FontId::new(18.0, egui::FontFamily::Name("semibold".into())),
-    );
+    interface_style(ui);
+    ui.spacing_mut().item_spacing = egui::vec2(8.0, 12.0);
+    ui.spacing_mut().button_padding = egui::vec2(14.0, 8.0);
+}
+
+pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::popup(&ctx.global_style())
+        .inner_margin(egui::Margin::same(24))
+        .corner_radius(10)
+}
+
+pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.heading(title);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let response = icon_button(ui, Icon::Close, close_label);
+            crate::ui_probe::record(ui.ctx(), "dialog-close", response.rect);
+            response
+        })
+        .inner
+    })
+    .inner
+}
+
+pub fn dialog_actions(
+    ui: &mut egui::Ui,
+    label: &str,
+    destructive: bool,
+) -> (egui::Response, egui::Response) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let background = if destructive {
+                Color32::from_rgb(180, 45, 55)
+            } else {
+                accent(ui)
+            };
+            let foreground = if destructive || !ui.visuals().dark_mode {
+                Color32::WHITE
+            } else {
+                Color32::from_rgb(17, 21, 23)
+            };
+            let submit = ui.add(
+                egui::Button::new(egui::RichText::new(label).color(foreground))
+                    .fill(background)
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(6)
+                    .min_size(egui::vec2(0.0, 36.0)),
+            );
+            let cancel = ui.add(
+                egui::Button::new("Cancel")
+                    .fill(ui.visuals().window_fill)
+                    .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+                    .corner_radius(6)
+                    .min_size(egui::vec2(0.0, 36.0)),
+            );
+            crate::ui_probe::record(ui.ctx(), "dialog-submit", submit.rect);
+            crate::ui_probe::record(ui.ctx(), "dialog-cancel", cancel.rect);
+            (submit, cancel)
+        })
+        .inner
+    })
+    .inner
 }
 
 pub fn menu_style(ui: &mut egui::Ui) {
@@ -732,6 +829,23 @@ pub fn menu_style(ui: &mut egui::Ui) {
     }
     ui.spacing_mut().item_spacing.y = 1.0;
     ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+}
+
+pub fn delete_menu_item(ui: &mut egui::Ui, label: &str) -> (egui::Response, bool) {
+    let response = menu_item(ui, Icon::Trash, &format!("D  {label}"));
+    let shortcut = ui.input_mut(|input| {
+        input.modifiers.matches_exact(egui::Modifiers::NONE)
+            && input.consume_key(egui::Modifiers::NONE, egui::Key::D)
+    });
+    if shortcut {
+        ui.input_mut(|input| {
+            input.events.retain(
+                |event| !matches!(event, egui::Event::Text(text) if text.eq_ignore_ascii_case("d")),
+            )
+        });
+    }
+    let activated = response.clicked() || shortcut;
+    (response, activated)
 }
 
 pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
@@ -809,7 +923,7 @@ mod tests {
                         })
                         .inner;
                     widths.push(width);
-                    assert_eq!(egui::TextStyle::Body.resolve(ui.style()).size, 18.0);
+                    assert_eq!(egui::TextStyle::Body.resolve(ui.style()).size, 14.0);
                 }
                 assert_eq!(ui.label("Navigation").rect.width(), before);
             })

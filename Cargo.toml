@@ -1,6 +1,6 @@
 [package]
 name = "rustidian"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 edition = "2024"
 rust-version = "1.95"
 description = "Rustidian — a native Markdown notebook for local vaults"
@@ -9,6 +9,15 @@ readme = "README.md"
 keywords = ["markdown", "notes", "obsidian", "egui"]
 categories = ["text-editors"]
 license = "MIT"
+
+[features]
+default = ["desktop"]
+desktop = []
+
+[[bin]]
+name = "rustidian"
+path = "src/main.rs"
+required-features = ["desktop"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
@@ -45,4 +54,3 @@ strip = true
 [patch.crates-io]
 epaint = { path = "vendor/epaint" }
 egui = { path = "vendor/egui" }
-

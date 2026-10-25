@@ -1,5 +1,5 @@
 use crate::{theme, ui_probe};
-use eframe::egui::{self, Align2, FontId, Key, Margin, RichText, Stroke, TextEdit};
+use eframe::egui::{self, Align2, Key, RichText, Stroke, TextEdit};
 use rustidian::{operations::LinkUpdates, search::FileMatcher, vault::Vault};
 use std::path::{Path, PathBuf};
 
@@ -69,70 +69,26 @@ impl Manager {
             let mut choice = None;
             let focus = std::mem::take(&mut self.updates_focus);
             let dark = ctx.global_style().visuals.dark_mode;
-            let frame = egui::Frame::popup(&ctx.global_style())
-                .inner_margin(Margin::same(16))
-                .corner_radius(15)
-                .fill(if dark {
-                    egui::Color32::from_rgb(23, 27, 29)
-                } else {
-                    egui::Color32::from_rgb(247, 246, 242)
-                })
-                .stroke(Stroke::new(
-                    1.0,
-                    egui::Color32::from_gray(if dark { 63 } else { 218 }),
-                ));
+            let frame = theme::dialog_frame(ctx);
             let response = egui::Modal::new(egui::Id::unique("move-update-links"))
                 .frame(frame)
                 .show(ctx, |ui| {
                     let width = (ctx.content_rect().width() - 48.0).clamp(220.0, 560.0);
                     ui.set_width(width - frame.total_margin().sum().x);
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.spacing_mut().button_padding = egui::vec2(12.0, 4.0);
-                    ui.spacing_mut().interact_size.y = 30.0;
-                    let title = ui.label(
-                        RichText::new("Update links")
-                            .font(FontId::new(15.0, egui::FontFamily::Name("semibold".into())))
-                            .line_height(Some(19.5)),
-                    );
-                    ui_probe::record(ctx, "move-links-title", title.rect);
-                    let corner = egui::Rect::from_center_size(
-                        egui::pos2(ui.max_rect().right() - 3.0, title.rect.center().y),
-                        egui::vec2(24.0, 24.0),
-                    );
-                    let close = ui
-                        .interact(corner, ui.make_persistent_id("close"), egui::Sense::click())
-                        .on_hover_text("Close");
-                    close.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), "Close")
-                    });
-                    theme::control_feedback(ui, &close);
-                    theme::icon_image(theme::Icon::Close, ui.visuals().weak_text_color()).paint_at(
-                        ui,
-                        egui::Rect::from_center_size(corner.center(), egui::vec2(12.0, 12.0)),
-                    );
+                    theme::dialog_style(ui);
+                    let close = theme::dialog_header(ui, "Update links", "Close");
+                    ui_probe::record(ctx, "move-links-title", ui.min_rect());
                     ui_probe::record(ctx, "move-links-close", close.rect);
                     if close.clicked() {
                         choice = Some(None);
                     }
-                    ui.add_space(26.25);
-                    ui.label(
-                        RichText::new(
-                            "Do you want to update internal links that link to this file?",
-                        )
-                        .size(15.0)
-                        .line_height(Some(19.5)),
-                    );
-                    ui.add_space(15.0);
-                    ui.label(
-                        RichText::new(format!(
-                            "This will affect {links} {} in {files} {}.",
-                            if links == 1 { "link" } else { "links" },
-                            if files == 1 { "file" } else { "files" },
-                        ))
-                        .size(15.0)
-                        .line_height(Some(19.5)),
-                    );
-                    ui.add_space(37.5);
+                    ui.label("Do you want to update internal links that link to this file?");
+                    ui.label(format!(
+                        "This will affect {links} {} in {files} {}.",
+                        if links == 1 { "link" } else { "links" },
+                        if files == 1 { "file" } else { "files" },
+                    ));
+                    ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
                         let choices = [
                             ("Always update", "move-links-always", Some(true)),
@@ -145,7 +101,7 @@ impl Manager {
                                 ui.painter()
                                     .layout_no_wrap(
                                         (*label).into(),
-                                        FontId::proportional(13.0),
+                                        egui::TextStyle::Button.resolve(ui.style()),
                                         ui.visuals().text_color(),
                                     )
                                     .size()
@@ -155,23 +111,9 @@ impl Manager {
                             .sum::<f32>()
                             + 16.0;
                         ui.add_space((ui.available_width() - required).max(0.0));
-                        let normal = egui::Color32::from_gray(if dark { 51 } else { 255 });
-                        let hovered = egui::Color32::from_gray(if dark { 63 } else { 250 });
-                        let widgets = &mut ui.visuals_mut().widgets;
-                        for (visuals, fill) in [
-                            (&mut widgets.inactive, normal),
-                            (&mut widgets.hovered, hovered),
-                        ] {
-                            visuals.bg_fill = fill;
-                            visuals.weak_bg_fill = fill;
-                            visuals.bg_stroke = Stroke::NONE;
-                            visuals.corner_radius = egui::CornerRadius::same(8);
-                        }
                         for (label, name, value) in choices {
-                            let button = ui.add(
-                                egui::Button::new(RichText::new(label).size(13.0))
-                                    .min_size(egui::vec2(0.0, 30.0)),
-                            );
+                            let button =
+                                ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 30.0)));
                             if focus && value == Some(true) {
                                 button.request_focus();
                             }
@@ -217,14 +159,13 @@ impl Manager {
             Align2::CENTER_TOP,
             [0.0, ctx.content_rect().height() * 0.15],
         );
-        let frame = egui::Frame::popup(&ctx.global_style())
-            .inner_margin(Margin::same(12))
-            .corner_radius(16);
+        let frame = theme::dialog_frame(ctx);
         let response = egui::Modal::new(egui::Id::unique("move-file-picker"))
             .area(area)
             .frame(frame)
             .show(ctx, |ui| {
-                ui.set_width(width - 24.0);
+                theme::dialog_style(ui);
+                ui.set_width(width - frame.total_margin().sum().x);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.visuals_mut().selection.bg_fill = theme::hover_fill(ui);
                 ui.visuals_mut().selection.stroke = Stroke::new(1.0, ui.visuals().text_color());
@@ -236,10 +177,9 @@ impl Manager {
                     let field = ui.add(
                         TextEdit::singleline(&mut picker.query)
                             .id(id)
-                            .font(FontId::proportional(15.0))
                             .hint_text("Type a folder")
                             .frame(egui::Frame::NONE)
-                            .desired_width((width - 70.0).max(100.0)),
+                            .desired_width((ui.available_width() - 46.0).max(100.0)),
                     );
                     ui_probe::record(ctx, "move-input", field.rect);
                     if picker.focus {
@@ -304,9 +244,9 @@ impl Manager {
                             [ui.available_width(), 32.0],
                             egui::Button::new("")
                                 .left_text(if index == picker.selected {
-                                    RichText::new(&label).size(15.0).strong()
+                                    RichText::new(&label).strong()
                                 } else {
-                                    RichText::new(&label).size(15.0)
+                                    RichText::new(&label)
                                 })
                                 .selected(index == picker.selected)
                                 .stroke(Stroke::NONE),
@@ -328,7 +268,7 @@ impl Manager {
                     let button = ui.add_sized(
                         [ui.available_width(), 32.0],
                         egui::Button::new("")
-                            .left_text(RichText::new(query).size(15.0))
+                            .left_text(RichText::new(query))
                             .right_text(RichText::new("Enter to create").size(12.0))
                             .selected(true)
                             .stroke(Stroke::NONE),

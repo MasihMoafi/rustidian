@@ -123,12 +123,13 @@ impl Tables {
     pub fn prepare(
         &mut self,
         ui: &egui::Ui,
-        source: &str,
+        document: (&std::path::Path, &str),
         models: &[Table],
         active_line: Option<&Range<usize>>,
         caret: Option<usize>,
         hidden: &[Range<usize>],
     ) -> Vec<Placement> {
+        let (from, source) = document;
         if self.views.len() != models.len()
             || self.views.iter().zip(models).any(|(view, model)| {
                 view.model.range != model.range || !view.model.is_current(source)
@@ -202,6 +203,7 @@ impl Tables {
                         );
                     }
                 }
+                let widths = crate::table_layout::widths(ui.ctx(), from, ordinal, &widths);
                 let heights = view
                     .cells
                     .iter()
@@ -605,6 +607,13 @@ impl Tables {
                             }
                             y += placement.heights[row];
                         }
+                        crate::table_layout::handles(
+                            ui,
+                            &tab.document.path,
+                            table,
+                            outer,
+                            &placement.widths,
+                        );
                     });
             });
         }

@@ -49,9 +49,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", default="target/debug/rustidian")
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
-    parser.add_argument("--open-file", choices=["md", "txt"], help="Check opening and saving an individual document")
+    parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -79,6 +79,13 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
+        if args.section in ("palettes", "all"):
+            launcher = base / "data/applications/rustidian.desktop"
+            environment["XDG_DATA_DIRS"] = str(base / "system data") + os.pathsep + os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
+            system_launcher = base / "system data/applications/rustidian.desktop"
+            system_launcher.parent.mkdir(parents=True, exist_ok=True)
+            original_launcher = "[Desktop Entry]\nType=Application\nName=Rustidian\nExec=/usr/bin/true %f\nIcon=old-teal\nStartupWMClass=rustidian\nActions=Example;\n\n[Desktop Action Example]\nName=Keep this action\nExec=/usr/bin/true\nIcon=keep-action-icon\n"
+            system_launcher.write_text(original_launcher)
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
@@ -129,7 +136,7 @@ def main():
         launch_command = [str(ROOT / args.binary), str(fixture)]
         if args.open_file:
             startup_path = fixture / f"Open me سلام.{args.open_file}"
-            startup_text = "# File opening\n\nOriginal text سلام\n"
+            startup_text = "fn main() {\n    // Original text سلام\n    let value = 42;\n    println!(\"Hello\");\n}\n" if args.open_file == "rs" else "# File opening\n\nOriginal text سلام\n"
             startup_path.write_text(startup_text)
             launch_command = [str(ROOT / args.binary), str(startup_path)]
         if args.default_vault:
@@ -273,9 +280,9 @@ def main():
             title_contains(value if title is None else title)
 
         def ready_window():
-            deadline = time.monotonic() + 20
             window = None
-            while time.monotonic() < deadline:
+            # The thermal guard can pause both this controller and the app.
+            for _ in range(200):
                 assert app.poll() is None, (reports / "gui-smoke.log").read_text()
                 try:
                     window = xdo("search", "--onlyvisible", "--name", "Rustidian$").splitlines()[0]
@@ -289,7 +296,9 @@ def main():
             # it then loses FocusIn, since no window manager delivers a later
             # transition in Xvfb. Wait for the first actual UI, then activate once.
             probe = base / "ui-probe.json"
-            while not probe.exists() and time.monotonic() < deadline:
+            for _ in range(1000):
+                if probe.exists():
+                    break
                 assert app.poll() is None, "App exited before preparing its first UI"
                 time.sleep(.02)
             assert probe.exists(), "The native window never prepared its first UI"
@@ -391,7 +400,15 @@ def main():
                 else:
                     trace("query-not-selected")
                     capture("command-query-not-selected.png")
-                    raise AssertionError(("Requested command availability/result differs",value,available,matches))
+                    actual_query = None
+                    if control_bounds("dialog-input-focused", required=False):
+                        xdo("key", "--clearmodifiers", "ctrl+a", "ctrl+c")
+                        time.sleep(.15)
+                        try:
+                            actual_query = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, text=True, timeout=2)
+                        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                            pass
+                    raise AssertionError(("Requested command availability/result differs",value,available,matches,actual_query))
                 trace("query")
                 key("Return")
                 if not available:
@@ -414,6 +431,20 @@ def main():
                 theme_observations.append({"requested_dark":dark,"before_rgb":before,"after_rgb":after})
                 (reports/"gui-theme-observations.json").write_text(json.dumps(theme_observations,indent=2)+"\n")
                 assert (max(after)<128)==dark,(dark,before,after)
+
+            def create_note_named(name):
+                path = Path(name)
+                key("ctrl+n")
+                control_bounds("note-title-input")
+                type_text(path.stem)
+                key("Return")
+                control_bounds("editor-focused")
+                if path.parent != Path("."):
+                    command("Rename or move file")
+                    key("ctrl+a")
+                    type_text(str(path))
+                    key("Return")
+                title_contains(path.stem)
 
             def close_tabs():
                 for _ in range(32):
@@ -622,10 +653,7 @@ def main():
                 results.append("Long nested callout titles reserve their actual wrapped height in both themes and compact width")
 
             def properties_checks():
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Notes/Properties GUI.md")
-                key("Return")
+                create_note_named('Notes/Properties GUI.md')
                 command("Source editing")
                 editor_end()
                 key("ctrl+a")
@@ -714,10 +742,7 @@ def main():
                 results.append("Ctrl+Shift+Tab moved backward independently from Ctrl+Tab across three tabs")
                 results.append("YAML properties rendered natively; alias quick-open found the file; adding a property preserved the exact body")
             def image_checks():
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Notes/Image GUI.md")
-                key("Return")
+                create_note_named('Notes/Image GUI.md')
                 command("Source editing")
                 editor_end()
                 key("ctrl+a")
@@ -1084,7 +1109,7 @@ def main():
                 results.append("All three generated window controls show immediate visible hover feedback")
 
                 file_menu("Notes/First steps.md")
-                for label in ["Open in new tab", "Make a copy", "Bookmark…", "Copy path", "Rename…", "Delete"]:
+                for label in ["Open in new tab", "Make a copy", "Bookmark…", "Copy path", "Rename…", "D  Delete"]:
                     left, top, right, bottom = control_bounds("menu:" + label)
                     assert 24 <= bottom-top <= 30 and 190 <= right-left <= 240, (label, right-left, bottom-top)
                 capture("native-file-context-menu.png")
@@ -1148,12 +1173,12 @@ def main():
                 assert not (fixture / copied).exists()
                 assert (fixture / "Menu renamed.md").read_bytes() == originals["Home.md"]
                 file_menu("Menu renamed.md")
-                click_control("menu:Delete")
+                click_control("menu:D  Delete")
                 control_bounds("dialog-input")
                 key("Escape")
                 assert (fixture / "Menu renamed.md").exists(), "Cancel must preserve the note"
                 file_menu("Menu renamed.md")
-                click_control("menu:Delete")
+                click_control("menu:D  Delete")
                 control_bounds("dialog-input")
                 key("Return")
                 title_contains("New tab")
@@ -1296,18 +1321,11 @@ def main():
                         assert icon_background("button:"+other)==(17,21,23), (other,"Inactive tab still appears selected")
                 capture("native-selected-sidebar.png")
                 click_control("button:New note · Ctrl+N",hold=.15)
-                control_bounds("dialog-input")
-                xdo("mousemove","--sync","1000","880");pause()
-                active=icon_background("button:New note · Ctrl+N")
-                inactive=icon_background("button:Open today's daily note")
-                assert min(a-b for a,b in zip(active,inactive))>=5, ("The open tool must remain visibly marked behind its chooser",active,inactive)
-                ribbon=icon_background("ribbon-new-note")
-                assert min(a-b for a,b in zip(ribbon,inactive))>=5, ("Both New note buttons must show the same open chooser",ribbon,inactive)
-                capture("native-selected-tool.png")
+                control_bounds("note-title-input")
                 key("Escape")
                 xdo("mousemove","--sync","1000","880");pause()
-                assert icon_background("button:New note · Ctrl+N")==(17,21,23), "A cancelled action must not remain selected"
-                assert icon_background("ribbon-new-note")== (17,21,23), "Cancel must also clear the ribbon's marker"
+                assert icon_background("button:New note · Ctrl+N")== (17,21,23), "An immediate action must not remain selected"
+                assert icon_background("ribbon-new-note")== (17,21,23), "The ribbon action must also clear its marker"
                 click_control("new-folder",hold=.15)
                 control_bounds("dialog-input")
                 xdo("mousemove","--sync","1000","880");pause()
@@ -1320,7 +1338,7 @@ def main():
                 assert icon_background("new-folder")== (17,21,23), "A cancelled folder action must not remain selected"
                 assert {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")} == originals
                 assert {str(p.relative_to(fixture)) for p in fixture.rglob("*") if p.is_dir()} == original_folders
-                results.append("Files, Search and Bookmarks retained a single selected background away from the pointer; both New note buttons and New folder stayed marked behind their chooser, and Cancel cleared their markers without writing notes or folders")
+                results.append("Files, Search and Bookmarks retained a single selected background away from the pointer; New note creates immediately without a stuck marker, while New folder stays marked behind its chooser and Cancel leaves folders unchanged")
 
             def title_checks():
                 path = fixture / "Notes/Title edit.md"
@@ -1430,6 +1448,48 @@ def main():
                     if abs(repeated-start_y-5*step) > 10 or abs(reversed_y-start_y-4*step) > 10:
                         failures.append((view, "distance/direction", step, repeated, reversed_y))
                     assert path.read_text() == source, "Scrolling changed the note"
+                # Inspect the actual pixels, then drag that visible thumb.
+                def luminance(rgb):
+                    channels = [value/255 for value in rgb]
+                    linear = [value/12.92 if value <= .04045 else ((value+.055)/1.055)**2.4 for value in channels]
+                    return sum(value*weight for value, weight in zip(linear, (.2126, .7152, .0722)))
+                for dark in (True, False):
+                    set_theme(dark)
+                    xdo("mousemove", "100", "20")
+                    time.sleep(.3)
+                    viewport = control_bounds("document-viewport")
+                    image = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    left, top, right, bottom = map(round, viewport)
+                    background = luminance(image.getpixel((right-24, (top+bottom)//2)))
+                    def contrast(pixel):
+                        value = luminance(pixel)
+                        return (max(value,background)+.05)/(min(value,background)+.05)
+                    rows = []
+                    for y in range(top+4, bottom-4):
+                        xs = [x for x in range(right-2, min(image.width, right+14)) if contrast(image.getpixel((x,y))) >= 3]
+                        if len(xs) >= 4:
+                            rows.append((y, xs))
+                    assert len(rows) >= 24, ("Scrollbar must remain visible away from the pointer with a readable thumb", dark, viewport, len(rows))
+                    assert max(len(xs) for _, xs in rows) <= 6, "Keep the original six-pixel thumb width"
+                    y, xs = rows[len(rows)//2]
+                    x = xs[len(xs)//2]
+                    if dark:
+                        assert max(image.getpixel((x, y))) <= 160, "The idle thumb must blend with the dark page, not look white"
+                    capture("native-scrollbar-" + ("dark" if dark else "light") + ".png")
+                    before = control_bounds("document-scroll-y")[0]
+                    xdo("mousemove", "--sync", str(x), str(y))
+                    pause()
+                    xdo("mousedown", "1")
+                    try:
+                        for step in range(1, 11):
+                            xdo("mousemove", "--sync", str(x), str(min(bottom-12, y+step*12)))
+                            time.sleep(.025)
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+                    assert control_bounds("document-scroll-y")[0] > before+100, "Dragging the visible scrollbar must move the document"
+                    assert path.read_text() == source
+                results.append("Original narrow scrollbar stays muted and readable at 3:1 contrast in dark and light; real dragging moves the document and preserves bytes")
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
@@ -1947,7 +2007,7 @@ def main():
 
             def task_checks():
                 key("ctrl+n")
-                capture("native-new-note-dialog.png")
+                capture("native-new-note-created.png")
                 key("Escape")
                 source = "# Task GUI\n\n- [ ] Native task\n- [x] Done فارسی\n  - [ ] Nested\n\n```md\n- [ ] Literal code\n```\n"
                 task_note = fixture / "Notes/Task GUI.md"
@@ -2121,10 +2181,7 @@ def main():
                 pause()
                 capture("native-reading-code-copy.png")
                 click_control("copy-code:1")
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Reading clipboard.md")
-                key("Return")
+                create_note_named('Reading clipboard.md')
                 command("Source editing")
                 key("ctrl+a")
                 key("ctrl+v")
@@ -2144,6 +2201,288 @@ def main():
                 assert note.read_text() == source
                 assert not (fixture / "Never open.md").exists()
                 results.append("Reading code matched all seven measured token colors in both themes, kept plain blocks uncolored and empty blocks visible, and rejected text input")
+
+            def trash_options_checks():
+                nonlocal app, window
+                source = "# Contextual deletion\n\nKeep this text.\n"
+                first = fixture / "Notes/Trash first.md"
+                second = fixture / "Notes/Trash second.md"
+                first.write_text(source)
+                second.write_text(source)
+                time.sleep(.6)
+                open_note("Trash first")
+                command("Source editing")
+                key("ctrl+End")
+                type_text("d")
+                key("ctrl+s")
+                assert first.read_text() == source + "d", "An ordinary D must type text, not delete a file"
+                file_menu("Notes/Trash first.md")
+                control_bounds("menu:D  Delete")
+                key("d")
+                control_bounds("trash-dont-ask")
+                capture("native-trash-confirmation.png")
+                click_control("trash-dont-ask")
+                key("Escape")
+                assert first.exists()
+                file_menu("Notes/Trash first.md")
+                key("d")
+                control_bounds("trash-dont-ask")
+                click_control("trash-dont-ask")
+                key("Return")
+                assert not first.exists()
+                assert any(path.read_bytes() == (source + "d").encode() for path in (base / "data/Trash/files").iterdir() if path.is_file())
+                results.append("D types normally outside menus; its visible menu mnemonic opens recoverable Trash, and cancelling does not save the skip-confirmation choice")
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=10)
+                app = launch_app(launch_command)
+                window = ready_window()
+                file_menu("Notes/Trash second.md")
+                key("d")
+                assert not second.exists()
+                assert control_bounds("trash-dont-ask", required=False) is None
+                command("Open settings")
+                click_control("settings-page:Files and links")
+                click_control("settings-confirm-trash")
+                key("Escape")
+                second.write_text(source)
+                time.sleep(.6)
+                file_menu("Notes/Trash second.md")
+                key("d")
+                control_bounds("trash-dont-ask")
+                key("Escape")
+                assert second.read_text() == source
+                results.append("Confirmed skip preference survives a real restart, and Settings restores the confirmation without changing the surviving note")
+
+            def palette_ready():
+                # Wait for rendered, colored logos rather than capturing loader spinners.
+                for _ in range(50):
+                    cards = [control_bounds("settings-palette:" + name) for name in ("Original teal", "Love Space", "Elpis Gold", "Signature")]
+                    image = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    counts = []
+                    for left, top, right, bottom in cards:
+                        center = (left+right)/2
+                        crop = image.crop((round(center-24),round(top+8),round(center+24),round(top+68)))
+                        counts.append(sum(max(pixel)-min(pixel)>35 for pixel in pixel_data(crop)))
+                    if min(counts) >= 60:
+                        return
+                    assert app.poll() is None, "App exited before drawing palette logos"
+                    time.sleep(.1)
+                raise AssertionError(("Palette logos did not finish drawing in their visible cards", counts, cards))
+
+            def note_dialog_checks():
+                original = {path: path.read_bytes() for path in fixture.rglob("*.md")}
+                key("ctrl+n")
+                control_bounds("note-title-input")
+                assert control_bounds("dialog-input", required=False) is None, "New note must create immediately, without a naming modal"
+                first = fixture / "Untitled.md"
+                assert first.exists() and first.read_bytes() == b"", "A new note must start empty, without a duplicate Markdown heading"
+                control_bounds("note-title-input")
+                capture("native-new-note-immediate.png")
+                type_text("Quick thought")
+                key("Return")
+                renamed = fixture / "Quick thought.md"
+                assert renamed.exists() and not first.exists(), "Typing must replace the selected inline title"
+                type_text("Write immediately after naming.")
+                key("ctrl+s")
+                assert renamed.read_text() == "Write immediately after naming.", "Enter from the title must focus the note body"
+                capture("native-new-note-written.png")
+                results.append("New note creates an empty file immediately; the selected inline title renames it, and Enter moves directly to body typing")
+                for index, action in enumerate([
+                    lambda: click_control("ribbon-new-note"),
+                    lambda: click_control("button:New note · Ctrl+N"),
+                    lambda: command("New note"),
+                ]):
+                    action()
+                    control_bounds("note-title-input")
+                    name = "Untitled.md" if index == 0 else f"Untitled {index}.md"
+                    path = fixture / name
+                    assert control_bounds("dialog-input", required=False) is None
+                    control_bounds("note-title-input")
+                    assert path.exists() and path.read_bytes() == b"", name
+                    key("Escape")
+                assert renamed.read_text() == "Write immediately after naming."
+                results.append("Ribbon, file-explorer and command-palette creation share collision-safe empty Untitled naming without touching existing notes")
+                open_note("Quick thought")
+                command("Open settings")
+                control_bounds("settings-close")
+                click_control("settings-close")
+                for name in ["New folder", "Rename or move file", "Save a copy", "Add property"]:
+                    if name == "New folder":
+                        click_control("button:New folder")
+                    else:
+                        command(name)
+                    cancel = control_bounds("dialog-cancel")
+                    submit = control_bounds("dialog-submit")
+                    assert cancel[2] < submit[0], (name, "Cancel precedes the primary action", cancel, submit)
+                    assert min(cancel[3]-cancel[1], submit[3]-submit[1]) >= 32, (name, cancel, submit)
+                    bounds = control_bounds("dialog-bounds"); button = control_bounds("dialog-close")
+                    assert bounds[3]-bounds[1] <= 260, (name, "A one-input form must size to its content, including after Settings", bounds)
+                    assert 22 <= bounds[3]-submit[3] <= 28, (name, "Footer stays at the padded bottom edge", bounds, submit)
+                    assert 23 <= bounds[2]-button[2] <= 27 and 23 <= button[1]-bounds[1] <= 27, (name, bounds, button)
+                    capture("native-form-" + name.lower().replace(" ", "-") + ".png")
+                    click_control("dialog-cancel")
+                    assert control_bounds("dialog-input", required=False) is None
+                    control_bounds("editor-focused")
+                    key("ctrl+End")
+                    type_text(" Continues after cancelling.")
+                    key("ctrl+s")
+                    assert renamed.read_text() == "Write immediately after naming. Continues after cancelling."
+                    key("ctrl+z"); key("ctrl+s")
+                    assert renamed.read_text() == "Write immediately after naming."
+                open_note("Quick thought")
+                file_menu("Quick thought.md")
+                key("d")
+                assert control_bounds("dialog-input", required=False) is None, "Trash must show a filename label, not an input"
+                control_bounds("trash-target")
+                control_bounds("trash-dont-ask")
+                cancel = control_bounds("dialog-cancel")
+                submit = control_bounds("dialog-submit")
+                assert cancel[2] < submit[0]
+                capture("native-trash-dialog-refined.png")
+                click_control("dialog-cancel")
+                assert renamed.read_text() == "Write immediately after naming."
+                assert all(path.read_bytes() == expected for path, expected in original.items())
+                for dark in (True, False):
+                    set_theme(dark)
+                    command("Open settings")
+                    palette_ready()
+                    bounds = control_bounds("dialog-bounds")
+                    button = control_bounds("settings-close")
+                    assert 23 <= bounds[2]-button[2] <= 27 and 23 <= button[1]-bounds[1] <= 27, ("Settings close must use the shared 24px header inset", bounds, button)
+                    capture("native-settings-header-" + ("dark" if dark else "light") + ".png")
+                    click_control("settings-close")
+                    assert control_bounds("settings-close", required=False) is None
+                results.append("Settings close control stays inside the shared padded header in dark and light, and real clicks close the dialog")
+                results.append("Standard form actions share readable button geometry; Trash has a non-editable target and cancellation preserves every original note")
+
+            def palette_checks():
+                nonlocal app, window
+                def expect_icons(value):
+                    assert system_launcher.read_text() == original_launcher, "System launchers must remain unchanged"
+                    asset = ROOT / ("docs/brand/rustidian.png" if value == "teal" else f"docs/brand/themes/{value}.png")
+                    entry = launcher.read_text()
+                    icon_lines = [line[5:] for line in entry.splitlines() if line.startswith("Icon=")]
+                    assert len(icon_lines) == 2 and icon_lines[1] == "keep-action-icon", entry
+                    icon_path = Path(icon_lines[0])
+                    assert icon_path.is_relative_to(base / "data"), ("Use the private XDG data folder", icon_path)
+                    assert icon_path.read_bytes() == asset.read_bytes(), ("Launcher must use the selected palette logo", value, icon_lines)
+                    assert "Exec=/usr/bin/true %f\n" in entry and "Actions=Example;\n" in entry, entry
+                    raw = subprocess.check_output(["xprop", "-id", window, "-notype", "-f", "_NET_WM_ICON", "32c", "_NET_WM_ICON"], env=environment, text=True)
+                    pixels = [int(value.strip()) for value in raw.split("=", 1)[1].split(",")]
+                    width, height = pixels[:2]
+                    assert width > 0 and height > 0 and len(pixels) == width * height + 2, "The native window must expose its selected icon"
+                    actual = [((p >> 16) & 255, (p >> 8) & 255, p & 255, p >> 24) for p in pixels[2:]]
+                    expected = list(pixel_data(Image.open(asset).convert("RGBA")))
+                    def colored_mean(values):
+                        colors = [p[:3] for p in values if p[3] >= 128 and max(p[:3]) - min(p[:3]) > 35]
+                        assert len(colors) >= 50
+                        return [sum(p[i] for p in colors) / len(colors) for i in range(3)]
+                    assert max(abs(a-b) for a,b in zip(colored_mean(actual), colored_mean(expected))) <= 18, ("Native window and launcher must match the chosen palette", value)
+                expect_icons("teal")
+                source = "# Palette sample\n\n[[Home]] and **clear text**.\n\n- [x] Keep contrast\n\n| Palette | Status |\n| --- | --- |\n| Native | Ready for review |\n"
+                note = fixture / "Notes/Palette sample.md"
+                note.write_text(source)
+                command("Refresh vault"); open_note("Palette sample")
+                def background_color():
+                    header = control_bounds("button:More options")
+                    return ImageGrab.grab(xdisplay=display).getpixel((round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                def expect_background(expected):
+                    deadline = time.monotonic() + 3
+                    while True:
+                        actual = background_color()
+                        if max(abs(a-b) for a,b in zip(actual,expected)) <= 2:
+                            return
+                        assert app.poll() is None, "App exited before presenting its restored palette"
+                        if time.monotonic() >= deadline:
+                            raise AssertionError(("Native background did not present the selected palette", actual, expected))
+                        time.sleep(.05)
+                palettes = [("Original teal", "teal"), ("Love Space", "love-space"), ("Elpis Gold", "elpis-gold"), ("Signature", "signature")]
+                # Start away from the default so the first Teal click is a real change.
+                command("Open settings"); click_control("settings-page:Appearance"); palette_ready()
+                click_control("settings-palette:Love Space"); key("Escape")
+                for dark in (True, False):
+                    set_theme(dark)
+                    for label, value in palettes:
+                        command("Open settings"); click_control("settings-page:Appearance"); palette_ready()
+                        click_control("settings-palette:" + label)
+                        palette_ready()
+                        expect_icons(value)
+                        cards = [control_bounds("settings-palette:" + name) for name, _ in palettes]
+                        assert max(card[1] for card in cards)-min(card[1] for card in cards) <= 1, cards
+                        assert all(left[2] < right[0] for left, right in zip(cards, cards[1:])), cards
+                        capture("native-palettes-" + ("dark" if dark else "light") + "-" + value + ".png")
+                        key("Escape")
+                        state = None
+                        for _ in range(40):
+                            states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
+                            state = next((state for state in states if any(path == "Notes/Palette sample.md" for path, _ in state.get("tabs", []))), None)
+                            if state and state.get("palette") == value and state.get("dark") == dark:
+                                break
+                            assert app.poll() is None, "App exited before persisting its palette"
+                            time.sleep(.1)
+                        assert state and state["palette"] == value and state["dark"] == dark, state
+                        expected = {("teal", True):(23,27,29), ("teal", False):(247,246,242), ("love-space", True):(29,23,27), ("elpis-gold", True):(28,27,23), ("signature", True):(31,31,40), ("love-space", False):(251,245,245), ("elpis-gold", False):(251,248,239), ("signature", False):(252,245,242)}[(value, dark)]
+                        expect_background(expected)
+                        capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")
+                        assert note.read_text() == source
+                    results.append(("Dark" if dark else "Light") + " palettes apply the requested native colors, save the actual selection and preserve Markdown")
+                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                expect_background((252,245,242))
+                command("Open settings"); click_control("settings-page:Appearance")
+                capture("native-palettes-restored.png")
+                states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
+                assert any(state.get("palette") == "signature" and state["dark"] is False for state in states)
+                expect_icons("signature")
+                click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
+                expect_icons("teal")
+                assert note.read_text() == source
+                results.append("All four palettes update the real native window and XDG launcher icons; a real restart restores the selection without changing launcher actions or note bytes")
+
+            def table_resize_checks():
+                nonlocal app, window
+                source = "# Resize tables\n\n| Item | Value |\n| --- | --- |\n| Short | A longer value that must remain readable |\n\n> | Nested | Value |\n> | --- | --- |\n> | Quote | Safe |\n"
+                note = fixture / "Notes/Resize tables.md"
+                note.write_text(source)
+                time.sleep(.6)
+                open_note("Resize tables")
+                for mode in ("Live preview", "Reading view"):
+                    command(mode)
+                    capture("native-table-resize-" + mode.split()[0].lower() + "-before.png")
+                    for table in (0, 1):
+                        name = f"table-resize:{table}:0"
+                        original = control_bounds(name)
+                        x, y = round((original[0] + original[2]) / 2), round((original[1] + original[3]) / 2)
+                        for distance in (100, -60):
+                            current = control_bounds(name)
+                            x = round((current[0] + current[2]) / 2)
+                            xdo("mousemove", "--sync", str(x), str(y))
+                            pause()
+                            xdo("mousedown", "1")
+                            time.sleep(.1)
+                            try:
+                                for step in range(1, 11):
+                                    xdo("mousemove", "--sync", str(round(x + distance * step / 10)), str(y))
+                                    time.sleep(.025)
+                            finally:
+                                xdo("mouseup", "1")
+                            pause()
+                            updated = control_bounds(name)
+                            assert abs((updated[0] + updated[2] - current[0] - current[2]) / 2 - distance) < 12, (mode, table, current, updated, distance)
+                            assert note.read_text() == source, "Resizing a table must not rewrite Markdown"
+                    capture("native-table-resize-" + mode.split()[0].lower() + "-after.png")
+                    results.append(mode + " resizes ordinary and callout table columns in both directions without changing note bytes")
+                before = control_bounds("table-resize:0:0")
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=10)
+                app = launch_app(launch_command)
+                window = ready_window()
+                open_note("Resize tables")
+                command("Reading view")
+                after = control_bounds("table-resize:0:0")
+                assert abs(before[0] - after[0]) < 2, (before, after)
+                assert note.read_text() == source
+                results.append("Table widths survive a real restart in workspace state while the Markdown remains byte-for-byte unchanged")
 
             def table_input_checks():
                 source = "# Table input\n\n| A | B |\n| --- | --- |\n| old | 1 |\n| other | 2 |\n\nAfter\n"
@@ -2592,10 +2931,7 @@ def main():
                 pause()
                 capture("native-code-copy.png")
                 click_control("copy-code:0")
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Clipboard result.md")
-                key("Return")
+                create_note_named('Clipboard result.md')
                 command("Source editing")
                 editor_end()
                 key("ctrl+a")
@@ -2677,10 +3013,7 @@ def main():
                 command("Source editing")
                 capture("native-source-reference.png")
                 assert (fixture / "Home.md").read_text() == original_home
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Notes/Folding GUI.md")
-                key("Return")
+                create_note_named('Notes/Folding GUI.md')
                 command("Source editing")
                 editor_end()
                 key("ctrl+a")
@@ -2849,10 +3182,7 @@ def main():
                 key("ctrl+a")
                 type_text("Notes/Nested")
                 key("Return")
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Notes/Nested/Toolbar child.md")
-                key("Return")
+                create_note_named('Notes/Nested/Toolbar child.md')
                 title_contains("Toolbar child")
                 assert control_bounds("file:Notes/Nested/Toolbar child.md")
                 child = fixture / "Notes/Nested/Toolbar child.md"
@@ -2896,10 +3226,7 @@ def main():
                 assert control_bounds("search:Notes/First steps.md")
                 assert first.read_text() == original + "QUICK_OPEN_FOCUS"
                 results.append("Global search retained keyboard focus and did not insert its query into the open note")
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("Notes/Keyboard focus.md")
-                key("Return")
+                create_note_named('Notes/Keyboard focus.md')
                 title_contains("Keyboard focus")
                 created = fixture / "Notes/Keyboard focus.md"
                 initial = created.read_text()
@@ -3065,9 +3392,7 @@ def main():
                 assert roots()[0] == str(created)
                 # Leaving the first vault has now persisted its session.
                 fixture_state = max((base / "state/rustidian").glob("*.json"), key=lambda path: path.stat().st_mtime_ns)
-                key("ctrl+n")
-                type_text("Home")
-                key("Return")
+                create_note_named("Home.md")
                 title_contains("Home")
                 assert control_bounds("editor-focused")
                 created_home=created/"Home.md"
@@ -3359,10 +3684,7 @@ def main():
                 key("Escape")
                 assert sorted(str(path.relative_to(fixture)) for path in fixture.rglob("*.md")) == original_notes
                 results.append("New folder appeared without a note; creating the same folder again preserved all entries")
-                key("ctrl+n")
-                key("ctrl+a")
-                type_text("GUI empty/Child.md")
-                key("Return")
+                create_note_named('GUI empty/Child.md')
                 title_contains("Child")
                 assert control_bounds("file:GUI empty/Child.md")
                 click_control("file:Home.md")
@@ -3475,6 +3797,10 @@ def main():
                 type_text("path:Bulk/")
                 assert control_bounds("search:Bulk/Note0000.md")
                 assert control_bounds("search:Home.md", required=False) is None
+                search_input = control_bounds("search-input")
+                viewport = control_bounds("search-viewport")
+                assert abs(viewport[2] - search_input[2]) <= 12, ("Search scrollbar belongs at the sidebar edge", search_input, viewport)
+                capture("native-search-sidebar-alignment.png")
                 last = None
                 for _ in range(12):
                     last = control_bounds("search:Bulk/Note0549.md", required=False)
@@ -3486,7 +3812,7 @@ def main():
                 capture("native-large-search.png")
                 click_control("search:Bulk/Note0549.md")
                 title_contains("Note0549")
-                results.append("All 550 search matches remained reachable; scrolling opened the last note beyond the previous 200-result cap")
+                results.append("Search results use the full sidebar width with its scrollbar at the edge; all 550 matches remain reachable and the last note opens")
             def bookmark_checks():
                 nonlocal app, window
                 folder = fixture / "Bookmark folder"
@@ -4192,6 +4518,86 @@ def main():
                 command("Reading view");font(18);assert abs(title_width()-baseline)<.1
                 assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
                 results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
+
+            def tab_drag_checks(*, keys_only=False):
+                nonlocal app, window
+                close_tabs()
+                contents = {name: f"# Drag {name}\n\nKeep {name}.\n" for name in ("Alpha", "Beta", "Gamma", "Delta")}
+                for name, source in contents.items():
+                    (fixture / f"Drag {name}.md").write_text(source)
+                command("Refresh vault")
+                for index, name in enumerate(contents):
+                    if index:
+                        key("ctrl+t")
+                    open_note("Drag " + name)
+                def order():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return [name.removeprefix("tab-full:Drag ").removesuffix(".md") for name, rect in sorted(controls.items(), key=lambda item: item[1][0]) if name.startswith("tab-full:Drag ")]
+                def keyboard():
+                    names = order()
+                    click_control("tab-full:Drag " + names[0] + ".md")
+                    key("Right"); title_contains("Drag " + names[1])
+                    key("Left"); title_contains("Drag " + names[0])
+                    key("End"); title_contains("Drag " + names[-1])
+                    key("Right"); title_contains("Drag " + names[0])
+                    key("Home"); title_contains("Drag " + names[0])
+                    command("Source editing"); editor_end(); key("Left"); key("Right")
+                    title_contains("Drag " + names[0])
+                    results.append("Left/Right and Home/End navigate the focused tab bar; arrows in the editor keep the same document selected")
+                if keys_only:
+                    keyboard()
+                    return
+                def drag(name, target, after=False, outside=False, cancel=False):
+                    source = control_bounds(f"tab-full:Drag {name}.md")
+                    destination = control_bounds(f"tab-full:Drag {target}.md")
+                    start = (source[0] + 20, (source[1] + source[3]) / 2)
+                    end = (destination[2] - 35 if after else destination[0] + 12, destination[3] + 180 if outside else start[1])
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", "1")
+                    try:
+                        for step in range(1, 21):
+                            point = [round(start[axis] + (end[axis] - start[axis]) * step / 20) for axis in (0, 1)]
+                            xdo("mousemove", "--sync", str(point[0]), str(point[1]))
+                            time.sleep(.025)
+                        if cancel:
+                            key("Escape")
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+                capture("native-tab-drag-before.png")
+                assert order() == list(contents), order()
+                drag("Alpha", "Gamma", after=True)
+                assert order() == ["Beta", "Gamma", "Alpha", "Delta"], ("Dragging right did not reorder tabs", order())
+                title_contains("Drag Alpha")
+                drag("Delta", "Beta")
+                assert order() == ["Delta", "Beta", "Gamma", "Alpha"], ("Dragging left did not reorder tabs", order())
+                title_contains("Drag Delta")
+                results.append("Real pointer drags reordered background tabs in both directions and kept the dragged document selected")
+                click_control("tab-full:Drag Beta.md")
+                command("Toggle pin")
+                drag("Beta", "Alpha", after=True)
+                assert order() == ["Delta", "Gamma", "Alpha", "Beta"], order()
+                control_bounds("unpin-tab:Drag Beta.md")
+                before = order()
+                drag("Gamma", "Delta", outside=True)
+                assert order() == before, "Dropping outside the tab strip must preserve order"
+                drag("Gamma", "Delta", cancel=True)
+                assert order() == before, "Escape must cancel the drag"
+                results.append("Pinned tabs retained their pin after moving; outside drops and Escape cancelled without changing tab order")
+                capture("native-tab-drag-after.png")
+                click_control("tab-full:Drag Alpha.md")
+                command("Source editing")
+                editor_end(); type_text("UNDO_AFTER_DRAG"); key("ctrl+z"); key("ctrl+s")
+                assert all((fixture / f"Drag {name}.md").read_text() == source for name, source in contents.items())
+                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                assert order() == before, (before, order())
+                title_contains("Drag Alpha")
+                control_bounds("unpin-tab:Drag Beta.md")
+                click_control("tab-full:Drag Delta.md"); title_contains("Drag Delta"); key("ctrl+w")
+                assert order() == ["Gamma", "Alpha", "Beta"], order()
+                keyboard()
+                click_control("tab-full:Drag Beta.md"); command("Toggle pin")
+                results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
 
             def tab_restore_checks():
                 close_tabs()
@@ -5803,6 +6209,36 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "persian"}))
                 return
+            if args.section == "note-dialogs":
+                note_dialog_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "note-dialogs"}))
+                return
+            if args.section == "palettes":
+                palette_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
+                return
+            if args.section == "tab-keys":
+                tab_drag_checks(keys_only=True)
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-keys"}))
+                return
+            if args.section == "tab-drag":
+                tab_drag_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-drag"}))
+                return
+            if args.section == "trash-options":
+                trash_options_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "trash-options"}))
+                return
+            if args.section == "table-resize":
+                table_resize_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "table-resize"}))
+                return
             if args.section == "table-input":
                 table_input_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -6156,12 +6592,9 @@ def main():
             assert note.read_text() == "# External version\nKeep the disk version.\n"
             results.append("Conflicted edits recovered into a separate note without overwriting disk")
 
-            key("ctrl+n")
-            key("ctrl+a")
-            type_text("Notes/Created in GUI.md")
-            key("Return")
+            create_note_named('Notes/Created in GUI.md')
             title_contains("Created in GUI")
-            assert (fixture / "Notes/Created in GUI.md").read_text().startswith("# Created in GUI")
+            assert (fixture / "Notes/Created in GUI.md").read_text() == ""
             command("Split source")
             capture("native-split.png")
             xdo("windowsize", window, "860", "560")
@@ -6276,6 +6709,9 @@ def main():
                 table_edit_checks,
                 table_link_checks,
                 table_input_checks,
+                table_resize_checks,
+                trash_options_checks,
+                palette_checks,
                 callout_checks,
                 bookmark_checks,
                 persian_checks,
@@ -6283,6 +6719,7 @@ def main():
                 note_creator_checks,
                 tab_action_checks,
                 tab_restore_checks,
+                tab_drag_checks,
                 settings_checks,
                 font_controls_checks,
                 workspace_checks,
@@ -6293,6 +6730,8 @@ def main():
             (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
             print(json.dumps({"status": "passed", "checks": len(results), "report": str(reports / "gui-results.json")}))
         except BaseException:
+            log.flush()
+            shutil.copyfile(reports / "gui-smoke.log", reports / f"gui-{args.section}-failure-app.log")
             capture("gui-failure.png")
             capture(f"gui-{args.section}-failure.png")
             candidates = [path for path in fixture.rglob("*") if path.is_file() and path.suffix.lower() in (".md", ".txt")]

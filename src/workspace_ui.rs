@@ -56,7 +56,7 @@ impl Manager {
         } else {
             "workspace-manager"
         });
-        let mut modal = egui::Modal::new(id);
+        let mut modal = egui::Modal::new(id).frame(theme::dialog_frame(ctx));
         if self.load_only {
             modal = modal.area(
                 egui::Modal::default_area(id)
@@ -68,14 +68,9 @@ impl Manager {
             let width: f32 = if self.load_only { 686.0 } else { 546.0 };
             ui.set_width(width.min((ctx.content_rect().width() - 48.0).max(240.0)));
             if !self.load_only {
-                ui.horizontal(|ui| {
-                    ui.heading("Manage workspace layouts");
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let button = theme::icon_button(ui, theme::Icon::Close, "Close");
-                        ui_probe::record(ctx, "workspace-close", button.rect);
-                        close = button.clicked();
-                    });
-                });
+                let button = theme::dialog_header(ui, "Manage workspace layouts", "Close");
+                ui_probe::record(ctx, "workspace-close", button.rect);
+                close = button.clicked();
                 ui.add_space(12.0);
             }
             ui.horizontal(|ui| {
