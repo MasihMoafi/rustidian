@@ -106,14 +106,14 @@ impl Manager {
                                     )
                                     .size()
                                     .x
-                                    + 24.0
+                                    + 2.0 * ui.spacing().button_padding.x
                             })
                             .sum::<f32>()
                             + 16.0;
                         ui.add_space((ui.available_width() - required).max(0.0));
                         for (label, name, value) in choices {
                             let button =
-                                ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 30.0)));
+                                ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 36.0)));
                             if focus && value == Some(true) {
                                 button.request_focus();
                             }
