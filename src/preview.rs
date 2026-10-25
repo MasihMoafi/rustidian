@@ -1049,7 +1049,8 @@ fn show_table(
         heights.push(height + 9.0);
         cells.push(shaped_row);
     }
-    let resized = crate::table_layout::widths(ui.ctx(), from, ordinal, &widths);
+    let available = ui.available_width();
+    let resized = crate::table_layout::widths(ui.ctx(), from, ordinal, &widths, available);
     if resized != widths {
         widths = resized;
         for (row, cells) in cells.iter_mut().enumerate() {
@@ -1179,7 +1180,13 @@ fn show_table(
                     .line_segment([egui::pos2(start.x, y), egui::pos2(x, y)], stroke);
                 y += height;
             }
-            crate::table_layout::handles(ui, from, ordinal, outer, &widths);
+            let in_hover_card = ui.ctx().data(|data| {
+                data.get_temp::<bool>(egui::Id::unique("inside-page-preview"))
+                    .unwrap_or(false)
+            });
+            if !in_hover_card {
+                crate::table_layout::handles(ui, from, ordinal, outer, &widths, available);
+            }
         });
     follow
 }

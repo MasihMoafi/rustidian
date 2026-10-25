@@ -94,6 +94,9 @@ impl Session {
 // The persisted state contains paths and layout, never unsaved note contents.
 impl NotesApp {
     pub(crate) fn restore_session(&mut self, ctx: &egui::Context) -> bool {
+        if let Some(vault) = &self.vault {
+            crate::editor_ui::clear_layout_history(ctx, &vault.root);
+        }
         crate::table_layout::restore(ctx, Default::default());
         let Some(vault) = &self.vault else {
             return false;

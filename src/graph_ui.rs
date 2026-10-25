@@ -54,8 +54,8 @@ struct Display {
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum ColorMode {
-    #[default]
     Groups,
+    #[default]
     LinkDirection,
 }
 
@@ -85,6 +85,7 @@ struct Pane {
     forces: Forces,
     display: Display,
     camera: Camera,
+    anchor: Option<PathBuf>,
     settings: bool,
     sections: [bool; 4],
     requested: Option<Key>,
@@ -100,8 +101,9 @@ impl Default for Pane {
             forces: Default::default(),
             display: Default::default(),
             camera: Default::default(),
+            anchor: None,
             settings: true,
-            sections: [false; 4],
+            sections: [false, false, true, false],
             requested: None,
             changed: Instant::now(),
             ready: None,
@@ -122,6 +124,10 @@ pub struct Manager {
 }
 
 impl Manager {
+    pub fn set_active_note(&mut self, path: Option<&std::path::Path>) {
+        self.global.anchor = path.map(std::path::Path::to_owned);
+    }
+
     pub fn invalidate(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.source = None;
@@ -531,7 +537,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         }
         ui.add_space(4.0);
     }
-    if pane.display.colors == ColorMode::Groups && section(ui, &mut pane.sections[1], "Groups") {
+    if section(ui, &mut pane.sections[1], "Groups") {
         let mut remove = None;
         let mut reorder = None;
         let group_count = pane.options.groups.len();
@@ -586,6 +592,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         let add = ui.button("New group");
         ui_probe::record(ui.ctx(), "group-add", add.rect);
         if add.clicked() {
+            pane.display.colors = ColorMode::Groups;
             pane.options.groups.push(Group {
                 query: String::new(),
                 color: [224, 82, 82, 255],
@@ -616,7 +623,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             ui.small(if local {
                 "Relative to the current note"
             } else {
-                "Hover a note to see its connections"
+                "Current note; hover another to inspect its connections"
             });
         }
         toggle(ui, &mut pane.display.arrows, "Arrows", "arrows");
@@ -731,16 +738,29 @@ fn paint(
     });
     let graph = &ready.graph;
     let root = ready.key.root.as_deref().and_then(|path| graph.node(path));
+    let current = pane
+        .anchor
+        .as_deref()
+        .and_then(|path| graph.node(path))
+        .filter(|index| view.nodes.contains(index));
     let anchor = (pane.display.colors == ColorMode::LinkDirection)
-        .then_some(root.or(hovered))
+        .then_some(root.or(hovered).or(current))
         .flatten();
     let mut directions = HashMap::<usize, u8>::new();
     for edge in &view.edges {
-        if anchor == Some(edge.to) {
-            *directions.entry(edge.from).or_default() |= 1;
-        }
-        if anchor == Some(edge.from) {
-            *directions.entry(edge.to).or_default() |= 2;
+        if pane.display.colors == ColorMode::LinkDirection {
+            if anchor == Some(edge.to) {
+                *directions.entry(edge.from).or_default() |= 1;
+            }
+            if anchor == Some(edge.from) {
+                *directions.entry(edge.to).or_default() |= 2;
+            }
+            if anchor.is_none() {
+                // A graph opened from an empty/filtered note still has meaningful
+                // colors: incoming-only, outgoing-only, and both link roles.
+                *directions.entry(edge.to).or_default() |= 1;
+                *directions.entry(edge.from).or_default() |= 2;
+            }
         }
         let start = screen(edge.from);
         let end = screen(edge.to);

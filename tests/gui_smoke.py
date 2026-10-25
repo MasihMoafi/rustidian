@@ -2444,6 +2444,191 @@ def main():
 
             def table_resize_checks():
                 nonlocal app, window
+                edge_source = "# Table edge\n\n| Day | DW (h) | AW (h) |\n| --- | --- | --- |\n| Saturday | 0 | 9.5 |\n| Sunday | 0 | 0 |\n"
+                edge_note = fixture / "Notes/Table edge.md"
+                edge_note.write_text(edge_source)
+                time.sleep(.6)
+                open_note("Table edge")
+                command("Live preview")
+
+                def columns(required=True):
+                    return [control_bounds(f"edit-table-cell:0:0:{column}", required=required) for column in range(3)]
+
+                def same_widths(actual, expected):
+                    return all(a is not None and b is not None and abs(a[index] - b[index]) < 2 for a, b in zip(actual, expected) for index in (0, 2))
+
+                def drag_divider(column, target, cancel=False):
+                    rect = control_bounds(f"table-resize:0:{column}")
+                    x, y = round((rect[0] + rect[2]) / 2), round((rect[1] + rect[3]) / 2)
+                    xdo("mousemove", "--sync", str(x), str(y))
+                    pause()
+                    xdo("mousedown", "1")
+                    time.sleep(.1)
+                    try:
+                        for step in range(1, 11):
+                            xdo("mousemove", "--sync", str(round(x + (target - x) * step / 10)), str(y))
+                            time.sleep(.025)
+                        if cancel:
+                            key("Escape")
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+
+                before_edge = columns()
+                capture("native-table-edge-before.png")
+                drag_divider(1, 1435)
+                after_edge = columns(required=False)
+                capture("native-table-edge-far-right.png")
+                content_right = before_edge[0][0] + control_bounds("document-content-width")[0]
+                bounded = all(rect is not None and rect[2] > rect[0] and rect[0] >= before_edge[0][0] - 2 and rect[2] <= content_right + 2 for rect in after_edge)
+                assert edge_note.read_bytes() == edge_source.encode(), "Extreme resize changed note bytes"
+                key("ctrl+z")
+                undone_edge = columns(required=False)
+                capture("native-table-edge-undo.png")
+                undo_restored = same_widths(undone_edge, before_edge)
+                assert edge_note.read_bytes() == edge_source.encode(), "Layout Undo changed note bytes"
+                (reports / "native-table-edge-evidence.json").write_text(json.dumps({
+                    "before": before_edge, "far_right": after_edge, "undo": undone_edge,
+                    "content_right": content_right, "bounded": bounded,
+                    "undo_restored": undo_restored, "note_bytes_unchanged": True,
+                }, indent=2) + "\n")
+                assert bounded and undo_restored, f"Extreme divider regression: bounded={bounded}, undo_restored={undo_restored}; before={before_edge}, after={after_edge}, undo={undone_edge}"
+                key("ctrl+shift+z")
+                assert same_widths(columns(), after_edge), "Layout Redo did not restore the committed widths"
+                assert edge_note.read_bytes() == edge_source.encode()
+                results.append("Three-column far-right divider stays within the document; one Undo and Redo restore exact widths without changing note bytes")
+
+                drag_divider(1, 1435)
+                assert same_widths(columns(), after_edge), "Dragging beyond the same bound changed widths"
+                key("ctrl+z")
+                assert same_widths(columns(), before_edge), "A clamped no-op drag added an Undo entry"
+                key("ctrl+y")
+                assert same_widths(columns(), after_edge)
+
+                divider = control_bounds("table-resize:0:1")
+                drag_divider(1, (divider[0] + divider[2]) / 2 - 90, cancel=True)
+                assert same_widths(columns(), after_edge), "Escape did not cancel the entire resize gesture"
+                key("ctrl+z")
+                assert same_widths(columns(), before_edge), "Cancelled drag added an Undo entry"
+                key("ctrl+y")
+                assert same_widths(columns(), after_edge)
+                click_control("table-resize:0:1")
+                key("Left")
+                keyboard_edge = columns()
+                assert not same_widths(keyboard_edge, after_edge), "Keyboard resize did not change column widths"
+                key("ctrl+z")
+                assert same_widths(columns(), after_edge), "Keyboard resize Undo did not restore widths"
+                key("ctrl+y")
+                assert same_widths(columns(), keyboard_edge), "Keyboard resize Redo did not restore widths"
+                assert edge_note.read_bytes() == edge_source.encode()
+                capture("native-table-edge-keyboard-redo.png")
+                results.append("Escape cancels a whole drag without adding history; keyboard resize shares layout Undo and Redo")
+
+                drag_divider(2, 1435)
+                outer_edge = columns()
+                assert outer_edge[2][2] <= content_right + 2 and outer_edge[2][2] > keyboard_edge[2][2] + 2, "Outer edge must use only the remaining document width"
+                drag_divider(2, 0)
+                minimum_edge = columns()
+                assert abs(minimum_edge[2][2] - minimum_edge[2][0] - 56) < 2, "Outer column must stop at its readable minimum"
+                key("ctrl+z"); assert same_widths(columns(), outer_edge)
+                key("ctrl+z"); assert same_widths(columns(), keyboard_edge)
+                assert edge_note.read_bytes() == edge_source.encode()
+                results.append("The outer divider is bounded at both viewport and minimum limits, with one Undo per gesture and unchanged bytes")
+
+                xdo("windowsize", window, "900", "700"); pause()
+                narrow = columns()
+                narrow_right = narrow[0][0] + control_bounds("document-content-width")[0]
+                assert all(rect[2] <= narrow_right + 2 for rect in narrow), "Narrow windows must keep all three columns visible"
+                capture("native-table-edge-narrow.png")
+                xdo("windowsize", window, "1440", "960"); pause()
+                assert same_widths(columns(), keyboard_edge), "Viewport fitting must not overwrite the saved widths"
+                assert edge_note.read_bytes() == edge_source.encode()
+                results.append("A narrower real window fits all columns; widening restores chosen widths without editing the saved preference or note")
+
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                app.wait(timeout=10)
+                app = launch_app(launch_command)
+                window = ready_window()
+                open_note("Table edge")
+                command("Live preview")
+                assert same_widths(columns(), keyboard_edge), "Committed widths did not survive a real restart"
+                key("ctrl+z")
+                assert same_widths(columns(), keyboard_edge), "Restart resurrected a previous session's layout Undo"
+                assert edge_note.read_bytes() == edge_source.encode()
+                capture("native-table-edge-restarted.png")
+                results.append("A real restart preserves committed table widths and note bytes, without reviving session-only Undo")
+
+                # Text and geometry must share chronological Undo boundaries.
+                click_control("edit-table-cell:0:1:0")
+                key("ctrl+a")
+                paste_text("Friday")
+                key("ctrl+s")
+                text_a = edge_source.replace("Saturday", "Friday")
+                assert edge_note.read_text() == text_a
+                before_ordered_resize = columns()
+                divider = control_bounds("table-resize:0:1")
+                drag_divider(1, (divider[0] + divider[2]) / 2 - 40)
+                ordered_resize = columns()
+                assert not same_widths(ordered_resize, before_ordered_resize)
+                click_control("edit-table-cell:0:1:2")
+                key("ctrl+a")
+                paste_text("22")
+                key("ctrl+s")
+                text_b = text_a.replace("9.5", "22")
+                assert edge_note.read_text() == text_b
+                key("ctrl+z")
+                key("ctrl+s")
+                assert edge_note.read_text() == text_a, "First Undo must restore the later text edit"
+                assert same_widths(columns(), ordered_resize), "Text Undo also changed table widths"
+                key("ctrl+z")
+                assert same_widths(columns(), before_ordered_resize), "Second Undo must restore the intervening resize"
+                assert edge_note.read_text() == text_a, "Layout Undo rewrote note text"
+                key("ctrl+z")
+                key("ctrl+s")
+                assert edge_note.read_text() == edge_source, "Third Undo must restore the earlier text edit"
+                key("ctrl+y")
+                key("ctrl+s")
+                assert edge_note.read_text() == text_a
+                key("ctrl+y")
+                assert same_widths(columns(), ordered_resize), "Redo skipped the layout command"
+                assert edge_note.read_text() == text_a
+                key("ctrl+y")
+                key("ctrl+s")
+                assert edge_note.read_text() == text_b
+                capture("native-table-edge-ordered-redo.png")
+                results.append("Text edit, resize, and later text edit Undo and Redo in chronological order, with layout steps preserving exact note bytes")
+
+                # Equal final text must not hide newer text edits behind geometry.
+                for value in ("33", "22"):
+                    click_control("edit-table-cell:0:1:2"); key("ctrl+a"); paste_text(value); key("ctrl+s")
+                key("ctrl+z"); key("ctrl+s")
+                assert edge_note.read_text() == text_b.replace("22", "33"), "A→B→A must undo the newest text edit before layout"
+                assert same_widths(columns(), ordered_resize)
+                key("ctrl+z"); key("ctrl+s")
+                assert edge_note.read_text() == text_b
+                for _ in range(2): key("ctrl+y"); key("ctrl+s")
+                assert edge_note.read_text() == text_b
+                click_control("edit-table-cell:0:1:2"); key("End")
+                queued_steps(("text", "X"), ("key", "ctrl+z"), ("key", "ctrl+s"))
+                time.sleep(.5)
+                assert edge_note.read_text() == text_b, "Queued typing then Undo must preserve event order"
+                assert same_widths(columns(), ordered_resize), "Queued typing Undo must not consume a layout command"
+                results.append("A→B→A text history and queued typing/Undo preserve chronological text/layout ordering")
+
+                before_reading_resize = columns()
+                command("Reading view")
+                divider = control_bounds("table-resize:0:1")
+                drag_divider(1, (divider[0] + divider[2]) / 2 - 30)
+                capture("native-table-edge-reading-resize.png")
+                key("ctrl+z")
+                command("Live preview")
+                assert same_widths(columns(), before_reading_resize), "Reading-view resize did not Undo through the shared layout history"
+                assert edge_note.read_text() == text_b
+                key("ctrl+y")
+                assert not same_widths(columns(), before_reading_resize), "Reading-view resize Redo was lost when changing view"
+                assert edge_note.read_text() == text_b
+                results.append("Reading-view resizing shares Undo/Redo across view switches and leaves Markdown bytes unchanged")
+
                 source = "# Resize tables\n\n| Item | Value |\n| --- | --- |\n| Short | A longer value that must remain readable |\n\n> | Nested | Value |\n> | --- | --- |\n> | Quote | Safe |\n"
                 note = fixture / "Notes/Resize tables.md"
                 note.write_text(source)
@@ -6063,9 +6248,13 @@ def main():
                     click_control(prefix+":color-mode",hold=.15)
                     click_control(prefix+":color-mode:Link direction",hold=.15)
                     click_control(prefix+":fit",hold=.15)
-                def check_direction_colors(prefix,dark):
+                def check_direction_colors(prefix,dark,hover=True):
                     focus=control_bounds(prefix+":node:Direction/Focus.md")
-                    xdo("mousemove","--sync",str(round((focus[0]+focus[2])/2)),str(round((focus[1]+focus[3])/2)));pause()
+                    if hover:
+                        xdo("mousemove","--sync",str(round((focus[0]+focus[2])/2)),str(round((focus[1]+focus[3])/2)))
+                    else:
+                        xdo("mousemove","--sync","0","0")
+                    pause()
                     name="native-graph-"+prefix+"-directions-"+("dark" if dark else "light")+".png"
                     capture(name);image=Image.open(reports/name).convert("RGB")
                     colors={}
@@ -6075,11 +6264,17 @@ def main():
                     r,g,b=colors["Parent"];assert b>r+60 and b>g+30,("Incoming note must use the blue legend color",colors)
                     r,g,b=colors["Child"];assert g>r+60 and g>b+20,("Outgoing note must use the green legend color",colors)
                     r,g,b=colors["Peer"];assert b>g+40 and r>g+20,("A reciprocal link must use the purple legend color",colors)
+                click_control("global-graph:node:Direction/Focus.md",hold=.15);title_contains("Focus")
+                command("Graph view: Open graph view");ready("global-graph",4,4)
+                assert control_bounds("global-graph:color-mode",required=False) is not None, "The default color mode and legend must be discoverable on opening"
+                for dark in (True,False):set_theme(dark);check_direction_colors("global-graph",dark,hover=False)
+                results.append("Global graph opens with visible incoming, outgoing and reciprocal colors in both themes without selecting a mode or hovering")
                 direction_mode("global-graph")
                 for dark in (True,False):set_theme(dark);check_direction_colors("global-graph",dark)
                 focus=control_bounds("global-graph:node:Direction/Focus.md")
                 click_control("global-graph:node:Direction/Focus.md",hold=.15);title_contains("Focus")
                 command("Graph view: Open local graph");ready("local-graph",4,4)
+                for dark in (True,False):set_theme(dark);check_direction_colors("local-graph",dark,hover=False)
                 direction_mode("local-graph")
                 for dark in (False,True):set_theme(dark);check_direction_colors("local-graph",dark)
                 click_control("local-graph:close",hold=.15)

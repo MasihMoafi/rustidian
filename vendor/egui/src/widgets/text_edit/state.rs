@@ -17,6 +17,7 @@ fn default_text_undoer() -> TextEditUndoer {
         auto_save_interval: 1.0,
         ..Default::default()
     })
+    .with_state_equality(|left, right| left.1 == right.1)
 }
 
 /// The text edit state stored between frames.
@@ -94,6 +95,14 @@ impl TextEditState {
 
     pub fn undoer(&self) -> TextEditUndoer {
         self.undoer.lock().clone()
+    }
+
+    /// Track text changes without cloning the complete shared history.
+    pub fn feed_undo_state(&self, time: f64, text: &str) {
+        let cursor = self.cursor.char_range().unwrap_or_default();
+        self.undoer
+            .lock()
+            .feed_state(time, &(cursor, text.to_owned()));
     }
 
     #[expect(clippy::needless_pass_by_ref_mut)] // Intentionally hide interiority of mutability

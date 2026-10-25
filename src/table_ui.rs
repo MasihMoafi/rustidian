@@ -78,26 +78,29 @@ fn take_action(
     if action == TableAction::Follow {
         events.remove(index);
     } else {
-        let tail = events.split_off(index + 1);
-        events.pop();
-        for event in tail {
-            if matches!(
-                event,
-                egui::Event::Key { .. }
-                    | egui::Event::Text(_)
-                    | egui::Event::ModifiersChanged(_)
-                    | egui::Event::Paste(_)
-                    | egui::Event::Copy
-                    | egui::Event::Cut
-                    | egui::Event::Ime(_)
-            ) {
-                deferred.push(event);
-            } else {
-                events.push(event);
-            }
-        }
+        events.remove(index);
+        defer_from(events, deferred, index);
     }
     Some(action)
+}
+
+fn defer_from(events: &mut Vec<egui::Event>, deferred: &mut Vec<egui::Event>, index: usize) {
+    for event in events.split_off(index) {
+        if matches!(
+            event,
+            egui::Event::Key { .. }
+                | egui::Event::Text(_)
+                | egui::Event::ModifiersChanged(_)
+                | egui::Event::Paste(_)
+                | egui::Event::Copy
+                | egui::Event::Cut
+                | egui::Event::Ime(_)
+        ) {
+            deferred.push(event);
+        } else {
+            events.push(event);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -107,6 +110,7 @@ pub struct Placement {
     pub characters: Range<usize>,
     pub widths: Vec<f32>,
     pub heights: Vec<f32>,
+    pub available: f32,
 }
 
 impl Placement {
@@ -203,7 +207,13 @@ impl Tables {
                         );
                     }
                 }
-                let widths = crate::table_layout::widths(ui.ctx(), from, ordinal, &widths);
+                let widths = crate::table_layout::widths(
+                    ui.ctx(),
+                    from,
+                    ordinal,
+                    &widths,
+                    ui.available_width(),
+                );
                 let heights = view
                     .cells
                     .iter()
@@ -228,6 +238,7 @@ impl Tables {
                     characters: start..start + source[view.model.range.clone()].chars().count(),
                     widths,
                     heights,
+                    available: ui.available_width(),
                 })
             })
             .collect()
@@ -255,35 +266,84 @@ impl Tables {
                 input.events = std::mem::take(&mut self.deferred);
             });
         }
-        let focused = self.focus.is_some()
-            || self.views.iter().enumerate().any(|(table, view)| {
-                view.cells.iter().enumerate().any(|(row, cells)| {
-                    (0..cells.len())
-                        .any(|column| ui.memory(|m| m.has_focus(cell_id(id, (table, row, column)))))
-                })
-            });
-        if !focused {
+        let focused = self.focus.is_some() || self.has_focus(ui.ctx(), id);
+        if !focused
+            || !ui.is_enabled()
+            || !ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
+        {
             return;
         }
-        let redo = ui.input_mut(|input| {
-            input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::Z)
-                || input.consume_key(egui::Modifiers::COMMAND, Key::Y)
-        });
-        let undo =
-            !redo && ui.input_mut(|input| input.consume_key(egui::Modifiers::COMMAND, Key::Z));
-        if !(undo || redo) {
-            return;
-        }
+        feed_history(ui.ctx(), id, &tab.document.text);
         let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
+        while crate::table_layout::history(
+            ui.ctx(),
+            &tab.document.path,
+            &tab.document.text,
+            &mut state,
+            true,
+        ) {}
+        state.clone().store(ui.ctx(), id);
+        let request = ui.input_mut(|input| {
+            let mut mutation = false;
+            for (index, event) in input.events.iter().enumerate() {
+                match event {
+                    egui::Event::Text(_)
+                    | egui::Event::Paste(_)
+                    | egui::Event::Cut
+                    | egui::Event::Ime(egui::ImeEvent::Commit(_)) => mutation = true,
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => {
+                        let redo = *key == Key::Y
+                            && modifiers.matches_logically(egui::Modifiers::COMMAND)
+                            || *key == Key::Z
+                                && modifiers.matches_logically(
+                                    egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                                );
+                        let undo =
+                            *key == Key::Z && modifiers.matches_logically(egui::Modifiers::COMMAND);
+                        if undo || redo {
+                            if mutation {
+                                defer_from(&mut input.events, &mut self.deferred, index);
+                                return None;
+                            }
+                            input.events.remove(index);
+                            defer_from(&mut input.events, &mut self.deferred, index);
+                            return Some(redo);
+                        }
+                        if matches!(key, Key::Backspace | Key::Delete | Key::Enter | Key::Tab) {
+                            mutation = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        });
+        if !self.deferred.is_empty() {
+            ui.ctx().request_repaint();
+        }
+        let Some(redo) = request else {
+            return;
+        };
         let cursor = state.cursor.char_range().unwrap_or_default();
         let mut history = state.undoer();
-        let current = (cursor, tab.document.text.clone());
-        let restored = if redo {
-            history.redo(&current)
-        } else {
-            history.undo(&current)
-        }
-        .cloned();
+        let mut current = (cursor, tab.document.text.clone());
+        let restored = loop {
+            let next = if redo {
+                history.redo(&current)
+            } else {
+                history.undo(&current)
+            }
+            .cloned();
+            match next {
+                Some(next) if next.1 == tab.document.text => current = next,
+                next => break next,
+            }
+        };
         if let Some((cursor, text)) = restored {
             self.draft = None;
             tab.document.text = text;
@@ -293,6 +353,16 @@ impl Tables {
         }
         state.set_undoer(history);
         state.store(ui.ctx(), id);
+    }
+
+    pub fn has_focus(&self, ctx: &egui::Context, id: egui::Id) -> bool {
+        self.views.iter().enumerate().any(|(table, view)| {
+            view.cells.iter().enumerate().any(|(row, cells)| {
+                (0..cells.len()).any(|column| {
+                    ctx.memory(|memory| memory.has_focus(cell_id(id, (table, row, column))))
+                })
+            })
+        })
     }
 
     pub fn take_exit(&mut self) -> Option<usize> {
@@ -309,6 +379,7 @@ impl Tables {
     ) -> Option<String> {
         let mut follow = None;
         let mut edit = None;
+        let mut separate_edit = false;
         let mut navigation = None;
         let mut menu_focus = None;
         let mut exit = None;
@@ -396,6 +467,28 @@ impl Tables {
                                     Some(TableAction::Down) => Some(2),
                                     _ => None,
                                 };
+                                let discrete = focused
+                                    && ui.input(|input| {
+                                        input.events.iter().any(|event| {
+                                            matches!(
+                                                event,
+                                                egui::Event::Paste(_) | egui::Event::Cut
+                                            )
+                                        })
+                                    });
+                                let replacing = focused
+                                    && TextEditState::load(ui.ctx(), field_id)
+                                        .and_then(|state| state.cursor.char_range())
+                                        .is_some_and(|cursor| !cursor.is_empty())
+                                    && ui.input(|input| {
+                                        input
+                                            .events
+                                            .iter()
+                                            .any(|event| matches!(event, egui::Event::Text(_)))
+                                    });
+                                if discrete || replacing {
+                                    checkpoint(ui.ctx(), id, &tab.document.text);
+                                }
                                 let rendered =
                                     cell.presentation.layout(ui, row == 0, inner.width());
                                 let mut layouter =
@@ -452,6 +545,7 @@ impl Tables {
                                     );
                                 }
                                 if response.changed() {
+                                    separate_edit = discrete;
                                     edit = Some((
                                         table,
                                         Action::Cell {
@@ -613,12 +707,16 @@ impl Tables {
                             table,
                             outer,
                             &placement.widths,
+                            placement.available,
                         );
                     });
             });
         }
         if let Some((table, action)) = edit {
             self.apply(ui, tab, id, table, action);
+            if separate_edit {
+                checkpoint(ui.ctx(), id, &tab.document.text);
+            }
         }
         if let Some((table, row, column)) = menu_focus
             && let Some(model) = rustidian::editor::Markdown::parse(&tab.document.text)
@@ -708,6 +806,8 @@ impl Tables {
                     tab.edited();
                     if structural {
                         checkpoint(ui.ctx(), id, &tab.document.text);
+                    } else {
+                        feed_history(ui.ctx(), id, &tab.document.text);
                     }
                     ui.ctx().request_repaint();
                 }
@@ -715,6 +815,12 @@ impl Tables {
             Err(error) => self.error = Some(error.into()),
         }
     }
+}
+
+fn feed_history(ctx: &egui::Context, id: egui::Id, text: &str) {
+    let state = TextEditState::load(ctx, id).unwrap_or_default();
+    state.feed_undo_state(ctx.input(|input| input.time), text);
+    state.store(ctx, id);
 }
 
 pub(crate) fn checkpoint(ctx: &egui::Context, id: egui::Id, text: &str) {

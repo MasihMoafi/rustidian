@@ -2200,6 +2200,11 @@ impl NotesApp {
 
     fn graph_view(&mut self, ui: &mut egui::Ui, local: bool) {
         let blocked = self.interaction_blocked();
+        self.graph.set_active_note(
+            self.tabs
+                .get(self.active)
+                .map(|tab| tab.document.path.as_path()),
+        );
         let root = local.then(|| self.tabs[self.active].document.path.clone());
         let action = self
             .vault
@@ -2507,6 +2512,36 @@ impl NotesApp {
         let id = ui
             .scope_id()
             .with(("note-editor", tab.id(), tab.editor_path()));
+        if let Some(vault) = &self.vault {
+            let shared =
+                crate::editor_ui::document_history(ui.ctx(), &vault.root, &tab.document.path);
+            let mut state =
+                egui::widgets::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            state.share_undoer_with(&shared);
+            let history_key =
+                ui.input(|input| input.key_pressed(Key::Z) || input.key_pressed(Key::Y));
+            let shortcuts = history_key
+                && self.dialog.is_none()
+                && self.pending.is_none()
+                && !self.open_picker.active()
+                && !self.vault_manager.open
+                && !self.workspace_manager.open
+                && !self.recovery_manager.active()
+                && !self.file_move.active()
+                && ui.is_enabled()
+                && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
+                && (self.editor.has_focus(ui.ctx(), id)
+                    || crate::table_layout::has_focus(ui.ctx(), &tab.document.path)
+                    || view == View::Read && !ui.ctx().egui_wants_keyboard_input());
+            while crate::table_layout::history(
+                ui.ctx(),
+                &tab.document.path,
+                &tab.document.text,
+                &mut state,
+                shortcuts,
+            ) {}
+            state.store(ui.ctx(), id);
+        }
         crate::editor_ui::find_bar(ui, &mut self.find, tab, id);
         let mut follow = None;
         let anchor = self.pending_anchor.take();

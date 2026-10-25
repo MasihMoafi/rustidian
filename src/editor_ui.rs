@@ -53,6 +53,31 @@ fn histories(root: &std::path::Path) -> egui::Id {
     egui::Id::unique(("document-edit-histories", root))
 }
 
+pub fn document_history(
+    ctx: &egui::Context,
+    root: &std::path::Path,
+    path: &std::path::Path,
+) -> TextEditState {
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Histories>(histories(root))
+            .entry(path.to_owned())
+            .or_default()
+            .clone()
+    })
+}
+
+pub fn clear_layout_history(ctx: &egui::Context, root: &std::path::Path) {
+    let states = ctx.data(|data| {
+        data.get_temp::<Histories>(histories(root))
+            .unwrap_or_default()
+    });
+    for mut state in states.into_values() {
+        let mut history = state.undoer();
+        history.clear_markers();
+        state.set_undoer(history);
+    }
+}
+
 pub fn record_document_edit(
     ctx: &egui::Context,
     root: &std::path::Path,
@@ -94,6 +119,7 @@ pub fn relocate_histories(
             }
         }
     });
+    crate::table_layout::relocate(ctx, from, to);
 }
 
 pub fn clear_document_history(ctx: &egui::Context, root: &std::path::Path, path: &std::path::Path) {
@@ -515,6 +541,10 @@ impl Editor {
                 .map(|(_, range)| range),
         });
         self.focus = true;
+    }
+
+    pub fn has_focus(&self, ctx: &egui::Context, id: egui::Id) -> bool {
+        ctx.memory(|memory| memory.has_focus(id)) || self.tables.has_focus(ctx, id)
     }
 
     pub fn show(
@@ -2690,6 +2720,7 @@ mod tests {
             characters: start..end,
             widths: vec![80.0, 80.0],
             heights: vec![32.4, 32.4],
+            available: 920.0,
         };
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let mut galley = ui.fonts_mut(|fonts| {
