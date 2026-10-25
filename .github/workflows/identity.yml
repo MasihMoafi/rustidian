@@ -73,7 +73,7 @@ jobs:
       - name: Exact optimized app workflows
         run: |
           gui_status=0
-          for section in essential undo navigation tab-restore settings recovery; do
+          for section in essential undo navigation tab-restore settings recovery folders; do
             python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1 || gui_status=1
           done
           python3 tests/gui_smoke.py --binary target/release/rustidian --open-file md > reports/gui-open-md.log 2>&1 || gui_status=1

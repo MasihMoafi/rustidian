@@ -345,6 +345,7 @@ jobs:
         run: |
           sha256sum target/release/rustidian > reports/release.sha256
           mv reports/rustidian-candidate-linux-x86_64.tar.gz reports/rustidian-linux-x86_64.tar.gz
+          sha256sum reports/rustidian-linux-x86_64.tar.gz > reports/rustidian-linux-x86_64.tar.gz.sha256
           sha256sum reports/rustidian-linux-x86_64.tar.gz > reports/bundle.sha256
           df -h .
       - name: Keep the application and evidence for one day
