@@ -1238,8 +1238,12 @@ fn events(
 
     for event in &events {
         let separate_edit = matches!(event, Event::Paste(value) if !value.is_empty())
-            || (!cursor_range.is_empty() && matches!(event, Event::Text(_) | Event::Cut));
-        if separate_edit {
+            || (!cursor_range.is_empty() && matches!(event, Event::Cut));
+        // Selection replacement starts a typing group. Do not checkpoint its first
+        // character as a completed edit: subsequent Text events may arrive later.
+        let replacing_text =
+            !cursor_range.is_empty() && matches!(event, Event::Text(value) if !value.is_empty());
+        if separate_edit || replacing_text {
             state
                 .undoer
                 .lock()

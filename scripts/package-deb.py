@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -39,6 +40,7 @@ def main():
     parser.add_argument('--revision', type=int, default=1)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
+    mime_types = runpy.run_path(str(root / 'scripts/install-linux.py'))['MIME_TYPES']
     binary = args.binary.resolve()
     with binary.open('rb') as incoming:
         header = incoming.read(20)
@@ -70,7 +72,7 @@ def main():
         for license in (root / 'assets/fonts').glob('LICENSE-*.txt'):
             shutil.copy2(license, documents / license.name)
         desktop = package / 'usr/share/applications/rustidian.desktop'
-        desktop.write_text('[Desktop Entry]\nType=Application\nName=Rustidian\nComment=Local Markdown notes and source code\nExec=rustidian %f\nIcon=rustidian\nTerminal=false\nCategories=Office;TextEditor;\nKeywords=Markdown;Notes;Code;\nStartupWMClass=rustidian\nMimeType=text/markdown;text/x-markdown;text/plain;text/x-python;text/x-rust;application/json;text/html;\n')
+        desktop.write_text('[Desktop Entry]\nType=Application\nName=Rustidian\nComment=Local Markdown notes and source code\nExec=rustidian %f\nIcon=rustidian\nTerminal=false\nCategories=Office;TextEditor;\nKeywords=Markdown;Notes;Code;\nStartupWMClass=rustidian\nMimeType=' + mime_types + '\n')
         subprocess.run(['desktop-file-validate', str(desktop)], check=True)
         size = sum(path.stat().st_size for path in (package / 'usr').rglob('*') if path.is_file())
         dependencies = 'libc6 (>= 2.39), libstdc++6, libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libxkbcommon0, libwayland-client0, libegl1, libgl1, python3, zenity'

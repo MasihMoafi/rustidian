@@ -12,7 +12,7 @@ Early alpha · Full Obsidian parity is unfinished
 
 </div>
 
-I built Rustidian because I wanted a note editor that felt fast. I liked Obsidian, but startup still felt slow after several optimization attempts. Rustidian brings that familiar vault workflow to a native Rust app: ordinary Markdown folders, live editing, linked notes and graphs.
+I built Rustidian for myself because every note editor I tried felt too slow, especially Obsidian. **Speed and stability** guide the project: ordinary Markdown folders, native editing, linked notes and graphs.
 
 **Try the Linux alpha. Contributors are welcome.**
 

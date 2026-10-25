@@ -100,29 +100,36 @@ fn queued_typing_then_undo_keeps_event_order_and_a_caret_move_alone_changes_no_t
 
 #[test]
 fn ordinary_edits_keep_independent_undo_and_redo_groups() {
-    for (name, time, event, replace, expected) in [
+    for (name, time, events, replace, expected) in [
         (
             "pause",
             0.7,
-            Event::Text(" second".into()),
+            vec![Event::Text(" second".into())],
             false,
             "first second",
         ),
         (
             "paste",
             0.2,
-            Event::Paste(" second".into()),
+            vec![Event::Paste(" second".into())],
             false,
             "first second",
         ),
         (
             "replacement",
             0.2,
-            Event::Text("second".into()),
+            vec![Event::Text("second".into())],
             true,
             "second",
         ),
-        ("cut", 0.2, Event::Cut, true, ""),
+        (
+            "replacement across frames",
+            0.2,
+            vec![Event::Text("s".into()), Event::Text("econd".into())],
+            true,
+            "second",
+        ),
+        ("cut", 0.2, vec![Event::Cut], true, ""),
     ] {
         let ctx = egui::Context::default();
         let id = egui::Id::unique(name);
@@ -142,7 +149,9 @@ fn ordinary_edits_keep_independent_undo_and_redo_groups() {
             )));
             state.store(&ctx, id);
         }
-        frame(&ctx, id, &mut text, time, vec![event]);
+        for (index, event) in events.into_iter().enumerate() {
+            frame(&ctx, id, &mut text, time + index as f64 * 0.01, vec![event]);
+        }
         assert_eq!(text, format!("Original note: {expected}"), "{name}");
         frame(&ctx, id, &mut text, time + 0.1, vec![key(Key::Z)]);
         assert_eq!(

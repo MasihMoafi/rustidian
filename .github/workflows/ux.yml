@@ -29,7 +29,7 @@ jobs:
       - name: Install native test tools
         run: |
           sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
-          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox zenity python3-pil python3-xlib desktop-file-utils
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
           mkdir -p reports
       - name: Formatting
@@ -42,7 +42,7 @@ jobs:
         run: |
           tar -czf reports/rustidian-functional.tar.gz -C target/debug rustidian
           gui_status=0
-          for section in tab-drag table-resize trash-options palettes; do
+          for section in tab-drag table-resize trash-options palettes code undo; do
             if ! python3 tests/gui_smoke.py --binary target/debug/rustidian --section "$section" > "reports/debug-$section.log" 2>&1; then
               gui_status=1
               tail -n 80 "reports/debug-$section.log"
@@ -71,7 +71,11 @@ jobs:
         run: |
           gui_status=0
           for section in tab-drag table-resize trash-options palettes tab-actions tab-overflow table-edit table-input table-links essential undo settings folders code reading-code; do
-            python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1 || gui_status=1
+            if ! python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1; then
+              gui_status=1
+              tail -n 80 "reports/gui-$section.log"
+              if test -f "reports/gui-$section-failure-app.log"; then tail -n 80 "reports/gui-$section-failure-app.log"; fi
+            fi
           done
           python3 tests/gui_smoke.py --binary target/release/rustidian --open-file md > reports/gui-open-md.log 2>&1 || gui_status=1
           python3 tests/gui_smoke.py --binary target/release/rustidian --open-file txt > reports/gui-open-txt.log 2>&1 || gui_status=1

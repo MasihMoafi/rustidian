@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
-parser.add_argument("--section", choices=["all", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview", "page-preview-actions", "native-highlights", "native-highlight-caret", "native-highlight-render", "native-highlight-availability", "native-highlight-empty", "empty-commands"], default="all")
+parser.add_argument("--section", choices=["all", "ux", "callouts", "navigation", "hover", "menus", "inventory", "workspaces", "recovery", "recovery-live", "note-creators", "unique-settings", "unique-links", "unique-links-configured", "tab-actions", "tab-windows", "file-actions", "file-move", "page-preview", "page-preview-actions", "native-highlights", "native-highlight-caret", "native-highlight-render", "native-highlight-availability", "native-highlight-empty", "empty-commands"], default="all")
 parser.add_argument("--appimage", type=Path, default=Path("/home/masih/Desktop/o/Obsidian.AppImage"))
 parser.add_argument("--app-asar", type=Path, help="Read-only copy of an installed update into the disposable profile")
 arguments = parser.parse_args()
@@ -72,11 +72,12 @@ with tempfile.TemporaryDirectory(prefix="rustidian-reference-") as temporary:
         update_identity = {"app_asar": str(arguments.app_asar), "app_asar_sha256": hashlib.sha256(update_bytes).hexdigest()}
     (profile / "obsidian.json").write_text(json.dumps({"updateDisabled": True, "vaults": {"0123456789abcdef": {"path": str(vault), "ts": 1, "open": True}}}))
     read_fd, write_fd = os.pipe()
-    server = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1440x960x24", "-nolisten", "tcp", "-ac"], pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    xvfb_log = (ROOT / 'reports/reference-xvfb.log').open('w')
+    server = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1440x960x24", "-nolisten", "tcp", "-ac", "-noreset"], pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=xvfb_log)
     os.close(write_fd)
-    display = ":" + os.read(read_fd, 64).decode().strip()
-    os.close(read_fd)
-    environment = {**os.environ, "DISPLAY": display, "WAYLAND_DISPLAY": "", "ELECTRON_OZONE_PLATFORM_HINT": "x11"}
+    with os.fdopen(read_fd) as display_file:
+        display = ":" + display_file.readline().strip()
+    environment = {**os.environ, "DISPLAY": display, "WAYLAND_DISPLAY": "", "ELECTRON_OZONE_PLATFORM_HINT": "x11", "GDK_BACKEND": "x11", "GTK_USE_PORTAL": "0", "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/tmp/rustidian-reference-no-bus-{os.getpid()}"}
     for _ in range(50):
         ready = subprocess.run(["xdotool", "getdisplaygeometry"], env=environment,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -156,6 +157,64 @@ with tempfile.TemporaryDirectory(prefix="rustidian-reference-") as temporary:
             target=main_target;xdo("windowfocus",window)
             print(json.dumps({"reference_identity":{k:v for k,v in reference_identity.items() if k!="general_text"}}),flush=True)
             assert reference_identity['observed_general_version']==re.search(r"(\d+\.\d+\.\d+)",arguments.app_asar.name).group(1),reference_identity
+
+        if arguments.section == "ux":
+            output = ROOT / 'reports/reference-ux'
+            output.mkdir(exist_ok=True)
+            source = '# Resize tables\n\n| Item | Value |\n| --- | --- |\n| Short | A longer value that must remain readable |\n\n> | Nested | Value |\n> | --- | --- |\n> | Quote | Safe |\n'
+            note = vault / 'Notes/Resize tables.md'
+            note.write_text(source)
+            for name in ('Alpha', 'Beta', 'Gamma', 'Delta'):
+                (vault / f'Drag {name}.md').write_text(f'# Drag {name}\n\nKeep {name}.\n')
+            time.sleep(.8)
+            report = {**reference_identity, 'window': [1440, 960], 'fixture': source, 'status': 'observed', 'actions': []}
+            def show_table(mode):
+                evaluate('(app.workspace.activeLeaf.setViewState({type:"markdown",state:{file:"Notes/Resize tables.md",mode:'+json.dumps(mode)+',source:false}}),JSON.stringify("opening"))')
+                time.sleep(.8)
+            def table_bounds():
+                return evaluate("JSON.stringify([...document.querySelectorAll('.workspace-leaf.mod-active table')].filter(table=>table.getBoundingClientRect().width>0).map(table=>({rect:(()=>{const r=table.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})(),columns:[...table.rows[0].cells].map(cell=>{const r=cell.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})})))")
+            def move(start, end):
+                xdo('mousemove','--sync',str(round(start[0])),str(round(start[1])),'mousedown','1')
+                try:
+                    for step in range(1,21):
+                        point=[round(start[axis]+(end[axis]-start[axis])*step/20) for axis in (0,1)]
+                        xdo('mousemove','--sync',str(point[0]),str(point[1]));time.sleep(.03)
+                finally:xdo('mouseup','1')
+                time.sleep(.5)
+            try:
+                for mode in ('source','preview'):
+                    show_table(mode)
+                    bounds=table_bounds()
+                    assert bounds, 'The ordinary table must be visible for this comparison'
+                    ImageGrab.grab(xdisplay=display).save(output / ('obsidian-table-'+('live' if mode=='source' else 'reading')+'.png'))
+                    report['actions'].append({'view':mode,'tables':bounds,'viewing_preserved_bytes':note.read_text()==source})
+                show_table('source')
+                cell=table_bounds()[0]['columns'][0]
+                xdo('mousemove','--sync',str(round(cell[0]+cell[2]/2)),str(round(cell[1]+cell[3]/2)),'click','3');time.sleep(.4)
+                report['table_context_menu']=evaluate("JSON.stringify([...document.querySelectorAll('.menu-item-title')].map(e=>e.textContent))")
+                ImageGrab.grab(xdisplay=display).save(output/'obsidian-table-menu.png')
+                xdo('key','Escape')
+                before=table_bounds();cell=before[0]['columns'][0]
+                move([cell[0]+cell[2],cell[1]+cell[3]/2],[cell[0]+cell[2]+100,cell[1]+cell[3]/2])
+                report['border_drag']={'before':before,'after':table_bounds(),'preserved_bytes':note.read_text()==source,'source_after':note.read_text()}
+                for name in ('Alpha','Beta','Gamma','Delta'):
+                    evaluate('(app.workspace.getLeaf("tab").setViewState({type:"markdown",state:{file:'+json.dumps('Drag '+name+'.md')+',mode:"source",source:false}}),JSON.stringify("opening"))')
+                    time.sleep(.2)
+                def tabs():
+                    return evaluate("JSON.stringify([...document.querySelectorAll('.workspace-tabs.mod-active .workspace-tab-header')].map(e=>{const r=e.getBoundingClientRect();return {title:e.textContent.trim(),rect:[r.x,r.y,r.width,r.height]}}))")
+                before=tabs()
+                a=next(tab['rect'] for tab in before if tab['title']=='Drag Alpha')
+                c=next(tab['rect'] for tab in before if tab['title']=='Drag Gamma')
+                move([a[0]+20,a[1]+a[3]/2],[c[0]+c[2]-30,c[1]+c[3]/2])
+                report['tab_drag']={'before':before,'after':tabs()}
+                xdo('mousemove','--sync','1300','700');time.sleep(.6)
+                ImageGrab.grab(xdisplay=display).save(output/'obsidian-tab-drag.png')
+                report['fixture_exact']=note.read_text()==source
+                report['fixture_after']=note.read_text()
+            finally:
+                (output/'observations.json').write_text(json.dumps(report,indent=2)+'\n')
+            print(json.dumps({'section':'ux','status':'observed','output':str(output)}))
+            raise SystemExit(0)
 
         if arguments.section == "empty-commands":
             report={**reference_identity,"profile":"disposable","status":"observed"}

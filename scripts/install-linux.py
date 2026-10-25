@@ -9,6 +9,9 @@ import subprocess
 import tempfile
 
 
+MIME_TYPES = 'text/markdown;text/x-markdown;text/plain;text/rust;text/x-python;text/x-python3;application/json;application/toml;text/html;'
+
+
 def atomic_copy(source, destination, mode):
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
@@ -75,7 +78,7 @@ def main():
                  'Exec=' + desktop_exec(launcher) + ' %f\n'
                  'Icon=' + desktop_string(icon) + '\nTerminal=false\n'
                  'Categories=Office;TextEditor;\nKeywords=Markdown;Notes;Vault;\n'
-                 'StartupWMClass=rustidian\nMimeType=text/markdown;text/x-markdown;text/plain;\n')
+                 'StartupWMClass=rustidian\nMimeType=' + MIME_TYPES + '\n')
         staging.write_text(entry)
         applications = data / 'applications'
         atomic_copy(staging, applications / 'rustidian.desktop', 0o644)
