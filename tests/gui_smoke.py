@@ -2425,9 +2425,10 @@ def main():
                 capture("native-palettes-restored.png")
                 states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
                 assert any(state.get("palette") == "signature" and state["dark"] is False for state in states)
-                click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
-                assert note.read_text() == source
                 expect_icons("signature")
+                click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
+                expect_icons("teal")
+                assert note.read_text() == source
                 results.append("All four palettes update the real native window and XDG launcher icons; a real restart restores the selection without changing launcher actions or note bytes")
 
             def table_resize_checks():
