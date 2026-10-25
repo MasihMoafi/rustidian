@@ -48,10 +48,16 @@ fn plain_text_documents_open_and_save_without_bulk_indexing_or_overwriting_exter
     }
     assert_eq!(
         vault.notes.len(),
-        1,
-        "Source code must not enter the Markdown graph/search index on save"
+        2,
+        "Source code stays outside the note index; saved .txt files keep their existing indexing behavior"
     );
     assert_eq!(vault.notes[0].path, Path::new("Home.md"));
+    assert!(
+        vault
+            .notes
+            .iter()
+            .any(|note| note.path == Path::new(names[0]))
+    );
     fs::write(folder.path().join("binary.rs"), b"text\0binary").unwrap();
     assert!(vault.open_document(Path::new("binary.rs")).is_err());
     fs::write(folder.path().join("invalid.py"), [0xff, 0xfe]).unwrap();

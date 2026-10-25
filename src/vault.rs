@@ -366,13 +366,17 @@ impl Vault {
     }
 
     fn index_note(&mut self, path: PathBuf, text: String) {
-        if !is_markdown(&path) {
+        let legacy_text = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("txt"));
+        if !is_markdown(&path) && !legacy_text {
             if !self.attachments.contains(&path) {
                 self.attachments.push(path);
                 self.attachments.sort();
             }
             return;
         }
+        self.attachments.retain(|attachment| attachment != &path);
         let note = Note::new(path.clone(), text);
         if let Some(existing) = self.notes.iter_mut().find(|note| note.path == path) {
             *existing = note;
