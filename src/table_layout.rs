@@ -7,7 +7,7 @@ use std::{
 pub type Layouts = BTreeMap<PathBuf, BTreeMap<usize, Vec<f32>>>;
 
 fn storage() -> Id {
-    Id::new("table-column-widths")
+    Id::unique("table-column-widths")
 }
 
 pub fn restore(ctx: &Context, layouts: Layouts) {

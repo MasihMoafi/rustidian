@@ -36,6 +36,15 @@ jobs:
         run: cargo test --locked --all-targets --no-fail-fast 2>&1 | tee reports/rust-tests.log
       - name: Clippy
         run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
+      - name: Native functional checks before optimization
+        run: |
+          tar -czf reports/rustidian-functional.tar.gz -C target/debug rustidian
+          gui_status=0
+          for section in tab-drag table-resize trash-options palettes; do
+            python3 tests/gui_smoke.py --binary target/debug/rustidian --section "$section" > "reports/debug-$section.log" 2>&1 || gui_status=1
+          done
+          python3 tests/gui_smoke.py --binary target/debug/rustidian --open-file rs > reports/debug-open-rs.log 2>&1 || gui_status=1
+          exit "$gui_status"
       - name: Build optimized Rustidian
         run: |
           cargo build --locked --release --bin rustidian 2>&1 | tee reports/build.log

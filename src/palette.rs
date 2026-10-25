@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Palette {
-    #[default]
-    #[serde(other)]
-    Teal,
     LoveSpace,
     ElpisGold,
     Signature,
+    #[default]
+    #[serde(other)]
+    Teal,
 }
 
 impl Palette {
@@ -83,7 +83,7 @@ impl Palette {
 }
 
 fn id() -> egui::Id {
-    egui::Id::new("rustidian-palette")
+    egui::Id::unique("rustidian-palette")
 }
 
 pub fn current(ctx: &egui::Context) -> Palette {

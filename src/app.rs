@@ -79,7 +79,7 @@ pub struct NotesApp {
     started: Instant,
     first_frame: bool,
     window_title: String,
-    ctx: egui::Context,
+    pub(crate) ctx: egui::Context,
     loading: Option<Receiver<Result<Vault, String>>>,
     watcher: Option<Box<dyn notify::Watcher>>,
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
@@ -997,7 +997,7 @@ impl NotesApp {
         self.ask(dialog);
         self.dialog_input = path.display().to_string();
         self.dialog_path = Some(path);
-        if dialog == Dialog::TrashNote && !self.confirm_trash && self.apply_dialog(dialog) {
+        if dialog == Dialog::TrashNote && !self.confirm_trash && self.submit_dialog(dialog) {
             self.dialog = None;
             self.focus_editor();
         }
