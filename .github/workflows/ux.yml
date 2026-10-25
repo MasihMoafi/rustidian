@@ -1,0 +1,131 @@
+name: Rustidian UX candidate
+
+on:
+  push:
+    branches: ['work/rustidian-ux-*']
+  workflow_dispatch:
+    inputs:
+      gui_only:
+        description: 'Run optimized GUI checks only; do not package or upload artifacts'
+        type: boolean
+        default: false
+      sections:
+        description: 'Space-separated native GUI sections'
+        type: string
+        default: 'table-resize table-input table-edit undo graph note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: '1.95.0'
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install native test tools
+        run: |
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          mkdir -p reports
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Rust behavior checks
+        if: ${{ !inputs.gui_only }}
+        run: cargo test --locked --all-targets --no-fail-fast 2>&1 | tee reports/rust-tests.log
+      - name: Clippy
+        if: ${{ !inputs.gui_only }}
+        run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee reports/clippy.log
+      - name: Native functional checks before optimization
+        if: ${{ !inputs.gui_only }}
+        run: |
+          tar -czf reports/rustidian-functional.tar.gz -C target/debug rustidian
+          gui_status=0
+          for section in tab-drag table-resize trash-options palettes code undo; do
+            if ! python3 tests/gui_smoke.py --binary target/debug/rustidian --section "$section" > "reports/debug-$section.log" 2>&1; then
+              gui_status=1
+              tail -n 80 "reports/debug-$section.log"
+              if test -f "reports/gui-$section-failure-app.log"; then tail -n 80 "reports/gui-$section-failure-app.log"; fi
+            fi
+          done
+          python3 tests/gui_smoke.py --binary target/debug/rustidian --open-file rs > reports/debug-open-rs.log 2>&1 || gui_status=1
+          exit "$gui_status"
+      - name: Build optimized Rustidian
+        run: |
+          CARGO_PROFILE_RELEASE_LTO=false cargo rustc --locked --release --bin rustidian -- -C opt-level=2 2>&1 | tee reports/build.log
+          git rev-parse HEAD > reports/source-commit.txt
+          sha256sum target/release/rustidian > reports/binary.sha256
+          target/release/rustidian --version | tee reports/version.txt
+      - name: Real package and installation checks
+        if: ${{ !inputs.gui_only }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git diff --exit-code 54be6cc016bc5c6e7927c9de99cab436295d2fa9 -- Cargo.toml Cargo.lock
+          gh release download v0.1.0-alpha.2 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/
+          python3 scripts/package-linux.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-x86_64.tar.gz
+          python3 scripts/package-deb.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-amd64.deb
+          python3 tests/linux_bundle.py --binary target/release/rustidian 2>&1 | tee reports/package-tests.log
+          python3 tests/debian_package.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --system 2>&1 | tee reports/debian-tests.log
+      - name: Exact optimized app workflows
+        if: ${{ !inputs.gui_only }}
+        run: |
+          gui_status=0
+          for section in tab-drag table-resize trash-options palettes tab-actions tab-overflow table-edit table-input table-links essential undo settings folders code reading-code; do
+            if ! python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1; then
+              gui_status=1
+              tail -n 80 "reports/gui-$section.log"
+              if test -f "reports/gui-$section-failure-app.log"; then tail -n 80 "reports/gui-$section-failure-app.log"; fi
+            fi
+          done
+          python3 tests/gui_smoke.py --binary target/release/rustidian --open-file md > reports/gui-open-md.log 2>&1 || gui_status=1
+          python3 tests/gui_smoke.py --binary target/release/rustidian --open-file txt > reports/gui-open-txt.log 2>&1 || gui_status=1
+          for extension in rs py html json toml; do
+            python3 tests/gui_smoke.py --binary target/release/rustidian --open-file "$extension" > "reports/gui-open-$extension.log" 2>&1 || gui_status=1
+          done
+          exit "$gui_status"
+      - name: Selected native GUI workflows
+        if: ${{ inputs.gui_only }}
+        env:
+          GUI_SECTIONS: ${{ inputs.sections }}
+        run: |
+          read -ra sections <<< "$GUI_SECTIONS"
+          test "${#sections[@]}" -gt 0
+          gui_status=0
+          for section in "${sections[@]}"; do
+            [[ "$section" =~ ^[a-z]+(-[a-z]+)*$ ]] || exit 2
+            if python3 tests/gui_smoke.py --binary target/release/rustidian --section "$section" > "reports/selected-$section.log" 2>&1; then
+              echo "PASSED: $section"
+              python3 -m json.tool reports/gui-results.json
+            else
+              gui_status=1
+              echo "FAILED: $section"
+              tail -n 80 "reports/selected-$section.log"
+              if test -f "reports/gui-$section-failure-app.log"; then tail -n 80 "reports/gui-$section-failure-app.log"; fi
+              if test -f reports/gui-results.json; then python3 -m json.tool reports/gui-results.json; fi
+            fi
+          done
+          exit "$gui_status"
+      - name: Retain exact candidate and evidence
+        if: ${{ always() && !inputs.gui_only }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-ux-${{ github.sha }}
+          path: reports/
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error

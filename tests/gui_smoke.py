@@ -1681,6 +1681,10 @@ def main():
                 click_control("page-preview/task:0");assert target.read_text()==target_original
                 away(True);click_control("tab:Preview folder/Preview target.md");title_contains("Preview target")
                 key("ctrl+s");assert target.read_text()==target_original.replace("- [ ]","- [x]")+"BUFFER_PREVIEW_MARKER"
+                # Tab selection retains focus for arrow navigation. Re-enter the
+                # document before exercising its text Undo, without changing it.
+                editor_end()
+                assert control_bounds("editor-memory-focus")[0] == 1
                 key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original+"BUFFER_PREVIEW_MARKER"
                 key("ctrl+z");key("ctrl+s");assert target.read_text()==target_original
                 command("Open settings");type_text("autosave")
