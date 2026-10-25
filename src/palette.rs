@@ -91,9 +91,9 @@ pub fn current(ctx: &egui::Context) -> Palette {
 }
 
 pub fn select(ctx: &egui::Context, palette: Palette) {
-    let previous = current(ctx);
+    let previous = ctx.data(|data| data.get_temp::<Palette>(id()));
     ctx.data_mut(|data| data.insert_temp(id(), palette));
-    if previous != palette {
+    if previous != Some(palette) {
         // Decode only on selection; inactive themes add no startup image work.
         if let Ok(image) = image::load_from_memory(palette.logo().1) {
             let image = image.thumbnail(128, 128).into_rgba8();
@@ -106,7 +106,93 @@ pub fn select(ctx: &egui::Context, palette: Palette) {
                 },
             ))));
         }
+        #[cfg(target_os = "linux")]
+        if let Err(error) = sync_launcher(palette) {
+            eprintln!("Cannot update Rustidian's launcher icon: {error}");
+        }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sync_launcher(palette: Palette) -> std::io::Result<()> {
+    use std::{io::Write, path::PathBuf};
+    let Some(data) = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+    else {
+        return Ok(());
+    };
+    let launcher = data.join("applications/rustidian.desktop");
+    // A per-user override also covers the system-wide Debian installation.
+    let source = if launcher.is_file() {
+        launcher.clone()
+    } else {
+        let directories = std::env::var_os("XDG_DATA_DIRS")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        let Some(source) = std::env::split_paths(&directories)
+            .filter(|path| path.is_absolute())
+            .map(|path| path.join("applications/rustidian.desktop"))
+            .find(|path| path.is_file())
+        else {
+            return Ok(());
+        };
+        source
+    };
+    let entry = match std::fs::read_to_string(&source) {
+        Ok(entry) => entry,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !entry.lines().any(|line| line == "StartupWMClass=rustidian") {
+        return Ok(());
+    }
+    let mut in_entry = false;
+    let mut offset = 0;
+    let icon_range = entry.split_inclusive('\n').find_map(|line| {
+        let start = offset;
+        offset += line.len();
+        if line.starts_with('[') {
+            in_entry = line.trim_end() == "[Desktop Entry]";
+        }
+        (in_entry && line.starts_with("Icon=")).then_some(start..offset)
+    });
+    let Some(range) = icon_range else {
+        return Ok(());
+    };
+    let name = match palette {
+        Palette::Teal => "teal",
+        Palette::LoveSpace => "love-space",
+        Palette::ElpisGold => "elpis-gold",
+        Palette::Signature => "signature",
+    };
+    let icon = data.join(format!("icons/hicolor/256x256/apps/rustidian-{name}.png"));
+    let atomic_write = |path: &std::path::Path, bytes: &[u8]| -> std::io::Result<()> {
+        let parent = path.parent().expect("Application data paths have a parent");
+        std::fs::create_dir_all(parent)?;
+        let mut file = tempfile::NamedTempFile::new_in(parent)?;
+        file.write_all(bytes)?;
+        file.persist(path)?;
+        Ok(())
+    };
+    if std::fs::read(&icon).ok().as_deref() != Some(palette.logo().1) {
+        atomic_write(&icon, palette.logo().1)?;
+    }
+    // A distinct filename per palette invalidates GNOME's cached launcher image.
+    let escaped = icon
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    let replacement = format!("Icon={escaped}\n");
+    if &entry[range.clone()] != replacement {
+        let mut updated = entry;
+        updated.replace_range(range, &replacement);
+        atomic_write(&launcher, updated.as_bytes())?;
+    }
+    Ok(())
 }
 
 pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {

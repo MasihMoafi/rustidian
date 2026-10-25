@@ -79,6 +79,13 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
+        if args.section in ("palettes", "all"):
+            launcher = base / "data/applications/rustidian.desktop"
+            environment["XDG_DATA_DIRS"] = str(base / "system data")
+            system_launcher = base / "system data/applications/rustidian.desktop"
+            system_launcher.parent.mkdir(parents=True, exist_ok=True)
+            original_launcher = "[Desktop Entry]\nType=Application\nName=Rustidian\nExec=/usr/bin/true %f\nIcon=old-teal\nStartupWMClass=rustidian\nActions=Example;\n\n[Desktop Action Example]\nName=Keep this action\nExec=/usr/bin/true\nIcon=keep-action-icon\n"
+            system_launcher.write_text(original_launcher)
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
@@ -273,9 +280,9 @@ def main():
             title_contains(value if title is None else title)
 
         def ready_window():
-            deadline = time.monotonic() + 20
             window = None
-            while time.monotonic() < deadline:
+            # The thermal guard can pause both this controller and the app.
+            for _ in range(200):
                 assert app.poll() is None, (reports / "gui-smoke.log").read_text()
                 try:
                     window = xdo("search", "--onlyvisible", "--name", "Rustidian$").splitlines()[0]
@@ -289,7 +296,9 @@ def main():
             # it then loses FocusIn, since no window manager delivers a later
             # transition in Xvfb. Wait for the first actual UI, then activate once.
             probe = base / "ui-probe.json"
-            while not probe.exists() and time.monotonic() < deadline:
+            for _ in range(1000):
+                if probe.exists():
+                    break
                 assert app.poll() is None, "App exited before preparing its first UI"
                 time.sleep(.02)
             assert probe.exists(), "The native window never prepared its first UI"
@@ -1458,11 +1467,14 @@ def main():
                     rows = []
                     for y in range(top+4, bottom-4):
                         xs = [x for x in range(right-2, min(image.width, right+14)) if contrast(image.getpixel((x,y))) >= 3]
-                        if len(xs) >= 6:
+                        if len(xs) >= 4:
                             rows.append((y, xs))
                     assert len(rows) >= 24, ("Scrollbar must remain visible away from the pointer with a readable thumb", dark, viewport, len(rows))
+                    assert max(len(xs) for _, xs in rows) <= 6, "Keep the original six-pixel thumb width"
                     y, xs = rows[len(rows)//2]
                     x = xs[len(xs)//2]
+                    if dark:
+                        assert max(image.getpixel((x, y))) <= 160, "The idle thumb must blend with the dark page, not look white"
                     capture("native-scrollbar-" + ("dark" if dark else "light") + ".png")
                     before = control_bounds("document-scroll-y")[0]
                     xdo("mousemove", "--sync", str(x), str(y))
@@ -1477,7 +1489,7 @@ def main():
                     pause()
                     assert control_bounds("document-scroll-y")[0] > before+100, "Dragging the visible scrollbar must move the document"
                     assert path.read_text() == source
-                results.append("Scrollbar thumb remains at least six visible pixels wide with 3:1 contrast in dark and light; dragging it moves the document and preserves bytes")
+                results.append("Original narrow scrollbar stays muted and readable at 3:1 contrast in dark and light; real dragging moves the document and preserves bytes")
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
@@ -2337,6 +2349,28 @@ def main():
 
             def palette_checks():
                 nonlocal app, window
+                def expect_icons(value):
+                    assert system_launcher.read_text() == original_launcher, "System launchers must remain unchanged"
+                    asset = ROOT / ("docs/brand/rustidian.png" if value == "teal" else f"docs/brand/themes/{value}.png")
+                    entry = launcher.read_text()
+                    icon_lines = [line[5:] for line in entry.splitlines() if line.startswith("Icon=")]
+                    assert len(icon_lines) == 2 and icon_lines[1] == "keep-action-icon", entry
+                    icon_path = Path(icon_lines[0])
+                    assert icon_path.is_relative_to(base / "data"), ("Use the private XDG data folder", icon_path)
+                    assert icon_path.read_bytes() == asset.read_bytes(), ("Launcher must use the selected palette logo", value, icon_lines)
+                    assert "Exec=/usr/bin/true %f\n" in entry and "Actions=Example;\n" in entry, entry
+                    raw = subprocess.check_output(["xprop", "-id", window, "-notype", "-f", "_NET_WM_ICON", "32c", "_NET_WM_ICON"], env=environment, text=True)
+                    pixels = [int(value.strip()) for value in raw.split("=", 1)[1].split(",")]
+                    width, height = pixels[:2]
+                    assert width > 0 and height > 0 and len(pixels) == width * height + 2, "The native window must expose its selected icon"
+                    actual = [((p >> 16) & 255, (p >> 8) & 255, p & 255, p >> 24) for p in pixels[2:]]
+                    expected = list(pixel_data(Image.open(asset).convert("RGBA")))
+                    def colored_mean(values):
+                        colors = [p[:3] for p in values if p[3] >= 128 and max(p[:3]) - min(p[:3]) > 35]
+                        assert len(colors) >= 50
+                        return [sum(p[i] for p in colors) / len(colors) for i in range(3)]
+                    assert max(abs(a-b) for a,b in zip(colored_mean(actual), colored_mean(expected))) <= 18, ("Native window and launcher must match the chosen palette", value)
+                expect_icons("teal")
                 source = "# Palette sample\n\n[[Home]] and **clear text**.\n\n- [x] Keep contrast\n\n| Palette | Status |\n| --- | --- |\n| Native | Ready for review |\n"
                 note = fixture / "Notes/Palette sample.md"
                 note.write_text(source)
@@ -2364,6 +2398,7 @@ def main():
                         command("Open settings"); click_control("settings-page:Appearance"); palette_ready()
                         click_control("settings-palette:" + label)
                         palette_ready()
+                        expect_icons(value)
                         cards = [control_bounds("settings-palette:" + name) for name, _ in palettes]
                         assert max(card[1] for card in cards)-min(card[1] for card in cards) <= 1, cards
                         assert all(left[2] < right[0] for left, right in zip(cards, cards[1:])), cards
@@ -2392,7 +2427,8 @@ def main():
                 assert any(state.get("palette") == "signature" and state["dark"] is False for state in states)
                 click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
                 assert note.read_text() == source
-                results.append("Real restart restores the selected palette and base scheme; Original teal remains available")
+                expect_icons("signature")
+                results.append("All four palettes update the real native window and XDG launcher icons; a real restart restores the selection without changing launcher actions or note bytes")
 
             def table_resize_checks():
                 nonlocal app, window
@@ -3752,6 +3788,10 @@ def main():
                 type_text("path:Bulk/")
                 assert control_bounds("search:Bulk/Note0000.md")
                 assert control_bounds("search:Home.md", required=False) is None
+                search_input = control_bounds("search-input")
+                viewport = control_bounds("search-viewport")
+                assert abs(viewport[2] - search_input[2]) <= 12, ("Search scrollbar belongs at the sidebar edge", search_input, viewport)
+                capture("native-search-sidebar-alignment.png")
                 last = None
                 for _ in range(12):
                     last = control_bounds("search:Bulk/Note0549.md", required=False)
@@ -3763,7 +3803,7 @@ def main():
                 capture("native-large-search.png")
                 click_control("search:Bulk/Note0549.md")
                 title_contains("Note0549")
-                results.append("All 550 search matches remained reachable; scrolling opened the last note beyond the previous 200-result cap")
+                results.append("Search results use the full sidebar width with its scrollbar at the edge; all 550 matches remain reachable and the last note opens")
             def bookmark_checks():
                 nonlocal app, window
                 folder = fixture / "Bookmark folder"

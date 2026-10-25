@@ -15,6 +15,10 @@ pub const LIGHT_MUTED: Color32 = Color32::from_rgb(101, 112, 113);
 pub const DARK_FAINT: Color32 = Color32::from_rgb(104, 115, 117);
 pub const DEFAULT_DOCUMENT_FONT_SIZE: u8 = 18;
 
+pub fn sidebar_scroll() -> egui::ScrollArea {
+    egui::ScrollArea::vertical().auto_shrink([false, false])
+}
+
 /// Apply document typography inside its own UI, leaving window controls unchanged.
 pub fn document_style(ui: &mut egui::Ui, size: u8) {
     let scale = f32::from(size) / f32::from(DEFAULT_DOCUMENT_FONT_SIZE);
@@ -216,17 +220,17 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         style.spacing.button_padding = egui::vec2(10.0, 7.0);
         style.spacing.window_margin = egui::Margin::same(22);
         style.spacing.scroll = egui::style::ScrollStyle {
-            bar_width: 12.0,
-            floating_width: 8.0,
-            floating_allocated_width: 8.0,
+            bar_width: 6.0,
+            floating_width: 6.0,
+            floating_allocated_width: 6.0,
             handle_min_length: 36.0,
             foreground_color: true,
-            dormant_background_opacity: 0.12,
-            active_background_opacity: 0.18,
-            interact_background_opacity: 0.25,
-            dormant_handle_opacity: 0.85,
-            active_handle_opacity: 1.0,
-            interact_handle_opacity: 1.0,
+            dormant_background_opacity: 0.04,
+            active_background_opacity: 0.07,
+            interact_background_opacity: 0.10,
+            dormant_handle_opacity: if dark { 0.48 } else { 0.62 },
+            active_handle_opacity: if dark { 0.58 } else { 0.72 },
+            interact_handle_opacity: 0.75,
             ..egui::style::ScrollStyle::thin()
         };
         style.visuals.window_corner_radius = egui::CornerRadius::same(10);

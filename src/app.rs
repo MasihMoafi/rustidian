@@ -1498,7 +1498,7 @@ impl NotesApp {
         }
         let mut open = None;
         let mut action = None;
-        ScrollArea::vertical()
+        theme::sidebar_scroll()
             .id_salt("bookmarks")
             .max_height((ui.available_height() - 64.0).max(0.0))
             .show(ui, |ui| {
@@ -1834,6 +1834,7 @@ impl NotesApp {
                             .desired_width(f32::INFINITY)
                             .font(FontId::proportional(14.0)),
                     );
+                    crate::ui_probe::record(ui.ctx(), "search-input", input.rect);
                     if self.search_focus {
                         input.request_focus();
                         self.search_focus = false;
@@ -1853,7 +1854,7 @@ impl NotesApp {
                                 .small()
                                 .weak(),
                         );
-                        ScrollArea::vertical()
+                        let scroll = theme::sidebar_scroll()
                             .id_salt("search-results")
                             .max_height((ui.available_height() - 64.0).max(0.0))
                             .show_rows(ui, 52.0, results.len(), |ui, rows| {
@@ -1893,6 +1894,7 @@ impl NotesApp {
                                     );
                                 }
                             });
+                        crate::ui_probe::record(ui.ctx(), "search-viewport", scroll.inner_rect);
                     }
                 } else {
                     ui.label(
@@ -1907,7 +1909,7 @@ impl NotesApp {
                         .weak(),
                     );
                     ui.add_space(8.0);
-                    let mut tree_scroll = ScrollArea::vertical()
+                    let mut tree_scroll = theme::sidebar_scroll()
                         .id_salt("file-tree")
                         .max_height((ui.available_height() - 64.0).max(0.0));
                     if self.reset_tree_scroll {
@@ -2055,7 +2057,7 @@ impl NotesApp {
                     }
                 });
                 ui.add_space(10.0);
-                ScrollArea::vertical().show(ui, |ui| {
+                theme::sidebar_scroll().show(ui, |ui| {
                     if self.right_tab == 0 {
                         ui.horizontal(|ui| {
                             ui.add(theme::icon_image(
