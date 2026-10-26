@@ -520,11 +520,9 @@ mod tests {
                             "{alias}: CRLF/Unicode source must stay literal"
                         );
                         let byte = body.find("سلام").unwrap();
-                        assert!(
-                            job.sections
-                                .iter()
-                                .any(|section| section.byte_range.contains(&byte)
-                                    && section.format.color == string_color),
+                        assert_eq!(
+                            job.format_at_byte(egui::text::ByteIndex(byte)).color,
+                            string_color,
                             "{alias}"
                         );
                     }
