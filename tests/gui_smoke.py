@@ -2159,6 +2159,59 @@ def main():
                 assert plain.read_text() == plain_source
                 results.append("An unknown fence language stayed readable as plain code without inheriting the previous file's syntax colors")
 
+                # Code files use Source; Markdown fences exercise all three views.
+                language_cases = [
+                    ("ts", '// TypeScript comment\r\nconst greeting: string = "Hello TypeScript";\r\n'),
+                    ("tsx", '// TSX comment\r\nconst view = <section title="Hello TSX">text</section>;\r\n'),
+                ]
+                language_files = []
+                for language, body in language_cases:
+                    path = fixture / f"Native language.{language}"
+                    original = body.encode()
+                    path.write_bytes(original)
+                    markdown = fixture / f"Native {language} fence.md"
+                    fenced = (f"~~~{language}\r\n{body}~~~\r\n").encode()
+                    markdown.write_bytes(fenced)
+                    language_files.append((language, path, original, markdown, fenced))
+                time.sleep(.6)
+
+                def save_round_trip(path, original):
+                    editor_end()
+                    type_text("SAVE_PROBE")
+                    save_shortcut(xdo)
+                    pause()
+                    assert path.read_bytes() == original + b"SAVE_PROBE", path.name
+                    key("ctrl+z")
+                    save_shortcut(xdo)
+                    pause()
+                    assert path.read_bytes() == original, (path.name, "Save/Undo changed original bytes")
+
+                for dark, palette in [(True, dark_palette), (False, light_palette)]:
+                    set_theme(dark)
+                    appearance = "dark" if dark else "light"
+                    # Only keyword, string and comment colors belong to this contract.
+                    required = [palette[index] for index in (0, 1, 5)]
+                    for language, path, original, markdown, fenced in language_files:
+                        open_note(path.name)
+                        command("Source editing")
+                        colored_pixels(required, control="editor")
+                        capture(f"native-syntax-{language}-file-source-{appearance}.png")
+                        save_round_trip(path, original)
+                        open_note(markdown.stem)
+                        for mode, name in [("Source editing", "source"), ("Live preview", "live"), ("Reading view", "reading")]:
+                            command(mode)
+                            colored_pixels(required)
+                            capture(f"native-syntax-{language}-fence-{name}-{appearance}.png")
+                            if name != "reading":
+                                save_round_trip(markdown, fenced)
+                            else:
+                                save_shortcut(xdo)
+                                pause()
+                            assert markdown.read_bytes() == fenced
+                        assert path.read_bytes() == original
+                set_theme(True)
+                results.append("Actual TS/TSX source files and Source/Live/Reading fences rendered keyword/string/comment colors in both themes; real edit/Save/Undo/Save preserved every original CRLF byte")
+
             def reading_code_checks():
                 # The compact-tab check can restore a previously open outline.
                 # This fixture measures the 920px reader with that pane closed.

@@ -8,15 +8,20 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   syntax:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_RELEASE_LTO: 'false'
       CARGO_PROFILE_RELEASE_DEBUG: '0'
+      LIBGL_ALWAYS_SOFTWARE: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -24,8 +29,9 @@ jobs:
       - name: Prepare Rust and native dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils x11-xserver-utils python3-pil python3-xlib
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+          for tool in Xvfb xdotool xclip xset xprop xwininfo; do command -v "$tool"; done
       - name: Formatting
         run: cargo +1.95.0 fmt --all -- --check
       - name: Prove missing-language regression on the prior highlighter
@@ -54,10 +60,26 @@ jobs:
           git diff --exit-code -- src/syntax.rs
       - name: Verify all highlighter behavior on the repair
         run: cargo +1.95.0 test --locked --release --bin rustidian syntax::tests -- --nocapture 2>&1 | tee reports/language-fixed.log
+      - name: Build the optimized native candidate
+        run: |
+          cargo +1.95.0 build --locked --release --bin rustidian 2>&1 | tee reports/language-build.log
+          sha256sum target/release/rustidian > reports/language-binary.sha256
+          git rev-parse HEAD > reports/language-source.txt
+      - name: Verify displayed languages and exact saved bytes
+        run: python3 tests/gui_smoke.py --binary target/release/rustidian --section syntax 2>&1 | tee reports/language-native.log
       - name: Retain focused proof
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rustidian-language-${{ github.sha }}
-          path: reports/language-*.log
-          retention-days: 2
+          path: |
+            reports/language-*.log
+            reports/language-binary.sha256
+            reports/language-source.txt
+            reports/gui-syntax-results.json
+            reports/gui-syntax-failure-app.log
+            reports/gui-syntax-failure.png
+            reports/gui-failure.png
+            reports/native-syntax-*.png
+            reports/native-syntax-*-controls.json
+          retention-days: 1
