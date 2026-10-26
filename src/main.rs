@@ -80,7 +80,7 @@ fn main() -> eframe::Result {
                 .ok()
                 .and_then(|executable| executable.parent().map(|parent| parent.join("demo-vault")))
                 .filter(|vault| vault.is_dir())
-                .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo-vault"))
+                .unwrap_or_else(|| PathBuf::from("demo-vault"))
         });
     let registered = if input.is_file() {
         rustidian::vaults::Vaults::open().ok()
