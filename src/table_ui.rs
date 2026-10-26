@@ -751,6 +751,7 @@ impl Tables {
                                     navigation = Some((key, direction));
                                 }
                                 response.context_menu(|ui| {
+                                    crate::theme::menu_style(ui);
                                     let columns = view.model.alignments.len();
                                     let count = view.model.rows.len();
                                     let mut action =

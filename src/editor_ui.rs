@@ -1786,6 +1786,7 @@ fn paint_callouts(
                     ui.memory_mut(|memory| memory.surrender_focus(output.response.id));
                 }
                 header.context_menu(|ui| {
+                    crate::theme::menu_style(ui);
                     for kind in rustidian::callouts::Kind::ALL {
                         let response = ui.selectable_label(kind == callout.kind, kind.identifier());
                         crate::ui_probe::record(

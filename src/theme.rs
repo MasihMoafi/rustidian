@@ -252,7 +252,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     }
     ctx.set_visuals(visuals);
     ctx.all_styles_mut(|style| {
-        style.animation_time = 0.0;
+        style.animation_time = 0.12;
         style.scroll_animation = egui::style::ScrollAnimation::none();
         interface_fonts(style);
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);

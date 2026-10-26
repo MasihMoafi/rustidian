@@ -399,11 +399,12 @@ impl NotesApp {
                         self.collapse_epoch = 0;
                         self.reveal_folder = None;
                         self.reset_tree_scroll = true;
-                        self.note_aids = rustidian::note_aids::Config::from_obsidian(&vault.root)
-                            .unwrap_or_else(|error| {
-                                self.error = Some(error);
-                                Default::default()
-                            });
+                        let (note_aids, import_errors) =
+                            rustidian::note_aids::Config::from_obsidian_partial(&vault.root);
+                        self.note_aids = note_aids;
+                        if !import_errors.is_empty() {
+                            self.error = Some(import_errors.join("\n"));
+                        }
                         let first = vault
                             .notes
                             .iter()
@@ -1547,6 +1548,7 @@ impl NotesApp {
                         response.rect,
                     );
                     response.context_menu(|ui| {
+                        theme::menu_style(ui);
                         for (name, label, enabled) in [
                             ("title", "Edit title…", true),
                             ("up", "Move up", index > 0),
@@ -1744,6 +1746,7 @@ impl NotesApp {
                     .inner_margin(Margin::symmetric(12, 0)),
             )
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 40.0),
@@ -1820,6 +1823,7 @@ impl NotesApp {
                             let sort = icon_button(ui, Icon::Sort, "Change sort order");
                             crate::ui_probe::record(ui.ctx(), "file-sort", sort.rect);
                             egui::Popup::menu(&sort).show(|ui| {
+                                theme::menu_style(ui);
                                 for (descending, label, probe) in [
                                     (false, "File name (A to Z)", "sort-ascending"),
                                     (true, "File name (Z to A)", "sort-descending"),
@@ -2409,6 +2413,7 @@ impl NotesApp {
                                     }
                                     let more = icon_button(ui, Icon::More, "More options");
                                     egui::Popup::menu(&more).show(|ui| {
+                                        theme::menu_style(ui);
                                         for (label, dialog) in [
                                             ("Rename or move…", Dialog::RenameNote),
                                             ("Delete file", Dialog::TrashNote),
@@ -2445,6 +2450,7 @@ impl NotesApp {
                                 }
                                 let more = icon_button(ui, Icon::More, "More options");
                                 egui::Popup::menu(&more).show(|ui| {
+                                    theme::menu_style(ui);
                                     if ui.button("Save · Ctrl+S").clicked() {
                                         self.save(self.active);
                                         ui.close();
@@ -3386,12 +3392,10 @@ impl NotesApp {
                     ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
                         for (index, path) in matches.iter().enumerate() {
                             let row = ui.add(
-                                egui::Button::new(
-                                    RichText::new(rustidian::paths::display_path(path)).size(15.0),
-                                )
-                                .selected(index == self.dialog_selected)
-                                .frame_when_inactive(false)
-                                .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                egui::Button::new(rustidian::paths::display_path(path))
+                                    .selected(index == self.dialog_selected)
+                                    .frame_when_inactive(false)
+                                    .min_size(egui::vec2(ui.available_width(), 34.0)),
                             );
                             if crate::ui_probe::enabled() {
                                 crate::ui_probe::record(
