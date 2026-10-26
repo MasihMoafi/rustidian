@@ -136,6 +136,9 @@ fn edge_button(
     if column {
         hit.min.x += 4.0;
     }
+    if !hit.is_positive() {
+        return false;
+    }
     let response = ui
         .interact(hit, id, egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
