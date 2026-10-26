@@ -2,6 +2,49 @@ use rustidian::search::FileMatcher;
 use std::path::PathBuf;
 
 #[test]
+fn exact_source_filename_and_qualified_path_outrank_fuzzy_siblings() {
+    let root = tempfile::tempdir().unwrap();
+    let paths = [
+        "Native language.ts",
+        "Native language.tsx",
+        "A/Native language.ts",
+        "B/Native language.ts",
+        "B/Native language.tsx",
+        "AB/Native language.ts",
+        "Nested/config.ts",
+        "config.tsx",
+    ];
+    for path in paths {
+        let file = root.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "const value = 1;\n").unwrap();
+    }
+    let vault = rustidian::vault::Vault::open(root.path()).unwrap();
+    let mut matcher = FileMatcher::from_vault(&vault);
+    for query in ["Native language.ts", "Native language.tsx"] {
+        assert_eq!(
+            matcher.rank(query, 1),
+            vec![PathBuf::from(query)],
+            "An exact source filename must not select its fuzzy sibling"
+        );
+    }
+    for query in ["A/Native language.ts", "B/Native language.ts"] {
+        assert_eq!(
+            matcher.rank(query, 1),
+            vec![PathBuf::from(query)],
+            "A qualified path must select its folder when basenames repeat"
+        );
+    }
+    assert_eq!(
+        matcher.rank("config.ts", 1),
+        vec![PathBuf::from("Nested/config.ts")],
+        "An exact filename in a folder must outrank a fuzzy root filename"
+    );
+    assert_eq!(matcher.rank("", 20).len(), paths.len());
+    assert!(matcher.rank("Native language.ts", 0).is_empty());
+}
+
+#[test]
 fn file_query_words_match_in_order_without_reusing_the_shared_prefix() {
     let mut matcher = FileMatcher::new(
         ["Closed A.md", "Closed B.md", "Closed C.md"]

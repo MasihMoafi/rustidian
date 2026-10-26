@@ -114,13 +114,24 @@ fn settings() -> &'static Settings {
     })
 }
 
+// Preserve measured default grammars; load additional languages only on demand.
+fn extra_syntaxes() -> &'static SyntaxSet {
+    static EXTRA: OnceLock<SyntaxSet> = OnceLock::new();
+    EXTRA.get_or_init(two_face::syntax::extra_newlines)
+}
+
 #[derive(Default)]
 struct Highlighter;
 
 impl egui::cache::ComputerMut<(&str, &str, bool, bool), Vec<Token>> for Highlighter {
     fn compute(&mut self, (code, language, dark, reading): (&str, &str, bool, bool)) -> Vec<Token> {
         let settings = settings();
-        let Some(syntax) = settings.syntaxes.find_syntax_by_token(language) else {
+        let syntaxes = if settings.syntaxes.find_syntax_by_token(language).is_some() {
+            &settings.syntaxes
+        } else {
+            extra_syntaxes()
+        };
+        let Some(syntax) = syntaxes.find_syntax_by_token(language) else {
             return Vec::new();
         };
         let theme = match (dark, reading) {
@@ -138,7 +149,7 @@ impl egui::cache::ComputerMut<(&str, &str, bool, bool), Vec<Token>> for Highligh
         let mut tokens: Vec<Token> = Vec::new();
         let mut offset = 0;
         for line in LinesWithEndings::from(code) {
-            let Ok(highlighted) = highlighter.highlight_line(line, &settings.syntaxes) else {
+            let Ok(highlighted) = highlighter.highlight_line(line, syntaxes) else {
                 return Vec::new();
             };
             for (style, text) in highlighted {
@@ -207,7 +218,21 @@ pub fn highlights(ui: &egui::Ui, source: &str, parsed: &Markdown) -> Vec<Token> 
 }
 
 pub fn code_tokens(ui: &egui::Ui, body: &str, language: &str, reading: bool) -> Vec<Token> {
-    let language = language.split_whitespace().next().unwrap_or("");
+    let token = language
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let language = match token.as_str() {
+        "mjs" | "cjs" | "javascript" => "js",
+        "typescript" | "mts" | "cts" => "ts",
+        // Fancy-regex excludes Babel; TypeScriptReact handles JSX too.
+        "jsx" | "typescriptreact" => "tsx",
+        "pyw" | "python" => "py",
+        "jsonc" => "json",
+        "shell" | "sh" => "bash",
+        _ => token.as_str(),
+    };
     if ["", "text", "txt", "plain", "plaintext"]
         .iter()
         .any(|plain| language.eq_ignore_ascii_case(plain))
@@ -235,14 +260,7 @@ pub fn source_job(
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    let language = match extension {
-        "mjs" | "cjs" | "jsx" => "js",
-        "tsx" => "ts",
-        "pyw" => "py",
-        "jsonc" => "json",
-        _ => extension,
-    };
-    let tokens = code_tokens(ui, text, language, false);
+    let tokens = code_tokens(ui, text, extension, false);
     let byte = |character| {
         text.char_indices()
             .nth(character)
@@ -395,6 +413,119 @@ mod tests {
                     "~~~missing-language\nfn plain() {}\n~~~",
                 ] {
                     assert!(highlights(ui, plain, &Markdown::parse(plain)).is_empty());
+                }
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    #[test]
+    fn language_files_and_fences_color_real_tokens_without_changing_text() {
+        let cases: &[(&[&str], &str, Option<&str>)] = &[
+            (
+                &["ts", "typescript", "mts", "cts"],
+                "const label: string = \"سلام\"; // comment\r\n",
+                Some("comment"),
+            ),
+            (
+                &["rs", "rust"],
+                "let label = \"سلام\"; // comment\r\n",
+                Some("comment"),
+            ),
+            (
+                &["py", "python", "pyw"],
+                "label = \"سلام\" # comment\r\n",
+                Some("comment"),
+            ),
+            (
+                &["js", "javascript", "mjs", "cjs"],
+                "const label = \"سلام\"; // comment\r\n",
+                Some("comment"),
+            ),
+            (
+                &["tsx", "jsx", "typescriptreact"],
+                "const node = <div title=\"سلام\">hello</div>; // comment\r\n",
+                Some("comment"),
+            ),
+            (&["json", "jsonc"], "{\"label\": \"سلام\"}\r\n", None),
+            (
+                &["bash", "sh", "shell"],
+                "label=\"سلام\" # comment\r\n",
+                Some("comment"),
+            ),
+        ];
+        for dark in [true, false] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx, dark);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let string_color = if dark {
+                    Color32::from_rgb(68, 207, 110)
+                } else {
+                    Color32::from_rgb(8, 185, 78)
+                };
+                let comment_color = if dark {
+                    crate::theme::DARK_FAINT
+                } else {
+                    Color32::from_rgb(171, 171, 171)
+                };
+                for &(aliases, body, comment) in cases {
+                    for &alias in aliases {
+                        for language in [
+                            alias.to_owned(),
+                            format!("{} options", alias.to_ascii_uppercase()),
+                        ] {
+                            for reading in [false, true] {
+                                let tokens = code_tokens(ui, body, &language, reading);
+                                let at = |needle: &str| {
+                                    let byte = body.find(needle).unwrap();
+                                    tokens
+                                        .iter()
+                                        .find(|token| token.range.contains(&byte))
+                                        .map(|token| token.color)
+                                };
+                                assert_eq!(
+                                    at("سلام"),
+                                    Some(string_color),
+                                    "{language}, reading={reading}"
+                                );
+                                if let Some(comment) = comment {
+                                    assert_eq!(
+                                        at(comment),
+                                        Some(comment_color),
+                                        "{language}, reading={reading}"
+                                    );
+                                }
+                                assert!(
+                                    tokens
+                                        .iter()
+                                        .all(|token| body.get(token.range.clone()).is_some())
+                                );
+                            }
+                            let source = format!("~~~{language}\r\n{body}~~~\r\n");
+                            let byte = source.find("سلام").unwrap();
+                            let tokens = highlights(ui, &source, &Markdown::parse(&source));
+                            assert!(
+                                tokens.iter().any(|token| token.range.contains(&byte)
+                                    && token.color == string_color),
+                                "{language}"
+                            );
+                        }
+                        let path = std::path::PathBuf::from(format!(
+                            "example.{}",
+                            alias.to_ascii_uppercase()
+                        ));
+                        let job = source_job(ui, body, &path, 800.0, None);
+                        assert_eq!(
+                            job.text, body,
+                            "{alias}: CRLF/Unicode source must stay literal"
+                        );
+                        let byte = body.find("سلام").unwrap();
+                        assert_eq!(
+                            job.format_at_byte(egui::text::ByteIndex(byte)).color,
+                            string_color,
+                            "{alias}"
+                        );
+                    }
                 }
             });
             output.textures_delta.clear();

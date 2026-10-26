@@ -58,6 +58,14 @@ jobs:
           for tool in Xvfb xdotool xclip xset xprop xwininfo; do command -v "$tool"; done
       - name: Formatting
         run: cargo fmt --all -- --check
+      - name: Verify and obtain dependency notices
+        if: ${{ !inputs.gui_only || inputs.package_after_checks }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo fetch --locked --target x86_64-unknown-linux-gnu
+          gh release download v0.1.0 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/baseline-notices/
+          python3 scripts/language-notices.py --baseline-notices reports/baseline-notices/THIRD_PARTY_NOTICES.txt --output reports/THIRD_PARTY_NOTICES.txt | tee reports/notices-generation.json
       - name: Rust behavior checks
         if: ${{ !inputs.gui_only }}
         run: cargo test --locked --all-targets --no-fail-fast 2>&1 | tee reports/rust-tests.log
@@ -108,21 +116,6 @@ jobs:
           git rev-parse HEAD > reports/source-commit.txt
           sha256sum target/release/rustidian > reports/binary.sha256
           target/release/rustidian --version | tee reports/version.txt
-      - name: Verify and obtain dependency notices
-        if: ${{ !inputs.gui_only || inputs.package_after_checks }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'NOTICES'
-          import subprocess,tomllib
-          from pathlib import Path
-          baseline=tomllib.loads(subprocess.check_output(['git','show','v0.1.0-alpha.2:Cargo.lock'],text=True))
-          current=tomllib.loads(Path('Cargo.lock').read_text())
-          def dependencies(lock):
-              return {(item['name'],item['version'],item['source'],item.get('checksum')) for item in lock['package'] if 'source' in item}
-          assert dependencies(current)==dependencies(baseline), 'Third-party dependencies changed; regenerate notices before packaging'
-          NOTICES
-          gh release download v0.1.0-alpha.2 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/
       - name: Real package and installation checks
         if: ${{ !inputs.gui_only }}
         env:
@@ -194,7 +187,7 @@ jobs:
           package=json.loads(Path('reports/debian-verification.json').read_text())
           assert package['status']=='passed' and package['exact_binary_sha256']==digest
           assert package['package_sha256']==hashlib.sha256(Path('reports/rustidian-linux-amd64.deb').read_bytes()).hexdigest()
-          info={'source_commit':os.environ['GITHUB_SHA'],'binary_sha256':digest,'version':subprocess.check_output([str(binary.resolve()),'--version'],text=True).strip(),'depends':subprocess.check_output(['dpkg-deb','--field','reports/rustidian-linux-amd64.deb','Depends'],text=True).strip(),'gui_checks':checks,'debian_verification':package,'scope':'Optimized Linux amd64 executable; native X11 workflows on Ubuntu 24.04; native Wayland interaction unverified','run_url':'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'/actions/runs/'+os.environ['GITHUB_RUN_ID']}
+          info={'source_commit':os.environ['GITHUB_SHA'],'binary_sha256':digest,'version':subprocess.check_output([str(binary.resolve()),'--version'],text=True).strip(),'depends':subprocess.check_output(['dpkg-deb','--field','reports/rustidian-linux-amd64.deb','Depends'],text=True).strip(),'gui_checks':checks,'debian_verification':package,'dependency_notices':json.loads(Path('reports/notices-generation.json').read_text()),'scope':'Optimized Linux amd64 executable; native X11 workflows on Ubuntu 24.04; native Wayland interaction unverified','run_url':'https://github.com/'+os.environ['GITHUB_REPOSITORY']+'/actions/runs/'+os.environ['GITHUB_RUN_ID']}
           Path('reports/BUILDINFO.json').write_text(json.dumps(info,indent=2)+'\n')
           INFO
           (cd reports && sha256sum rustidian-linux-amd64.deb rustidian-linux-x86_64.tar.gz BUILDINFO.json > SHA256SUMS)
@@ -208,6 +201,7 @@ jobs:
             reports/rustidian-linux-x86_64.tar.gz
             reports/rustidian-linux-x86_64.tar.gz.sha256
             reports/THIRD_PARTY_NOTICES.txt
+            reports/notices-generation.json
             reports/portable-verification.log
             reports/BUILDINFO.json
             reports/SHA256SUMS
@@ -220,6 +214,9 @@ jobs:
             reports/native-table-edge-far-right.png
             reports/native-form-add-property.png
             reports/native-graph-global-dark.png
+            reports/native-syntax-*.png
+            reports/native-syntax-*-controls.json
+            reports/native-reading-code-*.png
           retention-days: 1
           compression-level: 1
           if-no-files-found: error

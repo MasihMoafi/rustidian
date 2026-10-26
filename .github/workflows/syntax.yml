@@ -1,0 +1,102 @@
+name: Language highlighting
+
+on:
+  push:
+    branches: ['work/rustidian-language-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  syntax:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      LIBGL_ALWAYS_SOFTWARE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Prepare Rust and native dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils x11-xserver-utils python3-pil python3-xlib
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt
+          for tool in Xvfb xdotool xclip xset xprop xwininfo; do command -v "$tool"; done
+      - name: Formatting
+        run: cargo +1.95.0 fmt --all -- --check
+      - name: Prove missing-language regression on the prior highlighter
+        run: |
+          mkdir -p reports
+          cp src/syntax.rs "$RUNNER_TEMP/rustidian-language-fixed.rs"
+          trap 'cp "$RUNNER_TEMP/rustidian-language-fixed.rs" src/syntax.rs' EXIT
+          python3 - <<'BASELINE'
+          import subprocess
+          from pathlib import Path
+          fixed=Path('src/syntax.rs').read_text()
+          marker='    #[test]\n    fn language_files_and_fences_color_real_tokens_without_changing_text()'
+          case=fixed[fixed.index(marker):].rsplit('}',1)[0]
+          old=subprocess.check_output(['git','show','811b07635f471c4c8eceffc7b1e3d0958f687b52:src/syntax.rs'],text=True)
+          Path('src/syntax.rs').write_text(old.rsplit('}',1)[0]+case+'}\n')
+          BASELINE
+          if cargo +1.95.0 test --locked --release --bin rustidian syntax::tests::language_files_and_fences_color_real_tokens_without_changing_text -- --nocapture > reports/language-baseline.log 2>&1; then
+            echo 'Expected the missing TypeScript grammar to fail'
+            exit 1
+          fi
+          python3 - <<'EXPECTED'
+          from pathlib import Path
+          assert 'ts, reading=false' in Path('reports/language-baseline.log').read_text(), 'Baseline failed for an unrelated reason'
+          EXPECTED
+          cp "$RUNNER_TEMP/rustidian-language-fixed.rs" src/syntax.rs
+          git diff --exit-code -- src/syntax.rs
+      - name: Prove exact source-file selection regression on the prior matcher
+        run: |
+          cp src/search.rs "$RUNNER_TEMP/rustidian-search-fixed.rs"
+          trap 'cp "$RUNNER_TEMP/rustidian-search-fixed.rs" src/search.rs' EXIT
+          git show de3e218167b54bb76768e3a6c53fd9768aa2555b:src/search.rs > src/search.rs
+          if cargo +1.95.0 test --locked --release --test search_behavior exact_source_filename_and_qualified_path_outrank_fuzzy_siblings -- --nocapture > reports/language-search-baseline.log 2>&1; then
+            echo 'Expected the exact filename to lose to its fuzzy sibling'
+            exit 1
+          fi
+          python3 - <<'EXPECTED'
+          from pathlib import Path
+          assert 'An exact source filename must not select its fuzzy sibling' in Path('reports/language-search-baseline.log').read_text(), 'Matcher baseline failed for an unrelated reason'
+          EXPECTED
+          cp "$RUNNER_TEMP/rustidian-search-fixed.rs" src/search.rs
+          git diff --exit-code -- src/search.rs
+      - name: Verify all search and highlighter behavior on the repair
+        run: |
+          cargo +1.95.0 test --locked --release --test search_behavior -- --nocapture 2>&1 | tee reports/language-search-fixed.log
+          cargo +1.95.0 test --locked --release --bin rustidian syntax::tests -- --nocapture 2>&1 | tee reports/language-fixed.log
+      - name: Build the optimized native candidate
+        run: |
+          cargo +1.95.0 build --locked --release --bin rustidian 2>&1 | tee reports/language-build.log
+          sha256sum target/release/rustidian > reports/language-binary.sha256
+          git rev-parse HEAD > reports/language-source.txt
+      - name: Verify displayed languages and exact saved bytes
+        run: python3 tests/gui_smoke.py --binary target/release/rustidian --section syntax 2>&1 | tee reports/language-native.log
+      - name: Retain focused proof
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-language-${{ github.sha }}
+          path: |
+            reports/language-*.log
+            reports/language-binary.sha256
+            reports/language-source.txt
+            reports/gui-syntax-results.json
+            reports/gui-syntax-failure-app.log
+            reports/gui-syntax-failure.png
+            reports/gui-failure.png
+            reports/native-syntax-*.png
+            reports/native-syntax-*-controls.json
+          retention-days: 1

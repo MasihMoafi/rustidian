@@ -13,9 +13,9 @@
 
 **A native Markdown notebook for Linux. Your files, your folders, no account.**
 
-**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-amd64.deb)**
+**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.1/rustidian-linux-amd64.deb)**
 
-[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
+[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.1/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
 
 Linux desktop · Plain files · Native Rust
 
@@ -31,7 +31,7 @@ I built Rustidian for myself because every note editor I tried felt too slow, es
 
 Linux x86_64, **glibc 2.39 or newer**. Native UI checks use X11; Wayland is enabled, with broader coverage still open. Check your system with `ldd --version`.
 
-Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/SHA256SUMS), then run:
+Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.1/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.1/SHA256SUMS), then run:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
@@ -41,7 +41,7 @@ rustidian
 
 The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. The installer is built and checked on Ubuntu 24.04.
 
-For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-x86_64.tar.gz) and the same checksums:
+For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.1/rustidian-linux-x86_64.tar.gz) and the same checksums:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
@@ -98,7 +98,7 @@ The [coverage ledger](docs/PARITY.md) records implemented workflows and remainin
 
 ## Performance
 
-These measurements use older builds. Version 0.1.0 has not yet been benchmarked against Obsidian.
+These measurements use older builds. Version 0.1.1 has not yet been benchmarked against Obsidian.
 
 A [paired startup comparison](docs/performance/startup-2026-10-22/README.md) measured a median complete matching note frame at **0.61 s for the verified Rustidian baseline versus 3.77 s for Obsidian 1.14.4**. Ten balanced warmed pairs used 100 synthetic notes, a 1440×960 software display and screenshot/OCR sampling. The measured baseline precedes the later graph update. Exact versions, original paired screenshots, raw results and limits accompany this bounded result.
 

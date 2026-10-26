@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import tarfile
+import time
 
 
 def command(*args):
@@ -19,6 +20,19 @@ def api(endpoint, payload=None):
         args += ["--method", "PATCH", "--input", "-"]
     result = subprocess.run(args, input=None if payload is None else json.dumps(payload), check=True, capture_output=True, text=True)
     return json.loads(result.stdout)
+
+
+def release_metadata(repo, tag):
+    # Resolve the owned draft through gh, then read its exact numeric endpoint.
+    # Newly created drafts can be absent from the paginated REST release list.
+    for attempt in range(5):
+        try:
+            release = json.loads(command("gh", "release", "view", tag, "--repo", repo, "--json", "apiUrl"))
+            return api(release["apiUrl"])
+        except subprocess.CalledProcessError:
+            if attempt == 4:
+                raise
+            time.sleep(min(2 ** (attempt + 1), 8))
 
 
 def digest(path):
@@ -77,12 +91,16 @@ def main():
     subprocess.run(["python3", "tests/gui_smoke.py", "--binary", "/usr/bin/rustidian", "--section", "palette-queued"], check=True)
     palette = json.loads(Path("reports/gui-results.json").read_text())
     assert palette["status"] == "passed"
+    subprocess.run(["python3", "tests/gui_smoke.py", "--binary", "/usr/bin/rustidian", "--section", "syntax"], check=True)
+    syntax = json.loads(Path("reports/gui-results.json").read_text())
+    assert syntax["status"] == "passed"
     package = json.loads(command("python3", "tests/debian_package.py", "--binary", str(binary), "--package", str(assets / "rustidian-linux-amd64.deb"), "--notices", str(assets / "THIRD_PARTY_NOTICES.txt"), "--system"))
     assert package["status"] == "passed" and package["exact_binary_sha256"] == info["binary_sha256"]
     assert package["package_sha256"] == digest(assets / "rustidian-linux-amd64.deb")
     info["debian_verification"] = package
     info["installed_package_gui"] = smoke
     info["installed_package_palette"] = palette
+    info["installed_package_syntax"] = syntax
     info["packaging_source_commit"] = os.environ["GITHUB_SHA"]
     info["depends"] = command("dpkg-deb", "--field", str(assets / "rustidian-linux-amd64.deb"), "Depends")
     (assets / "BUILDINFO.json").write_text(json.dumps(info, indent=2) + "\n")
@@ -96,7 +114,7 @@ def main():
         "**[Download the Debian/Ubuntu installer](" + base + "rustidian-linux-amd64.deb)** · [Portable Linux archive](" + base + "rustidian-linux-x86_64.tar.gz) · [Checksums](" + base + "SHA256SUMS)\n\n"
         "Linux x86_64, Ubuntu 24.04 or newer, glibc 2.39 or newer. Download the `.deb` and `SHA256SUMS`, then run:\n\n"
         "```sh\nsha256sum --check --ignore-missing SHA256SUMS\nsudo apt install ./rustidian-linux-amd64.deb\n```\n\n"
-        "This update bounds extreme table-column dragging, adds chronological text/layout Undo and Redo, fixes queued dialog dismissal, makes graph relationship colors visible, and unifies compact dialogs and fonts. Theme icons follow the selected palette.\n\n"
+        "This update adds TypeScript/TSX highlighting to code files and Markdown fences, unifies file/fence language aliases, and makes Quick-open prefer exact paths and filenames. Real edit, Save and Undo checks preserve original CRLF bytes in both themes. It retains the table bounds, chronological Undo/Redo, dialog, graph-color and palette-icon fixes from 0.1.0.\n\n"
         "Verified: " + str(total) + " native checks across " + str(len(checks)) + " groups; core tests; exact Debian install/upgrade/remove/purge and portable installer checks. Existing notes, recovery data and user demo edits survive. [Verification run](" + run["url"] + "). `BUILDINFO.json` binds the source and executable.\n\n"
         "Obsidian community plugins and browser-style HTML rendering remain unfinished. Full Obsidian parity and a current overall performance advantage are unproven.\n"
     )
@@ -106,7 +124,7 @@ def main():
     else:
         release = json.loads(existing.stdout)
         assert release["targetCommitish"] == publication_source, "Existing release targets another revision"
-    release = next(value for value in api("repos/" + repo + "/releases") if value["tag_name"] == tag)
+    release = release_metadata(repo, tag)
     current = {value["name"]: value for value in release["assets"]}
     names = ["rustidian-linux-amd64.deb", "rustidian-linux-x86_64.tar.gz", "BUILDINFO.json", "SHA256SUMS", "THIRD_PARTY_NOTICES.txt"]
     for name in names:
@@ -116,7 +134,7 @@ def main():
         else:
             assert release["draft"], "Only an owned draft may receive new release assets"
             subprocess.run(["gh", "release", "upload", tag, str(assets / name), "--repo", repo], check=True)
-    release = next(value for value in api("repos/" + repo + "/releases") if value["tag_name"] == tag)
+    release = release_metadata(repo, tag)
     current = {value["name"]: value for value in release["assets"]}
     assert all(current[name].get("digest") == "sha256:" + digest(assets / name) for name in names)
     if release["draft"]:
