@@ -2,6 +2,7 @@
 """Package the exact verified executable with the Linux installer and demo."""
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,9 +38,15 @@ def main():
             'Open a copied vault: ./rustidian "/path/to/vault copy"\n\n'
             'Linux desktop notebook. Existing Obsidian community plugins are unsupported.\n'
             'Report a problem: https://github.com/MasihMoafi/rustidian/issues/new/choose\n')
+        def public_metadata(info):
+            info.uid = info.gid = 0
+            info.uname = info.gname = 'root'
+            info.mtime = int(os.environ.get('SOURCE_DATE_EPOCH', '0'))
+            return info
+
         with tarfile.open(args.output, 'w:gz') as archive:
             for path in sorted(bundle.iterdir()):
-                archive.add(path, arcname=path.name)
+                archive.add(path, arcname=path.name, filter=public_metadata)
     digest = hashlib.file_digest(args.output.open('rb'), 'sha256').hexdigest()
     args.output.with_name(args.output.name + '.sha256').write_text(digest + '  ' + args.output.name + '\n')
     print(str(args.output))
