@@ -175,6 +175,56 @@ fn existing_obsidian_settings_are_imported_without_writing_to_the_vault() {
 }
 
 #[test]
+fn independent_settings_failures_preserve_usable_templates_and_original_files() {
+    for broken in ["daily-notes.json", "zk-prefixer.json"] {
+        let base = tempfile::tempdir().unwrap();
+        fs::create_dir(base.path().join(".obsidian")).unwrap();
+        fs::create_dir(base.path().join("Templates")).unwrap();
+        let template_settings =
+            br#"{"folder":"Templates","dateFormat":"DD/MM/YYYY","timeFormat":"HH:mm"}"#;
+        let source = "# {{title}}\r\n{{date}} {{time}}\r\nیادداشت {{unknown}}\r\n";
+        let files: [(&str, &[u8]); 4] = [
+            (".obsidian/templates.json", template_settings),
+            (
+                ".obsidian/daily-notes.json",
+                if broken == "daily-notes.json" {
+                    b"{broken\r\n"
+                } else {
+                    b"{}\r\n"
+                },
+            ),
+            (
+                ".obsidian/zk-prefixer.json",
+                if broken == "zk-prefixer.json" {
+                    b"{broken\r\n"
+                } else {
+                    b"{}\r\n"
+                },
+            ),
+            ("Templates/Meeting.md", source.as_bytes()),
+        ];
+        for (path, bytes) in files {
+            fs::write(base.path().join(path), bytes).unwrap();
+        }
+        let (config, errors) = Config::from_obsidian_partial(base.path());
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with(&format!("{broken}: ")), "{errors:?}");
+        let vault = Vault::open(base.path()).unwrap();
+        let paths = config.template_paths(&vault).unwrap();
+        assert_eq!(paths, vec![Path::new("Templates/Meeting.md").to_owned()]);
+        assert_eq!(
+            config
+                .render_template(&vault, &paths[0], "Meeting", clock())
+                .unwrap(),
+            "# Meeting\r\n21/10/2026 13:05\r\nیادداشت {{unknown}}\r\n"
+        );
+        for (path, bytes) in files {
+            assert_eq!(fs::read(base.path().join(path)).unwrap(), bytes, "{path}");
+        }
+    }
+}
+
+#[test]
 fn unique_notes_preserve_collisions_and_advance_the_clock_across_year_end() {
     let base = tempfile::tempdir().unwrap();
     let mut vault = Vault::open(base.path()).unwrap();

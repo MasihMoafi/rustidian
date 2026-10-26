@@ -1,8 +1,10 @@
 //! Deterministic, bounded graph geometry; computed once per topology/settings change.
 use crate::graph::{Graph, View};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Forces {
     pub center: f32,
     pub repel: f32,
@@ -161,7 +163,8 @@ impl Geometry {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Camera {
     pub zoom: f32,
     pub pan: [f32; 2],

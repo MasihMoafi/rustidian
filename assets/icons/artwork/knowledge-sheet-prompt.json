@@ -3,6 +3,6 @@
   "transparent_background": false,
   "selectionContext": "Same approved rounded monochrome icon family as the existing generated Rust Notes assets. New distinct glyphs for explicit graph, canvas, bookmarks, daily notes, templates and recovery actions.",
   "selectedRationale": "Distinct network, board, ribbon, sun-calendar, page template and recovery-clock silhouettes; rounded monochrome contours match the approved existing family. Source inspected at full sheet size; native-size and source/SVG proof remain required.",
-  "generator_original": "/home/masih/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-3acab2b7-c1be-4d89-a80f-9fae2affd6f7.png",
+  "generator_original": "/home/user/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-3acab2b7-c1be-4d89-a80f-9fae2affd6f7.png",
   "verification": "48 source/SVG conditions inspected; native light/dark12/18/24/48px proof inspected; six pipeline regressions pass. Fine internal detail is intended for18px and larger."
 }

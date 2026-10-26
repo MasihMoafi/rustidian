@@ -326,10 +326,10 @@ impl NotesApp {
                                     "Font size",
                                     "Font size in pixels that affects editing and reading views.",
                                     |ui| {
-                                        let response = ui.add(egui::Slider::new(
-                                            &mut self.document_font_size,
-                                            10..=30,
-                                        ));
+                                        let response = theme::slider(
+                                            ui,
+                                            egui::Slider::new(&mut self.document_font_size, 10..=30),
+                                        );
                                         crate::ui_probe::record(
                                             ctx,
                                             "settings-font-size",
@@ -345,7 +345,8 @@ impl NotesApp {
                                     "Zoom level",
                                     "Scale the interface and document together.",
                                     |ui| {
-                                        let response = ui.add(
+                                        let response = theme::slider(
+                                            ui,
                                             egui::Slider::new(&mut self.ui_zoom, 0.75..=1.5)
                                                 .step_by(0.05),
                                         );

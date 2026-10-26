@@ -43,13 +43,13 @@ Close and Copy use the same generated-image workflow. Their selected monochrome 
 `proof/source-vs-vector.html` compares all traces at 24/48/128/512px on light/dark surfaces with full-frame and foreground measurements. `proof/native-tints.png` compares silhouettes with the actual native tinting at 12/18/24/48px. Both were inspected for counters, silhouettes, margins, speckles, and legibility, followed by native-window review in both themes. Rust tests reject duplicated artwork across distinct icon identities and embedded rasters/text/scripts/foreign objects.
 
 ```sh
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-icons.mjs
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs properties
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs file-toolbar
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs files-tab
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs disclosure
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs code-controls
-SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/prove-icons.mjs
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-icons.mjs
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs properties
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs file-toolbar
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs files-tab
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs disclosure
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs code-controls
+SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/prove-icons.mjs
 ```
 
 Node and SVG Studio prepare artwork; the application itself remains native Rust.

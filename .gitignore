@@ -2,3 +2,13 @@
 /reports/
 /assets/icons/proof/renders/traced-callout-*.png
 __pycache__/
+
+# Local agent/session context must stay private.
+/AGENTS.md
+/ES.md
+/VISION.md
+/CLAUDE.md
+/.agents/
+/.specify/
+/specs/
+/experiments/

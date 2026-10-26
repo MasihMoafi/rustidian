@@ -28,6 +28,17 @@ def pixel_data(picture):
     return modern() if modern else picture.getdata()
 
 
+def luminance(rgb):
+    channels = [value / 255 for value in rgb[:3]]
+    linear = [value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4 for value in channels]
+    return sum(value * weight for value, weight in zip(linear, (.2126, .7152, .0722)))
+
+
+def pixel_contrast(first, second):
+    first, second = luminance(first), luminance(second)
+    return (max(first, second) + .05) / (min(first, second) + .05)
+
+
 def run_checks(checks, on_failure, *, count_checks=None, on_success=None):
     failures = []
     for check in checks:
@@ -51,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -206,6 +217,7 @@ def main():
             try:
                 for kind, value in steps:
                     if kind == "text": xdo("type", "--clearmodifiers", "--delay", "0", "--", value)
+                    elif kind == "click": xdo("mousemove", "--sync", *map(str, value), "click", "1")
                     else: xdo("key", "--clearmodifiers", value)
             finally:
                 app.send_signal(signal.SIGCONT)
@@ -265,6 +277,103 @@ def main():
             else:
                 xdo(*pointer, "click", button)
             pause()
+
+        def slider_pixels(name, label, dark):
+            """Inspect the real thumb, including its idle, hover and held-drag states."""
+            left, top, right, bottom = control_bounds(name)
+            target = round(left + (right - left) * .35)
+            middle = round((top + bottom) / 2)
+            xdo("mousemove", "--sync", str(target), str(middle), "click", "1")
+            pause()
+            observations = []
+
+            def inspect(state, expected_x):
+                capture(f"native-slider-{label}-{'dark' if dark else 'light'}-{state}.png")
+                picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                background = picture.getpixel((round(left) - 3, middle))
+                columns = []
+                for x in range(max(0, expected_x - 16), min(picture.width, expected_x + 17)):
+                    ys = [y for y in range(max(0, round(top) - 2), min(picture.height, round(bottom) + 3))
+                          if pixel_contrast(picture.getpixel((x, y)), background) >= 3]
+                    if ys:
+                        columns.append((max(ys) - min(ys) + 1, x, min(ys), max(ys)))
+                assert columns, ("A visible slider thumb must be painted", name, state)
+                diameter, _, first, last = max(columns)
+                centers = [x for height, x, _, _ in columns if height >= diameter - 1]
+                center = round((min(centers) + max(centers)) / 2)
+                fill = picture.getpixel((center, round((first + last) / 2)))
+                observations.append({"state": state, "diameter": diameter, "center": center, "fill": fill,
+                                     "fill_contrast": pixel_contrast(fill, background)})
+                (reports / f"slider-{label}-{'dark' if dark else 'light'}.json").write_text(json.dumps(observations, indent=2) + "\n")
+                assert 8 <= diameter <= 15, ("Slider thumbs must remain compact at 100% scale", name, observations[-1])
+                assert pixel_contrast(fill, background) >= 1.5, ("The thumb needs a visible filled center as well as an outline", name, observations[-1])
+                return center, round((first + last) / 2)
+
+            xdo("mousemove", "--sync", "100", "20");pause()
+            center, y = inspect("idle", target)
+            xdo("mousemove", "--sync", str(center), str(y));pause()
+            inspect("hover", center)
+            xdo("mousedown", "1")
+            try:
+                xdo("mousemove", "--sync", str(center + 12), str(y));pause()
+                moved, _ = inspect("drag", center + 12)
+                assert moved >= center + 6, ("Dragging the visible thumb must actually move it", name, center, moved)
+            finally:
+                xdo("mouseup", "1")
+            xdo("mousemove", "--sync", "100", "20");pause()
+
+        def scrollbar_pixels(path, source):
+            # Inspect the actual pixels, then drag that visible thumb.
+            for dark in (True, False):
+                set_theme(dark)
+                xdo("mousemove", "100", "20")
+                time.sleep(.3)
+                viewport = control_bounds("document-viewport")
+                image = ImageGrab.grab(xdisplay=display).convert("RGB")
+                left, top, right, bottom = map(round, viewport)
+                observations = []
+                def thumb_pixels(picture, state):
+                    background = picture.getpixel((right-24, (top+bottom)//2))
+                    rows = []
+                    for y in range(top+4, bottom-4):
+                        xs = [x for x in range(right-2, min(picture.width, right+14))
+                              if pixel_contrast(picture.getpixel((x,y)), background) >= 3]
+                        if len(xs) >= 4:
+                            rows.append((y, xs))
+                    assert len(rows) >= 24, ("Scrollbar must remain visibly distinct from its page", dark, state, viewport, len(rows))
+                    width = max(len(xs) for _, xs in rows)
+                    assert width <= 6, ("Keep the original six-pixel thumb width in every state", dark, state, width)
+                    y, xs = rows[len(rows)//2]
+                    color = picture.getpixel((xs[len(xs)//2], y))
+                    observations.append({"state": state, "width": width, "color": color})
+                    (reports / f"scrollbar-{'dark' if dark else 'light'}-states.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    if dark:
+                        assert max(color) <= 135, ("Hovering or dragging the dark scrollbar must keep it gray instead of white", observations[-1])
+                    return rows
+                rows = thumb_pixels(image, "idle")
+                y, xs = rows[len(rows)//2]
+                x = xs[len(xs)//2]
+                capture("native-scrollbar-" + ("dark" if dark else "light") + ".png")
+                before = control_bounds("document-scroll-y")[0]
+                xdo("mousemove", "--sync", str(x), str(y))
+                pause()
+                capture("native-scrollbar-hover-" + ("dark" if dark else "light") + ".png")
+                thumb_pixels(ImageGrab.grab(xdisplay=display).convert("RGB"), "hover")
+                xdo("mousedown", "1")
+                try:
+                    for step in range(1, 11):
+                        xdo("mousemove", "--sync", str(x), str(min(bottom-12, y+step*12)))
+                        time.sleep(.025)
+                        if step == 3:
+                            pause()
+                            capture("native-scrollbar-drag-" + ("dark" if dark else "light") + ".png")
+                            thumb_pixels(ImageGrab.grab(xdisplay=display).convert("RGB"), "drag")
+                finally:
+                    xdo("mouseup", "1")
+                pause()
+                assert control_bounds("document-scroll-y")[0] > before+100, "Dragging the visible scrollbar must move the document"
+                assert path.read_text() == source
+            results.append("The six-pixel scrollbar stays readable in idle, hover and real drag states in both themes; dark thumbs stay gray and dragging moves the document without edits")
 
         def title_contains(value):
             deadline = time.monotonic() + 5
@@ -1451,48 +1560,7 @@ def main():
                     if abs(repeated-start_y-5*step) > 10 or abs(reversed_y-start_y-4*step) > 10:
                         failures.append((view, "distance/direction", step, repeated, reversed_y))
                     assert path.read_text() == source, "Scrolling changed the note"
-                # Inspect the actual pixels, then drag that visible thumb.
-                def luminance(rgb):
-                    channels = [value/255 for value in rgb]
-                    linear = [value/12.92 if value <= .04045 else ((value+.055)/1.055)**2.4 for value in channels]
-                    return sum(value*weight for value, weight in zip(linear, (.2126, .7152, .0722)))
-                for dark in (True, False):
-                    set_theme(dark)
-                    xdo("mousemove", "100", "20")
-                    time.sleep(.3)
-                    viewport = control_bounds("document-viewport")
-                    image = ImageGrab.grab(xdisplay=display).convert("RGB")
-                    left, top, right, bottom = map(round, viewport)
-                    background = luminance(image.getpixel((right-24, (top+bottom)//2)))
-                    def contrast(pixel):
-                        value = luminance(pixel)
-                        return (max(value,background)+.05)/(min(value,background)+.05)
-                    rows = []
-                    for y in range(top+4, bottom-4):
-                        xs = [x for x in range(right-2, min(image.width, right+14)) if contrast(image.getpixel((x,y))) >= 3]
-                        if len(xs) >= 4:
-                            rows.append((y, xs))
-                    assert len(rows) >= 24, ("Scrollbar must remain visible away from the pointer with a readable thumb", dark, viewport, len(rows))
-                    assert max(len(xs) for _, xs in rows) <= 6, "Keep the original six-pixel thumb width"
-                    y, xs = rows[len(rows)//2]
-                    x = xs[len(xs)//2]
-                    if dark:
-                        assert max(image.getpixel((x, y))) <= 160, "The idle thumb must blend with the dark page, not look white"
-                    capture("native-scrollbar-" + ("dark" if dark else "light") + ".png")
-                    before = control_bounds("document-scroll-y")[0]
-                    xdo("mousemove", "--sync", str(x), str(y))
-                    pause()
-                    xdo("mousedown", "1")
-                    try:
-                        for step in range(1, 11):
-                            xdo("mousemove", "--sync", str(x), str(min(bottom-12, y+step*12)))
-                            time.sleep(.025)
-                    finally:
-                        xdo("mouseup", "1")
-                    pause()
-                    assert control_bounds("document-scroll-y")[0] > before+100, "Dragging the visible scrollbar must move the document"
-                    assert path.read_text() == source
-                results.append("Original narrow scrollbar stays muted and readable at 3:1 contrast in dark and light; real dragging moves the document and preserves bytes")
+                scrollbar_pixels(path, source)
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
@@ -2729,6 +2797,155 @@ def main():
                 assert note.read_text() == source
                 results.append("Table widths survive a real restart in workspace state while the Markdown remains byte-for-byte unchanged")
 
+            def table_edge_checks():
+                observations = []
+
+                def reveal(table, direction, label):
+                    # Discover from the visible table edge, not a hidden control's
+                    # coordinates: a probe without actual '+' pixels is insufficient.
+                    xdo("mousemove", "100", "20"); pause()
+                    name = f"edit-table-add-{direction}:{table}"
+                    assert control_bounds(name, required=False) is None, ("Edge buttons must hide away from their table", name)
+                    left, top, right, bottom = control_bounds(f"edit-table:{table}")
+                    idle = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    x, y = ((left + right) / 2, bottom + 6) if direction == "row" else (right + 6, (top + bottom) / 2)
+                    xdo("mousemove", "--sync", str(round(x)), str(round(y))); pause()
+                    bounds = control_bounds(name)
+                    a, b, c, d = bounds
+                    if direction == "row":
+                        assert abs(a - left) <= 2 and abs(c - right) <= 2 and 8 <= d - b <= 20, ("The row control must be a compact full-width bottom strip", bounds, (left, top, right, bottom))
+                        assert b >= bottom - 1, ("The row strip must not cover an existing cell", bounds, bottom)
+                    else:
+                        assert abs(b - top) <= 2 and abs(d - bottom) <= 2 and 8 <= c - a <= 20, ("The column control must be a compact full-height right strip", bounds, (left, top, right, bottom))
+                        assert a >= right - 1, ("The column strip must not cover an existing cell", bounds, right)
+                    capture(f"native-table-edge-{label}-{direction}-hover.png")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    region = tuple(map(round, bounds))
+                    changed = sum(max(pixel) >= 12 for pixel in pixel_data(ImageChops.difference(idle.crop(region), picture.crop(region))))
+                    cx, cy = round((a + c) / 2), round((b + d) / 2)
+                    background = picture.getpixel((cx + 5, cy + 5))
+                    plus_pixels = sum(pixel_contrast(picture.getpixel((px, py)), background) >= 1.5
+                                      for px in range(cx - 4, cx + 5) for py in range(cy - 4, cy + 5))
+                    observations.append({"label": label, "direction": direction, "bounds": bounds, "changed_pixels": changed, "visible_plus_pixels": plus_pixels})
+                    (reports / "native-table-edge-controls.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    assert changed >= 30 and plus_pixels >= 7, ("Hover must paint a visible '+' inside the edge strip", observations[-1])
+                    return name
+
+                def expect_bytes(note, expected):
+                    key("ctrl+s")
+                    assert note.read_bytes() == expected.encode(), repr(note.read_bytes())
+
+                def normal(dark):
+                    label = "dark" if dark else "light"
+                    source = "# Table edge controls\n\nBefore π\n\n| Item | Count | State |\n| :--- | ---: | --- |\n| Alpha \\| Beta | 2 | keep |\n| Gamma | 1 | stay |\n\nAfter table سلام\n"
+                    note = fixture / f"Notes/Table edges {label}.md"
+                    note.write_text(source)
+                    time.sleep(.6)
+                    open_note(f"Table edges {label}"); command("Live preview"); set_theme(dark)
+                    click_control(reveal(0, "row", label))
+                    row_blank = source.replace("| Gamma | 1 | stay |\n", "| Gamma | 1 | stay |\n|  |  |  |\n")
+                    expect_bytes(note, row_blank)
+                    type_text("edge row π")
+                    row_filled = row_blank.replace("|  |  |  |\n", "| edge row π |  |  |\n")
+                    expect_bytes(note, row_filled)
+                    key("ctrl+z"); expect_bytes(note, row_blank)
+                    key("ctrl+z"); expect_bytes(note, source)
+                    key("ctrl+y"); expect_bytes(note, row_blank)
+                    key("ctrl+y"); expect_bytes(note, row_filled)
+                    click_control(reveal(0, "column", label))
+                    column_blank = row_filled.replace(" |\n", " |  |\n").replace("| :--- | ---: | --- |  |", "| :--- | ---: | --- | --- |")
+                    expect_bytes(note, column_blank)
+                    type_text("Extra")
+                    column_filled = column_blank.replace("| Item | Count | State |  |", "| Item | Count | State | Extra |")
+                    expect_bytes(note, column_filled)
+                    key("ctrl+z"); expect_bytes(note, column_blank)
+                    key("ctrl+z"); expect_bytes(note, row_filled)
+                    key("ctrl+y"); expect_bytes(note, column_blank)
+                    key("ctrl+y"); expect_bytes(note, column_filled)
+                    key("Escape"); key("ctrl+End"); type_text("PROSE"); expect_bytes(note, column_filled + "PROSE")
+                    results.append(f"{label.title()} table hover reveals compact bottom/right '+' strips; each click appends exactly one row/column, accepts immediate typing, saves exact bytes and supports Undo/Redo and Escape to prose")
+
+                def normal_dark():
+                    normal(True)
+
+                def normal_light():
+                    normal(False)
+
+                def queued():
+                    queued_source = "# Queued table edges\n\n| A | B |\n| --- | --- |\n| old | 1 |\n\nAfter π\n"
+                    queued_note = fixture / "Notes/Queued table edges.md"
+                    queued_note.write_text(queued_source)
+                    time.sleep(.6)
+                    open_note("Queued table edges"); command("Live preview"); set_theme(True)
+                    queued_row = queued_source.replace("| old | 1 |\n", "| old row | 1 |\n| queued row |  |\n")
+                    queued_column = queued_row.replace("| A | B |", "| A | B | queued column |").replace("| --- | --- |", "| --- | --- | --- |").replace("| old row | 1 |", "| old row column | 1 |  |").replace("| queued row |  |", "| queued row |  |  |")
+                    for direction, expected in (("row", queued_row), ("column", queued_column)):
+                        click_control("edit-table-cell:0:1:0"); key("End")
+                        left, top, right, bottom = control_bounds(reveal(0, direction, "queued"))
+                        point = (round((left + right) / 2), round((top + bottom) / 2))
+                        queued_steps(("text", f" {direction}"), ("click", point), ("text", f"queued {direction}"), ("key", "ctrl+s"))
+                        time.sleep(.5)
+                        assert queued_note.read_bytes() == expected.encode(), (direction, repr(queued_note.read_bytes()))
+                    results.append("Same-frame pending text, edge click, destination typing and Save preserve the old cell and reach the new row cell or column header")
+
+                def keyboard():
+                    source = "# Keyboard table edges\n\n| A | B |\n| --- | --- |\n| old | 1 |\n\nAfter\n"
+                    note = fixture / "Notes/Keyboard table edges.md"
+                    note.write_text(source)
+                    time.sleep(.6)
+                    open_note("Keyboard table edges"); command("Live preview"); set_theme(True)
+                    for shortcut, direction in (("space", "row"), ("Return", "column")):
+                        click_control("table-resize:0:1")
+                        xdo("mousemove", "100", "20")
+                        key("Tab")
+                        if direction == "column": key("Tab")
+                        assert control_bounds(f"edit-table-add-{direction}:0")
+                        key(shortcut)
+                        expected = source.replace("| old | 1 |\n", "| old | 1 |\n|  |  |\n") if direction == "row" else source.replace(" |\n", " |  |\n").replace("| --- | --- |  |", "| --- | --- | --- |")
+                        expect_bytes(note, expected)
+                        key("ctrl+z"); expect_bytes(note, source)
+                    results.append("Keyboard-focused edge strips append with Space/Enter without inserting the activation character; one Undo restores the table")
+
+                def nested():
+                    nested_source = "# Multiple table edges\r\n\r\n| First | Safe |\r\n| --- | --- |\r\n| original | value |\r\n\r\n> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n\r\n```md\r\n| Literal | Table |\r\n| --- | --- |\r\n| unchanged | fenced |\r\n```\r\n"
+                    nested = fixture / "Notes/Multiple table edges.md"
+                    nested.write_bytes(nested_source.encode())
+                    time.sleep(.6)
+                    open_note("Multiple table edges"); command("Live preview"); set_theme(True)
+                    assert control_bounds("edit-table:2", required=False) is None
+                    click_control(reveal(1, "row", "nested"))
+                    nested_row = nested_source.replace("> | second | 2 |\r\n", "> | second | 2 |\r\n> |  |  |\r\n")
+                    expect_bytes(nested, nested_row)
+                    click_control(reveal(1, "column", "nested"))
+                    nested_column = nested_row.replace("> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n> |  |  |\r\n", "> | Quoted | N |  |\r\n> | --- | --- | --- |\r\n> | second | 2 |  |\r\n> |  |  |  |\r\n")
+                    expect_bytes(nested, nested_column)
+                    key("ctrl+z"); expect_bytes(nested, nested_row)
+                    key("ctrl+z"); expect_bytes(nested, nested_source)
+                    key("ctrl+y"); expect_bytes(nested, nested_row)
+                    key("ctrl+y"); expect_bytes(nested, nested_column)
+                    for mode in ("Reading view", "Source editing"):
+                        command(mode)
+                        assert control_bounds("edit-table-add-row:1", required=False) is None
+                        assert control_bounds("edit-table-add-column:1", required=False) is None
+                        expect_bytes(nested, nested_column)
+                    results.append("Edge insertion targets the second quoted table, preserves CRLF, the first table and fenced literals, and stays absent in Reading/Source modes")
+
+                failures = []
+                failure_report = reports / "native-table-edge-failures.json"
+                failure_report.write_text("[]\n")
+
+                def retain_failure(name, error):
+                    capture(f"native-table-edge-{name}-failure.png")
+                    failures.append({"case": name, "error": repr(error), "traceback": traceback.format_exc()})
+                    failure_report.write_text(json.dumps(failures, indent=2) + "\n")
+                    print(traceback.format_exc(), flush=True)
+                    xdo("key", "--clearmodifiers", "Escape", "Escape"); pause()
+
+                try:
+                    run_checks([normal_dark, normal_light, queued, keyboard, nested], retain_failure, count_checks=lambda: len(results))
+                finally:
+                    set_theme(True)
+
             def table_input_checks():
                 source = "# Table input\n\n| A | B |\n| --- | --- |\n| old | 1 |\n| other | 2 |\n\nAfter\n"
                 note = fixture / "Notes/Table input.md"
@@ -3465,6 +3682,16 @@ def main():
                 assert first.read_text() == original + "QUICK_OPEN_FOCUS", repr(first.read_text())
                 assert anchor.read_text()==anchor_source
                 results.append("Quick opening a note accepted immediate keyboard editing without clicking the editor")
+                sidebar_note=fixture/"Keyboard sidebar.md";sidebar_source="# Keyboard sidebar\n\nABCDE"
+                sidebar_note.write_text(sidebar_source);command("Refresh vault")
+                for same_note in (False,True):
+                    if not same_note:open_note("Keyboard mode anchor")
+                    click_control("file:Keyboard sidebar.md");title_contains("Keyboard sidebar")
+                    control_bounds("editor-focused");key("ctrl+End");key("Left");type_text("<");key("ctrl+s")
+                    assert sidebar_note.read_text()==sidebar_source[:-1]+"<"+sidebar_source[-1:]
+                    key("ctrl+z");key("ctrl+s");assert sidebar_note.read_text()==sidebar_source
+                open_note("First steps")
+                results.append("Opening a sidebar note and clicking its selected name again both returned text focus; real arrow/edit/Undo/save actions preserved the note and other documents")
                 key("ctrl+shift+f")
                 key("ctrl+a")
                 type_text("path:Notes/")
@@ -4685,7 +4912,7 @@ def main():
                 nonlocal app,window
                 close_tabs()
                 note=fixture/"Font controls.md"
-                original="# Font controls\n\nA paragraph with **bold**, a [link](Home.md) and `code`.\n\n- [ ] Font task\n\n| Name | Value |\n| --- | --- |\n| Keep | Text |\n\n```rust\nlet keep = 1;\n```\n"
+                original="# Font controls\n\nA paragraph with **bold**, a [link](Home.md) and `code`.\n\n> [!note] Compact callout\n> Keep this body.\n\n- [ ] Font task\n\n| Name | Value |\n| --- | --- |\n| Keep | Text |\n\n```rust\nlet keep = 1;\n```\n"
                 note.write_text(original);open_note("Font controls");command("Reading view")
                 def font(expected):
                     deadline=time.monotonic()+3
@@ -4700,8 +4927,33 @@ def main():
                     actual=round(control_bounds("document-font-size")[0])
                     for _ in range(abs(size-actual)):command("Increase font size" if size>actual else "Decrease font size")
                     font(size)
+                popup_samples={}
+                def compact_popups(size):
+                    for label,target,row in (("table","edit-table-cell:0:1:0","table-action:Insert row below"),("callout","callout:0","callout-type:warning")):
+                        command("Reading view");command("Live preview");key("ctrl+Home")
+                        click_control(target,button="3");bounds=control_bounds(row)
+                        xdo("mousemove","--sync","0","0");pause()
+                        capture(f"native-font-popup-{label}-{size}.png")
+                        picture=ImageGrab.grab(xdisplay=display).convert("RGB")
+                        left,top,right,bottom=map(round,bounds)
+                        background=picture.getpixel((right-5,(top+bottom)//2))
+                        ink=[(x,y) for y in range(top+2,bottom-2) for x in range(left+7,right-7) if pixel_contrast(picture.getpixel((x,y)),background)>=3]
+                        assert ink,("Popup text must actually be painted",label,size,bounds)
+                        glyph_height=max(y for _,y in ink)-min(y for _,y in ink)+1
+                        sample={"document_size":size,"row_height":bounds[3]-bounds[1],"glyph_height":glyph_height,"bounds":bounds}
+                        popup_samples.setdefault(label,[]).append(sample)
+                        (reports/"native-font-popup-measurements.json").write_text(json.dumps(popup_samples,indent=2)+"\n")
+                        assert 8<=glyph_height<=14 and sample["row_height"]<=26,("Context menus must use compact interface text",label,sample)
+                        earlier=popup_samples[label]
+                        assert max(item["glyph_height"] for item in earlier)-min(item["glyph_height"] for item in earlier)<=1,("Document size must not resize popup glyphs",label,earlier)
+                        assert max(item["row_height"] for item in earlier)-min(item["row_height"] for item in earlier)<=1.1,("Document size must not resize popup rows",label,earlier)
+                        key("Escape")
+                    assert abs(popup_samples["table"][-1]["glyph_height"]-popup_samples["callout"][-1]["glyph_height"])<=1,("Sibling context menus need consistent text size",popup_samples)
+                    assert note.read_text()==original
+                    command("Reading view")
                 font(18);baseline=title_width();chrome=control_bounds("tab-full:Font controls.md")
                 paragraph=control_bounds("reading-block:1");height=paragraph[3]-paragraph[1]
+                compact_popups(18)
                 command("Increase font size");font(19)
                 enlarged=control_bounds("reading-block:1")
                 assert title_width()>baseline and enlarged[3]-enlarged[1]>height
@@ -4722,13 +4974,15 @@ def main():
                 key("Escape");font(30)
                 high=title_width();command("Increase font size");font(30);assert title_width()==high
                 capture("native-font-controls-maximum.png")
+                compact_popups(30)
                 command("Open settings")
                 click_control("settings-font-size",hold=.15)
                 for _ in range(25):key("Left")
                 key("Escape");font(10)
                 low=title_width();command("Decrease font size");font(10);assert title_width()==low and low<baseline<high
-                capture("native-font-controls-minimum.png");step_to(18)
+                capture("native-font-controls-minimum.png");compact_popups(10);step_to(18)
                 results.append("The actual settings slider reached both observed 10/30 pixel boundaries and the corresponding palette commands could not step beyond either limit")
+                results.append("Actual table and callout context-menu glyphs and rows stayed compact and consistent at document sizes 10/18/30; dismissing each menu preserved exact note bytes")
                 command("Source editing");editor_end();type_text("UNDO_FONT_PROOF");key("ctrl+s")
                 assert note.read_text()==original+"UNDO_FONT_PROOF"
                 command("Increase font size");font(19);key("ctrl+z");key("ctrl+s");assert note.read_text()==original
@@ -5254,6 +5508,26 @@ def main():
                 capture("native-daily-note.png")
                 results.append("Configured daily notes created nested folders and expanded the selected template once; reopening preserved edited content")
 
+                imported=base/"Mixed imported note settings";imported.mkdir();(imported/".obsidian").mkdir();(imported/"Imported templates").mkdir()
+                imported_settings=b'{"folder":"Imported templates","dateFormat":"DD/MM/YYYY","timeFormat":"HH:mm"}'
+                broken_daily=b'{"folder":\n'
+                template_source=b'Title={{title}}\nKeep {{content}}.\n'
+                home_source=b'# Imported target\n\nBefore.\n'
+                protected={imported/".obsidian/templates.json":imported_settings,imported/".obsidian/daily-notes.json":broken_daily,imported/"Imported templates/Imported.md":template_source}
+                for path,source in protected.items():path.write_bytes(source)
+                imported_home=imported/"Home.md";imported_home.write_bytes(home_source)
+                command("Open vault");key("ctrl+a");paste_text(str(imported),held=True);key("Return");title_contains(imported.name)
+                control_bounds("error-notice");capture("native-note-aids-mixed-import-warning.png");click_control("error-dismiss",hold=.15)
+                open_note("Home");command("Source editing");editor_end();command("Templates: Insert template")
+                click_control("template:Imported templates/Imported.md",hold=.15);key("ctrl+s")
+                expected=home_source+b'Title=Home\nKeep {{content}}.\n'
+                assert imported_home.read_bytes()==expected,repr(imported_home.read_bytes())
+                key("ctrl+z");key("ctrl+s");assert imported_home.read_bytes()==home_source
+                assert all(path.read_bytes()==source for path,source in protected.items())
+                capture("native-note-aids-mixed-import-insert-undo.png")
+                command("Open vault");key("ctrl+a");paste_text(str(fixture),held=True);key("Return");title_contains(fixture.name)
+                results.append("A fresh vault reported malformed daily-note settings while retaining its valid imported template folder; actual template insertion/Undo/save preserved the original note, template and both configuration files")
+
                 settings_page("daily")
                 setting("settings-daily-folder", "Missing daily")
                 setting("settings-daily-template", "Templates/Missing")
@@ -5269,7 +5543,12 @@ def main():
                 assert control_bounds("template-error")
                 key("Return")
                 assert control_bounds("template-error") and journal.read_text() == kept
+                click_control("template-configure",hold=.15)
+                control_bounds("settings-template-folder")
+                assert control_bounds("template-error",required=False) is None
+                assert journal.read_text()==kept
                 key("Escape")
+                assert journal.read_text()==kept
                 settings_page("templates")
                 setting("settings-template-folder", "Templates")
                 key("Escape")
@@ -5388,6 +5667,29 @@ def main():
                     click_control("workspace-load:" + name, hold=.15)
                     assert control_bounds("workspace-name", required=False) is None
 
+                fill_samples=[]
+                def filled_sidebars(stage):
+                    was_dark=max(ImageGrab.grab(xdisplay=display).getpixel((5,100))[:3])<128
+                    for dark in (True,False):
+                        set_theme(dark);xdo("mousemove","--sync","0","0");pause()
+                        picture=ImageGrab.grab(xdisplay=display).convert("RGB")
+                        details=control_bounds("sidebar:details")
+                        background=picture.getpixel((round((details[0]+details[2])/2),round(details[3]-90)))
+                        capture(f"native-workspaces-sidebar-fill-{stage}-{'dark' if dark else 'light'}.png")
+                        for side in ("explorer","details"):
+                            left,top,right,bottom=map(round,control_bounds("sidebar:"+side))
+                            coverage=[]
+                            # Twelve-pixel strips tolerate real glyphs/tree guides,
+                            # but reject an unpainted tail inside the allocated pane.
+                            for start in range(left+6,right-6,12):
+                                pixels=[picture.getpixel((x,y)) for x in range(start,min(start+12,right-6),2) for y in range(top+110,bottom-80,3)]
+                                coverage.append(sum(max(abs(a-b) for a,b in zip(pixel,background))<=3 for pixel in pixels)/len(pixels))
+                            sample={"stage":stage,"dark":dark,"side":side,"bounds":[left,top,right,bottom],"reference_rgb":background,"background_coverage":coverage}
+                            fill_samples.append(sample)
+                            (reports/"native-workspaces-sidebar-fill.json").write_text(json.dumps(fill_samples,indent=2)+"\n")
+                            assert coverage and min(coverage)>=.72,("Sidebar background must cover its whole allocated width, matching the filled details pane",sample)
+                    set_theme(was_dark)
+
                 manager()
                 paste_text("Cancelled layout", held=True)
                 capture("native-workspaces-empty.png")
@@ -5409,6 +5711,7 @@ def main():
                 pause()
                 resized = control_bounds("sidebar:explorer")
                 assert abs((resized[2]-resized[0]) - (left[2]-left[0])) >= 20, (left,resized)
+                filled_sidebars("resized")
                 command("Reading view")
                 manager()
                 save_layout("Writing", keyboard=True)
@@ -5507,9 +5810,12 @@ def main():
                 load("Reading");assert_layout(updated)
                 results.append("All four workspace commands work: active overwrite keeps one entry, fuzzy load selects it and cancelled save-and-load retains current tabs")
 
+                load("Writing");assert_layout(writing)
                 xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 title_contains("Workspace A")
+                assert_layout(writing);filled_sidebars("restarted")
+                results.append("The resized explorer and details panes painted their entire allocated widths in both themes before and after a real restart; saved widths and original note bytes were retained")
                 manager()
                 assert control_bounds("workspace-load:Writing") and control_bounds("workspace-load:Reading")
                 key("Escape")
@@ -6113,6 +6419,122 @@ def main():
                 set_theme(True)
                 results.append("The actual linked-note hover used the same colored glyphs without altering source or target")
 
+            def visual_controls_checks():
+                """One compact native regression for the reported control/proportion failures."""
+                failures = []
+                observations = {}
+                def verify(label, check):
+                    try:
+                        check()
+                        observations[label] = {"status": "passed"}
+                    except AssertionError as error:
+                        failures.append(label)
+                        observations[label] = {"status": "failed", "error": str(error)}
+                        capture("native-visual-control-failure-" + label + ".png")
+                    (reports / "visual-controls-results.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                graph_root = base / "Graph proportions"
+                graph_root.mkdir()
+                sources = {}
+                for index in range(64):
+                    source = f"# Label-{index:02}\n\n"
+                    if index == 0:
+                        source += "\n".join(f"[[Label-{other:02}]]" for other in range(1, 64)) + "\n"
+                    sources[f"Label-{index:02}.md"] = source
+                    (graph_root / f"Label-{index:02}.md").write_text(source)
+                command("Open vault");key("ctrl+a");paste_text(str(graph_root), held=True);key("Return")
+                title_contains(graph_root.name);open_note("Label-00")
+                command("Graph view: Open graph view")
+                def graph_ready():
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        if control_bounds("global-graph:busy")[0] == 0 and control_bounds("global-graph:node-count")[0] == 64:
+                            return
+                        time.sleep(.05)
+                    raise AssertionError("The proportions fixture must finish its real graph layout")
+                graph_ready()
+
+                def graph_pixels(dark):
+                    xdo("mousemove", "--sync", "100", "20");pause()
+                    capture(f"native-graph-proportions-{'dark' if dark else 'light'}.png")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    canvas = control_bounds("global-graph:canvas")
+                    background = picture.getpixel((round(canvas[0] + 15), round(canvas[1] + 15)))
+                    samples = []
+                    glyphs = []
+                    for index in range(12):
+                        bounds = control_bounds(f"global-graph:node:Label-{index:02}.md")
+                        cx, cy = round((bounds[0] + bounds[2]) / 2), round((bounds[1] + bounds[3]) / 2)
+                        color = picture.getpixel((cx, cy))
+                        spans = []
+                        for axis in (0, 1):
+                            edges = []
+                            for sign in (-1, 1):
+                                distance = 0
+                                while distance < 40:
+                                    point = (cx + sign * distance, cy) if axis == 0 else (cx, cy + sign * distance)
+                                    if max(abs(a-b) for a,b in zip(picture.getpixel(point), color)) > 24:
+                                        break
+                                    distance += 1
+                                edges.append(distance)
+                            spans.append(sum(edges) - 1)
+                        samples.append({"node": index, "diameter": spans})
+                        assert 5 <= min(spans) and max(spans) <= 20, ("Default graph dots must remain proportionate after Fit", samples[-1])
+                        # Identical Label-NN words distinguish hub font growth from
+                        # genuine glyph differences without reading a font-size probe.
+                        first_y = cy + (spans[1] + 1) // 2 + 3
+                        rows = []
+                        for y in range(first_y, min(picture.height, first_y + 34)):
+                            count = sum(pixel_contrast(picture.getpixel((x, y)), background) >= 3
+                                        for x in range(max(0, cx - 34), min(picture.width, cx + 35)))
+                            if count >= 3:
+                                rows.append(y)
+                        runs = []
+                        for y in rows:
+                            if not runs or y > runs[-1][-1] + 1:runs.append([])
+                            runs[-1].append(y)
+                        text = next((run for run in runs if len(run) >= 7), None)
+                        if text is not None:
+                            glyphs.append({"node": index, "height": len(text)})
+                    (reports / f"graph-proportions-{'dark' if dark else 'light'}.json").write_text(json.dumps({"dots": samples, "glyphs": glyphs}, indent=2) + "\n")
+                    hub = next((sample["height"] for sample in glyphs if sample["node"] == 0), None)
+                    leaves = sorted(sample["height"] for sample in glyphs if sample["node"] != 0)
+                    assert hub is not None and len(leaves) >= 4, ("Hub and several leaf labels must actually be visible", glyphs)
+                    assert hub <= 15 and abs(hub - leaves[len(leaves)//2]) <= 1, ("Graph label glyphs must stay compact and consistent across node degrees", glyphs)
+
+                for dark in (True, False):
+                    set_theme(dark)
+                    verify("graph-" + ("dark" if dark else "light"), lambda: graph_pixels(dark))
+                    if control_bounds("global-graph:filter", required=False):click_control("global-graph:section:filters", hold=.15)
+                    if not control_bounds("global-graph:node-size", required=False):click_control("global-graph:section:display", hold=.15)
+                    for name in ("text-fade", "node-size", "link-thickness"):
+                        verify(name + "-" + ("dark" if dark else "light"), lambda name=name: slider_pixels("global-graph:" + name, "graph-" + name, dark))
+                    click_control("global-graph:section:display", hold=.15)
+                    if not control_bounds("global-graph:force-center", required=False):click_control("global-graph:section:forces", hold=.15)
+                    for name in ("force-center", "force-repel", "force-link", "force-distance"):
+                        verify(name + "-" + ("dark" if dark else "light"), lambda name=name: slider_pixels("global-graph:" + name, "graph-" + name, dark))
+                    click_control("global-graph:reset", hold=.15);graph_ready()
+                    click_control("global-graph:section:forces", hold=.15)
+                    click_control("global-graph:fit", hold=.15)
+                assert all((graph_root / name).read_text() == source for name, source in sources.items())
+                command("Open vault");key("ctrl+a");paste_text(str(fixture), held=True);key("Return")
+                title_contains(fixture.name)
+                note = fixture / "Visual controls.md"
+                source = "# Visual controls\n\n" + "\n\n".join(f"Line {index}: keep the scrollbar visible and the original note intact." for index in range(160)) + "\n"
+                note.write_text(source);open_note("Visual controls");command("Reading view")
+                for dark in (True, False):
+                    set_theme(dark);command("Open settings");click_control("settings-page:Appearance")
+                    verify("settings-font-" + ("dark" if dark else "light"), lambda: slider_pixels("settings-font-size", "settings-font", dark))
+                    key("Escape")
+                    size = round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size - 18)):command("Decrease font size" if size > 18 else "Increase font size")
+                xdo("mousemove", "--sync", "900", "500", "click", "--repeat", "3", "--delay", "15", "5");pause()
+                verify("scrollbar", lambda: scrollbar_pixels(note, source))
+                set_theme(True)
+                assert note.read_text() == source
+                assert not failures, ("Native visual/control regressions", observations)
+                results.append("Actual graph dots and labels stay compact; graph and Settings slider thumbs remain filled and compact through idle/hover/drag in both themes, with all fixture bytes preserved")
+
             def graph_checks():
                 nonlocal app, window
                 graph_root = base / "Graph native vault"
@@ -6343,6 +6765,319 @@ def main():
                 title_contains(fixture.name);open_note("Home")
                 results.append("Every graph operation and real restart preserved all eight original note files and returned to the previous vault")
 
+            def graph_state_checks():
+                nonlocal app, window
+                observations = {}
+                originals = {}
+                sources = {"Focus.md": "# Focus\n\n[[Child]]\n[[Peer]]\n", "Parent.md": "# Parent\n\n[[Focus]]\n",
+                           "Child.md": "# Child\n\n[[Leaf]]\n", "Peer.md": "# Peer\n\n[[Focus]]\n",
+                           "Leaf.md": "# Leaf\n", "Isolated.md": "# Isolated\n"}
+                value_names = ("text-fade", "node-size", "link-thickness", "force-center", "force-repel", "force-link", "force-distance", "color-mode")
+                checked_names = ("tags", "attachments", "existing-only", "orphans", "incoming", "outgoing", "neighbor", "arrows")
+
+                def metric(prefix, name):
+                    return control_bounds(prefix + ":" + name)[0]
+
+                def ready(prefix, nodes=None):
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        if controls.get(prefix + ":busy", [1])[0] == 0 and prefix + ":node-count" in controls:
+                            if nodes is None or controls[prefix + ":node-count"][0] == nodes:
+                                return
+                        time.sleep(.05)
+                    raise AssertionError(("Graph did not finish its real layout", prefix, nodes, controls))
+
+                def open_vault(root):
+                    command("Open vault"); key("ctrl+a"); paste_text(str(root), held=True); key("Return")
+                    title_contains(root.name)
+
+                def fresh(label, local=False):
+                    key("Escape")
+                    root = base / ("Graph state " + label)
+                    root.mkdir()
+                    for name, source in sources.items():
+                        path = root / name
+                        path.write_text(source)
+                        originals[path] = source.encode()
+                    before = set((base / "state/rustidian").glob("*.json"))
+                    open_vault(root); open_note("Focus")
+                    command("Graph view: Open local graph" if local else "Graph view: Open graph view")
+                    prefix = "local-graph" if local else "global-graph"
+                    ready(prefix, 4 if local else 6)
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        created = set((base / "state/rustidian").glob("*.json")) - before
+                        matching = [path for path in created if any(tab[0] == "Focus.md" for tab in json.loads(path.read_text()).get("tabs", []))]
+                        if len(matching) == 1:
+                            return root, prefix, matching[0]
+                        time.sleep(.05)
+                    raise AssertionError(("Fresh graph fixture did not get one private session file", created))
+
+                def settings(prefix, opened):
+                    if bool(metric(prefix, "settings-open")) != opened:
+                        click_control(prefix + ":settings", hold=.15)
+                    assert bool(metric(prefix, "settings-open")) == opened
+
+                def section(prefix, name, opened):
+                    settings(prefix, True)
+                    if bool(metric(prefix, "section-open:" + name)) != opened:
+                        click_control(prefix + ":section:" + name, hold=.15)
+                    assert bool(metric(prefix, "section-open:" + name)) == opened
+
+                def only_section(prefix, name):
+                    for other in ("filters", "groups", "display", "forces"):
+                        if other != name:
+                            section(prefix, other, False)
+                    section(prefix, name, True)
+
+                def write_field(name, text):
+                    click_control(name, hold=.15); key("ctrl+a"); paste_text(text, held=True)
+
+                def read_field(name):
+                    click_control(name, hold=.15); key("ctrl+a"); key("ctrl+c")
+                    return subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, text=True, timeout=3)
+
+                def camera(prefix):
+                    return [metric(prefix, name) for name in ("pan-x", "pan-y", "zoom")]
+
+                def positions(prefix):
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return {name.split(":node:", 1)[1]: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2]
+                            for name, bounds in controls.items() if name.startswith(prefix + ":node:")}
+
+                def drag(start, delta, cancel=False):
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", "1")
+                    try:
+                        for step in range(1, 9):
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
+                            time.sleep(.035)
+                        if cancel:
+                            key("Escape")
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 15)), str(round(start[1] + delta[1] + 10)))
+                            pause()
+                    finally:
+                        xdo("mouseup", "1")
+                    xdo("mousemove", "--sync", "0", "0"); pause()
+
+                def pan(prefix):
+                    left, top, right, bottom = control_bounds(prefix + ":canvas")
+                    before = camera(prefix)
+                    drag((left + 25, bottom - 25), (42, -27))
+                    after = camera(prefix)
+                    assert abs(after[0] - before[0] - 42) < 2 and abs(after[1] - before[1] + 27) < 2, ("Blank canvas must pan", before, after)
+
+                def snapshot(prefix):
+                    names = ["settings-open", "depth"] + ["section-open:" + name for name in ("filters", "groups", "display", "forces")]
+                    names += ["value:" + name for name in value_names] + ["checked:" + name for name in checked_names]
+                    return {"controls": {name: metric(prefix, name) for name in names}, "camera": camera(prefix),
+                            "nodes": metric(prefix, "node-count"), "edges": metric(prefix, "edge-count")}
+
+                def same_snapshot(prefix, expected):
+                    actual = snapshot(prefix)
+                    assert actual["nodes"] == expected["nodes"] and actual["edges"] == expected["edges"], ("Restored graph topology differs", expected, actual)
+                    assert all(abs(actual["controls"][key] - value) < .003 for key, value in expected["controls"].items()), ("Graph settings/sections were not restored", expected, actual)
+                    assert all(abs(a - b) < .5 for a, b in zip(actual["camera"], expected["camera"])), ("Graph camera changed during restoration", expected, actual)
+                    return actual
+
+                def restart(root):
+                    nonlocal app
+                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    app = launch_app([str(ROOT / args.binary), str(root)])
+                    return app
+
+                def slider_change(prefix, name):
+                    before = metric(prefix, "value:" + name)
+                    left, top, right, bottom = control_bounds(prefix + ":" + name)
+                    xdo("mousemove", "--sync", str(round(left + (right - left - 35) * .35)), str(round((top + bottom) / 2)), "click", "1"); pause()
+                    key("Right")
+                    assert abs(metric(prefix, "value:" + name) - before) > .001, ("The native slider must change its actual value", prefix, name, before)
+
+                def group_pixels(prefix):
+                    # A narrow local canvas can place a dot behind Settings.
+                    # Hide that overlay without fitting or changing the camera.
+                    opened = bool(metric(prefix, "settings-open"))
+                    settings(prefix, False)
+                    try:
+                        xdo("mousemove", "--sync", "0", "0"); pause()
+                        bounds = control_bounds(prefix + ":node:Child.md")
+                        picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                        rgb = picture.getpixel((round((bounds[0] + bounds[2]) / 2), round((bounds[1] + bounds[3]) / 2)))
+                        assert rgb[0] > rgb[1] + 60 and rgb[0] > rgb[2] + 60, ("The saved group must color the actual Child dot red", rgb)
+                    finally:
+                        settings(prefix, opened)
+
+                def configure(prefix, local):
+                    only_section(prefix, "filters")
+                    write_field(prefix + ":filter", "-path:Isolated")
+                    if local:
+                        click_control(prefix + ":depth-slider"); key("Right")
+                        assert metric(prefix, "depth") > 1
+                    click_control(prefix + ":existing-only", hold=.15)
+                    ready(prefix, 5)
+                    only_section(prefix, "groups"); click_control(prefix + ":group-add", hold=.15)
+                    write_field(prefix + ":group:0:query", "path:Child"); ready(prefix, 5)
+                    only_section(prefix, "display"); click_control(prefix + ":arrows", hold=.15)
+                    for name in ("text-fade", "node-size", "link-thickness"):
+                        slider_change(prefix, name)
+                    only_section(prefix, "forces")
+                    for name in ("force-center", "force-repel", "force-link", "force-distance"):
+                        slider_change(prefix, name)
+                    ready(prefix, 5)
+                    only_section(prefix, "filters"); section(prefix, "groups", True)
+                    click_control(prefix + ":fit", hold=.15); pan(prefix)
+                    left, top, right, bottom = control_bounds(prefix + ":canvas")
+                    zoom = metric(prefix, "zoom")
+                    xdo("mousemove", "--sync", str(round(left + 40)), str(round(top + 40)), "click", "5"); pause()
+                    assert 0 < metric(prefix, "zoom") < zoom
+                    group_pixels(prefix)
+
+                def check_fields(prefix):
+                    settings(prefix, True)
+                    assert read_field(prefix + ":filter") == "-path:Isolated"
+                    assert read_field(prefix + ":group:0:query") == "path:Child"
+                    group_pixels(prefix)
+
+                def node_drag_case():
+                    _, prefix, _ = fresh("node drag")
+                    # This path deliberately needs no newly added value probes:
+                    # the installed baseline must fail on the actual node/camera bug.
+                    if control_bounds(prefix + ":section:display", required=False):
+                        click_control(prefix + ":settings", hold=.15)
+                    click_control(prefix + ":fit", hold=.15)
+                    xdo("mousemove", "0", "0"); pause()
+                    before = positions(prefix); before_camera = camera(prefix)
+                    assert set(before) == set(sources)
+                    picture_before = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    capture("native-graph-state-node-before.png")
+                    drag(before["Focus.md"], (53, 37))
+                    after = positions(prefix); after_camera = camera(prefix)
+                    capture("native-graph-state-node-after.png")
+                    assert set(after) == set(before), ("A node drag must not navigate or remove nodes", before, after)
+                    assert all(abs(a - b) < .5 for a, b in zip(before_camera, after_camera)), ("Dragging a node must not pan/zoom the camera", before_camera, after_camera)
+                    assert all(abs(after["Focus.md"][axis] - before["Focus.md"][axis] - delta) < 2 for axis, delta in enumerate((53, 37))), (before, after)
+                    assert all(abs(after[name][axis] - point[axis]) < 1 for name, point in before.items() if name != "Focus.md" for axis in (0, 1)), ("Only the grabbed node may move", before, after)
+                    picture_after = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    canvas = control_bounds(prefix + ":canvas")
+                    background = picture_after.getpixel((round(canvas[0] + 8), round(canvas[1] + 8)))
+                    edge_samples = []
+                    for neighbor in ("Child.md", "Parent.md", "Peer.md"):
+                        start, end = after["Focus.md"], after[neighbor]
+                        for fraction in (.2, .35, .5, .65, .8):
+                            x, y = [round(a + (b - a) * fraction) for a, b in zip(start, end)]
+                            points = [(px, py) for px in range(x - 1, x + 2) for py in range(y - 1, y + 2)]
+                            old = max(pixel_contrast(picture_before.getpixel(point), background) for point in points)
+                            new = max(pixel_contrast(picture_after.getpixel(point), background) for point in points)
+                            if old < 1.2 and new > 1.3:
+                                edge_samples.append({"neighbor": neighbor, "point": [x, y], "old_contrast": old, "new_contrast": new})
+                                break
+                    assert len(edge_samples) >= 2, ("Connected edge pixels must follow the dragged node into previously blank locations", edge_samples)
+                    observations["node-pixels"] = {"before": before, "after": after, "camera_before": before_camera, "camera_after": after_camera, "edge_samples": edge_samples}
+                    drag(after["Focus.md"], (31, -28), cancel=True)
+                    cancelled = positions(prefix)
+                    assert all(abs(cancelled[name][axis] - point[axis]) < 1 for name, point in after.items() for axis in (0, 1)), ("Escape must restore the node's whole drag and keep it cancelled until mouse release", after, cancelled)
+                    assert camera(prefix) == after_camera
+                    pan(prefix)
+                    click_control(prefix + ":settings", hold=.15)
+                    if not control_bounds(prefix + ":filter", required=False):
+                        click_control(prefix + ":section:filters", hold=.15)
+                    bounds = control_bounds(prefix + ":filter")
+                    before_camera = camera(prefix); before = positions(prefix)
+                    drag(((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2), (22, 8))
+                    assert camera(prefix) == before_camera and positions(prefix) == before, "Dragging the settings overlay must not move the canvas or its nodes"
+                    click_control(prefix + ":settings", hold=.15)
+                    click_control(prefix + ":node:Child.md", hold=.15); title_contains("Child")
+                    results.append("A real node drag moved only its dot and connected edge pixels without panning; Escape cancelled the whole drag, blank canvas still panned, Settings blocked dragging, and a click opened the note")
+
+                def global_restart_case():
+                    nonlocal app, window
+                    root, prefix, _ = fresh("global restart")
+                    configure(prefix, False); settings(prefix, False)
+                    expected = snapshot(prefix)
+                    capture("native-graph-state-global-before-restart.png")
+                    app = restart(root); window = ready_window(); ready(prefix, 5)
+                    observations["global-restored"] = same_snapshot(prefix, expected)
+                    check_fields(prefix)
+                    capture("native-graph-state-global-restored.png")
+                    results.append("A real restart restored global graph filters, group color/query, display/forces, section expansion, hidden Settings and exact camera; visible topology and red group pixels matched")
+
+                def local_restart_case():
+                    nonlocal app, window
+                    root, prefix, _ = fresh("local restart", local=True)
+                    configure(prefix, True)
+                    expected = snapshot(prefix)
+                    capture("native-graph-state-local-before-restart.png")
+                    app = restart(root); window = ready_window(); title_contains("Focus"); ready(prefix, 5)
+                    observations["local-restored"] = same_snapshot(prefix, expected)
+                    check_fields(prefix)
+                    capture("native-graph-state-local-restored.png")
+                    results.append("A real restart reopened the local graph beside its note and restored depth, filter/groups, display/forces, settings sections and camera with actual topology/group colors intact")
+
+                def vault_isolation_case():
+                    first, prefix, _ = fresh("vault A")
+                    configure(prefix, False); settings(prefix, False)
+                    global_expected = snapshot(prefix)
+                    open_note("Focus"); command("Graph view: Open local graph"); ready("local-graph", 4)
+                    local_default = snapshot("local-graph")
+                    configure("local-graph", True)
+                    local_expected = snapshot("local-graph")
+                    second, other, _ = fresh("vault B")
+                    assert metric(other, "node-count") == 6 and control_bounds(other + ":group:0:query", required=False) is None
+                    assert metric(other, "value:node-size") == 1 and metric(other, "checked:existing-only") == 0
+                    open_vault(first); title_contains("Focus"); ready("local-graph", 5)
+                    same_snapshot("local-graph", local_expected); check_fields("local-graph")
+                    only_section("local-graph", "forces"); click_control("local-graph:reset", hold=.15); ready("local-graph", 4)
+                    actual = snapshot("local-graph")
+                    assert all(actual["controls"][key] == value for key, value in local_default["controls"].items() if key.startswith(("value:", "checked:")) or key == "depth"), ("Reset must restore this pane's defaults", local_default, actual)
+                    click_control("local-graph:close", hold=.15)
+                    command("Graph view: Open graph view"); ready(prefix, 5)
+                    same_snapshot(prefix, global_expected); check_fields(prefix)
+                    open_vault(second); ready(other, 6)
+                    assert metric(other, "value:node-size") == 1 and metric(other, "checked:existing-only") == 0
+                    results.append("Two vaults retain independent global/local preferences and cameras; resetting only the local pane restored its controls without altering the global pane or the other vault")
+
+                def write_failure_case():
+                    nonlocal app, window
+                    root, prefix, state_path = fresh("write failure")
+                    only_section(prefix, "filters")
+                    old = metric(prefix, "checked:existing-only")
+                    before = state_path.read_bytes()
+                    held = base / "graph-state-held-durable.json"
+                    state_path.rename(held); state_path.mkdir()
+                    try:
+                        click_control(prefix + ":existing-only", hold=.15)
+                        control_bounds("error-notice")
+                        capture("native-graph-state-write-error.png")
+                        assert held.read_bytes() == before, "A failed atomic state write changed the previous durable bytes"
+                    finally:
+                        state_path.rmdir(); held.rename(state_path)
+                    click_control("error-dismiss", hold=.15)
+                    # Return to the observed old value before applying a successful retry.
+                    if metric(prefix, "checked:existing-only") != old:
+                        click_control(prefix + ":existing-only", hold=.15)
+                    click_control(prefix + ":existing-only", hold=.15)
+                    assert metric(prefix, "checked:existing-only") != old
+                    app = restart(root); window = ready_window(); ready(prefix, 6)
+                    assert metric(prefix, "checked:existing-only") != old
+                    results.append("An obstructed private atomic state write visibly failed without replacing durable bytes; restoring the destination allowed a real retry/restart with no note edits")
+
+                def failure(name, error):
+                    observations[name] = {"status": "failed", "error": repr(error), "traceback": traceback.format_exc()}
+                    capture("native-graph-state-failure-" + name + ".png")
+                    (reports / "native-graph-state-results.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                def success(name, count):
+                    assert all(path.read_bytes() == original for path, original in originals.items()), "Graph controls changed original note bytes"
+                    observations[name] = {"status": "passed", "checks": count}
+                    (reports / "native-graph-state-results.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                try:
+                    run_checks([node_drag_case, global_restart_case, local_restart_case, vault_isolation_case, write_failure_case],
+                               failure, count_checks=lambda: len(results), on_success=success)
+                finally:
+                    assert all(path.read_bytes() == original for path, original in originals.items()), "A graph workflow changed original note bytes"
+                open_vault(fixture); open_note("Home")
+
             def palette_queue_checks():
                 sources={p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
                 for shortcut in ("ctrl+p","ctrl+o"):
@@ -6391,6 +7126,11 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "graph-state":
+                graph_state_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "graph-state"}))
+                return
             if args.section == "palette-queued":
                 palette_queue_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
@@ -6525,6 +7265,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "table-input"}))
                 return
+            if args.section == "table-edges":
+                table_edge_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "table-edges"}))
+                return
             if args.section == "table-links":
                 table_link_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -6641,6 +7386,11 @@ def main():
                 font_controls_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"font-controls"}))
+                return
+            if args.section == "visual-controls":
+                visual_controls_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
             if args.section == "tab-restore":
                 tab_restore_checks()
@@ -6976,6 +7726,8 @@ def main():
                 vault_switch_checks,
                 system_open_checks,
                 graph_checks,
+                graph_state_checks,
+                visual_controls_checks,
                 emoji_checks,
                 file_toolbar_checks,
                 folding_checks,
@@ -6991,6 +7743,7 @@ def main():
                 table_link_checks,
                 table_input_checks,
                 table_resize_checks,
+                table_edge_checks,
                 trash_options_checks,
                 palette_checks,
                 callout_checks,

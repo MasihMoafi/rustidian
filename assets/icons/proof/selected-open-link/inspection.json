@@ -9,7 +9,7 @@
     128,
     512
   ],
-  "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+  "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
   "method": "existing monochrome SVG Studio builder; source alpha/luminance normalization and margin trim; path geometry untouched; native fills white for tinting",
   "findings": "Two opposed arrows and negative spaces remain intact; small native tints are legible in both themes. Agent-selected match to requested Obsidian control; no separate user artwork acceptance claimed.",
   "files": [

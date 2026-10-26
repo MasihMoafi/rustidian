@@ -2,7 +2,7 @@
   "generator": "Built-in image_gen.imagegen; backend model unidentified.",
   "prompt": "Create a NEW wide two-cell native UI icon sheet using the clean rounded monoline style of the reference. Two equally sized square cells side by side, pure white background, centered black linework, generous balanced margins, no grid lines, no labels or text, no shadows or texture. LEFT CELL: one small CLOSE symbol, exactly two slender diagonal strokes crossing as a symmetric X, rounded caps, no surrounding circle or box. RIGHT CELL: one COPY symbol, two offset overlapping rounded square document outlines, front lower-right square fully outlined and the rear upper-left square partially visible; no text marks or folded corners. Match the minimal light stroke of Obsidian-style interface controls; keep both silhouettes readable when reduced to 12 to 18 pixels. The reference supplies line style only; do not retain any of its folder, sort, or collapse symbols.",
   "selectedRationale": "Conventional X and overlapping-square silhouettes give Close and Copy separate actions and remain legible at 12px and 18px. Match the existing generated monoline controls.",
-  "originalGeneratedPath": "/home/masih/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-f0b9f519-c020-419d-9111-68184ba1801d.png",
+  "originalGeneratedPath": "/home/user/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-f0b9f519-c020-419d-9111-68184ba1801d.png",
   "intendedDisplaySizes": {
     "close": 12,
     "copy": 18

@@ -38,6 +38,38 @@ pub fn interface_style(ui: &mut egui::Ui) {
     interface_fonts(ui.style_mut());
 }
 
+/// A shared compact slider; document typography must not resize its thumb.
+pub fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>) -> egui::Response {
+    ui.scope(|ui| {
+        let dark = ui.visuals().dark_mode;
+        let style = ui.style_mut();
+        style.spacing.interact_size.y = 16.0;
+        style.spacing.button_padding = egui::vec2(4.0, 2.0);
+        style.spacing.slider_rail_height = 4.0;
+        style
+            .text_styles
+            .insert(TextStyle::Body, FontId::proportional(13.0));
+        for (visuals, fill, outline) in [
+            (&mut style.visuals.widgets.inactive, 66, 170),
+            (&mut style.visuals.widgets.hovered, 108, 190),
+            (&mut style.visuals.widgets.active, 128, 200),
+        ] {
+            visuals.bg_fill = Color32::from_gray(if dark { fill } else { 230 - fill / 2 });
+            visuals.fg_stroke = Stroke::new(
+                1.0,
+                Color32::from_gray(if dark { outline } else { 230 - outline }),
+            );
+            visuals.expansion = 0.0;
+        }
+        ui.add(
+            slider
+                .handle_shape(egui::style::HandleShape::Circle)
+                .trailing_fill(true),
+        )
+    })
+    .inner
+}
+
 /// Apply document typography inside its own UI, leaving window controls unchanged.
 pub fn document_style(ui: &mut egui::Ui, size: u8) {
     let scale = f32::from(size) / f32::from(DEFAULT_DOCUMENT_FONT_SIZE);
@@ -220,7 +252,7 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
     }
     ctx.set_visuals(visuals);
     ctx.all_styles_mut(|style| {
-        style.animation_time = 0.0;
+        style.animation_time = 0.12;
         style.scroll_animation = egui::style::ScrollAnimation::none();
         interface_fonts(style);
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
@@ -235,9 +267,9 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
             dormant_background_opacity: 0.04,
             active_background_opacity: 0.07,
             interact_background_opacity: 0.10,
-            dormant_handle_opacity: if dark { 0.48 } else { 0.62 },
-            active_handle_opacity: if dark { 0.58 } else { 0.72 },
-            interact_handle_opacity: 0.75,
+            dormant_handle_opacity: if dark { 0.42 } else { 0.62 },
+            active_handle_opacity: if dark { 0.44 } else { 0.66 },
+            interact_handle_opacity: if dark { 0.40 } else { 0.58 },
             ..egui::style::ScrollStyle::thin()
         };
         style.visuals.window_corner_radius = egui::CornerRadius::same(10);

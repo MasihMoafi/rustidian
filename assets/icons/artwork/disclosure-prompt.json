@@ -2,5 +2,5 @@
   "generator": "Built-in image_gen.imagegen; backend model unidentified.",
   "prompt": "Create ONE square native UI disclosure icon from the chevron style in the RIGHT cell of the supplied sheet. A SINGLE slender right-pointing chevron >, two clean straight diagonal strokes joined in a softly rounded apex, rounded line caps. Only one chevron, no second chevron and no vertical line or arrow shaft. Match the precise minimal monoline style but keep the stroke light enough for a 12 to 14 pixel disclosure control. Black linework, pure white background, generous balanced margins, centered symmetric silhouette, no gray, no text, no texture, no shadow, no border or extra symbols. This will rotate downward when a folder or heading is expanded. It is a separate disclosure control icon, so it must remain extremely clear when small.",
   "selectedRationale": "A single right chevron gives folders and headings the same compact disclosure shape as the reference; rotation shows expanded state.",
-  "originalGeneratedPath": "/home/masih/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-521f29e6-f1da-4a32-a307-ab87adc0e756.png"
+  "originalGeneratedPath": "/home/user/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-521f29e6-f1da-4a32-a307-ab87adc0e756.png"
 }

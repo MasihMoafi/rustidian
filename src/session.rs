@@ -48,6 +48,8 @@ struct Session {
     confirm_trash: Option<bool>,
     #[serde(default)]
     table_layouts: crate::table_layout::Layouts,
+    #[serde(default)]
+    graph: Option<crate::graph_ui::State>,
 }
 
 fn default_sidebars() -> [f32; 2] {
@@ -98,6 +100,7 @@ impl NotesApp {
             crate::editor_ui::clear_layout_history(ctx, &vault.root);
         }
         crate::table_layout::restore(ctx, Default::default());
+        self.graph.restore(Default::default());
         let Some(vault) = &self.vault else {
             return false;
         };
@@ -111,6 +114,7 @@ impl NotesApp {
             return false;
         };
         (self.tabs, self.active) = session.restore_tabs(vault);
+        self.graph.restore(session.graph.unwrap_or_default());
         self.show_left = session.left;
         crate::table_layout::restore(ctx, session.table_layouts);
         self.show_right = session.right;
@@ -203,6 +207,7 @@ impl NotesApp {
             always_update_links: Some(self.always_update_links),
             confirm_trash: Some(self.confirm_trash),
             table_layouts: crate::table_layout::snapshot(&self.ctx),
+            graph: Some(self.graph.snapshot()),
         };
         let bytes = serde_json::to_vec(&session).map_err(|error| error.to_string())?;
         let Some(parent) = path.parent().map(Path::to_owned) else {
@@ -262,6 +267,7 @@ mod tests {
         assert!(state.bookmarks.items.is_empty());
         assert!(!state.bookmarks_open);
         assert!(state.note_aids.is_none());
+        assert!(state.graph.is_none());
         assert_eq!(state.document_font_size, None);
         assert!(state.pinned.is_empty());
         assert_eq!(state.sidebar_widths, [300.0, 234.0]);

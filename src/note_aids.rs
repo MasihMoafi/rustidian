@@ -83,13 +83,40 @@ fn relative(value: &str, empty: bool) -> Result<PathBuf> {
 }
 
 impl Config {
+    fn read_obsidian(root: &Path) -> (Result<Templates>, Result<Daily>, Result<Unique>) {
+        (
+            crate::paths::read_obsidian(root, "templates.json"),
+            crate::paths::read_obsidian(root, "daily-notes.json"),
+            crate::paths::read_obsidian(root, "zk-prefixer.json"),
+        )
+    }
+
     /// Import only the small note-creation settings, without writing .obsidian.
     pub fn from_obsidian(root: &Path) -> Result<Self> {
+        let (templates, daily, unique) = Self::read_obsidian(root);
         Ok(Self {
-            templates: crate::paths::read_obsidian(root, "templates.json")?,
-            daily: crate::paths::read_obsidian(root, "daily-notes.json")?,
-            unique: crate::paths::read_obsidian(root, "zk-prefixer.json")?,
+            templates: templates?,
+            daily: daily?,
+            unique: unique?,
         })
+    }
+
+    /// Keep valid independent settings and report each failed file without writing it.
+    pub fn from_obsidian_partial(root: &Path) -> (Self, Vec<String>) {
+        fn recover<T: Default>(value: Result<T>, name: &str, errors: &mut Vec<String>) -> T {
+            value.unwrap_or_else(|error| {
+                errors.push(format!("{name}: {error}"));
+                T::default()
+            })
+        }
+        let (templates, daily, unique) = Self::read_obsidian(root);
+        let mut errors = Vec::new();
+        let config = Self {
+            templates: recover(templates, "templates.json", &mut errors),
+            daily: recover(daily, "daily-notes.json", &mut errors),
+            unique: recover(unique, "zk-prefixer.json", &mut errors),
+        };
+        (config, errors)
     }
 
     pub fn template_paths(&self, vault: &Vault) -> Result<Vec<PathBuf>> {

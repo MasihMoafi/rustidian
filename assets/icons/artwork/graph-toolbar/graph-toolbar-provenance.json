@@ -20,7 +20,7 @@
     "fit": 648,
     "margin": 60
   },
-  "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+  "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
   "engineSha256": "f975e80542156cafdfac531a096979fab60535cfe3798b3f1fde089deb91a4f3",
   "tracing": {
     "method": "SVG Studio vectorizeImage (monochrome Potrace)",
@@ -42,12 +42,12 @@
   },
   "pathCount": 1,
   "nativeBytes": 4695,
-  "reproduction": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/home/masih/Desktop/p/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
+  "reproduction": "SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/workspace/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
   "verification": {
     "geometry": "One standalone SVG Studio path, four visible circular counters; path data is byte-identical to the raw engine output. Native file differs only in fills from the normalized trace.",
     "reproduction": "Re-ran the preserved recipe and obtained byte-identical native SVG SHA256 3e492a4cbd0caeaaecce1616af5a33a6b04fa328919d9cd58b7eb91aa4961235",
     "pipeline_checks": {
-      "command": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node --test /home/masih/Desktop/p/skills/logo/test/pipeline.test.mjs",
+      "command": "SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node --test /workspace/skills/logo/test/pipeline.test.mjs",
       "passed": 6,
       "failed": 0,
       "log": "graph-toolbar-pipeline-test.log"

@@ -1,5 +1,5 @@
 {
-  "source": "/home/masih/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-f6c159fa-98b1-4899-a2a1-e9f1f9959def.png",
+  "source": "/home/user/.elpis-next/generated_images/01a157ef-aa4b-70a1-92ff-11c1e7b29875/exec-f6c159fa-98b1-4899-a2a1-e9f1f9959def.png",
   "status": "rejected before vectorization",
   "reason": "Visible speckles and filled/noisy counters; unsuitable at native UI sizes."
 }

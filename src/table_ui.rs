@@ -10,6 +10,7 @@ use rustidian::{
 use std::ops::Range;
 
 type CellKey = (usize, usize, usize);
+const EDGE_SIZE: f32 = 14.0;
 
 struct Cell {
     text: String,
@@ -29,11 +30,13 @@ struct Draft {
 #[derive(Default)]
 pub struct Tables {
     owner: Option<egui::Id>,
+    tab: Option<u64>,
     views: Vec<TableView>,
     focus: Option<CellKey>,
     error: Option<String>,
     draft: Option<Draft>,
     deferred: Vec<egui::Event>,
+    raw_deferred: Vec<egui::Event>,
     exit: Option<usize>,
 }
 
@@ -115,8 +118,70 @@ pub struct Placement {
 
 impl Placement {
     pub fn height(&self) -> f32 {
-        self.heights.iter().sum::<f32>() + 1.0
+        self.heights.iter().sum::<f32>() + 1.0 + EDGE_SIZE
     }
+}
+
+fn edge_button(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    table: usize,
+    rect: egui::Rect,
+    column: bool,
+) -> bool {
+    let rect = rect.intersect(ui.clip_rect());
+    if !rect.is_positive() {
+        return false;
+    }
+    // Leave the existing last-column resize target independent of insertion.
+    let mut hit = rect;
+    if column {
+        hit.min.x += 4.0;
+    }
+    if !hit.is_positive() {
+        return false;
+    }
+    let response = ui
+        .interact(hit, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if column { "Add column" } else { "Add row" });
+    if response.hovered() || response.has_focus() || response.is_pointer_button_down_on() {
+        ui.painter().rect(
+            rect,
+            0,
+            ui.visuals().window_fill,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        crate::theme::icon_image(crate::theme::Icon::NewTab, ui.visuals().weak_text_color())
+            .fit_to_exact_size(egui::Vec2::splat(10.0))
+            .paint_at(
+                ui,
+                egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(10.0)),
+            );
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect,
+                0,
+                egui::Stroke::new(1.0, crate::theme::accent(ui)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        crate::ui_probe::record(
+            ui.ctx(),
+            format!(
+                "edit-table-add-{}:{table}",
+                if column { "column" } else { "row" }
+            ),
+            rect,
+        );
+    }
+    response.clicked()
+        || response.has_focus()
+            && ui.input_mut(|input| {
+                input.consume_key(egui::Modifiers::NONE, Key::Enter)
+                    || input.consume_key(egui::Modifiers::NONE, Key::Space)
+            })
 }
 
 fn cell_id(id: egui::Id, key: CellKey) -> egui::Id {
@@ -124,6 +189,94 @@ fn cell_id(id: egui::Id, key: CellKey) -> egui::Id {
 }
 
 impl Tables {
+    pub fn raw_input(
+        &mut self,
+        ctx: &egui::Context,
+        raw: &mut egui::RawInput,
+        live_tab: Option<u64>,
+    ) {
+        if raw.viewport_id != egui::ViewportId::ROOT || raw.viewport().visible() == Some(false) {
+            return;
+        }
+        if live_tab.is_none() || live_tab != self.tab {
+            self.raw_deferred.clear();
+            return;
+        }
+        let Some(owner) = self.owner else {
+            return;
+        };
+        self.raw_deferred.append(&mut raw.events);
+        raw.events = std::mem::take(&mut self.raw_deferred);
+        let edges: Vec<_> = (0..self.views.len())
+            .flat_map(|table| [false, true].map(|column| owner.with(("table-add", table, column))))
+            .filter_map(|id| ctx.read_response(id))
+            .filter(|response| {
+                response.enabled()
+                    && ctx.memory(|memory| memory.allows_interaction(response.layer_id))
+            })
+            .collect();
+        let mut mutation = false;
+        let mut split = None;
+        for (index, event) in raw.events.iter().enumerate() {
+            match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    ..
+                } if edges.iter().any(|response| {
+                    let local = ctx
+                        .layer_transform_from_global(response.layer_id)
+                        .map_or(*pos, |transform| transform * *pos);
+                    response.interact_rect.contains(local)
+                        && ctx.layer_id_at(*pos) == Some(response.layer_id)
+                }) =>
+                {
+                    // Text before a click belongs to the old cell. Text after its
+                    // release belongs to the new cell, which exists next frame.
+                    if *pressed && mutation {
+                        split = Some(index);
+                        break;
+                    }
+                    if !pressed {
+                        split = Some(index + 1);
+                        break;
+                    }
+                }
+                egui::Event::Key {
+                    key: key @ (Key::Enter | Key::Space),
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.matches_exact(egui::Modifiers::NONE)
+                    && edges.iter().any(|response| response.has_focus()) =>
+                {
+                    // Winit pairs a printable Space key with Text(" "). Keep
+                    // that activation text with the button, not the new cell.
+                    let end = index + 1;
+                    let space_text = *key == Key::Space
+                        && matches!(raw.events.get(end), Some(egui::Event::Text(text)) if text == " ");
+                    split = Some(end + usize::from(space_text));
+                    break;
+                }
+                egui::Event::Text(_)
+                | egui::Event::Paste(_)
+                | egui::Event::Cut
+                | egui::Event::Ime(egui::ImeEvent::Commit(_))
+                | egui::Event::Key {
+                    key: Key::Backspace | Key::Delete | Key::Enter | Key::Tab,
+                    pressed: true,
+                    ..
+                } => mutation = true,
+                _ => {}
+            }
+        }
+        if let Some(index) = split.filter(|index| *index < raw.events.len()) {
+            self.raw_deferred = raw.events.split_off(index);
+            ctx.request_repaint();
+        }
+    }
+
     pub fn prepare(
         &mut self,
         ui: &egui::Ui,
@@ -212,7 +365,7 @@ impl Tables {
                     from,
                     ordinal,
                     &widths,
-                    ui.available_width(),
+                    (ui.available_width() - EDGE_SIZE).max(1.0),
                 );
                 let heights = view
                     .cells
@@ -238,7 +391,7 @@ impl Tables {
                     characters: start..start + source[view.model.range.clone()].chars().count(),
                     widths,
                     heights,
-                    available: ui.available_width(),
+                    available: (ui.available_width() - EDGE_SIZE).max(1.0),
                 })
             })
             .collect()
@@ -251,6 +404,7 @@ impl Tables {
                 ..Default::default()
             };
         }
+        self.tab = Some(tab.id());
         if !live {
             self.focus = None;
             self.deferred.clear();
@@ -266,7 +420,8 @@ impl Tables {
                 input.events = std::mem::take(&mut self.deferred);
             });
         }
-        let focused = self.focus.is_some() || self.has_focus(ui.ctx(), id);
+        let focused_cell = self.focus.or_else(|| self.focused_cell(ui.ctx(), id));
+        let focused = focused_cell.is_some();
         if !focused
             || !ui.is_enabled()
             || !ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
@@ -348,6 +503,23 @@ impl Tables {
             self.draft = None;
             tab.document.text = text;
             state.cursor.set_char_range(Some(cursor));
+            if let Some((table, row, column)) = focused_cell {
+                let models = rustidian::editor::Markdown::parse(&tab.document.text).tables;
+                if let Some(model) = models.get(table) {
+                    if row >= model.rows.len() || column >= model.alignments.len() {
+                        let destination = (
+                            table,
+                            row.min(model.rows.len() - 1),
+                            column.min(model.alignments.len() - 1),
+                        );
+                        self.focus = Some(destination);
+                        ui.memory_mut(|memory| memory.request_focus(cell_id(id, destination)));
+                    }
+                } else {
+                    self.focus = None;
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                }
+            }
             tab.edited();
             ui.ctx().request_repaint();
         }
@@ -356,10 +528,16 @@ impl Tables {
     }
 
     pub fn has_focus(&self, ctx: &egui::Context, id: egui::Id) -> bool {
-        self.views.iter().enumerate().any(|(table, view)| {
-            view.cells.iter().enumerate().any(|(row, cells)| {
-                (0..cells.len()).any(|column| {
-                    ctx.memory(|memory| memory.has_focus(cell_id(id, (table, row, column))))
+        self.focused_cell(ctx, id).is_some()
+    }
+
+    fn focused_cell(&self, ctx: &egui::Context, id: egui::Id) -> Option<CellKey> {
+        self.views.iter().enumerate().find_map(|(table, view)| {
+            view.cells.iter().enumerate().find_map(|(row, cells)| {
+                (0..cells.len()).find_map(|column| {
+                    let key = (table, row, column);
+                    ctx.memory(|memory| memory.has_focus(cell_id(id, key)))
+                        .then_some(key)
                 })
             })
         })
@@ -379,6 +557,7 @@ impl Tables {
     ) -> Option<String> {
         let mut follow = None;
         let mut edit = None;
+        let mut insertion = None;
         let mut separate_edit = false;
         let mut navigation = None;
         let mut menu_focus = None;
@@ -391,7 +570,7 @@ impl Tables {
                 *origin,
                 egui::vec2(
                     placement.widths.iter().sum::<f32>() + 1.0,
-                    placement.height(),
+                    placement.height() - EDGE_SIZE,
                 ),
             );
             let available = egui::Rect::from_min_size(
@@ -404,7 +583,11 @@ impl Tables {
                     .id_salt(id.with(("edit-table-scroll", table)))
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        let (outer, _) = ui.allocate_exact_size(rect.size(), egui::Sense::hover());
+                        let (allocation, _) = ui.allocate_exact_size(
+                            rect.size() + egui::Vec2::splat(EDGE_SIZE),
+                            egui::Sense::hover(),
+                        );
+                        let outer = egui::Rect::from_min_size(allocation.min, rect.size());
                         crate::ui_probe::record(
                             ui.ctx(),
                             format!("edit-table:{table}"),
@@ -568,6 +751,7 @@ impl Tables {
                                     navigation = Some((key, direction));
                                 }
                                 response.context_menu(|ui| {
+                                    crate::theme::menu_style(ui);
                                     let columns = view.model.alignments.len();
                                     let count = view.model.rows.len();
                                     let mut action =
@@ -709,6 +893,37 @@ impl Tables {
                             &placement.widths,
                             placement.available,
                         );
+                        for column in [false, true] {
+                            let edge = if column {
+                                egui::Rect::from_min_size(
+                                    outer.right_top(),
+                                    egui::vec2(EDGE_SIZE, outer.height()),
+                                )
+                            } else {
+                                egui::Rect::from_min_size(
+                                    outer.left_bottom(),
+                                    egui::vec2(outer.width(), EDGE_SIZE),
+                                )
+                            };
+                            let edge_id = id.with(("table-add", table, column));
+                            if edge_button(ui, edge_id, table, edge, column) {
+                                let rows = view.model.rows.len();
+                                let columns = view.model.alignments.len();
+                                insertion = Some((
+                                    table,
+                                    if column {
+                                        Action::InsertColumn(columns)
+                                    } else {
+                                        Action::InsertRow(rows)
+                                    },
+                                ));
+                                menu_focus = Some(if column {
+                                    (table, 0, columns)
+                                } else {
+                                    (table, rows, 0)
+                                });
+                            }
+                        }
                     });
             });
         }
@@ -716,6 +931,17 @@ impl Tables {
             self.apply(ui, tab, id, table, action);
             if separate_edit {
                 checkpoint(ui.ctx(), id, &tab.document.text);
+            }
+        }
+        if let Some((table, action)) = insertion {
+            // A queued cell edit must reach the document before its structure
+            // changes; refresh offsets rather than discarding that input.
+            if let Some(model) = rustidian::editor::Markdown::parse(&tab.document.text)
+                .tables
+                .get(table)
+            {
+                self.views[table].model = model.clone();
+                self.apply(ui, tab, id, table, action);
             }
         }
         if let Some((table, row, column)) = menu_focus

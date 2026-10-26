@@ -119,7 +119,7 @@ pub struct NotesApp {
     recovery_manager: crate::recovery_ui::Manager,
     file_move: crate::file_move_ui::Manager,
     page_preview: crate::page_preview::Manager,
-    graph: crate::graph_ui::Manager,
+    pub(crate) graph: crate::graph_ui::Manager,
     pub(crate) always_update_links: bool,
 }
 
@@ -399,11 +399,12 @@ impl NotesApp {
                         self.collapse_epoch = 0;
                         self.reveal_folder = None;
                         self.reset_tree_scroll = true;
-                        self.note_aids = rustidian::note_aids::Config::from_obsidian(&vault.root)
-                            .unwrap_or_else(|error| {
-                                self.error = Some(error);
-                                Default::default()
-                            });
+                        let (note_aids, import_errors) =
+                            rustidian::note_aids::Config::from_obsidian_partial(&vault.root);
+                        self.note_aids = note_aids;
+                        if !import_errors.is_empty() {
+                            self.error = Some(import_errors.join("\n"));
+                        }
                         let first = vault
                             .notes
                             .iter()
@@ -1547,6 +1548,7 @@ impl NotesApp {
                         response.rect,
                     );
                     response.context_menu(|ui| {
+                        theme::menu_style(ui);
                         for (name, label, enabled) in [
                             ("title", "Edit title…", true),
                             ("up", "Move up", index > 0),
@@ -1744,6 +1746,7 @@ impl NotesApp {
                     .inner_margin(Margin::symmetric(12, 0)),
             )
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 40.0),
@@ -1820,6 +1823,7 @@ impl NotesApp {
                             let sort = icon_button(ui, Icon::Sort, "Change sort order");
                             crate::ui_probe::record(ui.ctx(), "file-sort", sort.rect);
                             egui::Popup::menu(&sort).show(|ui| {
+                                theme::menu_style(ui);
                                 for (descending, label, probe) in [
                                     (false, "File name (A to Z)", "sort-ascending"),
                                     (true, "File name (Z to A)", "sort-descending"),
@@ -2409,6 +2413,7 @@ impl NotesApp {
                                     }
                                     let more = icon_button(ui, Icon::More, "More options");
                                     egui::Popup::menu(&more).show(|ui| {
+                                        theme::menu_style(ui);
                                         for (label, dialog) in [
                                             ("Rename or move…", Dialog::RenameNote),
                                             ("Delete file", Dialog::TrashNote),
@@ -2445,6 +2450,7 @@ impl NotesApp {
                                 }
                                 let more = icon_button(ui, Icon::More, "More options");
                                 egui::Popup::menu(&more).show(|ui| {
+                                    theme::menu_style(ui);
                                     if ui.button("Save · Ctrl+S").clicked() {
                                         self.save(self.active);
                                         ui.close();
@@ -3269,6 +3275,7 @@ impl NotesApp {
         let mut select = None;
         let mut run_command = None;
         let mut recovery_action = None;
+        let mut configure_templates = false;
         let mut modal =
             egui::Modal::new(egui::Id::unique("main-dialog")).frame(theme::dialog_frame(ctx));
         if dialog == Dialog::Settings {
@@ -3386,12 +3393,10 @@ impl NotesApp {
                     ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
                         for (index, path) in matches.iter().enumerate() {
                             let row = ui.add(
-                                egui::Button::new(
-                                    RichText::new(rustidian::paths::display_path(path)).size(15.0),
-                                )
-                                .selected(index == self.dialog_selected)
-                                .frame_when_inactive(false)
-                                .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                egui::Button::new(rustidian::paths::display_path(path))
+                                    .selected(index == self.dialog_selected)
+                                    .frame_when_inactive(false)
+                                    .min_size(egui::vec2(ui.available_width(), 34.0)),
                             );
                             if crate::ui_probe::enabled() {
                                 crate::ui_probe::record(
@@ -3427,6 +3432,9 @@ impl NotesApp {
                         Err(error) => {
                             let label = ui.label(error.as_str());
                             crate::ui_probe::record(ctx, "template-error", label.rect);
+                            let configure = ui.button("Open Templates settings");
+                            crate::ui_probe::record(ctx, "template-configure", configure.rect);
+                            configure_templates = configure.clicked();
                         }
                         Ok(matcher) => {
                             let folder = Path::new(self.note_aids.templates.folder.trim());
@@ -3612,6 +3620,12 @@ impl NotesApp {
         crate::ui_probe::record(ctx, "dialog-bounds", response.response.rect);
         if response.should_close() {
             close = true;
+        }
+        if configure_templates && !close {
+            self.template_source = None;
+            self.ask(Dialog::Settings);
+            self.settings_page = settings_ui::Page::Templates;
+            return;
         }
         if let Some(clear) = recovery_action {
             if clear {
@@ -4397,8 +4411,18 @@ impl NotesApp {
 }
 
 impl eframe::App for NotesApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let live_tab = self
+            .tabs
+            .get(self.active)
+            .filter(|tab| tab.view == View::Live && !tab.document.is_image())
+            .map(Tab::id);
+        self.editor.raw_input(ctx, raw, live_tab);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let local_graph_open = self.graph.local_open;
         // Event modifiers retain the gesture even if Control was released in
         // this frame. The editor consumes Ctrl+Enter before following its link.
         self.new_tab_gesture = ctx.input(|input| {
@@ -4540,6 +4564,12 @@ impl eframe::App for NotesApp {
         self.sidebar(ui);
         self.details(ui);
         self.content(ui);
+        if !ctx.input(|input| input.pointer.any_down())
+            && (self.graph.take_changed() || local_graph_open != self.graph.local_open)
+            && let Err(error) = self.write_session()
+        {
+            self.error = Some(format!("Graph settings weren’t saved: {error}"));
+        }
         self.show_page_preview(&ctx);
         self.dialogs(&ctx);
         if let Some(error) = self.editor.error.take() {
