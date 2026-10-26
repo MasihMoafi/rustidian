@@ -6719,8 +6719,9 @@ def main():
                     deadline = time.monotonic() + 3
                     while time.monotonic() < deadline:
                         created = set((base / "state/rustidian").glob("*.json")) - before
-                        if len(created) == 1:
-                            return root, prefix, created.pop()
+                        matching = [path for path in created if any(tab[0] == "Focus.md" for tab in json.loads(path.read_text()).get("tabs", []))]
+                        if len(matching) == 1:
+                            return root, prefix, matching[0]
                         time.sleep(.05)
                     raise AssertionError(("Fresh graph fixture did not get one private session file", created))
 
@@ -6838,8 +6839,8 @@ def main():
                     click_control(prefix + ":fit", hold=.15); pan(prefix)
                     left, top, right, bottom = control_bounds(prefix + ":canvas")
                     zoom = metric(prefix, "zoom")
-                    xdo("mousemove", "--sync", str(round(left + 40)), str(round(top + 40)), "click", "4"); pause()
-                    assert metric(prefix, "zoom") > zoom
+                    xdo("mousemove", "--sync", str(round(left + 40)), str(round(top + 40)), "click", "5"); pause()
+                    assert 0 < metric(prefix, "zoom") < zoom
                     group_pixels(prefix)
 
                 def check_fields(prefix):

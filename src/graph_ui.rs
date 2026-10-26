@@ -145,10 +145,20 @@ pub struct State {
     local_open: bool,
 }
 
-struct NodeDrag {
-    path: PathBuf,
-    before: Option<[f32; 2]>,
-    offset: Vec2,
+enum DragTarget {
+    Node {
+        path: PathBuf,
+        before: Option<[f32; 2]>,
+        offset: Vec2,
+    },
+    Canvas {
+        origin: Pos2,
+        before: [f32; 2],
+    },
+}
+
+struct Drag {
+    target: DragTarget,
     cancelled: bool,
 }
 
@@ -160,7 +170,7 @@ struct Pane {
     ready: Option<Arc<Ready>>,
     fit: bool,
     positions: HashMap<PathBuf, [f32; 2]>,
-    drag: Option<NodeDrag>,
+    drag: Option<Drag>,
 }
 
 impl Default for Pane {
@@ -941,50 +951,89 @@ fn interact(
         pane.drag = None;
         return;
     }
-    if response.drag_started_by(egui::PointerButton::Primary)
+    if pane.drag.is_none()
+        && response.drag_started_by(egui::PointerButton::Primary)
         && let Some(origin) = ui.input(|input| input.pointer.press_origin())
-        && let Some(node) = node_at(pane, ready, scene, response.rect, origin)
     {
-        let path = ready.graph.nodes[node].path.clone();
-        pane.drag = Some(NodeDrag {
-            before: pane.positions.get(&path).copied(),
-            path,
-            offset: screen_position(pane, &ready.graph, &scene.geometry, node, response.rect)
-                - origin,
+        let target = if let Some(node) = node_at(pane, ready, scene, response.rect, origin) {
+            let path = ready.graph.nodes[node].path.clone();
+            DragTarget::Node {
+                before: pane.positions.get(&path).copied(),
+                path,
+                offset: screen_position(pane, &ready.graph, &scene.geometry, node, response.rect)
+                    - origin,
+            }
+        } else {
+            DragTarget::Canvas {
+                origin,
+                before: pane.preferences.camera.pan,
+            }
+        };
+        pane.drag = Some(Drag {
+            target,
             cancelled: false,
         });
     }
-    if let Some(drag) = &mut pane.drag {
-        if !drag.cancelled
-            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
-        {
-            if let Some(before) = drag.before {
-                pane.positions.insert(drag.path.clone(), before);
-            } else {
-                pane.positions.remove(&drag.path);
+    let Some(drag) = &mut pane.drag else {
+        return;
+    };
+    if !drag.cancelled
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        match &drag.target {
+            DragTarget::Node { path, before, .. } => {
+                if let Some(before) = before {
+                    pane.positions.insert(path.clone(), *before);
+                } else {
+                    pane.positions.remove(path);
+                }
             }
-            drag.cancelled = true;
+            DragTarget::Canvas { before, .. } => pane.preferences.camera.pan = *before,
         }
-        if !drag.cancelled
-            && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
-        {
-            let screen = pointer + drag.offset - response.rect.center();
-            let camera = pane.preferences.camera;
-            pane.positions.insert(
-                drag.path.clone(),
-                [
-                    (screen.x - camera.pan[0]) / camera.zoom,
-                    (screen.y - camera.pan[1]) / camera.zoom,
-                ],
-            );
+        drag.cancelled = true;
+    }
+    let (down, pointer) = ui.input(|input| {
+        let down = input.pointer.primary_down();
+        // A release and a later hover can share one frame. Commit the release
+        // position, not that later hover, and include the drag threshold distance.
+        let pointer = if down {
+            input.pointer.interact_pos()
+        } else {
+            input.events.iter().rev().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+        };
+        (down, pointer)
+    });
+    if !drag.cancelled
+        && let Some(pointer) = pointer
+    {
+        match &drag.target {
+            DragTarget::Node { path, offset, .. } => {
+                let screen = pointer + *offset - response.rect.center();
+                let camera = pane.preferences.camera;
+                pane.positions.insert(
+                    path.clone(),
+                    [
+                        (screen.x - camera.pan[0]) / camera.zoom,
+                        (screen.y - camera.pan[1]) / camera.zoom,
+                    ],
+                );
+            }
+            DragTarget::Canvas { origin, before } => {
+                let delta = pointer - *origin;
+                pane.preferences.camera.pan = [before[0] + delta.x, before[1] + delta.y];
+            }
         }
-        if !ui.input(|input| input.pointer.primary_down()) {
-            pane.drag = None;
-        }
-    } else if response.dragged_by(egui::PointerButton::Primary) {
-        let delta = ui.input(|input| input.pointer.delta());
-        pane.preferences.camera.pan[0] += delta.x;
-        pane.preferences.camera.pan[1] += delta.y;
+    }
+    if !down {
+        pane.drag = None;
     }
 }
 
