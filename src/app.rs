@@ -988,6 +988,33 @@ impl NotesApp {
         self.dialog_focus = true;
     }
 
+    fn dialog_shortcut(&mut self, ctx: &egui::Context, key: Key, dialog: Dialog) {
+        let requested = ctx.input_mut(|input| {
+            let trigger = input.events.iter().position(|event| matches!(event,
+                egui::Event::Key { key: pressed_key, pressed: true, modifiers, .. }
+                    if *pressed_key == key && modifiers.matches_logically(egui::Modifiers::COMMAND)
+            ));
+            if let Some(trigger) = trigger {
+                // Escape before the opening shortcut dismisses the previous
+                // dialog. An Escape after it still closes the new dialog.
+                let mut index = 0;
+                input.events.retain(|event| {
+                    let earlier = index < trigger;
+                    index += 1;
+                    !(earlier
+                        && matches!(event,
+                            egui::Event::Key { key: Key::Escape, pressed: true, modifiers, .. }
+                                if modifiers.matches_logically(egui::Modifiers::NONE)
+                        ))
+                });
+            }
+            input.consume_key(egui::Modifiers::COMMAND, key)
+        });
+        if requested {
+            self.ask(dialog);
+        }
+    }
+
     fn ask_file(&mut self, dialog: Dialog, path: PathBuf) {
         self.ask(dialog);
         self.dialog_input = path.display().to_string();
@@ -1254,15 +1281,11 @@ impl NotesApp {
             self.start_open_picker(rustidian::native_picker::Kind::Folder);
             return;
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::O)) {
-            self.ask(Dialog::QuickOpen);
-        }
+        self.dialog_shortcut(ctx, Key::O, Dialog::QuickOpen);
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::N)) {
             self.create_note();
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::P)) {
-            self.ask(Dialog::Commands);
-        }
+        self.dialog_shortcut(ctx, Key::P, Dialog::Commands);
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::E)) {
             self.toggle_reading();
         }

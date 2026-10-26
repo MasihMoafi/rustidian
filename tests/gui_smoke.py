@@ -6292,6 +6292,21 @@ def main():
 
             def palette_queue_checks():
                 sources={p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
+                for shortcut in ("ctrl+p","ctrl+o"):
+                    command("Open settings")
+                    queued_steps(("key","Escape"),("key",shortcut))
+                    pause()
+                    assert control_bounds("dialog-input-focused",required=False), "Earlier Escape closed the newly opened command palette or quick-open"
+                    type_text("Toggle right sidebar" if shortcut=="ctrl+p" else "Home")
+                    if shortcut=="ctrl+p":
+                        assert control_bounds("command:Toggle right sidebar")
+                        key("Escape")
+                    else:
+                        key("Return");title_contains("Home")
+                queued_steps(("key","ctrl+p"),("key","Escape"));pause()
+                assert control_bounds("dialog-input",required=False) is None, "Escape after the opening shortcut must still dismiss it"
+                for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
+                results.append("An earlier queued Escape dismissed Settings without closing the replacement palette/quick-open or inserting its query into notes; a later Escape still dismissed it")
                 before=control_bounds("sidebar:details",required=False) is not None
                 def queued(query):
                     os.kill(app.pid,signal.SIGSTOP)

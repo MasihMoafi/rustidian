@@ -9,6 +9,10 @@ on:
         description: 'Run optimized GUI checks only; do not package or upload artifacts'
         type: boolean
         default: false
+      modal_baseline:
+        description: 'Prove the queued Escape regression fails on the previous runtime before building the repair'
+        type: boolean
+        default: false
       package_after_checks:
         description: 'Create and retain the Debian package only after selected GUI and package checks pass'
         type: boolean
@@ -16,7 +20,7 @@ on:
       sections:
         description: 'Space-separated native GUI sections'
         type: string
-        default: 'table-resize table-input table-edit undo graph note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
+        default: 'palette-queued table-resize table-input table-edit undo graph note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
 
 permissions:
   contents: read
@@ -69,6 +73,24 @@ jobs:
           done
           python3 tests/gui_smoke.py --binary target/debug/rustidian --open-file rs > reports/debug-open-rs.log 2>&1 || gui_status=1
           exit "$gui_status"
+      - name: Prove queued modal regression on the previous runtime
+        if: ${{ inputs.gui_only && inputs.modal_baseline }}
+        run: |
+          cp src/app.rs "$RUNNER_TEMP/rustidian-fixed-app.rs"
+          trap 'cp "$RUNNER_TEMP/rustidian-fixed-app.rs" src/app.rs' EXIT
+          git show 90502b2a87ebb3d1b555907412e6068c391a91eb:src/app.rs > src/app.rs
+          CARGO_PROFILE_RELEASE_LTO=false cargo rustc --locked --release --bin rustidian -- -C opt-level=2
+          if python3 tests/gui_smoke.py --binary target/release/rustidian --section palette-queued > reports/modal-order-baseline.log 2>&1; then
+            echo 'The modal regression unexpectedly passed on the previous runtime'
+            exit 1
+          fi
+          python3 - <<'BASELINE'
+          from pathlib import Path
+          assert 'Earlier Escape closed the newly opened command palette or quick-open' in Path('reports/modal-order-baseline.log').read_text(), 'Baseline failed for an unrelated reason'
+          print('Confirmed: the queued Escape regression fails on the previous runtime')
+          BASELINE
+          cp "$RUNNER_TEMP/rustidian-fixed-app.rs" src/app.rs
+          git diff --exit-code -- src/app.rs
       - name: Build optimized Rustidian
         env:
           GUI_ONLY: ${{ inputs.gui_only }}
@@ -181,6 +203,7 @@ jobs:
             reports/debian-verification.json
             reports/package-core-tests.log
             reports/selected-*.log
+            reports/modal-order-baseline.log
             reports/gui-*-results.json
             reports/gui-failure.png
             reports/native-table-edge-far-right.png
