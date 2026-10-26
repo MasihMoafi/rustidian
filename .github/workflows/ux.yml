@@ -249,5 +249,9 @@ jobs:
           fetch-depth: 0
       - name: Follow the requested verification run
         run: gh run watch "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --interval 60 --exit-status
+      - name: Install package-check tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb xdotool xclip x11-utils x11-xserver-utils python3-pil python3-xlib desktop-file-utils xdg-utils libgl1-mesa-dri
       - name: Publish the verified installers directly from GitHub
         run: python3 scripts/publish-checked-release.py --run "$VERIFIED_RUN"

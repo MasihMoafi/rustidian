@@ -58,9 +58,32 @@ def main():
     with tarfile.open(assets / "rustidian-linux-x86_64.tar.gz") as archive:
         member = archive.extractfile("rustidian")
         assert member is not None and hashlib.file_digest(member, "sha256").hexdigest() == info["binary_sha256"]
+    # Repackage the already tested executable with corrected native runtime
+    # dependencies, then check the exact delivery artifact and installed launcher.
+    bundle = Path("verified-bundle")
+    with tarfile.open(assets / "rustidian-linux-x86_64.tar.gz") as archive:
+        archive.extractall(bundle, filter="data")
+    binary = bundle / "rustidian"
+    assert digest(binary) == info["binary_sha256"]
+    subprocess.run(["python3", "scripts/package-deb.py", "--binary", str(binary), "--notices", str(assets / "THIRD_PARTY_NOTICES.txt"), "--output", str(assets / "rustidian-linux-amd64.deb")], check=True)
+    subprocess.run(["sudo", "apt-get", "install", "-y", "--no-install-recommends", "./" + str(assets / "rustidian-linux-amd64.deb")], check=True)
+    assert digest(Path("/usr/lib/rustidian/rustidian")) == info["binary_sha256"]
+    subprocess.run(["python3", "tests/gui_smoke.py", "--binary", "/usr/bin/rustidian", "--section", "undo"], check=True)
+    smoke = json.loads(Path("reports/gui-results.json").read_text())
+    assert smoke["status"] == "passed"
+    package = json.loads(command("python3", "tests/debian_package.py", "--binary", str(binary), "--package", str(assets / "rustidian-linux-amd64.deb"), "--notices", str(assets / "THIRD_PARTY_NOTICES.txt"), "--system"))
+    assert package["status"] == "passed" and package["exact_binary_sha256"] == info["binary_sha256"]
+    assert package["package_sha256"] == digest(assets / "rustidian-linux-amd64.deb")
+    info["debian_verification"] = package
+    info["installed_package_gui"] = smoke
+    info["packaging_source_commit"] = os.environ["GITHUB_SHA"]
+    info["depends"] = command("dpkg-deb", "--field", str(assets / "rustidian-linux-amd64.deb"), "Depends")
+    (assets / "BUILDINFO.json").write_text(json.dumps(info, indent=2) + "\n")
+    (assets / "SHA256SUMS").write_text("".join(digest(assets / name) + "  " + name + "\n" for name in ("rustidian-linux-amd64.deb", "rustidian-linux-x86_64.tar.gz", "BUILDINFO.json")))
     # The publication helper may be newer than the compiled source. It cannot
     # publish a runtime or installer different from the checked revision.
-    subprocess.run(["git", "diff", "--exit-code", source, "HEAD", "--", "Cargo.toml", "Cargo.lock", "src", "vendor", "assets", "demo-vault", "docs/brand", "scripts/install-linux.py", "scripts/package-deb.py", "scripts/package-linux.py"], check=True)
+    subprocess.run(["git", "diff", "--exit-code", source, "HEAD", "--", "Cargo.toml", "Cargo.lock", "src", "vendor", "assets", "demo-vault", "docs/brand", "scripts/install-linux.py", "scripts/package-linux.py"], check=True)
+    publication_source = os.environ["GITHUB_SHA"]
     tag = "v" + version
     base = "https://github.com/" + repo + "/releases/download/" + tag + "/"
     total = sum(len(value["checks"]) for value in checks.values())
@@ -75,10 +98,10 @@ def main():
     )
     existing = subprocess.run(["gh", "release", "view", tag, "--repo", repo, "--json", "isDraft,targetCommitish"], capture_output=True, text=True)
     if existing.returncode:
-        subprocess.run(["gh", "release", "create", tag, "--repo", repo, "--target", source, "--draft", "--title", "Rustidian " + version + " — Linux installers", "--notes-file", str(notes)], check=True)
+        subprocess.run(["gh", "release", "create", tag, "--repo", repo, "--target", publication_source, "--draft", "--title", "Rustidian " + version + " — Linux installers", "--notes-file", str(notes)], check=True)
     else:
         release = json.loads(existing.stdout)
-        assert release["targetCommitish"] == source, "Existing release targets another revision"
+        assert release["targetCommitish"] == publication_source, "Existing release targets another revision"
     release = next(value for value in api("repos/" + repo + "/releases") if value["tag_name"] == tag)
     current = {value["name"]: value for value in release["assets"]}
     names = ["rustidian-linux-amd64.deb", "rustidian-linux-x86_64.tar.gz", "BUILDINFO.json", "SHA256SUMS", "THIRD_PARTY_NOTICES.txt"]
@@ -96,9 +119,9 @@ def main():
         subprocess.run(["gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest", "--notes-file", str(notes)], check=True)
     # A concurrent public-main change must never be overwritten.
     main_ref = api("repos/" + repo + "/git/ref/heads/main")["object"]["sha"]
-    subprocess.run(["git", "merge-base", "--is-ancestor", main_ref, source], check=True)
-    api("repos/" + repo + "/git/refs/heads/main", {"sha": source, "force": False})
-    receipt = {"status": "published", "tag": tag, "source_commit": source, "verification_run": run["url"], "url": "https://github.com/" + repo + "/releases/tag/" + tag, "assets": {name: {"sha256": digest(assets / name), "bytes": (assets / name).stat().st_size, "url": base + name} for name in names}, "native_checks": total, "native_groups": len(checks), "network": "GitHub runner uploaded directly; no local VPN transfer"}
+    subprocess.run(["git", "merge-base", "--is-ancestor", main_ref, publication_source], check=True)
+    api("repos/" + repo + "/git/refs/heads/main", {"sha": publication_source, "force": False})
+    receipt = {"status": "published", "tag": tag, "source_commit": source, "packaging_source_commit": publication_source, "verification_run": run["url"], "url": "https://github.com/" + repo + "/releases/tag/" + tag, "assets": {name: {"sha256": digest(assets / name), "bytes": (assets / name).stat().st_size, "url": base + name} for name in names}, "native_checks": total, "native_groups": len(checks), "network": "GitHub runner uploaded directly; no local VPN transfer"}
     Path("publication.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(json.dumps(receipt, indent=2))
     with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
