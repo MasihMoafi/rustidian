@@ -4408,6 +4408,7 @@ impl eframe::App for NotesApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let local_graph_open = self.graph.local_open;
         // Event modifiers retain the gesture even if Control was released in
         // this frame. The editor consumes Ctrl+Enter before following its link.
         self.new_tab_gesture = ctx.input(|input| {
@@ -4549,6 +4550,12 @@ impl eframe::App for NotesApp {
         self.sidebar(ui);
         self.details(ui);
         self.content(ui);
+        if !ctx.input(|input| input.pointer.any_down())
+            && (self.graph.take_changed() || local_graph_open != self.graph.local_open)
+            && let Err(error) = self.write_session()
+        {
+            self.error = Some(format!("Graph settings weren’t saved: {error}"));
+        }
         self.show_page_preview(&ctx);
         self.dialogs(&ctx);
         if let Some(error) = self.editor.error.take() {

@@ -24,7 +24,7 @@ on:
       sections:
         description: 'Space-separated native GUI sections'
         type: string
-        default: 'palette-queued table-resize table-edges table-input table-edit undo graph visual-controls note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
+        default: 'palette-queued table-resize table-edges table-input table-edit undo graph graph-state visual-controls note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
 
 permissions:
   contents: read
@@ -213,6 +213,8 @@ jobs:
             reports/gui-failure.png
             reports/native-table-edge-*.png
             reports/native-table-edge-*.json
+            reports/native-graph-state-*.png
+            reports/native-graph-state-*.json
             reports/native-form-add-property.png
             reports/native-graph-global-dark.png
             reports/native-graph-proportions-*.png

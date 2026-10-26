@@ -7,6 +7,7 @@ use rustidian::{
     graph_layout::{Camera, Forces, Geometry},
     vault::Vault,
 };
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -44,6 +45,8 @@ struct Scene {
     labels: Vec<usize>,
 }
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 struct Display {
     arrows: bool,
     fade: f32,
@@ -52,7 +55,7 @@ struct Display {
     colors: ColorMode,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 enum ColorMode {
     Groups,
     #[default]
@@ -80,34 +83,97 @@ impl Default for Display {
     }
 }
 
-struct Pane {
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Preferences {
     options: Options,
     forces: Forces,
     display: Display,
     camera: Camera,
-    anchor: Option<PathBuf>,
+    camera_root: Option<PathBuf>,
+    fitted: bool,
     settings: bool,
     sections: [bool; 4],
-    requested: Option<Key>,
-    changed: Instant,
-    ready: Option<Arc<Ready>>,
-    fit: bool,
 }
 
-impl Default for Pane {
+impl Default for Preferences {
     fn default() -> Self {
         Self {
             options: Default::default(),
             forces: Default::default(),
             display: Default::default(),
             camera: Default::default(),
-            anchor: None,
+            camera_root: None,
+            fitted: false,
             settings: true,
             sections: [false, false, true, false],
+        }
+    }
+}
+
+impl Preferences {
+    fn normalize(&mut self) {
+        self.options.depth = self.options.depth.clamp(1, 5);
+        self.forces = self.forces.normalized();
+        for (value, fallback, min, max) in [
+            (&mut self.display.fade, 0.0, -3.0, 3.0),
+            (&mut self.display.size, 1.0, 0.1, 5.0),
+            (&mut self.display.thickness, 1.0, 0.1, 5.0),
+        ] {
+            *value = if value.is_finite() {
+                value.clamp(min, max)
+            } else {
+                fallback
+            };
+        }
+        if !self.camera.zoom.is_finite() || self.camera.pan.iter().any(|value| !value.is_finite()) {
+            self.camera = Camera::default();
+            self.fitted = false;
+        }
+        self.camera.zoom = self.camera.zoom.clamp(0.02, 12.0);
+        for value in &mut self.camera.pan {
+            *value = value.clamp(-1_000_000.0, 1_000_000.0);
+        }
+    }
+}
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct State {
+    global: Preferences,
+    local: Preferences,
+    local_open: bool,
+}
+
+struct NodeDrag {
+    path: PathBuf,
+    before: Option<[f32; 2]>,
+    offset: Vec2,
+    cancelled: bool,
+}
+
+struct Pane {
+    preferences: Preferences,
+    anchor: Option<PathBuf>,
+    requested: Option<Key>,
+    changed: Instant,
+    ready: Option<Arc<Ready>>,
+    fit: bool,
+    positions: HashMap<PathBuf, [f32; 2]>,
+    drag: Option<NodeDrag>,
+}
+
+impl Default for Pane {
+    fn default() -> Self {
+        Self {
+            preferences: Default::default(),
+            anchor: None,
             requested: None,
             changed: Instant::now(),
             ready: None,
             fit: true,
+            positions: HashMap::new(),
+            drag: None,
         }
     }
 }
@@ -121,9 +187,34 @@ pub struct Manager {
     graph: Option<Arc<Graph>>,
     worker: Option<Receiver<Ready>>,
     generation: u64,
+    changed: bool,
 }
 
 impl Manager {
+    pub fn snapshot(&self) -> State {
+        State {
+            global: self.global.preferences.clone(),
+            local: self.local.preferences.clone(),
+            local_open: self.local_open,
+        }
+    }
+
+    pub fn restore(&mut self, mut state: State) {
+        self.reset();
+        state.global.normalize();
+        state.local.normalize();
+        self.global.fit = !state.global.fitted;
+        self.local.fit = !state.local.fitted;
+        self.global.preferences = state.global;
+        self.local.preferences = state.local;
+        self.local_open = state.local_open;
+        self.changed = false;
+    }
+
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
+    }
+
     pub fn set_active_note(&mut self, path: Option<&std::path::Path>) {
         self.global.anchor = path.map(std::path::Path::to_owned);
     }
@@ -158,10 +249,12 @@ impl Manager {
                 if pane
                     .ready
                     .as_ref()
-                    .is_none_or(|old| old.key.root != ready.key.root)
+                    .is_some_and(|old| old.key.root != ready.key.root)
                 {
                     pane.fit = true;
                 }
+                pane.positions.clear();
+                pane.drag = None;
                 pane.ready = Some(Arc::new(ready));
             }
         }
@@ -205,6 +298,13 @@ impl Manager {
         } else {
             std::mem::take(&mut self.global)
         };
+        let previous = pane.preferences.clone();
+        if local && pane.preferences.camera_root != root {
+            pane.preferences.camera_root = root.clone();
+            pane.fit = true;
+            pane.positions.clear();
+            pane.drag = None;
+        }
         let mut action = None;
         ui.add_enabled_ui(!blocked, |ui| {
             ui.horizontal(|ui| {
@@ -220,10 +320,10 @@ impl Manager {
                             action = Some(Action::CloseLocal);
                         }
                     }
-                    let settings = ui.selectable_label(pane.settings, "Settings");
+                    let settings = ui.selectable_label(pane.preferences.settings, "Settings");
                     ui_probe::record(ui.ctx(), "settings", settings.rect);
                     if settings.clicked() {
-                        pane.settings = !pane.settings;
+                        pane.preferences.settings = !pane.preferences.settings;
                     }
                     let fit = ui.button("Fit");
                     ui_probe::record(ui.ctx(), "fit", fit.rect);
@@ -245,7 +345,7 @@ impl Manager {
         );
         ui_probe::record(ui.ctx(), "canvas", rect);
         let panel_width = 240.0_f32.min((rect.width() - 20.0).max(100.0));
-        if pane.settings && !blocked {
+        if pane.preferences.settings && !blocked {
             let panel_height = (rect.height() - 44.0).max(40.0);
             egui::Area::new(ui.scope_id().with(("graph-settings", local)))
                 .fixed_pos(egui::pos2(
@@ -270,8 +370,8 @@ impl Manager {
         }
         let key = Key {
             generation: self.generation,
-            options: pane.options.clone(),
-            forces: pane.forces,
+            options: pane.preferences.options.clone(),
+            forces: pane.preferences.forces,
             root,
         };
         if pane.requested.as_ref() != Some(&key) {
@@ -321,23 +421,26 @@ impl Manager {
             }
         }
         ui_probe::metric(ui.ctx(), "busy", if pending { 1.0 } else { 0.0 });
-        ui_probe::metric(ui.ctx(), "depth", pane.options.depth as f32);
+        ui_probe::metric(ui.ctx(), "depth", pane.preferences.options.depth as f32);
         let painter = ui.painter().with_clip_rect(rect);
-        if let Some(ready) = &pane.ready {
+        if let Some(ready) = pane.ready.clone() {
             match &ready.result {
                 Ok(scene) => {
                     let Scene { view, geometry, .. } = scene;
                     if pane.fit {
-                        let reserved = if pane.settings {
+                        let reserved = if pane.preferences.settings {
                             panel_width + 20.0
                         } else {
                             0.0
                         };
-                        pane.camera.fit(
+                        pane.preferences.camera.fit(
                             geometry.bounds,
                             [(rect.width() - reserved).max(1.0), rect.height()],
                         );
-                        pane.camera.pan[0] -= reserved * 0.5;
+                        pane.preferences.camera.pan[0] -= reserved * 0.5;
+                        pane.preferences.fitted = true;
+                        pane.positions.clear();
+                        pane.drag = None;
                         pane.fit = false;
                     }
                     if !blocked && response.hovered() {
@@ -345,22 +448,26 @@ impl Manager {
                         if wheel != 0.0 {
                             let pointer =
                                 response.hover_pos().unwrap_or(rect.center()) - rect.center();
-                            pane.camera
+                            pane.preferences
+                                .camera
                                 .zoom_at((wheel * 0.003).exp(), [pointer.x, pointer.y]);
                             ui.ctx()
                                 .input_mut(|input| input.smooth_scroll_delta = Vec2::ZERO);
                         }
                     }
-                    if !blocked && response.dragged() {
-                        let delta = ui.ctx().input(|input| input.pointer.delta());
-                        pane.camera.pan[0] += delta.x;
-                        pane.camera.pan[1] += delta.y;
-                    }
+                    interact(
+                        ui,
+                        &response,
+                        &ready,
+                        scene,
+                        &mut pane,
+                        !pending && !blocked,
+                    );
                     let open = paint(
                         ui,
                         &painter,
                         &response,
-                        ready,
+                        &ready,
                         scene,
                         &pane,
                         !pending && !blocked,
@@ -408,9 +515,11 @@ impl Manager {
                 ui.visuals().weak_text_color(),
             );
         }
-        ui_probe::metric(ui.ctx(), "zoom", pane.camera.zoom);
-        ui_probe::metric(ui.ctx(), "pan-x", pane.camera.pan[0]);
-        ui_probe::metric(ui.ctx(), "pan-y", pane.camera.pan[1]);
+        ui_probe::metric(ui.ctx(), "zoom", pane.preferences.camera.zoom);
+        ui_probe::metric(ui.ctx(), "pan-x", pane.preferences.camera.pan[0]);
+        ui_probe::metric(ui.ctx(), "pan-y", pane.preferences.camera.pan[1]);
+        record_preferences(ui, &pane.preferences);
+        self.changed |= previous != pane.preferences;
         if local {
             self.local = pane;
         } else {
@@ -496,9 +605,9 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
     ui.style_mut()
         .text_styles
         .insert(egui::TextStyle::Body, FontId::proportional(13.0));
-    if section(ui, &mut pane.sections[0], "Filters") {
+    if section(ui, &mut pane.preferences.sections[0], "Filters") {
         let filter = ui.add(
-            egui::TextEdit::singleline(&mut pane.options.filter)
+            egui::TextEdit::singleline(&mut pane.preferences.options.filter)
                 .hint_text("Search files…")
                 .desired_width(f32::INFINITY),
         );
@@ -507,42 +616,57 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             ui.label("Depth");
             slider(
                 ui,
-                egui::Slider::new(&mut pane.options.depth, 1..=5),
+                egui::Slider::new(&mut pane.preferences.options.depth, 1..=5),
                 "depth-slider",
             );
-            toggle(ui, &mut pane.options.incoming, "Incoming links", "incoming");
-            toggle(ui, &mut pane.options.outgoing, "Outgoing links", "outgoing");
             toggle(
                 ui,
-                &mut pane.options.neighbor_links,
+                &mut pane.preferences.options.incoming,
+                "Incoming links",
+                "incoming",
+            );
+            toggle(
+                ui,
+                &mut pane.preferences.options.outgoing,
+                "Outgoing links",
+                "outgoing",
+            );
+            toggle(
+                ui,
+                &mut pane.preferences.options.neighbor_links,
                 "Neighbor links",
                 "neighbor",
             );
         }
-        toggle(ui, &mut pane.options.tags, "Tags", "tags");
+        toggle(ui, &mut pane.preferences.options.tags, "Tags", "tags");
         toggle(
             ui,
-            &mut pane.options.attachments,
+            &mut pane.preferences.options.attachments,
             "Attachments",
             "attachments",
         );
         toggle(
             ui,
-            &mut pane.options.existing_only,
+            &mut pane.preferences.options.existing_only,
             "Existing files only",
             "existing-only",
         );
         if !local {
-            toggle(ui, &mut pane.options.orphans, "Orphans", "orphans");
+            toggle(
+                ui,
+                &mut pane.preferences.options.orphans,
+                "Orphans",
+                "orphans",
+            );
         }
         ui.add_space(4.0);
     }
-    if section(ui, &mut pane.sections[1], "Groups") {
+    if section(ui, &mut pane.preferences.sections[1], "Groups") {
         let mut remove = None;
         let mut reorder = None;
-        let group_count = pane.options.groups.len();
+        let group_count = pane.preferences.options.groups.len();
         let owner = ui.scope_id();
-        for (index, group) in pane.options.groups.iter_mut().enumerate() {
+        for (index, group) in pane.preferences.options.groups.iter_mut().enumerate() {
             let row = ui.push_id(index, |ui| {
                 ui.horizontal(|ui| {
                     let query = ui.add(
@@ -584,30 +708,33 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             }
         }
         if let Some(index) = remove {
-            pane.options.groups.remove(index);
+            pane.preferences.options.groups.remove(index);
         } else if let Some((from, to)) = reorder {
-            let group = pane.options.groups.remove(from);
-            pane.options.groups.insert(to, group);
+            let group = pane.preferences.options.groups.remove(from);
+            pane.preferences.options.groups.insert(to, group);
         }
         let add = ui.button("New group");
         ui_probe::record(ui.ctx(), "group-add", add.rect);
         if add.clicked() {
-            pane.display.colors = ColorMode::Groups;
-            pane.options.groups.push(Group {
+            pane.preferences.display.colors = ColorMode::Groups;
+            pane.preferences.options.groups.push(Group {
                 query: String::new(),
                 color: [224, 82, 82, 255],
             });
         }
         ui.add_space(4.0);
     }
-    if section(ui, &mut pane.sections[2], "Display") {
+    if section(ui, &mut pane.preferences.sections[2], "Display") {
         ui.label("Color by");
         let color_mode = egui::ComboBox::from_id_salt("graph-color-mode")
-            .selected_text(pane.display.colors.label())
+            .selected_text(pane.preferences.display.colors.label())
             .show_ui(ui, |ui| {
                 for mode in [ColorMode::Groups, ColorMode::LinkDirection] {
-                    let response =
-                        ui.selectable_value(&mut pane.display.colors, mode, mode.label());
+                    let response = ui.selectable_value(
+                        &mut pane.preferences.display.colors,
+                        mode,
+                        mode.label(),
+                    );
                     ui_probe::record(
                         ui.ctx(),
                         format!("color-mode:{}", mode.label()),
@@ -616,7 +743,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
                 }
             });
         ui_probe::record(ui.ctx(), "color-mode", color_mode.response.rect);
-        if pane.display.colors == ColorMode::LinkDirection {
+        if pane.preferences.display.colors == ColorMode::LinkDirection {
             for (label, relation) in [("Incoming", 1), ("Outgoing", 2), ("Both directions", 3)] {
                 ui.colored_label(direction_color(ui, relation), label);
             }
@@ -626,18 +753,23 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
                 "Current note; hover another to inspect its connections"
             });
         }
-        toggle(ui, &mut pane.display.arrows, "Arrows", "arrows");
+        toggle(ui, &mut pane.preferences.display.arrows, "Arrows", "arrows");
         for (label, value, range, probe) in [
             (
                 "Text fade threshold",
-                &mut pane.display.fade,
+                &mut pane.preferences.display.fade,
                 -3.0..=3.0,
                 "text-fade",
             ),
-            ("Node size", &mut pane.display.size, 0.1..=5.0, "node-size"),
+            (
+                "Node size",
+                &mut pane.preferences.display.size,
+                0.1..=5.0,
+                "node-size",
+            ),
             (
                 "Link thickness",
-                &mut pane.display.thickness,
+                &mut pane.preferences.display.thickness,
                 0.1..=5.0,
                 "link-thickness",
             ),
@@ -647,24 +779,29 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         }
         ui.add_space(4.0);
     }
-    if section(ui, &mut pane.sections[3], "Forces") {
+    if section(ui, &mut pane.preferences.sections[3], "Forces") {
         for (label, value, range, probe) in [
             (
                 "Center force",
-                &mut pane.forces.center,
+                &mut pane.preferences.forces.center,
                 0.0..=1.0,
                 "force-center",
             ),
             (
                 "Repel force",
-                &mut pane.forces.repel,
+                &mut pane.preferences.forces.repel,
                 0.0..=20.0,
                 "force-repel",
             ),
-            ("Link force", &mut pane.forces.link, 0.0..=1.0, "force-link"),
+            (
+                "Link force",
+                &mut pane.preferences.forces.link,
+                0.0..=1.0,
+                "force-link",
+            ),
             (
                 "Link distance",
-                &mut pane.forces.distance,
+                &mut pane.preferences.forces.distance,
                 30.0..=500.0,
                 "force-distance",
             ),
@@ -677,9 +814,9 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
     let reset = ui.button("Restore default settings");
     ui_probe::record(ui.ctx(), "reset", reset.rect);
     if reset.clicked() {
-        pane.options = Options::default();
-        pane.forces = Forces::default();
-        pane.display = Display::default();
+        pane.preferences.options = Options::default();
+        pane.preferences.forces = Forces::default();
+        pane.preferences.display = Display::default();
         pane.fit = true;
     }
 }
@@ -696,6 +833,161 @@ fn direction_color(ui: &egui::Ui, relation: u8) -> Color32 {
     Color32::from_rgb(red, green, blue)
 }
 
+fn record_preferences(ui: &egui::Ui, preferences: &Preferences) {
+    if !ui_probe::enabled() {
+        return;
+    }
+    ui_probe::metric(
+        ui.ctx(),
+        "settings-open",
+        u8::from(preferences.settings) as f32,
+    );
+    for (name, open) in ["filters", "groups", "display", "forces"]
+        .into_iter()
+        .zip(preferences.sections)
+    {
+        ui_probe::metric(
+            ui.ctx(),
+            &format!("section-open:{name}"),
+            u8::from(open) as f32,
+        );
+    }
+    for (name, value) in [
+        ("text-fade", preferences.display.fade),
+        ("node-size", preferences.display.size),
+        ("link-thickness", preferences.display.thickness),
+        ("force-center", preferences.forces.center),
+        ("force-repel", preferences.forces.repel),
+        ("force-link", preferences.forces.link),
+        ("force-distance", preferences.forces.distance),
+        (
+            "color-mode",
+            u8::from(preferences.display.colors == ColorMode::LinkDirection) as f32,
+        ),
+    ] {
+        ui_probe::metric(ui.ctx(), &format!("value:{name}"), value);
+    }
+    for (name, checked) in [
+        ("tags", preferences.options.tags),
+        ("attachments", preferences.options.attachments),
+        ("existing-only", preferences.options.existing_only),
+        ("orphans", preferences.options.orphans),
+        ("incoming", preferences.options.incoming),
+        ("outgoing", preferences.options.outgoing),
+        ("neighbor", preferences.options.neighbor_links),
+        ("arrows", preferences.display.arrows),
+    ] {
+        ui_probe::metric(
+            ui.ctx(),
+            &format!("checked:{name}"),
+            u8::from(checked) as f32,
+        );
+    }
+}
+
+fn screen_position(
+    pane: &Pane,
+    graph: &Graph,
+    geometry: &Geometry,
+    node: usize,
+    rect: Rect,
+) -> Pos2 {
+    let world = pane
+        .positions
+        .get(&graph.nodes[node].path)
+        .copied()
+        .unwrap_or(geometry.points[node]);
+    let point = pane.preferences.camera.project(world);
+    rect.center() + egui::vec2(point[0], point[1])
+}
+
+fn node_radius(pane: &Pane, scene: &Scene, node: usize) -> f32 {
+    (((6.0 + 0.5 * (scene.degree[node] as f32).sqrt()).min(9.0)
+        * pane.preferences.camera.zoom.sqrt().clamp(0.35, 1.2))
+    .min(10.0)
+        * pane.preferences.display.size)
+        .max(2.0)
+}
+
+fn node_at(pane: &Pane, ready: &Ready, scene: &Scene, rect: Rect, pointer: Pos2) -> Option<usize> {
+    scene
+        .view
+        .nodes
+        .iter()
+        .copied()
+        .filter(|&node| {
+            screen_position(pane, &ready.graph, &scene.geometry, node, rect).distance_sq(pointer)
+                <= (node_radius(pane, scene, node).max(7.0) + 4.0).powi(2)
+        })
+        .min_by(|&a, &b| {
+            screen_position(pane, &ready.graph, &scene.geometry, a, rect)
+                .distance_sq(pointer)
+                .total_cmp(
+                    &screen_position(pane, &ready.graph, &scene.geometry, b, rect)
+                        .distance_sq(pointer),
+                )
+        })
+}
+
+fn interact(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    ready: &Ready,
+    scene: &Scene,
+    pane: &mut Pane,
+    interactive: bool,
+) {
+    if !interactive {
+        pane.drag = None;
+        return;
+    }
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && let Some(origin) = ui.input(|input| input.pointer.press_origin())
+        && let Some(node) = node_at(pane, ready, scene, response.rect, origin)
+    {
+        let path = ready.graph.nodes[node].path.clone();
+        pane.drag = Some(NodeDrag {
+            before: pane.positions.get(&path).copied(),
+            path,
+            offset: screen_position(pane, &ready.graph, &scene.geometry, node, response.rect)
+                - origin,
+            cancelled: false,
+        });
+    }
+    if let Some(drag) = &mut pane.drag {
+        if !drag.cancelled
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            if let Some(before) = drag.before {
+                pane.positions.insert(drag.path.clone(), before);
+            } else {
+                pane.positions.remove(&drag.path);
+            }
+            drag.cancelled = true;
+        }
+        if !drag.cancelled
+            && let Some(pointer) = ui.input(|input| input.pointer.interact_pos())
+        {
+            let screen = pointer + drag.offset - response.rect.center();
+            let camera = pane.preferences.camera;
+            pane.positions.insert(
+                drag.path.clone(),
+                [
+                    (screen.x - camera.pan[0]) / camera.zoom,
+                    (screen.y - camera.pan[1]) / camera.zoom,
+                ],
+            );
+        }
+        if !ui.input(|input| input.pointer.primary_down()) {
+            pane.drag = None;
+        }
+    } else if response.dragged_by(egui::PointerButton::Primary) {
+        let delta = ui.input(|input| input.pointer.delta());
+        pane.preferences.camera.pan[0] += delta.x;
+        pane.preferences.camera.pan[1] += delta.y;
+    }
+}
+
 fn paint(
     ui: &egui::Ui,
     painter: &egui::Painter,
@@ -709,36 +1001,13 @@ fn paint(
     let Scene {
         view,
         geometry,
-        degree,
         labels,
+        ..
     } = scene;
-    let screen = |node: usize| {
-        let p = pane.camera.project(geometry.points[node]);
-        rect.center() + egui::vec2(p[0], p[1])
-    };
-    let radius = |node: usize| {
-        // Fit can enlarge a sparse layout; keep default dots restrained while
-        // preserving the user's independent node-size setting and hit area.
-        (((6.0 + 0.5 * (degree[node] as f32).sqrt()).min(9.0)
-            * pane.camera.zoom.sqrt().clamp(0.35, 1.2))
-        .min(10.0)
-            * pane.display.size)
-            .max(2.0)
-    };
+    let screen = |node| screen_position(pane, &ready.graph, geometry, node, rect);
+    let radius = |node| node_radius(pane, scene, node);
     let pointer = response.hover_pos();
-    let hovered = pointer.and_then(|pointer| {
-        view.nodes
-            .iter()
-            .copied()
-            .filter(|&node| {
-                screen(node).distance_sq(pointer) <= (radius(node).max(7.0) + 4.0).powi(2)
-            })
-            .min_by(|&a, &b| {
-                screen(a)
-                    .distance_sq(pointer)
-                    .total_cmp(&screen(b).distance_sq(pointer))
-            })
-    });
+    let hovered = pointer.and_then(|pointer| node_at(pane, ready, scene, rect, pointer));
     let graph = &ready.graph;
     let root = ready.key.root.as_deref().and_then(|path| graph.node(path));
     let current = pane
@@ -746,12 +1015,12 @@ fn paint(
         .as_deref()
         .and_then(|path| graph.node(path))
         .filter(|index| view.nodes.contains(index));
-    let anchor = (pane.display.colors == ColorMode::LinkDirection)
+    let anchor = (pane.preferences.display.colors == ColorMode::LinkDirection)
         .then_some(root.or(hovered).or(current))
         .flatten();
     let mut directions = HashMap::<usize, u8>::new();
     for edge in &view.edges {
-        if pane.display.colors == ColorMode::LinkDirection {
+        if pane.preferences.display.colors == ColorMode::LinkDirection {
             if anchor == Some(edge.to) {
                 *directions.entry(edge.from).or_default() |= 1;
             }
@@ -780,8 +1049,8 @@ fn paint(
         } else {
             ui.visuals().weak_text_color().gamma_multiply(0.42)
         };
-        let stroke = Stroke::new(pane.display.thickness.max(0.25), color);
-        if pane.display.arrows && (end - start).length() > radius * 2.0 {
+        let stroke = Stroke::new(pane.preferences.display.thickness.max(0.25), color);
+        if pane.preferences.display.arrows && (end - start).length() > radius * 2.0 {
             let direction = (end - start).normalized();
             let begin = start + direction * radius;
             let target = end - direction * (radius + 2.0);
@@ -801,7 +1070,7 @@ fn paint(
             theme::accent(ui)
         } else if let Some(&relation) = directions.get(&index) {
             direction_color(ui, relation)
-        } else if pane.display.colors == ColorMode::Groups
+        } else if pane.preferences.display.colors == ColorMode::Groups
             && let Some(&group) = view.groups.get(&index)
         {
             let rgba = ready.key.options.groups[group].color;
@@ -828,7 +1097,9 @@ fn paint(
     // Grid cells only find candidates. Exact intersections keep the same labels
     // when a pan moves their rectangles across cell boundaries.
     let mut occupied = HashMap::<(i32, i32), Vec<Rect>>::new();
-    let fade = ((pane.camera.zoom * 2.0_f32.powf(-pane.display.fade) - 0.3) / 0.7).clamp(0.0, 1.0);
+    let fade =
+        ((pane.preferences.camera.zoom * 2.0_f32.powf(-pane.preferences.display.fade) - 0.3) / 0.7)
+            .clamp(0.0, 1.0);
     for index in hovered.into_iter().chain(
         labels
             .iter()

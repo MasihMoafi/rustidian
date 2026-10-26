@@ -4,6 +4,7 @@ use crate::{
     vault::{Note, Vault, is_ignored_path, is_markdown},
 };
 use pulldown_cmark::{Event, Parser, Tag};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     path::{Path, PathBuf},
@@ -36,13 +37,14 @@ pub struct Graph {
     pub edges: Vec<Edge>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
     pub query: String,
     pub color: [u8; 4],
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Options {
     pub filter: String,
     pub groups: Vec<Group>,

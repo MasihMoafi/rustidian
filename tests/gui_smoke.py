@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -6676,6 +6676,311 @@ def main():
                 title_contains(fixture.name);open_note("Home")
                 results.append("Every graph operation and real restart preserved all eight original note files and returned to the previous vault")
 
+            def graph_state_checks():
+                nonlocal app, window
+                observations = {}
+                originals = {}
+                sources = {"Focus.md": "# Focus\n\n[[Child]]\n[[Peer]]\n", "Parent.md": "# Parent\n\n[[Focus]]\n",
+                           "Child.md": "# Child\n\n[[Leaf]]\n", "Peer.md": "# Peer\n\n[[Focus]]\n",
+                           "Leaf.md": "# Leaf\n", "Isolated.md": "# Isolated\n"}
+                value_names = ("text-fade", "node-size", "link-thickness", "force-center", "force-repel", "force-link", "force-distance", "color-mode")
+                checked_names = ("tags", "attachments", "existing-only", "orphans", "incoming", "outgoing", "neighbor", "arrows")
+
+                def metric(prefix, name):
+                    return control_bounds(prefix + ":" + name)[0]
+
+                def ready(prefix, nodes=None):
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        if controls.get(prefix + ":busy", [1])[0] == 0 and prefix + ":node-count" in controls:
+                            if nodes is None or controls[prefix + ":node-count"][0] == nodes:
+                                return
+                        time.sleep(.05)
+                    raise AssertionError(("Graph did not finish its real layout", prefix, nodes, controls))
+
+                def open_vault(root):
+                    command("Open vault"); key("ctrl+a"); paste_text(str(root), held=True); key("Return")
+                    title_contains(root.name)
+
+                def fresh(label, local=False):
+                    key("Escape")
+                    root = base / ("Graph state " + label)
+                    root.mkdir()
+                    for name, source in sources.items():
+                        path = root / name
+                        path.write_text(source)
+                        originals[path] = source.encode()
+                    before = set((base / "state/rustidian").glob("*.json"))
+                    open_vault(root); open_note("Focus")
+                    command("Graph view: Open local graph" if local else "Graph view: Open graph view")
+                    prefix = "local-graph" if local else "global-graph"
+                    ready(prefix, 4 if local else 6)
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        created = set((base / "state/rustidian").glob("*.json")) - before
+                        if len(created) == 1:
+                            return root, prefix, created.pop()
+                        time.sleep(.05)
+                    raise AssertionError(("Fresh graph fixture did not get one private session file", created))
+
+                def settings(prefix, opened):
+                    if bool(metric(prefix, "settings-open")) != opened:
+                        click_control(prefix + ":settings", hold=.15)
+                    assert bool(metric(prefix, "settings-open")) == opened
+
+                def section(prefix, name, opened):
+                    settings(prefix, True)
+                    if bool(metric(prefix, "section-open:" + name)) != opened:
+                        click_control(prefix + ":section:" + name, hold=.15)
+                    assert bool(metric(prefix, "section-open:" + name)) == opened
+
+                def only_section(prefix, name):
+                    for other in ("filters", "groups", "display", "forces"):
+                        if other != name:
+                            section(prefix, other, False)
+                    section(prefix, name, True)
+
+                def write_field(name, text):
+                    click_control(name, hold=.15); key("ctrl+a"); paste_text(text, held=True)
+
+                def read_field(name):
+                    click_control(name, hold=.15); key("ctrl+a"); key("ctrl+c")
+                    return subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, text=True, timeout=3)
+
+                def camera(prefix):
+                    return [metric(prefix, name) for name in ("pan-x", "pan-y", "zoom")]
+
+                def positions(prefix):
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return {name.split(":node:", 1)[1]: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2]
+                            for name, bounds in controls.items() if name.startswith(prefix + ":node:")}
+
+                def drag(start, delta, cancel=False):
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", "1")
+                    try:
+                        for step in range(1, 9):
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
+                            time.sleep(.035)
+                        if cancel:
+                            key("Escape")
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 15)), str(round(start[1] + delta[1] + 10)))
+                            pause()
+                    finally:
+                        xdo("mouseup", "1")
+                    xdo("mousemove", "--sync", "0", "0"); pause()
+
+                def pan(prefix):
+                    left, top, right, bottom = control_bounds(prefix + ":canvas")
+                    before = camera(prefix)
+                    drag((left + 25, bottom - 25), (42, -27))
+                    after = camera(prefix)
+                    assert abs(after[0] - before[0] - 42) < 2 and abs(after[1] - before[1] + 27) < 2, ("Blank canvas must pan", before, after)
+
+                def snapshot(prefix):
+                    names = ["settings-open", "depth"] + ["section-open:" + name for name in ("filters", "groups", "display", "forces")]
+                    names += ["value:" + name for name in value_names] + ["checked:" + name for name in checked_names]
+                    return {"controls": {name: metric(prefix, name) for name in names}, "camera": camera(prefix),
+                            "nodes": metric(prefix, "node-count"), "edges": metric(prefix, "edge-count")}
+
+                def same_snapshot(prefix, expected):
+                    actual = snapshot(prefix)
+                    assert actual["nodes"] == expected["nodes"] and actual["edges"] == expected["edges"], ("Restored graph topology differs", expected, actual)
+                    assert all(abs(actual["controls"][key] - value) < .003 for key, value in expected["controls"].items()), ("Graph settings/sections were not restored", expected, actual)
+                    assert all(abs(a - b) < .5 for a, b in zip(actual["camera"], expected["camera"])), ("Graph camera changed during restoration", expected, actual)
+                    return actual
+
+                def restart(root):
+                    nonlocal app
+                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    app = launch_app([str(ROOT / args.binary), str(root)])
+                    return app
+
+                def slider_change(prefix, name):
+                    before = metric(prefix, "value:" + name)
+                    left, top, right, bottom = control_bounds(prefix + ":" + name)
+                    xdo("mousemove", "--sync", str(round(left + (right - left - 35) * .35)), str(round((top + bottom) / 2)), "click", "1"); pause()
+                    key("Right")
+                    assert abs(metric(prefix, "value:" + name) - before) > .001, ("The native slider must change its actual value", prefix, name, before)
+
+                def group_pixels(prefix):
+                    xdo("mousemove", "--sync", "0", "0"); pause()
+                    bounds = control_bounds(prefix + ":node:Child.md")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    rgb = picture.getpixel((round((bounds[0] + bounds[2]) / 2), round((bounds[1] + bounds[3]) / 2)))
+                    assert rgb[0] > rgb[1] + 60 and rgb[0] > rgb[2] + 60, ("The saved group must color the actual Child dot red", rgb)
+
+                def configure(prefix, local):
+                    only_section(prefix, "filters")
+                    write_field(prefix + ":filter", "-path:Isolated")
+                    if local:
+                        click_control(prefix + ":depth-slider"); key("Right")
+                        assert metric(prefix, "depth") > 1
+                    click_control(prefix + ":existing-only", hold=.15)
+                    ready(prefix, 5)
+                    only_section(prefix, "groups"); click_control(prefix + ":group-add", hold=.15)
+                    write_field(prefix + ":group:0:query", "path:Child"); ready(prefix, 5)
+                    only_section(prefix, "display"); click_control(prefix + ":arrows", hold=.15)
+                    for name in ("text-fade", "node-size", "link-thickness"):
+                        slider_change(prefix, name)
+                    only_section(prefix, "forces")
+                    for name in ("force-center", "force-repel", "force-link", "force-distance"):
+                        slider_change(prefix, name)
+                    ready(prefix, 5)
+                    only_section(prefix, "filters"); section(prefix, "groups", True)
+                    click_control(prefix + ":fit", hold=.15); pan(prefix)
+                    left, top, right, bottom = control_bounds(prefix + ":canvas")
+                    zoom = metric(prefix, "zoom")
+                    xdo("mousemove", "--sync", str(round(left + 40)), str(round(top + 40)), "click", "4"); pause()
+                    assert metric(prefix, "zoom") > zoom
+                    group_pixels(prefix)
+
+                def check_fields(prefix):
+                    settings(prefix, True)
+                    assert read_field(prefix + ":filter") == "-path:Isolated"
+                    assert read_field(prefix + ":group:0:query") == "path:Child"
+                    group_pixels(prefix)
+
+                def node_drag_case():
+                    _, prefix, _ = fresh("node drag")
+                    # This path deliberately needs no newly added value probes:
+                    # the installed baseline must fail on the actual node/camera bug.
+                    if control_bounds(prefix + ":section:display", required=False):
+                        click_control(prefix + ":settings", hold=.15)
+                    click_control(prefix + ":fit", hold=.15)
+                    xdo("mousemove", "0", "0"); pause()
+                    before = positions(prefix); before_camera = camera(prefix)
+                    assert set(before) == set(sources)
+                    picture_before = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    capture("native-graph-state-node-before.png")
+                    drag(before["Focus.md"], (53, 37))
+                    after = positions(prefix); after_camera = camera(prefix)
+                    capture("native-graph-state-node-after.png")
+                    assert set(after) == set(before), ("A node drag must not navigate or remove nodes", before, after)
+                    assert all(abs(a - b) < .5 for a, b in zip(before_camera, after_camera)), ("Dragging a node must not pan/zoom the camera", before_camera, after_camera)
+                    assert all(abs(after["Focus.md"][axis] - before["Focus.md"][axis] - delta) < 2 for axis, delta in enumerate((53, 37))), (before, after)
+                    assert all(abs(after[name][axis] - point[axis]) < 1 for name, point in before.items() if name != "Focus.md" for axis in (0, 1)), ("Only the grabbed node may move", before, after)
+                    picture_after = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    canvas = control_bounds(prefix + ":canvas")
+                    background = picture_after.getpixel((round(canvas[0] + 8), round(canvas[1] + 8)))
+                    edge_samples = []
+                    for neighbor in ("Child.md", "Parent.md", "Peer.md"):
+                        start, end = after["Focus.md"], after[neighbor]
+                        for fraction in (.2, .35, .5, .65, .8):
+                            x, y = [round(a + (b - a) * fraction) for a, b in zip(start, end)]
+                            points = [(px, py) for px in range(x - 1, x + 2) for py in range(y - 1, y + 2)]
+                            old = max(pixel_contrast(picture_before.getpixel(point), background) for point in points)
+                            new = max(pixel_contrast(picture_after.getpixel(point), background) for point in points)
+                            if old < 1.2 and new > 1.3:
+                                edge_samples.append({"neighbor": neighbor, "point": [x, y], "old_contrast": old, "new_contrast": new})
+                                break
+                    assert len(edge_samples) >= 2, ("Connected edge pixels must follow the dragged node into previously blank locations", edge_samples)
+                    observations["node-pixels"] = {"before": before, "after": after, "camera_before": before_camera, "camera_after": after_camera, "edge_samples": edge_samples}
+                    drag(after["Focus.md"], (31, -28), cancel=True)
+                    cancelled = positions(prefix)
+                    assert all(abs(cancelled[name][axis] - point[axis]) < 1 for name, point in after.items() for axis in (0, 1)), ("Escape must restore the node's whole drag and keep it cancelled until mouse release", after, cancelled)
+                    assert camera(prefix) == after_camera
+                    pan(prefix)
+                    click_control(prefix + ":settings", hold=.15)
+                    if not control_bounds(prefix + ":filter", required=False):
+                        click_control(prefix + ":section:filters", hold=.15)
+                    bounds = control_bounds(prefix + ":filter")
+                    before_camera = camera(prefix); before = positions(prefix)
+                    drag(((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2), (22, 8))
+                    assert camera(prefix) == before_camera and positions(prefix) == before, "Dragging the settings overlay must not move the canvas or its nodes"
+                    click_control(prefix + ":settings", hold=.15)
+                    click_control(prefix + ":node:Child.md", hold=.15); title_contains("Child")
+                    results.append("A real node drag moved only its dot and connected edge pixels without panning; Escape cancelled the whole drag, blank canvas still panned, Settings blocked dragging, and a click opened the note")
+
+                def global_restart_case():
+                    nonlocal app, window
+                    root, prefix, _ = fresh("global restart")
+                    configure(prefix, False); settings(prefix, False)
+                    expected = snapshot(prefix)
+                    capture("native-graph-state-global-before-restart.png")
+                    app = restart(root); window = ready_window(); ready(prefix, 5)
+                    observations["global-restored"] = same_snapshot(prefix, expected)
+                    check_fields(prefix)
+                    capture("native-graph-state-global-restored.png")
+                    results.append("A real restart restored global graph filters, group color/query, display/forces, section expansion, hidden Settings and exact camera; visible topology and red group pixels matched")
+
+                def local_restart_case():
+                    nonlocal app, window
+                    root, prefix, _ = fresh("local restart", local=True)
+                    configure(prefix, True)
+                    expected = snapshot(prefix)
+                    capture("native-graph-state-local-before-restart.png")
+                    app = restart(root); window = ready_window(); title_contains("Focus"); ready(prefix, 5)
+                    observations["local-restored"] = same_snapshot(prefix, expected)
+                    check_fields(prefix)
+                    capture("native-graph-state-local-restored.png")
+                    results.append("A real restart reopened the local graph beside its note and restored depth, filter/groups, display/forces, settings sections and camera with actual topology/group colors intact")
+
+                def vault_isolation_case():
+                    first, prefix, _ = fresh("vault A")
+                    configure(prefix, False); settings(prefix, False)
+                    global_expected = snapshot(prefix)
+                    open_note("Focus"); command("Graph view: Open local graph"); ready("local-graph", 4)
+                    local_default = snapshot("local-graph")
+                    configure("local-graph", True)
+                    local_expected = snapshot("local-graph")
+                    second, other, _ = fresh("vault B")
+                    assert metric(other, "node-count") == 6 and control_bounds(other + ":group:0:query", required=False) is None
+                    assert metric(other, "value:node-size") == 1 and metric(other, "checked:existing-only") == 0
+                    open_vault(first); title_contains("Focus"); ready("local-graph", 5)
+                    same_snapshot("local-graph", local_expected); check_fields("local-graph")
+                    only_section("local-graph", "forces"); click_control("local-graph:reset", hold=.15); ready("local-graph", 4)
+                    actual = snapshot("local-graph")
+                    assert all(actual["controls"][key] == value for key, value in local_default["controls"].items() if key.startswith(("value:", "checked:")) or key == "depth"), ("Reset must restore this pane's defaults", local_default, actual)
+                    click_control("local-graph:close", hold=.15)
+                    command("Graph view: Open graph view"); ready(prefix, 5)
+                    same_snapshot(prefix, global_expected); check_fields(prefix)
+                    open_vault(second); ready(other, 6)
+                    assert metric(other, "value:node-size") == 1 and metric(other, "checked:existing-only") == 0
+                    results.append("Two vaults retain independent global/local preferences and cameras; resetting only the local pane restored its controls without altering the global pane or the other vault")
+
+                def write_failure_case():
+                    nonlocal app, window
+                    root, prefix, state_path = fresh("write failure")
+                    only_section(prefix, "filters")
+                    old = metric(prefix, "checked:existing-only")
+                    before = state_path.read_bytes()
+                    held = base / "graph-state-held-durable.json"
+                    state_path.rename(held); state_path.mkdir()
+                    try:
+                        click_control(prefix + ":existing-only", hold=.15)
+                        control_bounds("error-notice")
+                        capture("native-graph-state-write-error.png")
+                        assert held.read_bytes() == before, "A failed atomic state write changed the previous durable bytes"
+                    finally:
+                        state_path.rmdir(); held.rename(state_path)
+                    click_control("error-dismiss", hold=.15)
+                    # Return to the observed old value before applying a successful retry.
+                    if metric(prefix, "checked:existing-only") != old:
+                        click_control(prefix + ":existing-only", hold=.15)
+                    click_control(prefix + ":existing-only", hold=.15)
+                    assert metric(prefix, "checked:existing-only") != old
+                    app = restart(root); window = ready_window(); ready(prefix, 6)
+                    assert metric(prefix, "checked:existing-only") != old
+                    results.append("An obstructed private atomic state write visibly failed without replacing durable bytes; restoring the destination allowed a real retry/restart with no note edits")
+
+                def failure(name, error):
+                    observations[name] = {"status": "failed", "error": repr(error)}
+                    capture("native-graph-state-failure-" + name + ".png")
+                    (reports / "native-graph-state-results.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                def success(name, count):
+                    assert all(path.read_bytes() == original for path, original in originals.items()), "Graph controls changed original note bytes"
+                    observations[name] = {"status": "passed", "checks": count}
+                    (reports / "native-graph-state-results.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                try:
+                    run_checks([node_drag_case, global_restart_case, local_restart_case, vault_isolation_case, write_failure_case],
+                               failure, count_checks=lambda: len(results), on_success=success)
+                finally:
+                    assert all(path.read_bytes() == original for path, original in originals.items()), "A graph workflow changed original note bytes"
+                open_vault(fixture); open_note("Home")
+
             def palette_queue_checks():
                 sources={p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
                 for shortcut in ("ctrl+p","ctrl+o"):
@@ -6724,6 +7029,11 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "graph-state":
+                graph_state_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "graph-state"}))
+                return
             if args.section == "palette-queued":
                 palette_queue_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
@@ -7319,6 +7629,7 @@ def main():
                 vault_switch_checks,
                 system_open_checks,
                 graph_checks,
+                graph_state_checks,
                 visual_controls_checks,
                 emoji_checks,
                 file_toolbar_checks,
