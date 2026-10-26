@@ -6309,6 +6309,8 @@ def main():
                         if query is not None:steps.append(("text",query))
                         queued_steps(*steps,("key","Escape"));pause()
                         assert control_bounds("dialog-input",required=False) is None, "Escape after the opening shortcut must still dismiss it"
+                        key("ctrl+s")
+                        assert hashlib.sha256((fixture/"Home.md").read_bytes()).hexdigest()==sources["Home.md"], ("Dismissed dialog text leaked into the note",shortcut,query)
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("An earlier queued Escape dismissed Settings without closing the replacement palette/quick-open or inserting its query into notes; a later Escape still dismissed it")
                 before=control_bounds("sidebar:details",required=False) is not None

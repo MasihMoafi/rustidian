@@ -74,11 +74,15 @@ def main():
     subprocess.run(["python3", "tests/gui_smoke.py", "--binary", "/usr/bin/rustidian", "--section", "undo"], check=True)
     smoke = json.loads(Path("reports/gui-results.json").read_text())
     assert smoke["status"] == "passed"
+    subprocess.run(["python3", "tests/gui_smoke.py", "--binary", "/usr/bin/rustidian", "--section", "palette-queued"], check=True)
+    palette = json.loads(Path("reports/gui-results.json").read_text())
+    assert palette["status"] == "passed"
     package = json.loads(command("python3", "tests/debian_package.py", "--binary", str(binary), "--package", str(assets / "rustidian-linux-amd64.deb"), "--notices", str(assets / "THIRD_PARTY_NOTICES.txt"), "--system"))
     assert package["status"] == "passed" and package["exact_binary_sha256"] == info["binary_sha256"]
     assert package["package_sha256"] == digest(assets / "rustidian-linux-amd64.deb")
     info["debian_verification"] = package
     info["installed_package_gui"] = smoke
+    info["installed_package_palette"] = palette
     info["packaging_source_commit"] = os.environ["GITHUB_SHA"]
     info["depends"] = command("dpkg-deb", "--field", str(assets / "rustidian-linux-amd64.deb"), "Depends")
     (assets / "BUILDINFO.json").write_text(json.dumps(info, indent=2) + "\n")
