@@ -466,7 +466,7 @@ fn section(ui: &mut egui::Ui, open: &mut bool, label: &str) -> bool {
 
 fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
     ui.push_id(probe, |ui| {
-        let response = ui.add(slider);
+        let response = theme::slider(ui, slider);
         let rail_key = ui.scope_id().with("rail");
         // Slider returns the number-field ID while it is edited. Retain the real
         // rail ID so both input paths keep their native behavior.
@@ -492,7 +492,7 @@ fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
 
 fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
     ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
-    ui.spacing_mut().slider_width = (ui.available_width() - 50.0).clamp(36.0, 110.0);
+    ui.spacing_mut().slider_width = (ui.available_width() - 46.0).clamp(36.0, 170.0);
     ui.style_mut()
         .text_styles
         .insert(egui::TextStyle::Body, FontId::proportional(13.0));
@@ -717,10 +717,13 @@ fn paint(
         rect.center() + egui::vec2(p[0], p[1])
     };
     let radius = |node: usize| {
-        ((8.0 + 2.0 * (degree[node] as f32).sqrt()).min(32.0)
-            * pane.display.size
-            * pane.camera.zoom.sqrt().clamp(0.35, 2.5))
-        .max(2.0)
+        // Fit can enlarge a sparse layout; keep default dots restrained while
+        // preserving the user's independent node-size setting and hit area.
+        (((6.0 + 0.5 * (degree[node] as f32).sqrt()).min(9.0)
+            * pane.camera.zoom.sqrt().clamp(0.35, 1.2))
+        .min(10.0)
+            * pane.display.size)
+            .max(2.0)
     };
     let pointer = response.hover_pos();
     let hovered = pointer.and_then(|pointer| {
@@ -842,7 +845,7 @@ fn paint(
             .visuals()
             .text_color()
             .gamma_multiply(if active { 1.0 } else { fade });
-        let font = FontId::proportional((16.0 + (degree[index] as f32).sqrt() * 0.5).min(22.0));
+        let font = FontId::proportional(16.0);
         let galley = egui::WidgetText::from(RichText::new(&node.label).color(color)).into_galley(
             ui,
             Some(egui::TextWrapMode::Truncate),

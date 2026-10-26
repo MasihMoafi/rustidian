@@ -28,6 +28,17 @@ def pixel_data(picture):
     return modern() if modern else picture.getdata()
 
 
+def luminance(rgb):
+    channels = [value / 255 for value in rgb[:3]]
+    linear = [value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4 for value in channels]
+    return sum(value * weight for value, weight in zip(linear, (.2126, .7152, .0722)))
+
+
+def pixel_contrast(first, second):
+    first, second = luminance(first), luminance(second)
+    return (max(first, second) + .05) / (min(first, second) + .05)
+
+
 def run_checks(checks, on_failure, *, count_checks=None, on_success=None):
     failures = []
     for check in checks:
@@ -51,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -265,6 +276,103 @@ def main():
             else:
                 xdo(*pointer, "click", button)
             pause()
+
+        def slider_pixels(name, label, dark):
+            """Inspect the real thumb, including its idle, hover and held-drag states."""
+            left, top, right, bottom = control_bounds(name)
+            target = round(left + (right - left) * .35)
+            middle = round((top + bottom) / 2)
+            xdo("mousemove", "--sync", str(target), str(middle), "click", "1")
+            pause()
+            observations = []
+
+            def inspect(state, expected_x):
+                capture(f"native-slider-{label}-{'dark' if dark else 'light'}-{state}.png")
+                picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                background = picture.getpixel((round(left) - 3, middle))
+                columns = []
+                for x in range(max(0, expected_x - 16), min(picture.width, expected_x + 17)):
+                    ys = [y for y in range(max(0, round(top) - 2), min(picture.height, round(bottom) + 3))
+                          if pixel_contrast(picture.getpixel((x, y)), background) >= 3]
+                    if ys:
+                        columns.append((max(ys) - min(ys) + 1, x, min(ys), max(ys)))
+                assert columns, ("A visible slider thumb must be painted", name, state)
+                diameter, _, first, last = max(columns)
+                centers = [x for height, x, _, _ in columns if height >= diameter - 1]
+                center = round((min(centers) + max(centers)) / 2)
+                fill = picture.getpixel((center, round((first + last) / 2)))
+                observations.append({"state": state, "diameter": diameter, "center": center, "fill": fill,
+                                     "fill_contrast": pixel_contrast(fill, background)})
+                (reports / f"slider-{label}-{'dark' if dark else 'light'}.json").write_text(json.dumps(observations, indent=2) + "\n")
+                assert 8 <= diameter <= 15, ("Slider thumbs must remain compact at 100% scale", name, observations[-1])
+                assert pixel_contrast(fill, background) >= 1.5, ("The thumb needs a visible filled center as well as an outline", name, observations[-1])
+                return center, round((first + last) / 2)
+
+            xdo("mousemove", "--sync", "100", "20");pause()
+            center, y = inspect("idle", target)
+            xdo("mousemove", "--sync", str(center), str(y));pause()
+            inspect("hover", center)
+            xdo("mousedown", "1")
+            try:
+                xdo("mousemove", "--sync", str(center + 12), str(y));pause()
+                moved, _ = inspect("drag", center + 12)
+                assert moved >= center + 6, ("Dragging the visible thumb must actually move it", name, center, moved)
+            finally:
+                xdo("mouseup", "1")
+            xdo("mousemove", "--sync", "100", "20");pause()
+
+        def scrollbar_pixels(path, source):
+            # Inspect the actual pixels, then drag that visible thumb.
+            for dark in (True, False):
+                set_theme(dark)
+                xdo("mousemove", "100", "20")
+                time.sleep(.3)
+                viewport = control_bounds("document-viewport")
+                image = ImageGrab.grab(xdisplay=display).convert("RGB")
+                left, top, right, bottom = map(round, viewport)
+                observations = []
+                def thumb_pixels(picture, state):
+                    background = picture.getpixel((right-24, (top+bottom)//2))
+                    rows = []
+                    for y in range(top+4, bottom-4):
+                        xs = [x for x in range(right-2, min(picture.width, right+14))
+                              if pixel_contrast(picture.getpixel((x,y)), background) >= 3]
+                        if len(xs) >= 4:
+                            rows.append((y, xs))
+                    assert len(rows) >= 24, ("Scrollbar must remain visibly distinct from its page", dark, state, viewport, len(rows))
+                    width = max(len(xs) for _, xs in rows)
+                    assert width <= 6, ("Keep the original six-pixel thumb width in every state", dark, state, width)
+                    y, xs = rows[len(rows)//2]
+                    color = picture.getpixel((xs[len(xs)//2], y))
+                    observations.append({"state": state, "width": width, "color": color})
+                    (reports / f"scrollbar-{'dark' if dark else 'light'}-states.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    if dark:
+                        assert max(color) <= 135, ("Hovering or dragging the dark scrollbar must keep it gray instead of white", observations[-1])
+                    return rows
+                rows = thumb_pixels(image, "idle")
+                y, xs = rows[len(rows)//2]
+                x = xs[len(xs)//2]
+                capture("native-scrollbar-" + ("dark" if dark else "light") + ".png")
+                before = control_bounds("document-scroll-y")[0]
+                xdo("mousemove", "--sync", str(x), str(y))
+                pause()
+                capture("native-scrollbar-hover-" + ("dark" if dark else "light") + ".png")
+                thumb_pixels(ImageGrab.grab(xdisplay=display).convert("RGB"), "hover")
+                xdo("mousedown", "1")
+                try:
+                    for step in range(1, 11):
+                        xdo("mousemove", "--sync", str(x), str(min(bottom-12, y+step*12)))
+                        time.sleep(.025)
+                        if step == 3:
+                            pause()
+                            capture("native-scrollbar-drag-" + ("dark" if dark else "light") + ".png")
+                            thumb_pixels(ImageGrab.grab(xdisplay=display).convert("RGB"), "drag")
+                finally:
+                    xdo("mouseup", "1")
+                pause()
+                assert control_bounds("document-scroll-y")[0] > before+100, "Dragging the visible scrollbar must move the document"
+                assert path.read_text() == source
+            results.append("The six-pixel scrollbar stays readable in idle, hover and real drag states in both themes; dark thumbs stay gray and dragging moves the document without edits")
 
         def title_contains(value):
             deadline = time.monotonic() + 5
@@ -1451,48 +1559,7 @@ def main():
                     if abs(repeated-start_y-5*step) > 10 or abs(reversed_y-start_y-4*step) > 10:
                         failures.append((view, "distance/direction", step, repeated, reversed_y))
                     assert path.read_text() == source, "Scrolling changed the note"
-                # Inspect the actual pixels, then drag that visible thumb.
-                def luminance(rgb):
-                    channels = [value/255 for value in rgb]
-                    linear = [value/12.92 if value <= .04045 else ((value+.055)/1.055)**2.4 for value in channels]
-                    return sum(value*weight for value, weight in zip(linear, (.2126, .7152, .0722)))
-                for dark in (True, False):
-                    set_theme(dark)
-                    xdo("mousemove", "100", "20")
-                    time.sleep(.3)
-                    viewport = control_bounds("document-viewport")
-                    image = ImageGrab.grab(xdisplay=display).convert("RGB")
-                    left, top, right, bottom = map(round, viewport)
-                    background = luminance(image.getpixel((right-24, (top+bottom)//2)))
-                    def contrast(pixel):
-                        value = luminance(pixel)
-                        return (max(value,background)+.05)/(min(value,background)+.05)
-                    rows = []
-                    for y in range(top+4, bottom-4):
-                        xs = [x for x in range(right-2, min(image.width, right+14)) if contrast(image.getpixel((x,y))) >= 3]
-                        if len(xs) >= 4:
-                            rows.append((y, xs))
-                    assert len(rows) >= 24, ("Scrollbar must remain visible away from the pointer with a readable thumb", dark, viewport, len(rows))
-                    assert max(len(xs) for _, xs in rows) <= 6, "Keep the original six-pixel thumb width"
-                    y, xs = rows[len(rows)//2]
-                    x = xs[len(xs)//2]
-                    if dark:
-                        assert max(image.getpixel((x, y))) <= 160, "The idle thumb must blend with the dark page, not look white"
-                    capture("native-scrollbar-" + ("dark" if dark else "light") + ".png")
-                    before = control_bounds("document-scroll-y")[0]
-                    xdo("mousemove", "--sync", str(x), str(y))
-                    pause()
-                    xdo("mousedown", "1")
-                    try:
-                        for step in range(1, 11):
-                            xdo("mousemove", "--sync", str(x), str(min(bottom-12, y+step*12)))
-                            time.sleep(.025)
-                    finally:
-                        xdo("mouseup", "1")
-                    pause()
-                    assert control_bounds("document-scroll-y")[0] > before+100, "Dragging the visible scrollbar must move the document"
-                    assert path.read_text() == source
-                results.append("Original narrow scrollbar stays muted and readable at 3:1 contrast in dark and light; real dragging moves the document and preserves bytes")
+                scrollbar_pixels(path, source)
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
@@ -2728,6 +2795,98 @@ def main():
                 assert abs(before[0] - after[0]) < 2, (before, after)
                 assert note.read_text() == source
                 results.append("Table widths survive a real restart in workspace state while the Markdown remains byte-for-byte unchanged")
+
+            def table_edge_checks():
+                observations = []
+
+                def reveal(table, direction, label):
+                    # Discover from the visible table edge, not a hidden control's
+                    # coordinates: a probe without actual '+' pixels is insufficient.
+                    xdo("mousemove", "100", "20"); pause()
+                    name = f"edit-table-add-{direction}:{table}"
+                    assert control_bounds(name, required=False) is None, ("Edge buttons must hide away from their table", name)
+                    left, top, right, bottom = control_bounds(f"edit-table:{table}")
+                    idle = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    x, y = ((left + right) / 2, bottom + 6) if direction == "row" else (right + 6, (top + bottom) / 2)
+                    xdo("mousemove", "--sync", str(round(x)), str(round(y))); pause()
+                    bounds = control_bounds(name)
+                    a, b, c, d = bounds
+                    if direction == "row":
+                        assert abs(a - left) <= 2 and abs(c - right) <= 2 and 8 <= d - b <= 20, ("The row control must be a compact full-width bottom strip", bounds, (left, top, right, bottom))
+                        assert b >= bottom - 1, ("The row strip must not cover an existing cell", bounds, bottom)
+                    else:
+                        assert abs(b - top) <= 2 and abs(d - bottom) <= 2 and 8 <= c - a <= 20, ("The column control must be a compact full-height right strip", bounds, (left, top, right, bottom))
+                        assert a >= right - 1, ("The column strip must not cover an existing cell", bounds, right)
+                    capture(f"native-table-edge-{label}-{direction}-hover.png")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    region = tuple(map(round, bounds))
+                    changed = sum(max(pixel) >= 12 for pixel in pixel_data(ImageChops.difference(idle.crop(region), picture.crop(region))))
+                    cx, cy = round((a + c) / 2), round((b + d) / 2)
+                    background = picture.getpixel((cx + 5, cy + 5))
+                    plus_pixels = sum(pixel_contrast(picture.getpixel((px, py)), background) >= 1.5
+                                      for px in range(cx - 4, cx + 5) for py in range(cy - 4, cy + 5))
+                    observations.append({"label": label, "direction": direction, "bounds": bounds, "changed_pixels": changed, "visible_plus_pixels": plus_pixels})
+                    (reports / "native-table-edge-controls.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    assert changed >= 30 and plus_pixels >= 7, ("Hover must paint a visible '+' inside the edge strip", observations[-1])
+                    return name
+
+                def expect_bytes(note, expected):
+                    key("ctrl+s")
+                    assert note.read_bytes() == expected.encode(), repr(note.read_bytes())
+
+                for dark in (True, False):
+                    label = "dark" if dark else "light"
+                    source = "# Table edge controls\n\nBefore π\n\n| Item | Count | State |\n| :--- | ---: | --- |\n| Alpha \\| Beta | 2 | keep |\n| Gamma | 1 | stay |\n\nAfter table سلام\n"
+                    note = fixture / f"Notes/Table edges {label}.md"
+                    note.write_text(source)
+                    time.sleep(.6)
+                    open_note(f"Table edges {label}"); command("Live preview"); set_theme(dark)
+                    click_control(reveal(0, "row", label))
+                    row_blank = source.replace("| Gamma | 1 | stay |\n", "| Gamma | 1 | stay |\n|  |  |  |\n")
+                    expect_bytes(note, row_blank)
+                    type_text("edge row π")
+                    row_filled = row_blank.replace("|  |  |  |\n", "| edge row π |  |  |\n")
+                    expect_bytes(note, row_filled)
+                    key("ctrl+z"); expect_bytes(note, row_blank)
+                    key("ctrl+z"); expect_bytes(note, source)
+                    key("ctrl+y"); expect_bytes(note, row_blank)
+                    key("ctrl+y"); expect_bytes(note, row_filled)
+                    click_control(reveal(0, "column", label))
+                    column_blank = row_filled.replace(" |\n", " |  |\n").replace("| :--- | ---: | --- |  |", "| :--- | ---: | --- | --- |")
+                    expect_bytes(note, column_blank)
+                    type_text("Extra")
+                    column_filled = column_blank.replace("| Item | Count | State |  |", "| Item | Count | State | Extra |")
+                    expect_bytes(note, column_filled)
+                    key("ctrl+z"); expect_bytes(note, column_blank)
+                    key("ctrl+z"); expect_bytes(note, row_filled)
+                    key("ctrl+y"); expect_bytes(note, column_blank)
+                    key("ctrl+y"); expect_bytes(note, column_filled)
+                    key("Escape"); key("ctrl+End"); type_text("PROSE"); expect_bytes(note, column_filled + "PROSE")
+                    results.append(f"{label.title()} table hover reveals compact bottom/right '+' strips; each click appends exactly one row/column, accepts immediate typing, saves exact bytes and supports Undo/Redo and Escape to prose")
+
+                nested_source = "# Multiple table edges\r\n\r\n| First | Safe |\r\n| --- | --- |\r\n| original | value |\r\n\r\n> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n\r\n```md\r\n| Literal | Table |\r\n| --- | --- |\r\n| unchanged | fenced |\r\n```\r\n"
+                nested = fixture / "Notes/Multiple table edges.md"
+                nested.write_bytes(nested_source.encode())
+                time.sleep(.6)
+                open_note("Multiple table edges"); command("Live preview")
+                assert control_bounds("edit-table:2", required=False) is None
+                click_control(reveal(1, "row", "nested"))
+                nested_row = nested_source.replace("> | second | 2 |\r\n", "> | second | 2 |\r\n> |  |  |\r\n")
+                expect_bytes(nested, nested_row)
+                click_control(reveal(1, "column", "nested"))
+                nested_column = nested_row.replace("> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n> |  |  |\r\n", "> | Quoted | N |  |\r\n> | --- | --- | --- |\r\n> | second | 2 |  |\r\n> |  |  |  |\r\n")
+                expect_bytes(nested, nested_column)
+                key("ctrl+z"); expect_bytes(nested, nested_row)
+                key("ctrl+z"); expect_bytes(nested, nested_source)
+                key("ctrl+y"); expect_bytes(nested, nested_row)
+                key("ctrl+y"); expect_bytes(nested, nested_column)
+                for mode in ("Reading view", "Source editing"):
+                    command(mode)
+                    assert control_bounds("edit-table-add-row:1", required=False) is None
+                    assert control_bounds("edit-table-add-column:1", required=False) is None
+                    expect_bytes(nested, nested_column)
+                set_theme(True)
+                results.append("Edge insertion targets the second quoted table, preserves CRLF, the first table and fenced literals, and stays absent in Reading/Source modes")
 
             def table_input_checks():
                 source = "# Table input\n\n| A | B |\n| --- | --- |\n| old | 1 |\n| other | 2 |\n\nAfter\n"
@@ -6113,6 +6272,122 @@ def main():
                 set_theme(True)
                 results.append("The actual linked-note hover used the same colored glyphs without altering source or target")
 
+            def visual_controls_checks():
+                """One compact native regression for the reported control/proportion failures."""
+                failures = []
+                observations = {}
+                def verify(label, check):
+                    try:
+                        check()
+                        observations[label] = {"status": "passed"}
+                    except AssertionError as error:
+                        failures.append(label)
+                        observations[label] = {"status": "failed", "error": str(error)}
+                        capture("native-visual-control-failure-" + label + ".png")
+                    (reports / "visual-controls-results.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                graph_root = base / "Graph proportions"
+                graph_root.mkdir()
+                sources = {}
+                for index in range(64):
+                    source = f"# Label-{index:02}\n\n"
+                    if index == 0:
+                        source += "\n".join(f"[[Label-{other:02}]]" for other in range(1, 64)) + "\n"
+                    sources[f"Label-{index:02}.md"] = source
+                    (graph_root / f"Label-{index:02}.md").write_text(source)
+                command("Open vault");key("ctrl+a");paste_text(str(graph_root), held=True);key("Return")
+                title_contains(graph_root.name);open_note("Label-00")
+                command("Graph view: Open graph view")
+                def graph_ready():
+                    deadline = time.monotonic() + 8
+                    while time.monotonic() < deadline:
+                        if control_bounds("global-graph:busy")[0] == 0 and control_bounds("global-graph:node-count")[0] == 64:
+                            return
+                        time.sleep(.05)
+                    raise AssertionError("The proportions fixture must finish its real graph layout")
+                graph_ready()
+
+                def graph_pixels(dark):
+                    xdo("mousemove", "--sync", "100", "20");pause()
+                    capture(f"native-graph-proportions-{'dark' if dark else 'light'}.png")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    canvas = control_bounds("global-graph:canvas")
+                    background = picture.getpixel((round(canvas[0] + 15), round(canvas[1] + 15)))
+                    samples = []
+                    glyphs = []
+                    for index in range(12):
+                        bounds = control_bounds(f"global-graph:node:Label-{index:02}.md")
+                        cx, cy = round((bounds[0] + bounds[2]) / 2), round((bounds[1] + bounds[3]) / 2)
+                        color = picture.getpixel((cx, cy))
+                        spans = []
+                        for axis in (0, 1):
+                            edges = []
+                            for sign in (-1, 1):
+                                distance = 0
+                                while distance < 40:
+                                    point = (cx + sign * distance, cy) if axis == 0 else (cx, cy + sign * distance)
+                                    if max(abs(a-b) for a,b in zip(picture.getpixel(point), color)) > 24:
+                                        break
+                                    distance += 1
+                                edges.append(distance)
+                            spans.append(sum(edges) - 1)
+                        samples.append({"node": index, "diameter": spans})
+                        assert 5 <= min(spans) and max(spans) <= 20, ("Default graph dots must remain proportionate after Fit", samples[-1])
+                        # Identical Label-NN words distinguish hub font growth from
+                        # genuine glyph differences without reading a font-size probe.
+                        first_y = cy + (spans[1] + 1) // 2 + 3
+                        rows = []
+                        for y in range(first_y, min(picture.height, first_y + 34)):
+                            count = sum(pixel_contrast(picture.getpixel((x, y)), background) >= 3
+                                        for x in range(max(0, cx - 34), min(picture.width, cx + 35)))
+                            if count >= 3:
+                                rows.append(y)
+                        runs = []
+                        for y in rows:
+                            if not runs or y > runs[-1][-1] + 1:runs.append([])
+                            runs[-1].append(y)
+                        text = next((run for run in runs if len(run) >= 7), None)
+                        if text is not None:
+                            glyphs.append({"node": index, "height": len(text)})
+                    (reports / f"graph-proportions-{'dark' if dark else 'light'}.json").write_text(json.dumps({"dots": samples, "glyphs": glyphs}, indent=2) + "\n")
+                    hub = next((sample["height"] for sample in glyphs if sample["node"] == 0), None)
+                    leaves = sorted(sample["height"] for sample in glyphs if sample["node"] != 0)
+                    assert hub is not None and len(leaves) >= 4, ("Hub and several leaf labels must actually be visible", glyphs)
+                    assert hub <= 15 and abs(hub - leaves[len(leaves)//2]) <= 1, ("Graph label glyphs must stay compact and consistent across node degrees", glyphs)
+
+                for dark in (True, False):
+                    set_theme(dark)
+                    verify("graph-" + ("dark" if dark else "light"), lambda: graph_pixels(dark))
+                    if control_bounds("global-graph:filter", required=False):click_control("global-graph:section:filters", hold=.15)
+                    if not control_bounds("global-graph:node-size", required=False):click_control("global-graph:section:display", hold=.15)
+                    for name in ("text-fade", "node-size", "link-thickness"):
+                        verify(name + "-" + ("dark" if dark else "light"), lambda name=name: slider_pixels("global-graph:" + name, "graph-" + name, dark))
+                    click_control("global-graph:section:display", hold=.15)
+                    if not control_bounds("global-graph:force-center", required=False):click_control("global-graph:section:forces", hold=.15)
+                    for name in ("force-center", "force-repel", "force-link", "force-distance"):
+                        verify(name + "-" + ("dark" if dark else "light"), lambda name=name: slider_pixels("global-graph:" + name, "graph-" + name, dark))
+                    click_control("global-graph:reset", hold=.15);graph_ready()
+                    click_control("global-graph:section:forces", hold=.15)
+                    click_control("global-graph:fit", hold=.15)
+                assert all((graph_root / name).read_text() == source for name, source in sources.items())
+                command("Open vault");key("ctrl+a");paste_text(str(fixture), held=True);key("Return")
+                title_contains(fixture.name)
+                note = fixture / "Visual controls.md"
+                source = "# Visual controls\n\n" + "\n\n".join(f"Line {index}: keep the scrollbar visible and the original note intact." for index in range(160)) + "\n"
+                note.write_text(source);open_note("Visual controls");command("Reading view")
+                for dark in (True, False):
+                    set_theme(dark);command("Open settings");click_control("settings-page:Appearance")
+                    verify("settings-font-" + ("dark" if dark else "light"), lambda: slider_pixels("settings-font-size", "settings-font", dark))
+                    key("Escape")
+                    size = round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size - 18)):command("Decrease font size" if size > 18 else "Increase font size")
+                xdo("mousemove", "--sync", "900", "500", "click", "--repeat", "3", "--delay", "15", "5");pause()
+                verify("scrollbar", lambda: scrollbar_pixels(note, source))
+                set_theme(True)
+                assert note.read_text() == source
+                assert not failures, ("Native visual/control regressions", observations)
+                results.append("Actual graph dots and labels stay compact; graph and Settings slider thumbs remain filled and compact through idle/hover/drag in both themes, with all fixture bytes preserved")
+
             def graph_checks():
                 nonlocal app, window
                 graph_root = base / "Graph native vault"
@@ -6525,6 +6800,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "table-input"}))
                 return
+            if args.section == "table-edges":
+                table_edge_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "table-edges"}))
+                return
             if args.section == "table-links":
                 table_link_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -6641,6 +6921,11 @@ def main():
                 font_controls_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"font-controls"}))
+                return
+            if args.section == "visual-controls":
+                visual_controls_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
             if args.section == "tab-restore":
                 tab_restore_checks()
@@ -6976,6 +7261,7 @@ def main():
                 vault_switch_checks,
                 system_open_checks,
                 graph_checks,
+                visual_controls_checks,
                 emoji_checks,
                 file_toolbar_checks,
                 folding_checks,
@@ -6991,6 +7277,7 @@ def main():
                 table_link_checks,
                 table_input_checks,
                 table_resize_checks,
+                table_edge_checks,
                 trash_options_checks,
                 palette_checks,
                 callout_checks,

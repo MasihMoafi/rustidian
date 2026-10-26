@@ -24,7 +24,7 @@ on:
       sections:
         description: 'Space-separated native GUI sections'
         type: string
-        default: 'palette-queued table-resize table-input table-edit undo graph note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
+        default: 'palette-queued table-resize table-edges table-input table-edit undo graph visual-controls note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
 
 permissions:
   contents: read
@@ -129,7 +129,7 @@ jobs:
         if: ${{ !inputs.gui_only }}
         run: |
           gui_status=0
-          for section in tab-drag table-resize trash-options palettes tab-actions tab-overflow table-edit table-input table-links essential undo settings folders code reading-code; do
+          for section in tab-drag table-resize table-edges trash-options palettes tab-actions tab-overflow table-edit table-input table-links essential undo settings folders code reading-code visual-controls; do
             if ! python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1; then
               gui_status=1
               tail -n 80 "reports/gui-$section.log"
@@ -212,8 +212,17 @@ jobs:
             reports/gui-*-results.json
             reports/gui-failure.png
             reports/native-table-edge-far-right.png
+            reports/native-table-edge-*-hover.png
+            reports/native-table-edge-controls.json
             reports/native-form-add-property.png
             reports/native-graph-global-dark.png
+            reports/native-graph-proportions-*.png
+            reports/graph-proportions-*.json
+            reports/native-slider-*.png
+            reports/slider-*.json
+            reports/native-scrollbar-*.png
+            reports/scrollbar-*-states.json
+            reports/visual-controls-results.json
             reports/native-syntax-*.png
             reports/native-syntax-*-controls.json
             reports/native-reading-code-*.png
