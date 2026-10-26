@@ -4397,6 +4397,15 @@ impl NotesApp {
 }
 
 impl eframe::App for NotesApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let live_tab = self
+            .tabs
+            .get(self.active)
+            .filter(|tab| tab.view == View::Live && !tab.document.is_image())
+            .map(Tab::id);
+        self.editor.raw_input(ctx, raw, live_tab);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         // Event modifiers retain the gesture even if Control was released in

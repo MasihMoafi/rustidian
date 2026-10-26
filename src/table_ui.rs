@@ -30,11 +30,13 @@ struct Draft {
 #[derive(Default)]
 pub struct Tables {
     owner: Option<egui::Id>,
+    tab: Option<u64>,
     views: Vec<TableView>,
     focus: Option<CellKey>,
     error: Option<String>,
     draft: Option<Draft>,
     deferred: Vec<egui::Event>,
+    raw_deferred: Vec<egui::Event>,
     exit: Option<usize>,
 }
 
@@ -187,6 +189,94 @@ fn cell_id(id: egui::Id, key: CellKey) -> egui::Id {
 }
 
 impl Tables {
+    pub fn raw_input(
+        &mut self,
+        ctx: &egui::Context,
+        raw: &mut egui::RawInput,
+        live_tab: Option<u64>,
+    ) {
+        if raw.viewport_id != egui::ViewportId::ROOT || raw.viewport().visible() == Some(false) {
+            return;
+        }
+        if live_tab.is_none() || live_tab != self.tab {
+            self.raw_deferred.clear();
+            return;
+        }
+        let Some(owner) = self.owner else {
+            return;
+        };
+        self.raw_deferred.append(&mut raw.events);
+        raw.events = std::mem::take(&mut self.raw_deferred);
+        let edges: Vec<_> = (0..self.views.len())
+            .flat_map(|table| [false, true].map(|column| owner.with(("table-add", table, column))))
+            .filter_map(|id| ctx.read_response(id))
+            .filter(|response| {
+                response.enabled()
+                    && ctx.memory(|memory| memory.allows_interaction(response.layer_id))
+            })
+            .collect();
+        let mut mutation = false;
+        let mut split = None;
+        for (index, event) in raw.events.iter().enumerate() {
+            match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    ..
+                } if edges.iter().any(|response| {
+                    let local = ctx
+                        .layer_transform_from_global(response.layer_id)
+                        .map_or(*pos, |transform| transform * *pos);
+                    response.interact_rect.contains(local)
+                        && ctx.layer_id_at(*pos) == Some(response.layer_id)
+                }) =>
+                {
+                    // Text before a click belongs to the old cell. Text after its
+                    // release belongs to the new cell, which exists next frame.
+                    if *pressed && mutation {
+                        split = Some(index);
+                        break;
+                    }
+                    if !pressed {
+                        split = Some(index + 1);
+                        break;
+                    }
+                }
+                egui::Event::Key {
+                    key: key @ (Key::Enter | Key::Space),
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.matches_exact(egui::Modifiers::NONE)
+                    && edges.iter().any(|response| response.has_focus()) =>
+                {
+                    // Winit pairs a printable Space key with Text(" "). Keep
+                    // that activation text with the button, not the new cell.
+                    let end = index + 1;
+                    let space_text = *key == Key::Space
+                        && matches!(raw.events.get(end), Some(egui::Event::Text(text)) if text == " ");
+                    split = Some(end + usize::from(space_text));
+                    break;
+                }
+                egui::Event::Text(_)
+                | egui::Event::Paste(_)
+                | egui::Event::Cut
+                | egui::Event::Ime(egui::ImeEvent::Commit(_))
+                | egui::Event::Key {
+                    key: Key::Backspace | Key::Delete | Key::Enter | Key::Tab,
+                    pressed: true,
+                    ..
+                } => mutation = true,
+                _ => {}
+            }
+        }
+        if let Some(index) = split.filter(|index| *index < raw.events.len()) {
+            self.raw_deferred = raw.events.split_off(index);
+            ctx.request_repaint();
+        }
+    }
+
     pub fn prepare(
         &mut self,
         ui: &egui::Ui,
@@ -314,6 +404,7 @@ impl Tables {
                 ..Default::default()
             };
         }
+        self.tab = Some(tab.id());
         if !live {
             self.focus = None;
             self.deferred.clear();
@@ -329,7 +420,8 @@ impl Tables {
                 input.events = std::mem::take(&mut self.deferred);
             });
         }
-        let focused = self.focus.is_some() || self.has_focus(ui.ctx(), id);
+        let focused_cell = self.focus.or_else(|| self.focused_cell(ui.ctx(), id));
+        let focused = focused_cell.is_some();
         if !focused
             || !ui.is_enabled()
             || !ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
@@ -411,6 +503,23 @@ impl Tables {
             self.draft = None;
             tab.document.text = text;
             state.cursor.set_char_range(Some(cursor));
+            if let Some((table, row, column)) = focused_cell {
+                let models = rustidian::editor::Markdown::parse(&tab.document.text).tables;
+                if let Some(model) = models.get(table) {
+                    if row >= model.rows.len() || column >= model.alignments.len() {
+                        let destination = (
+                            table,
+                            row.min(model.rows.len() - 1),
+                            column.min(model.alignments.len() - 1),
+                        );
+                        self.focus = Some(destination);
+                        ui.memory_mut(|memory| memory.request_focus(cell_id(id, destination)));
+                    }
+                } else {
+                    self.focus = None;
+                    ui.memory_mut(|memory| memory.request_focus(id));
+                }
+            }
             tab.edited();
             ui.ctx().request_repaint();
         }
@@ -419,10 +528,16 @@ impl Tables {
     }
 
     pub fn has_focus(&self, ctx: &egui::Context, id: egui::Id) -> bool {
-        self.views.iter().enumerate().any(|(table, view)| {
-            view.cells.iter().enumerate().any(|(row, cells)| {
-                (0..cells.len()).any(|column| {
-                    ctx.memory(|memory| memory.has_focus(cell_id(id, (table, row, column))))
+        self.focused_cell(ctx, id).is_some()
+    }
+
+    fn focused_cell(&self, ctx: &egui::Context, id: egui::Id) -> Option<CellKey> {
+        self.views.iter().enumerate().find_map(|(table, view)| {
+            view.cells.iter().enumerate().find_map(|(row, cells)| {
+                (0..cells.len()).find_map(|column| {
+                    let key = (table, row, column);
+                    ctx.memory(|memory| memory.has_focus(cell_id(id, key)))
+                        .then_some(key)
                 })
             })
         })

@@ -217,6 +217,7 @@ def main():
             try:
                 for kind, value in steps:
                     if kind == "text": xdo("type", "--clearmodifiers", "--delay", "0", "--", value)
+                    elif kind == "click": xdo("mousemove", "--sync", *map(str, value), "click", "1")
                     else: xdo("key", "--clearmodifiers", value)
             finally:
                 app.send_signal(signal.SIGCONT)
@@ -2834,7 +2835,7 @@ def main():
                     key("ctrl+s")
                     assert note.read_bytes() == expected.encode(), repr(note.read_bytes())
 
-                for dark in (True, False):
+                def normal(dark):
                     label = "dark" if dark else "light"
                     source = "# Table edge controls\n\nBefore π\n\n| Item | Count | State |\n| :--- | ---: | --- |\n| Alpha \\| Beta | 2 | keep |\n| Gamma | 1 | stay |\n\nAfter table سلام\n"
                     note = fixture / f"Notes/Table edges {label}.md"
@@ -2864,29 +2865,86 @@ def main():
                     key("Escape"); key("ctrl+End"); type_text("PROSE"); expect_bytes(note, column_filled + "PROSE")
                     results.append(f"{label.title()} table hover reveals compact bottom/right '+' strips; each click appends exactly one row/column, accepts immediate typing, saves exact bytes and supports Undo/Redo and Escape to prose")
 
-                nested_source = "# Multiple table edges\r\n\r\n| First | Safe |\r\n| --- | --- |\r\n| original | value |\r\n\r\n> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n\r\n```md\r\n| Literal | Table |\r\n| --- | --- |\r\n| unchanged | fenced |\r\n```\r\n"
-                nested = fixture / "Notes/Multiple table edges.md"
-                nested.write_bytes(nested_source.encode())
-                time.sleep(.6)
-                open_note("Multiple table edges"); command("Live preview")
-                assert control_bounds("edit-table:2", required=False) is None
-                click_control(reveal(1, "row", "nested"))
-                nested_row = nested_source.replace("> | second | 2 |\r\n", "> | second | 2 |\r\n> |  |  |\r\n")
-                expect_bytes(nested, nested_row)
-                click_control(reveal(1, "column", "nested"))
-                nested_column = nested_row.replace("> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n> |  |  |\r\n", "> | Quoted | N |  |\r\n> | --- | --- | --- |\r\n> | second | 2 |  |\r\n> |  |  |  |\r\n")
-                expect_bytes(nested, nested_column)
-                key("ctrl+z"); expect_bytes(nested, nested_row)
-                key("ctrl+z"); expect_bytes(nested, nested_source)
-                key("ctrl+y"); expect_bytes(nested, nested_row)
-                key("ctrl+y"); expect_bytes(nested, nested_column)
-                for mode in ("Reading view", "Source editing"):
-                    command(mode)
-                    assert control_bounds("edit-table-add-row:1", required=False) is None
-                    assert control_bounds("edit-table-add-column:1", required=False) is None
+                def normal_dark():
+                    normal(True)
+
+                def normal_light():
+                    normal(False)
+
+                def queued():
+                    queued_source = "# Queued table edges\n\n| A | B |\n| --- | --- |\n| old | 1 |\n\nAfter π\n"
+                    queued_note = fixture / "Notes/Queued table edges.md"
+                    queued_note.write_text(queued_source)
+                    time.sleep(.6)
+                    open_note("Queued table edges"); command("Live preview"); set_theme(True)
+                    queued_row = queued_source.replace("| old | 1 |\n", "| old row | 1 |\n| queued row |  |\n")
+                    queued_column = queued_row.replace("| A | B |", "| A | B | queued column |").replace("| --- | --- |", "| --- | --- | --- |").replace("| old row | 1 |", "| old row column | 1 |  |").replace("| queued row |  |", "| queued row |  |  |")
+                    for direction, expected in (("row", queued_row), ("column", queued_column)):
+                        click_control("edit-table-cell:0:1:0"); key("End")
+                        left, top, right, bottom = control_bounds(reveal(0, direction, "queued"))
+                        point = (round((left + right) / 2), round((top + bottom) / 2))
+                        queued_steps(("text", f" {direction}"), ("click", point), ("text", f"queued {direction}"), ("key", "ctrl+s"))
+                        time.sleep(.5)
+                        assert queued_note.read_bytes() == expected.encode(), (direction, repr(queued_note.read_bytes()))
+                    results.append("Same-frame pending text, edge click, destination typing and Save preserve the old cell and reach the new row cell or column header")
+
+                def keyboard():
+                    source = "# Keyboard table edges\n\n| A | B |\n| --- | --- |\n| old | 1 |\n\nAfter\n"
+                    note = fixture / "Notes/Keyboard table edges.md"
+                    note.write_text(source)
+                    time.sleep(.6)
+                    open_note("Keyboard table edges"); command("Live preview"); set_theme(True)
+                    for shortcut, direction in (("space", "row"), ("Return", "column")):
+                        click_control("table-resize:0:1")
+                        xdo("mousemove", "100", "20")
+                        key("Tab")
+                        if direction == "column": key("Tab")
+                        assert control_bounds(f"edit-table-add-{direction}:0")
+                        key(shortcut)
+                        expected = source.replace("| old | 1 |\n", "| old | 1 |\n|  |  |\n") if direction == "row" else source.replace(" |\n", " |  |\n").replace("| --- | --- |  |", "| --- | --- | --- |")
+                        expect_bytes(note, expected)
+                        key("ctrl+z"); expect_bytes(note, source)
+                    results.append("Keyboard-focused edge strips append with Space/Enter without inserting the activation character; one Undo restores the table")
+
+                def nested():
+                    nested_source = "# Multiple table edges\r\n\r\n| First | Safe |\r\n| --- | --- |\r\n| original | value |\r\n\r\n> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n\r\n```md\r\n| Literal | Table |\r\n| --- | --- |\r\n| unchanged | fenced |\r\n```\r\n"
+                    nested = fixture / "Notes/Multiple table edges.md"
+                    nested.write_bytes(nested_source.encode())
+                    time.sleep(.6)
+                    open_note("Multiple table edges"); command("Live preview"); set_theme(True)
+                    assert control_bounds("edit-table:2", required=False) is None
+                    click_control(reveal(1, "row", "nested"))
+                    nested_row = nested_source.replace("> | second | 2 |\r\n", "> | second | 2 |\r\n> |  |  |\r\n")
+                    expect_bytes(nested, nested_row)
+                    click_control(reveal(1, "column", "nested"))
+                    nested_column = nested_row.replace("> | Quoted | N |\r\n> | --- | --- |\r\n> | second | 2 |\r\n> |  |  |\r\n", "> | Quoted | N |  |\r\n> | --- | --- | --- |\r\n> | second | 2 |  |\r\n> |  |  |  |\r\n")
                     expect_bytes(nested, nested_column)
-                set_theme(True)
-                results.append("Edge insertion targets the second quoted table, preserves CRLF, the first table and fenced literals, and stays absent in Reading/Source modes")
+                    key("ctrl+z"); expect_bytes(nested, nested_row)
+                    key("ctrl+z"); expect_bytes(nested, nested_source)
+                    key("ctrl+y"); expect_bytes(nested, nested_row)
+                    key("ctrl+y"); expect_bytes(nested, nested_column)
+                    for mode in ("Reading view", "Source editing"):
+                        command(mode)
+                        assert control_bounds("edit-table-add-row:1", required=False) is None
+                        assert control_bounds("edit-table-add-column:1", required=False) is None
+                        expect_bytes(nested, nested_column)
+                    results.append("Edge insertion targets the second quoted table, preserves CRLF, the first table and fenced literals, and stays absent in Reading/Source modes")
+
+                failures = []
+                failure_report = reports / "native-table-edge-failures.json"
+                failure_report.write_text("[]\n")
+
+                def retain_failure(name, error):
+                    capture(f"native-table-edge-{name}-failure.png")
+                    failures.append({"case": name, "error": repr(error), "traceback": traceback.format_exc()})
+                    failure_report.write_text(json.dumps(failures, indent=2) + "\n")
+                    print(traceback.format_exc(), flush=True)
+                    xdo("key", "--clearmodifiers", "Escape", "Escape"); pause()
+
+                try:
+                    run_checks([normal_dark, normal_light, queued, keyboard, nested], retain_failure, count_checks=lambda: len(results))
+                finally:
+                    set_theme(True)
 
             def table_input_checks():
                 source = "# Table input\n\n| A | B |\n| --- | --- |\n| old | 1 |\n| other | 2 |\n\nAfter\n"
