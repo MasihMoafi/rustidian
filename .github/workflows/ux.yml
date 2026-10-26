@@ -5,6 +5,10 @@ on:
     branches: ['work/rustidian-ux-*']
   workflow_dispatch:
     inputs:
+      publish_run:
+        description: 'Publish an already verified UX run; skip all builds in this dispatch'
+        type: string
+        default: ''
       gui_only:
         description: 'Run optimized GUI checks only; do not package or upload artifacts'
         type: boolean
@@ -31,6 +35,7 @@ defaults:
 
 jobs:
   linux:
+    if: ${{ inputs.publish_run == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -227,3 +232,22 @@ jobs:
           retention-days: 1
           compression-level: 1
           if-no-files-found: error
+
+  publish:
+    if: ${{ inputs.publish_run != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERIFIED_RUN: ${{ inputs.publish_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Follow the requested verification run
+        run: gh run watch "$VERIFIED_RUN" --repo "$GITHUB_REPOSITORY" --interval 60 --exit-status
+      - name: Publish the verified installers directly from GitHub
+        run: python3 scripts/publish-checked-release.py --run "$VERIFIED_RUN"
