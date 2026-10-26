@@ -58,8 +58,25 @@ jobs:
           EXPECTED
           cp "$RUNNER_TEMP/rustidian-language-fixed.rs" src/syntax.rs
           git diff --exit-code -- src/syntax.rs
-      - name: Verify all highlighter behavior on the repair
-        run: cargo +1.95.0 test --locked --release --bin rustidian syntax::tests -- --nocapture 2>&1 | tee reports/language-fixed.log
+      - name: Prove exact source-file selection regression on the prior matcher
+        run: |
+          cp src/search.rs "$RUNNER_TEMP/rustidian-search-fixed.rs"
+          trap 'cp "$RUNNER_TEMP/rustidian-search-fixed.rs" src/search.rs' EXIT
+          git show de3e218167b54bb76768e3a6c53fd9768aa2555b:src/search.rs > src/search.rs
+          if cargo +1.95.0 test --locked --release --test search_behavior exact_source_filename_and_qualified_path_outrank_fuzzy_siblings -- --nocapture > reports/language-search-baseline.log 2>&1; then
+            echo 'Expected the exact filename to lose to its fuzzy sibling'
+            exit 1
+          fi
+          python3 - <<'EXPECTED'
+          from pathlib import Path
+          assert 'An exact source filename must not select its fuzzy sibling' in Path('reports/language-search-baseline.log').read_text(), 'Matcher baseline failed for an unrelated reason'
+          EXPECTED
+          cp "$RUNNER_TEMP/rustidian-search-fixed.rs" src/search.rs
+          git diff --exit-code -- src/search.rs
+      - name: Verify all search and highlighter behavior on the repair
+        run: |
+          cargo +1.95.0 test --locked --release --test search_behavior -- --nocapture 2>&1 | tee reports/language-search-fixed.log
+          cargo +1.95.0 test --locked --release --bin rustidian syntax::tests -- --nocapture 2>&1 | tee reports/language-fixed.log
       - name: Build the optimized native candidate
         run: |
           cargo +1.95.0 build --locked --release --bin rustidian 2>&1 | tee reports/language-build.log

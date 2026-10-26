@@ -111,7 +111,23 @@ impl FileMatcher {
         limit: usize,
         include: impl Fn(&std::path::Path) -> bool,
     ) -> Vec<PathBuf> {
-        Atom::new(
+        let mut exact: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                !query.is_empty()
+                    && include(&entry.path)
+                    && (entry.path == std::path::Path::new(query)
+                        || entry
+                            .path
+                            .file_name()
+                            .is_some_and(|name| name == std::ffi::OsStr::new(query)))
+            })
+            .collect();
+        // A qualified path selects that file even when other folders contain
+        // the same filename. Keep fuzzy order for every remaining candidate.
+        exact.sort_by_key(|entry| entry.path != std::path::Path::new(query));
+        let fuzzy = Atom::new(
             query,
             CaseMatching::Smart,
             Normalization::Smart,
@@ -123,16 +139,20 @@ impl FileMatcher {
             &mut self.matcher,
         )
         .into_iter()
-        .map(|(entry, _)| entry.path.clone())
-        .scan(std::collections::HashSet::new(), |seen, path| {
-            Some(if seen.insert(path.clone()) {
-                Some(path)
-            } else {
-                None
+        .map(|(entry, _)| entry);
+        exact
+            .into_iter()
+            .chain(fuzzy)
+            .map(|entry| entry.path.clone())
+            .scan(std::collections::HashSet::new(), |seen, path| {
+                Some(if seen.insert(path.clone()) {
+                    Some(path)
+                } else {
+                    None
+                })
             })
-        })
-        .flatten()
-        .take(limit)
-        .collect()
+            .flatten()
+            .take(limit)
+            .collect()
     }
 }

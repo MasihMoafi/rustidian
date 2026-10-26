@@ -2192,7 +2192,7 @@ def main():
                     # Only keyword, string and comment colors belong to this contract.
                     required = [palette[index] for index in (0, 1, 5)]
                     for language, path, original, markdown, fenced in language_files:
-                        open_note(path.name)
+                        open_note(path.name, title=path.name + " —")
                         command("Source editing")
                         colored_pixels(required, control="editor")
                         capture(f"native-syntax-{language}-file-source-{appearance}.png")
