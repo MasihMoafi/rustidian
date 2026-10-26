@@ -13,25 +13,25 @@
 
 **A native Markdown notebook for Linux. Your files, your folders, no account.**
 
-**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-amd64.deb)**
+**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-amd64.deb)**
 
-[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
+[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
 
-Early alpha · Full Obsidian parity is unfinished
+Linux desktop · Plain files · Native Rust
 
 </div>
 
 I built Rustidian for myself because every note editor I tried felt too slow, especially Obsidian. **Speed and stability** guide the project: ordinary Markdown folders, native editing, linked notes and graphs.
 
-**Try the Linux alpha. Contributors are welcome.**
+**Try Rustidian for Linux. Contributors are welcome.**
 
-![Verified Rustidian alpha showing its bundled Markdown notebook](docs/images/rustidian.png)
+![Rustidian showing its bundled Markdown notebook](docs/images/rustidian.png)
 
 ## Quick start
 
-Linux x86_64, **glibc 2.43 or newer**. Native UI checks use X11; Wayland is enabled, with broader coverage still open. Check your system with `ldd --version`.
+Linux x86_64, **glibc 2.39 or newer**. Native UI checks use X11; Wayland is enabled, with broader coverage still open. Check your system with `ldd --version`.
 
-Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/SHA256SUMS), then run:
+Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/SHA256SUMS), then run:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
@@ -39,9 +39,9 @@ sudo apt install ./rustidian-linux-amd64.deb
 rustidian
 ```
 
-The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. **The current build does not support Ubuntu 24.04's older glibc.**
+The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. The installer is built and checked on Ubuntu 24.04.
 
-For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0-alpha.3/rustidian-linux-x86_64.tar.gz) and the same checksums:
+For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.0/rustidian-linux-x86_64.tar.gz) and the same checksums:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
@@ -57,7 +57,7 @@ The bundled demo opens immediately. To add Rustidian to your applications menu, 
 ./rustidian --version
 ```
 
-**Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases, math and other gaps are listed below. Keep Obsidian available for workflows the alpha does not cover.
+**Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases, math and other gaps are listed below. Keep Obsidian available for other workflows.
 
 **Why don't Obsidian plugins work?** Rustidian's interface is native Rust with egui/eframe. Obsidian plugins require Obsidian's JavaScript API and often its browser DOM and CSS. Running them needs a compatibility runtime or individual feature ports; copying plugin folders is insufficient.
 
@@ -98,7 +98,7 @@ The [coverage ledger](docs/PARITY.md) records implemented workflows and remainin
 
 ## Performance
 
-These measurements use older builds. Alpha.3 has not yet been benchmarked against Obsidian.
+These measurements use older builds. Version 0.1.0 has not yet been benchmarked against Obsidian.
 
 A [paired startup comparison](docs/performance/startup-2026-10-22/README.md) measured a median complete matching note frame at **0.61 s for the verified Rustidian baseline versus 3.77 s for Obsidian 1.14.4**. Ten balanced warmed pairs used 100 synthetic notes, a 1440×960 software display and screenshot/OCR sampling. The measured baseline precedes the later graph update. Exact versions, original paired screenshots, raw results and limits accompany this bounded result.
 
@@ -106,7 +106,7 @@ A [verified same-host comparison](https://github.com/MasihMoafi/rustidian/action
 
 | Editor | Median |
 | --- | ---: |
-| **Rustidian alpha** | **78.57 ms** |
+| **Rustidian measured baseline** | **78.57 ms** |
 | Ferrite 0.3.0 | 439.32 ms |
 
 **About 5.6× faster in this edit-and-save test.** Both editors used the same 103,300-byte document in source mode on one Linux/Xvfb host. Four alternating rounds collected 100 timed samples plus 20 warmups. Timings cover synthetic input through observing the exact saved bytes, including keyboard-driver and file-polling overhead. Overall speed varies by workload.

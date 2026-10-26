@@ -15,18 +15,21 @@ def run(*command, **kwargs):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--archive', type=Path, help='Check this exact existing portable archive')
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix='rustidian-bundle-') as temporary:
         base = Path(temporary)
-        archive = base / 'rustidian-linux-x86_64.tar.gz'
-        run('python3', str(root / 'scripts/package-linux.py'), '--binary', str(args.binary), '--output', str(archive))
+        archive = args.archive.resolve() if args.archive else base / 'rustidian-linux-x86_64.tar.gz'
+        if not args.archive:
+            run('python3', str(root / 'scripts/package-linux.py'), '--binary', str(args.binary), '--output', str(archive))
         checksum = archive.with_name(archive.name + '.sha256').read_text().split()[0]
         with archive.open('rb') as incoming:
             assert hashlib.file_digest(incoming, 'sha256').hexdigest() == checksum
         bundle = base / 'extracted bundle'
         with tarfile.open(archive) as package:
             package.extractall(bundle, filter='data')
+        assert hashlib.sha256((bundle / 'rustidian').read_bytes()).digest() == hashlib.sha256(args.binary.read_bytes()).digest()
         assert (bundle / 'demo-vault/Home.md').read_bytes() == (root / 'demo-vault/Home.md').read_bytes()
         prefix = base / 'Local "notes" $safe %app `quoted`'
         vault = base / 'Vault سلام'

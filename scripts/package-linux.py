@@ -35,7 +35,7 @@ def main():
             version + '\n\nRun ./rustidian to try the included demo.\n'
             'Install to your applications menu: python3 install.py\n'
             'Open a copied vault: ./rustidian "/path/to/vault copy"\n\n'
-            'Early Linux alpha. Existing Obsidian community plugins are unsupported.\n'
+            'Linux desktop notebook. Existing Obsidian community plugins are unsupported.\n'
             'Report a problem: https://github.com/MasihMoafi/rustidian/issues/new/choose\n')
         with tarfile.open(args.output, 'w:gz') as archive:
             for path in sorted(bundle.iterdir()):
