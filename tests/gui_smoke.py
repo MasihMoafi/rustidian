@@ -6804,11 +6804,18 @@ def main():
                     assert abs(metric(prefix, "value:" + name) - before) > .001, ("The native slider must change its actual value", prefix, name, before)
 
                 def group_pixels(prefix):
-                    xdo("mousemove", "--sync", "0", "0"); pause()
-                    bounds = control_bounds(prefix + ":node:Child.md")
-                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
-                    rgb = picture.getpixel((round((bounds[0] + bounds[2]) / 2), round((bounds[1] + bounds[3]) / 2)))
-                    assert rgb[0] > rgb[1] + 60 and rgb[0] > rgb[2] + 60, ("The saved group must color the actual Child dot red", rgb)
+                    # A narrow local canvas can place a dot behind Settings.
+                    # Hide that overlay without fitting or changing the camera.
+                    opened = bool(metric(prefix, "settings-open"))
+                    settings(prefix, False)
+                    try:
+                        xdo("mousemove", "--sync", "0", "0"); pause()
+                        bounds = control_bounds(prefix + ":node:Child.md")
+                        picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                        rgb = picture.getpixel((round((bounds[0] + bounds[2]) / 2), round((bounds[1] + bounds[3]) / 2)))
+                        assert rgb[0] > rgb[1] + 60 and rgb[0] > rgb[2] + 60, ("The saved group must color the actual Child dot red", rgb)
+                    finally:
+                        settings(prefix, opened)
 
                 def configure(prefix, local):
                     only_section(prefix, "filters")
@@ -6965,7 +6972,7 @@ def main():
                     results.append("An obstructed private atomic state write visibly failed without replacing durable bytes; restoring the destination allowed a real retry/restart with no note edits")
 
                 def failure(name, error):
-                    observations[name] = {"status": "failed", "error": repr(error)}
+                    observations[name] = {"status": "failed", "error": repr(error), "traceback": traceback.format_exc()}
                     capture("native-graph-state-failure-" + name + ".png")
                     (reports / "native-graph-state-results.json").write_text(json.dumps(observations, indent=2) + "\n")
 

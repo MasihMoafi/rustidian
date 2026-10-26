@@ -119,7 +119,7 @@ pub struct NotesApp {
     recovery_manager: crate::recovery_ui::Manager,
     file_move: crate::file_move_ui::Manager,
     page_preview: crate::page_preview::Manager,
-    graph: crate::graph_ui::Manager,
+    pub(crate) graph: crate::graph_ui::Manager,
     pub(crate) always_update_links: bool,
 }
 
