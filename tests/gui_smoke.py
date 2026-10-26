@@ -4943,12 +4943,12 @@ def main():
                         sample={"document_size":size,"row_height":bounds[3]-bounds[1],"glyph_height":glyph_height,"bounds":bounds}
                         popup_samples.setdefault(label,[]).append(sample)
                         (reports/"native-font-popup-measurements.json").write_text(json.dumps(popup_samples,indent=2)+"\n")
-                        assert 8<=glyph_height<=14 and sample["row_height"]<=26,("Context menus must use compact interface text",label,sample)
+                        assert 8<=glyph_height<=14 and 22<=sample["row_height"]<=26,("Context menus must use compact interface text",label,sample)
                         earlier=popup_samples[label]
                         assert max(item["glyph_height"] for item in earlier)-min(item["glyph_height"] for item in earlier)<=1,("Document size must not resize popup glyphs",label,earlier)
                         assert max(item["row_height"] for item in earlier)-min(item["row_height"] for item in earlier)<=1.1,("Document size must not resize popup rows",label,earlier)
                         key("Escape")
-                    assert abs(popup_samples["table"][-1]["glyph_height"]-popup_samples["callout"][-1]["glyph_height"])<=1,("Sibling context menus need consistent text size",popup_samples)
+                    assert abs(popup_samples["table"][-1]["row_height"]-popup_samples["callout"][-1]["row_height"])<=1,("Sibling context menus need consistent row spacing",popup_samples)
                     assert note.read_text()==original
                     command("Reading view")
                 font(18);baseline=title_width();chrome=control_bounds("tab-full:Font controls.md")
