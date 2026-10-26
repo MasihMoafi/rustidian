@@ -6303,8 +6303,12 @@ def main():
                         key("Escape")
                     else:
                         key("Return");title_contains("Home")
-                queued_steps(("key","ctrl+p"),("key","Escape"));pause()
-                assert control_bounds("dialog-input",required=False) is None, "Escape after the opening shortcut must still dismiss it"
+                for shortcut in ("ctrl+p","ctrl+o"):
+                    for query in (None,"Queued query must not enter the note"):
+                        steps=[("key",shortcut)]
+                        if query is not None:steps.append(("text",query))
+                        queued_steps(*steps,("key","Escape"));pause()
+                        assert control_bounds("dialog-input",required=False) is None, "Escape after the opening shortcut must still dismiss it"
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("An earlier queued Escape dismissed Settings without closing the replacement palette/quick-open or inserting its query into notes; a later Escape still dismissed it")
                 before=control_bounds("sidebar:details",required=False) is not None

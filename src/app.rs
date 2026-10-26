@@ -3217,6 +3217,17 @@ impl NotesApp {
         let Some(dialog) = self.dialog else {
             return;
         };
+        // egui's top-modal layer comes from the previous frame. Handle a
+        // newly opened dialog's Escape here before its first modal pass.
+        if self.dialog_focus
+            && !egui::Popup::is_any_open(ctx)
+            && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::Escape))
+        {
+            self.dialog = None;
+            self.template_source = None;
+            self.focus_editor();
+            return;
+        }
         let title = match dialog {
             Dialog::QuickOpen => "Open a file",
             Dialog::NewFolder => "New folder",
