@@ -58,6 +58,9 @@ def main():
     with tarfile.open(assets / "rustidian-linux-x86_64.tar.gz") as archive:
         member = archive.extractfile("rustidian")
         assert member is not None and hashlib.file_digest(member, "sha256").hexdigest() == info["binary_sha256"]
+    # Runtime and portable installer sources must match the checked revision.
+    # The Debian metadata correction is verified separately below.
+    subprocess.run(["git", "diff", "--exit-code", source, "HEAD", "--", "Cargo.toml", "Cargo.lock", "src", "vendor", "assets", "demo-vault", "docs/brand", "scripts/install-linux.py", "scripts/package-linux.py"], check=True)
     # Repackage the already tested executable with corrected native runtime
     # dependencies, then check the exact delivery artifact and installed launcher.
     bundle = Path("verified-bundle")
@@ -80,9 +83,6 @@ def main():
     info["depends"] = command("dpkg-deb", "--field", str(assets / "rustidian-linux-amd64.deb"), "Depends")
     (assets / "BUILDINFO.json").write_text(json.dumps(info, indent=2) + "\n")
     (assets / "SHA256SUMS").write_text("".join(digest(assets / name) + "  " + name + "\n" for name in ("rustidian-linux-amd64.deb", "rustidian-linux-x86_64.tar.gz", "BUILDINFO.json")))
-    # The publication helper may be newer than the compiled source. It cannot
-    # publish a runtime or installer different from the checked revision.
-    subprocess.run(["git", "diff", "--exit-code", source, "HEAD", "--", "Cargo.toml", "Cargo.lock", "src", "vendor", "assets", "demo-vault", "docs/brand", "scripts/install-linux.py", "scripts/package-linux.py"], check=True)
     publication_source = os.environ["GITHUB_SHA"]
     tag = "v" + version
     base = "https://github.com/" + repo + "/releases/download/" + tag + "/"
