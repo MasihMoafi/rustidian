@@ -2758,7 +2758,9 @@ mod tests {
         use egui::text::{LayoutJob, TextFormat};
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
         let formats = [
             TextFormat {
                 font_id: FontId::new(14.0, FontFamily::Proportional),

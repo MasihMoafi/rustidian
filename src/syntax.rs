@@ -229,8 +229,6 @@ const BUDGET: Duration = Duration::from_millis(8);
 struct Cache {
     tokens: HashMap<u64, (Arc<Vec<Token>>, u64)>,
     queued: HashSet<u64>,
-    /// `BUDGET` spans every layout of one frame.
-    spent: (u64, Duration),
 }
 
 impl Cache {
@@ -319,13 +317,15 @@ pub fn highlights(ui: &egui::Ui, source: &str, parsed: &Markdown) -> Vec<Token> 
     let started = Instant::now();
     let dark = ui.visuals().dark_mode;
     let pass = ui.ctx().cumulative_pass_nr();
-    let budget = {
-        let mut cache = cache();
-        if cache.spent.0 != pass {
-            cache.spent = (pass, Duration::ZERO);
+    // `BUDGET` spans every layout of one frame of this context.
+    let spent_id = egui::Id::new("highlight-budget");
+    let budget = ui.ctx().data_mut(|data| {
+        let spent = data.get_temp_mut_or_default::<(u64, Duration)>(spent_id);
+        if spent.0 != pass {
+            *spent = (pass, Duration::ZERO);
         }
-        BUDGET.saturating_sub(cache.spent.1)
-    };
+        BUDGET.saturating_sub(spent.1)
+    });
     let mut result = Vec::new();
     for block in &parsed.code_blocks {
         let Some(range) = block.content_range(source) else {
@@ -361,7 +361,9 @@ pub fn highlights(ui: &egui::Ui, source: &str, parsed: &Markdown) -> Vec<Token> 
             color: token.color,
         }));
     }
-    cache().spent.1 += started.elapsed();
+    ui.ctx().data_mut(|data| {
+        data.get_temp_mut_or_default::<(u64, Duration)>(spent_id).1 += started.elapsed();
+    });
     result
 }
 
