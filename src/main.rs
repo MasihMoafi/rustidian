@@ -1,3 +1,5 @@
+mod agent;
+mod agent_ui;
 mod app;
 mod callout_ui;
 mod code_ui;
@@ -5,8 +7,14 @@ mod diagrams;
 mod editor_ui;
 mod file_move_ui;
 mod file_tree;
+mod graph_animation;
 mod graph_ui;
 mod image_view;
+#[cfg(unix)]
+mod instance;
+mod math_inline;
+mod math_ui;
+mod page_pan;
 mod page_preview;
 mod preview;
 mod properties_ui;
@@ -71,6 +79,18 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    #[cfg(unix)]
+    let instance = {
+        let requested = first
+            .as_ref()
+            .map(|input| std::path::absolute(input).unwrap_or_else(|_| PathBuf::from(input)));
+        if instance::hand_off(requested.as_deref()) {
+            return Ok(());
+        }
+        instance::Instance::claim()
+    };
+    #[cfg(unix)]
+    let socket = instance.as_ref().map(|instance| instance.path.clone());
     let default_vault = rustidian::vaults::default_vault();
     let input = first
         .map(PathBuf::from)
@@ -105,16 +125,21 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         rustidian::APP_NAME,
         options,
         Box::new(move |cc| {
-            Ok(Box::new(app::NotesApp::new(
-                cc,
-                &root,
-                started,
-                startup_document,
-            )))
+            let mut app = app::NotesApp::new(cc, &root, started, startup_document);
+            #[cfg(unix)]
+            {
+                app.launches = instance.map(|instance| instance.serve(cc.egui_ctx.clone()));
+            }
+            Ok(Box::new(app))
         }),
-    )
+    );
+    #[cfg(unix)]
+    if let Some(socket) = socket {
+        let _ = std::fs::remove_file(socket);
+    }
+    result
 }

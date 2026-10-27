@@ -61,3 +61,21 @@ The exact app-font metric regression failed in Actions39758705958; it remains
 unchanged to verify the repair. Emoji sequences, original marker pixels and
 text presentation retain actual shaping/atlas tests. This is a local correction,
 not an upstream release claim.
+
+Typing performance (27 Oct): `TextEdit` events no longer lay out the galley after
+each typed character, only before an event that reads it (cursor keys, IME,
+AccessKit) and once after the batch. Rustidian's layouter reparses Markdown, so a
+frame of queued keystrokes in an 86 KB note cost one full layout per character.
+The press and release of a character key around its text (no modifier but Shift,
+not a cursor, editing or return key) do not read it either; laying out before
+them still cost one layout per character (64 characters: a 500 ms frame).
+
+Incremental paragraph layout (27 Oct): `FontsView::layout_job_incremental` lays a
+job out paragraph by paragraph like `layout_job`'s split path, but takes the
+`ParagraphLayout` it returned last time and reuses the galley of every paragraph
+whose text and sections are unchanged, without hashing the whole job or the
+unchanged paragraphs. `FontsView::layout_generation` changes whenever a new
+`Fonts` is built or the galley caches are cleared, so an application holding
+galleys across passes knows when they stopped being valid. Rustidian's editor
+uses both to lay out one paragraph per keystroke in a large note; a crate test
+compares the result of random edits with `layout_job` and checks paragraph reuse.

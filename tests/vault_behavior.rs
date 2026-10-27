@@ -310,6 +310,40 @@ fn wiki_links_ignore_inline_code_and_escaped_openers() {
     );
 }
 
+#[test]
+fn autosave_writes_on_its_thread_and_text_typed_meanwhile_stays_unsaved() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("Note.md");
+    fs::write(&path, "original").unwrap();
+    let mut vault = Vault::open(dir.path()).unwrap();
+    let mut document = vault.read(Path::new("Note.md")).unwrap();
+    document.text = "first edit".into();
+    let mut writer = rustidian::autosave::Writer::default();
+    writer.submit(7, vault.prepare_save(&document).unwrap(), || {});
+    assert!(writer.busy(7));
+    document.text.push_str(" and more");
+    let mut finished = writer.wait();
+    assert!(!writer.busy(7));
+    let done = finished.pop().unwrap();
+    assert!(finished.is_empty() && done.tab == 7);
+    done.result.unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "first edit");
+    vault.commit_save(&mut document, done.save.text);
+    assert_eq!(document.saved_text(), Some("first edit"));
+    assert!(document.dirty());
+    assert_eq!(vault.notes[0].text, "first edit");
+    vault.save(&mut document).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "first edit and more");
+
+    document.text = "mine".into();
+    let pending = vault.prepare_save(&document).unwrap();
+    fs::write(&path, "theirs").unwrap();
+    writer.submit(7, pending, || {});
+    let error = writer.wait().pop().unwrap().result.unwrap_err();
+    assert!(error.contains("changed outside"), "{error}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+}
+
 #[cfg(unix)]
 #[test]
 fn ignores_and_refuses_symlink_files_and_preserves_save_permissions() {

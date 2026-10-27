@@ -17,6 +17,54 @@ pub enum FileAction {
     Bookmark(PathBuf),
 }
 
+// One focus owner survives virtualization and note replacement in every sidebar list.
+pub fn note_list_id() -> egui::Id {
+    egui::Id::unique("sidebar-note-navigation")
+}
+
+pub fn reveal_note_row(ui: &egui::Ui, path: &Path, rect: egui::Rect) {
+    let key = note_list_id().with("reveal");
+    if ui
+        .ctx()
+        .data(|data| data.get_temp::<PathBuf>(key))
+        .as_deref()
+        == Some(path)
+    {
+        if rect.top() >= ui.clip_rect().top() && rect.bottom() <= ui.clip_rect().bottom() {
+            ui.ctx().data_mut(|data| data.remove::<PathBuf>(key));
+        } else {
+            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+            ui.ctx().request_repaint();
+        }
+    }
+}
+
+pub fn note_list_key(ui: &egui::Ui) -> Option<egui::Key> {
+    let id = note_list_id();
+    if !ui.memory(|memory| memory.has_focus(id)) || egui::Popup::is_any_open(ui.ctx()) {
+        return None;
+    }
+    ui.memory_mut(|memory| {
+        memory.set_focus_lock_filter(
+            id,
+            egui::EventFilter {
+                vertical_arrows: true,
+                ..Default::default()
+            },
+        )
+    });
+    crate::ui_probe::record(ui.ctx(), "sidebar-list-focused", ui.max_rect());
+    [
+        egui::Key::ArrowUp,
+        egui::Key::ArrowDown,
+        egui::Key::Home,
+        egui::Key::End,
+        egui::Key::Enter,
+    ]
+    .into_iter()
+    .find(|key| ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, *key)))
+}
+
 #[derive(Default)]
 pub struct Tree {
     folders: BTreeMap<String, Tree>,
@@ -102,6 +150,7 @@ impl Tree {
         tree
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &self,
         ui: &mut egui::Ui,
@@ -110,6 +159,7 @@ impl Tree {
         reverse: bool,
         collapse_epoch: u64,
         reveal_folder: Option<&Path>,
+        visible_files: &mut Option<Vec<PathBuf>>,
     ) -> (Option<FileAction>, bool) {
         let mut open = None;
         let mut revealed = false;
@@ -154,6 +204,7 @@ impl Tree {
                     ui.cursor().min,
                     egui::vec2(ui.available_width(), 31.0),
                 ));
+            let first_child = visible_files.as_ref().map_or(0, Vec::len);
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
                     .size(13.0)
@@ -169,13 +220,26 @@ impl Tree {
             .icon(theme::disclosure)
             .default_open(false)
             .show(ui, |ui| {
-                let (action, visible) =
-                    folder.show(ui, &id, active, reverse, collapse_epoch, reveal_folder);
+                let (action, visible) = folder.show(
+                    ui,
+                    &id,
+                    active,
+                    reverse,
+                    collapse_epoch,
+                    reveal_folder,
+                    visible_files,
+                );
                 if action.is_some() {
                     open = action;
                 }
                 revealed |= visible;
             });
+            if egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                .is_some_and(|state| !state.is_open())
+                && let Some(paths) = visible_files.as_mut()
+            {
+                paths.truncate(first_child);
+            }
             ui.visuals_mut().collapsing_header_frame = framed;
             ui.visuals_mut().widgets.inactive.bg_fill = idle_fill;
             ui.visuals_mut().widgets.inactive.bg_stroke = idle_stroke;
@@ -228,6 +292,33 @@ impl Tree {
             .max(0.0) as usize)
             .saturating_add(1))
         .clamp(first, self.files.len());
+        if let Some(paths) = visible_files.as_mut() {
+            if reverse {
+                paths.extend(self.files.iter().rev().cloned());
+            } else {
+                paths.extend(self.files.iter().cloned());
+            }
+        }
+        let target = ui
+            .ctx()
+            .data(|data| data.get_temp::<PathBuf>(note_list_id().with("reveal")));
+        if let Some(target) = target
+            && let Some(index) = self.files.iter().position(|path| *path == target)
+        {
+            let slot = if reverse {
+                self.files.len() - 1 - index
+            } else {
+                index
+            };
+            reveal_note_row(
+                ui,
+                &target,
+                egui::Rect::from_min_size(
+                    egui::pos2(ui.cursor().left(), top + slot as f32 * row_height),
+                    egui::vec2(ui.available_width(), 31.0),
+                ),
+            );
+        }
         ui.add_space(first as f32 * row_height);
         for slot in first..last {
             let index = if reverse {

@@ -1,4 +1,5 @@
 pub mod assets;
+pub mod autosave;
 pub mod bookmarks;
 pub mod callouts;
 pub mod commands;
@@ -8,6 +9,7 @@ pub mod graph;
 pub mod graph_layout;
 pub mod highlight;
 pub mod inline_style;
+pub mod math;
 pub mod metadata;
 pub mod native_picker;
 pub mod navigation;

@@ -1236,7 +1236,46 @@ fn events(
         ImeCompositionCursorRange(CCursorRange),
     }
 
+    // Typed characters never read the galley; only cursor movement does. Laying
+    // out once per character made each frame of queued keystrokes in a large
+    // document cost one full layout per character (Rustidian, 27 Oct). Each
+    // character also arrives between its key's press and release, and neither
+    // reads the galley unless the key moves the cursor or edits (27 Oct: 64
+    // queued characters still laid the note out 64 times, a 500 ms frame).
+    let keeps_galley = |event: &Event| match event {
+        Event::Text(_) | Event::Key { pressed: false, .. } => true,
+        Event::Key { key, modifiers, .. } => {
+            (modifiers.is_none() || *modifiers == Modifiers::SHIFT)
+                && return_key.is_none_or(|shortcut| shortcut.logical_key != *key)
+                && !matches!(
+                    key,
+                    Key::ArrowDown
+                        | Key::ArrowLeft
+                        | Key::ArrowRight
+                        | Key::ArrowUp
+                        | Key::Escape
+                        | Key::Tab
+                        | Key::Backspace
+                        | Key::Enter
+                        | Key::Insert
+                        | Key::Delete
+                        | Key::Home
+                        | Key::End
+                        | Key::PageUp
+                        | Key::PageDown
+                        | Key::Copy
+                        | Key::Cut
+                        | Key::Paste
+                )
+        }
+        _ => false,
+    };
+    let mut galley_stale = false;
     for event in &events {
+        if galley_stale && !keeps_galley(event) {
+            *galley = layouter(ui, text, wrap_width);
+            galley_stale = false;
+        }
         let separate_edit = matches!(event, Event::Paste(value) if !value.is_empty())
             || (!cursor_range.is_empty() && matches!(event, Event::Cut));
         // Selection replacement starts a typing group. Do not checkpoint its first
@@ -1500,7 +1539,11 @@ fn events(
             any_change = true;
 
             // Layout again to avoid frame delay, and to keep `text` and `galley` in sync.
-            *galley = layouter(ui, text, wrap_width);
+            if matches!(event, Event::Text(_)) {
+                galley_stale = true;
+            } else {
+                *galley = layouter(ui, text, wrap_width);
+            }
 
             // Set cursor_range using new galley:
             match cursor_mutation {
@@ -1528,6 +1571,9 @@ fn events(
         }
     }
 
+    if galley_stale {
+        *galley = layouter(ui, text, wrap_width);
+    }
     state.cursor.set_char_range(Some(cursor_range));
 
     state.undoer.lock().feed_state(

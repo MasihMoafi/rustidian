@@ -31,6 +31,8 @@ pub struct Tab {
     pub view: View,
     pub pinned: bool,
     editing_view: View,
+    // A plain-text document borrows the tab in Source mode; the note's modes return after it.
+    note_views: Option<(View, View)>,
     pub image_scale: ImageScale,
     pub edited_at: Option<Instant>,
     pub autosave_failed: bool,
@@ -46,6 +48,7 @@ pub struct ClosedTab {
     history: History,
     view: View,
     editing_view: View,
+    note_views: Option<(View, View)>,
     pinned: bool,
     image_scale: ImageScale,
     saved_fingerprint: Option<u64>,
@@ -80,6 +83,7 @@ impl ClosedTab {
         tab.history = self.history;
         tab.view = self.view;
         tab.editing_view = self.editing_view;
+        tab.note_views = self.note_views;
         tab.pinned = self.pinned;
         tab.image_scale = self.image_scale;
         tab
@@ -106,6 +110,7 @@ impl Tab {
         } else {
             View::Live
         };
+        let note_views = document.is_plain_text().then_some((View::Live, View::Live));
         let view = if document.is_image() {
             View::Read
         } else {
@@ -122,6 +127,7 @@ impl Tab {
             view,
             pinned: false,
             editing_view,
+            note_views,
             image_scale: ImageScale::Fit,
             edited_at: None,
             autosave_failed: false,
@@ -157,6 +163,7 @@ impl Tab {
             history: self.history,
             view: self.view,
             editing_view: self.editing_view,
+            note_views: self.note_views,
             pinned: self.pinned,
             image_scale: self.image_scale,
             saved_fingerprint: fingerprint,
@@ -182,12 +189,27 @@ impl Tab {
         if self.document.path != document.path {
             self.editor_path = document.path.clone();
         }
+        if self.document.is_plain_text()
+            && !document.is_plain_text()
+            && let Some((view, editing_view)) = self.note_views.take()
+        {
+            self.view = view;
+            self.editing_view = editing_view;
+        }
         if document.is_image() {
             self.view = View::Read;
             if self.document.path != document.path {
                 self.image_scale = ImageScale::Fit;
             }
         } else if document.is_plain_text() && self.document.path != document.path {
+            if !self.document.is_plain_text() {
+                let view = if self.document.is_image() || self.view == View::Graph {
+                    self.editing_view
+                } else {
+                    self.view
+                };
+                self.note_views = Some((view, self.editing_view));
+            }
             self.view = View::Source;
             self.editing_view = View::Source;
         } else if self.document.is_image() {

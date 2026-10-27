@@ -66,6 +66,7 @@ pub fn header(
             ui.add(crate::theme::icon_image(icon, ink));
             let galley = title.layout_color(ui, true, width, Some(ink));
             let response = ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::hover()));
+            title.paint(ui, &galley, response.rect.min);
             if let Some(pointer) = ui
                 .ctx()
                 .pointer_hover_pos()
@@ -98,6 +99,8 @@ pub fn header(
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &model.title));
     crate::ui_probe::record(ui.ctx(), format!("callout:{ordinal}"), response.rect);
-    let link = response.clicked().then_some(hovered_link).flatten();
+    let link = crate::theme::link_clicked(&response)
+        .then_some(hovered_link)
+        .flatten();
     (response, link)
 }

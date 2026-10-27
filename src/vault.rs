@@ -142,6 +142,10 @@ pub struct Vault {
 
 impl Vault {
     pub fn open(root: &Path) -> Result<Self> {
+        Self::open_cancellable(root, || false)
+    }
+
+    pub fn open_cancellable(root: &Path, cancelled: impl Fn() -> bool) -> Result<Self> {
         let root = root
             .canonicalize()
             .map_err(|e| format!("Cannot open vault: {e}"))?;
@@ -159,7 +163,7 @@ impl Vault {
             names: HashMap::new(),
             incoming: std::sync::OnceLock::new(),
         };
-        vault.refresh()?;
+        vault.refresh_cancellable(cancelled)?;
         Ok(vault)
     }
 
@@ -172,6 +176,10 @@ impl Vault {
     }
 
     pub fn refresh(&mut self) -> Result<()> {
+        self.refresh_cancellable(|| false)
+    }
+
+    fn refresh_cancellable(&mut self, cancelled: impl Fn() -> bool) -> Result<()> {
         if !self.root.is_dir() {
             return Err("The vault folder is no longer available.".into());
         }
@@ -187,6 +195,9 @@ impl Vault {
                 entry.depth() == 0 || !is_ignored_path(Path::new(entry.file_name()))
             });
         for entry in entries {
+            if cancelled() {
+                return Err("Opening cancelled.".into());
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -347,46 +358,47 @@ impl Vault {
         if document.is_image() {
             return Err("Images cannot be edited as Markdown.".into());
         }
-        let absolute = self.safe_path(&document.path, document.original.is_none())?;
-        let permissions = if let Some(original) = &document.original {
-            let current = fs::read_to_string(&absolute).map_err(|e| {
-                format!("Note was removed or cannot be read. Your changes are still open: {e}")
-            })?;
-            if &current != original {
-                return Err("This note changed outside Rustidian. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
-            }
-            Some(
-                fs::metadata(&absolute)
-                    .map_err(|e| e.to_string())?
-                    .permissions(),
-            )
-        } else {
-            if absolute.exists() {
-                return Err("A note already exists at this path. Choose a different name.".into());
-            }
-            None
-        };
-        let temporary = prepare_file(&absolute, document.text.as_bytes(), permissions)?;
-        if document.original.is_none() {
-            temporary
-                .persist_noclobber(&absolute)
-                .map_err(|e| format!("Cannot create note: {}", e.error))?;
-        } else {
-            // Recheck after writing the temporary file to catch changes during a long write.
-            if fs::read_to_string(&absolute).ok().as_ref() != document.original.as_ref() {
-                return Err(
-                    "This note changed outside Rustidian during save. Nothing was overwritten."
-                        .into(),
-                );
-            }
-            temporary
-                .persist(&absolute)
-                .map_err(|e| format!("Cannot finish save: {}", e.error))?;
+        if document.original.is_some() {
+            let pending = self.prepare_save(document)?;
+            pending.write()?;
+            self.commit_save(document, pending.text);
+            return Ok(());
         }
-        document.original = Some(document.text.clone());
-        document.saved_revision = Document::next_revision();
-        self.index_note(document.path.clone(), document.text.clone());
+        let absolute = self.safe_path(&document.path, true)?;
+        if absolute.exists() {
+            return Err("A note already exists at this path. Choose a different name.".into());
+        }
+        prepare_file(&absolute, document.text.as_bytes(), None)?
+            .persist_noclobber(&absolute)
+            .map_err(|e| format!("Cannot create note: {}", e.error))?;
+        self.commit_save(document, document.text.clone());
         Ok(())
+    }
+
+    /// The checks and bytes for saving a note that is already on disk. Its
+    /// `write` borrows nothing from the vault, so autosave runs it off the UI thread.
+    pub fn prepare_save(&self, document: &Document) -> Result<PendingSave> {
+        if document.is_image() {
+            return Err("Images cannot be edited as Markdown.".into());
+        }
+        let original = document
+            .original
+            .clone()
+            .ok_or("This note is not on disk yet.")?;
+        Ok(PendingSave {
+            absolute: self.safe_path(&document.path, false)?,
+            path: document.path.clone(),
+            text: document.text.clone(),
+            original,
+        })
+    }
+
+    /// Record that `text`, written by `save` or `PendingSave::write`, is now the
+    /// document's saved state.
+    pub fn commit_save(&mut self, document: &mut Document, text: String) {
+        document.original = Some(text.clone());
+        document.saved_revision = Document::next_revision();
+        self.index_note(document.path.clone(), text);
     }
 
     fn index_note(&mut self, path: PathBuf, text: String) {
@@ -651,6 +663,46 @@ impl Vault {
     }
 }
 
+/// A save of an existing note: `Vault::prepare_save`, `write`, then `Vault::commit_save`.
+pub struct PendingSave {
+    pub path: PathBuf,
+    pub text: String,
+    absolute: PathBuf,
+    original: String,
+}
+
+impl PendingSave {
+    /// The saved text the write expects to replace.
+    pub fn original(&self) -> &str {
+        &self.original
+    }
+
+    /// Atomically replaces the note, keeping its permissions, unless it no longer
+    /// holds the text it was loaded or last saved with.
+    pub fn write(&self) -> Result<()> {
+        let current = fs::read_to_string(&self.absolute).map_err(|e| {
+            format!("Note was removed or cannot be read. Your changes are still open: {e}")
+        })?;
+        if current != self.original {
+            return Err("This note changed outside Rustidian. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
+        }
+        let permissions = fs::metadata(&self.absolute)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        let temporary = prepare_file(&self.absolute, self.text.as_bytes(), Some(permissions))?;
+        // Recheck after writing the temporary file to catch changes during a long write.
+        if fs::read_to_string(&self.absolute).ok().as_ref() != Some(&self.original) {
+            return Err(
+                "This note changed outside Rustidian during save. Nothing was overwritten.".into(),
+            );
+        }
+        temporary
+            .persist(&self.absolute)
+            .map_err(|e| format!("Cannot finish save: {}", e.error))?;
+        Ok(())
+    }
+}
+
 fn prepare_file(
     absolute: &Path,
     bytes: &[u8],
@@ -822,6 +874,14 @@ fn prose_lines(text: &str) -> impl Iterator<Item = &str> {
 }
 
 pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    wiki_spans_outside(text, &crate::math::spans(text))
+}
+
+/// `wiki_spans` for a caller that already parsed `text`'s math.
+pub fn wiki_spans_outside(
+    text: &str,
+    maths: &[crate::math::Span],
+) -> Vec<(std::ops::Range<usize>, String)> {
     let mut links = Vec::new();
     for line in prose_lines(text) {
         let offset = line.as_ptr() as usize - text.as_ptr() as usize;
@@ -850,7 +910,11 @@ pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
             {
                 let end = cursor + 2 + end;
                 let target = line[cursor + 2..end].trim();
-                if !target.is_empty() {
+                if !target.is_empty()
+                    && !maths.iter().any(|math| {
+                        math.range.start < offset + end + 2 && math.range.end > offset + cursor
+                    })
+                {
                     // Markdown tables escape the alias separator: [[Note\|Label]].
                     links.push((
                         offset + cursor..offset + end + 2,

@@ -6,6 +6,41 @@ mod emoji_glyphs;
 #[path = "palette.rs"]
 pub mod palette;
 
+#[path = "system_theme.rs"]
+mod system_theme;
+pub use system_theme::SystemTheme;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    pub fn from_dark(dark: bool) -> Self {
+        if dark { Self::Dark } else { Self::Light }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+
+    fn preference(self) -> egui::ThemePreference {
+        match self {
+            Self::System => egui::ThemePreference::System,
+            Self::Dark => egui::ThemePreference::Dark,
+            Self::Light => egui::ThemePreference::Light,
+        }
+    }
+}
+
 pub const ACCENT: Color32 = Color32::from_rgb(101, 183, 182);
 pub const DARK_BG: Color32 = Color32::from_rgb(23, 27, 29);
 pub const DARK_SIDE: Color32 = Color32::from_rgb(17, 21, 23);
@@ -99,6 +134,23 @@ pub fn document_size(ui: &egui::Ui, size: f32) -> f32 {
     size * (TextStyle::Body.resolve(ui.style()).size / f32::from(DEFAULT_DOCUMENT_FONT_SIZE))
 }
 
+pub fn prose_size(ui: &egui::Ui, heading: u8) -> f32 {
+    document_size(
+        ui,
+        match heading {
+            1 => 32.436,
+            2 => 28.836,
+            3 => 25.632,
+            4.. => 22.788,
+            _ => 18.0,
+        },
+    )
+}
+
+pub fn link_clicked(response: &egui::Response) -> bool {
+    response.clicked() || response.clicked_by(egui::PointerButton::Middle)
+}
+
 pub fn hover_fill(ui: &egui::Ui) -> Color32 {
     ui.visuals().widgets.hovered.weak_bg_fill
 }
@@ -167,11 +219,22 @@ pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
 }
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    apply_appearance(ctx, Appearance::from_dark(dark));
+}
+
+pub fn apply_appearance(ctx: &egui::Context, appearance: Appearance) {
+    ctx.set_theme(appearance.preference());
     palette::select(ctx, palette::current(ctx));
     ctx.options_mut(|options| {
         options.input_options.line_scroll_speed = 150.0;
         options.input_options.wheel_smoothing = false;
     });
+    for dark in [false, true] {
+        apply_style(ctx, dark);
+    }
+}
+
+fn apply_style(ctx: &egui::Context, dark: bool) {
     let mut visuals = if dark {
         Visuals::dark()
     } else {
@@ -250,8 +313,8 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.3);
         visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
     }
-    ctx.set_visuals(visuals);
-    ctx.all_styles_mut(|style| {
+    ctx.style_mut_of(egui::Theme::from_dark_mode(dark), |style| {
+        style.visuals = visuals;
         style.animation_time = 0.12;
         style.scroll_animation = egui::style::ScrollAnimation::none();
         interface_fonts(style);
@@ -799,6 +862,13 @@ pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
         .corner_radius(10)
 }
 
+/// A small floating card, like Obsidian's notices.
+pub fn notice_frame(ctx: &egui::Context) -> egui::Frame {
+    egui::Frame::popup(&ctx.global_style())
+        .inner_margin(egui::Margin::same(12))
+        .corner_radius(8)
+}
+
 pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui::Response {
     ui.horizontal(|ui| {
         ui.heading(title);
@@ -927,8 +997,63 @@ pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool)
     })
 }
 
+/// The drop-down arrow shared by every `ComboBox`.
+pub fn combo_chevron(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    visuals: &egui::style::WidgetVisuals,
+    open: bool,
+) {
+    icon_image(Icon::Disclosure, visuals.text_color())
+        .rotate(
+            if open {
+                -std::f32::consts::FRAC_PI_2
+            } else {
+                std::f32::consts::FRAC_PI_2
+            },
+            egui::Vec2::splat(0.5),
+        )
+        .paint_at(
+            ui,
+            egui::Rect::from_center_size(rect.center(), egui::vec2(12.0, 12.0)),
+        );
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn system_appearance_changes_both_custom_styles_and_explicit_choices_ignore_os_changes() {
+        use super::{Appearance, apply_appearance};
+        use eframe::egui::{self, Theme};
+        let ctx = egui::Context::default();
+        for appearance in [Appearance::System, Appearance::Dark, Appearance::Light] {
+            apply_appearance(&ctx, appearance);
+            for system_theme in [Theme::Light, Theme::Dark, Theme::Light] {
+                ctx.run_ui(
+                    egui::RawInput {
+                        system_theme: Some(system_theme),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let dark = match appearance {
+                            Appearance::System => system_theme == Theme::Dark,
+                            Appearance::Dark => true,
+                            Appearance::Light => false,
+                        };
+                        assert_eq!(ui.visuals().dark_mode, dark);
+                        assert_eq!(
+                            ui.visuals().window_fill,
+                            super::palette::Palette::Teal.background(dark)
+                        );
+                        assert_eq!(egui::TextStyle::Button.resolve(ui.style()).size, 14.0);
+                        assert_eq!(ui.spacing().scroll.bar_width, 6.0);
+                    },
+                )
+                .drop_without_applying_deltas();
+            }
+        }
+    }
+
     #[test]
     fn document_font_controls_change_glyphs_without_resizing_other_ui() {
         use eframe::egui;

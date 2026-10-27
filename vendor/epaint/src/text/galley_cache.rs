@@ -246,6 +246,85 @@ impl GalleyCache {
         self.cache.len()
     }
 
+    /// See `FontsView::layout_job_incremental`.
+    pub(super) fn layout_incremental(
+        &mut self,
+        fonts: &mut FontsImpl,
+        pixels_per_point: f32,
+        mut job: LayoutJob,
+        previous: Option<&ParagraphLayout>,
+    ) -> (Arc<Galley>, ParagraphLayout) {
+        if job.wrap.max_width.is_finite() {
+            job.wrap.max_width = job.wrap.max_width.round(); // As in `layout_internal`.
+        }
+        let Some(new) = paragraphs(&job).filter(|_| {
+            should_cache_each_paragraph_individually(&job) && job.wrap.max_rows == usize::MAX
+        }) else {
+            let (_, galley) = self.layout_internal(fonts, job, pixels_per_point, false);
+            let job = Arc::clone(&galley.job);
+            return (
+                galley,
+                ParagraphLayout {
+                    job,
+                    paragraphs: Vec::new(),
+                    galleys: Vec::new(),
+                },
+            );
+        };
+        let job = Arc::new(job);
+        let previous = previous
+            .filter(|previous| {
+                !previous.paragraphs.is_empty()
+                    && previous.paragraphs.len() == previous.galleys.len()
+                    && same_settings(&previous.job, &job)
+            })
+            .map(|previous| (&*previous.job, &previous.paragraphs, &previous.galleys));
+        let (prefix, suffix) = previous.as_ref().map_or((0, 0), |(old_job, old, _)| {
+            let same = |i: usize, j: usize| paragraph_eq(old_job, &old[i], &job, &new[j]);
+            let prefix = (0..old.len().min(new.len()))
+                .take_while(|&i| same(i, i))
+                .count();
+            let suffix = (0..old.len().min(new.len()) - prefix)
+                .take_while(|&k| same(old.len() - 1 - k, new.len() - 1 - k))
+                .count();
+            (prefix, suffix)
+        });
+        let mut child_galleys = Vec::with_capacity(new.len());
+        for (index, paragraph) in new.iter().enumerate() {
+            if let Some((_, old, old_galleys)) = &previous
+                && let Some(old_index) = if index < prefix {
+                    Some(index)
+                } else if index >= new.len() - suffix {
+                    Some(old.len() - (new.len() - index))
+                } else {
+                    None
+                }
+            {
+                child_galleys.push(Arc::clone(&old_galleys[old_index]));
+                continue;
+            }
+            let paragraph_job = paragraph_job(&job, paragraph, index == 0, usize::MAX);
+            child_galleys.push(Arc::new(layout(
+                fonts,
+                pixels_per_point,
+                Arc::new(paragraph_job),
+            )));
+        }
+        let galley = Arc::new(Galley::concat(
+            Arc::clone(&job),
+            &child_galleys,
+            pixels_per_point,
+        ));
+        (
+            galley,
+            ParagraphLayout {
+                job,
+                paragraphs: new,
+                galleys: child_galleys,
+            },
+        )
+    }
+
     /// Must be called once per frame to clear the [`Galley`] cache.
     pub fn flush_cache(&mut self) {
         let current_generation = self.generation;
@@ -253,6 +332,156 @@ impl GalleyCache {
             cached.last_used == current_generation // only keep those that were used this frame
         });
         self.generation = self.generation.wrapping_add(1);
+    }
+}
+
+/// A job laid out paragraph by paragraph by `FontsView::layout_job_incremental`,
+/// to pass back so the next layout of an edited job reuses its unchanged paragraphs.
+pub struct ParagraphLayout {
+    job: Arc<LayoutJob>,
+    paragraphs: Vec<Paragraph>,
+    galleys: Vec<Arc<Galley>>,
+}
+
+impl ParagraphLayout {
+    /// The job this laid out.
+    pub fn job(&self) -> &Arc<LayoutJob> {
+        &self.job
+    }
+
+    /// One galley per paragraph; a reused paragraph keeps its `Arc`.
+    pub fn galleys(&self) -> &[Arc<Galley>] {
+        &self.galleys
+    }
+}
+
+/// One paragraph of a job: its byte range (without the `\n`, except for a text
+/// ending in one) and the sections `paragraph_job` gives it, as
+/// `layout_each_paragraph_individually` splits them.
+pub(super) struct Paragraph {
+    start: usize,
+    end: usize,
+    sections: core::ops::Range<usize>,
+}
+
+/// The paragraphs of `job`, or `None` if a paragraph's sections are not one
+/// contiguous run (only possible with empty sections), which
+/// `layout_each_paragraph_individually` tolerates but this cannot describe.
+fn paragraphs(job: &LayoutJob) -> Option<Vec<Paragraph>> {
+    let mut paragraphs = Vec::new();
+    let mut current_section = 0;
+    let mut start = 0;
+    while start < job.text.len() {
+        let mut end = job.text[start..]
+            .find('\n')
+            .map_or(job.text.len(), |i| start + i);
+        if end == job.text.len() - 1 && job.text.ends_with('\n') {
+            end += 1;
+        }
+        let mut first = None;
+        let mut last = None;
+        for (index, section) in job.sections.iter().enumerate().skip(current_section) {
+            let section_range = &section.byte_range;
+            if section_range.end <= ByteIndex(start) {
+                current_section += 1;
+                if first.is_some() {
+                    return None;
+                }
+            } else if ByteIndex(end) < section_range.start {
+                break;
+            } else {
+                first.get_or_insert(index);
+                last = Some(index);
+            }
+        }
+        let sections = match (first, last) {
+            (Some(first), Some(last)) => first..last + 1,
+            _ => 0..0,
+        };
+        paragraphs.push(Paragraph {
+            start,
+            end,
+            sections,
+        });
+        start = end + 1;
+    }
+    Some(paragraphs)
+}
+
+/// Everything besides text and sections that shapes a paragraph's sub-job.
+fn same_settings(a: &LayoutJob, b: &LayoutJob) -> bool {
+    a.wrap == b.wrap
+        && a.break_on_newline == b.break_on_newline
+        && a.halign == b.halign
+        && a.justify == b.justify
+        && a.first_row_min_height == b.first_row_min_height
+        && a.round_output_to_gui == b.round_output_to_gui
+        && a.keep_trailing_whitespace == b.keep_trailing_whitespace
+}
+
+/// A section as it appears in a paragraph's sub-job.
+fn relative_section<'s>(
+    section: &'s LayoutSection,
+    paragraph: &Paragraph,
+) -> (f32, core::ops::Range<usize>, &'s crate::text::TextFormat) {
+    let section_range = &section.byte_range;
+    let (start, end) = (paragraph.start, paragraph.end);
+    (
+        if ByteIndex(start) <= section_range.start {
+            section.leading_space
+        } else {
+            0.0
+        },
+        section_range.start.saturating_sub(start).0
+            ..(section_range.end.min(ByteIndex(end))).saturating_sub(start).0,
+        &section.format,
+    )
+}
+
+/// Whether two paragraphs of two jobs with the same settings produce the same sub-job.
+fn paragraph_eq(a_job: &LayoutJob, a: &Paragraph, b_job: &LayoutJob, b: &Paragraph) -> bool {
+    a_job.text[a.start..a.end] == b_job.text[b.start..b.end]
+        && a.sections.len() == b.sections.len()
+        && a_job.sections[a.sections.clone()]
+            .iter()
+            .zip(&b_job.sections[b.sections.clone()])
+            .all(|(x, y)| relative_section(x, a) == relative_section(y, b))
+}
+
+/// The sub-job `layout_each_paragraph_individually` builds for one paragraph.
+fn paragraph_job(
+    job: &LayoutJob,
+    paragraph: &Paragraph,
+    is_first_paragraph: bool,
+    max_rows_remaining: usize,
+) -> LayoutJob {
+    LayoutJob {
+        text: job.text[paragraph.start..paragraph.end].to_owned(),
+        wrap: crate::text::TextWrapping {
+            max_rows: max_rows_remaining,
+            ..job.wrap
+        },
+        sections: job.sections[paragraph.sections.clone()]
+            .iter()
+            .map(|section| {
+                let (leading_space, range, format) = relative_section(section, paragraph);
+                LayoutSection {
+                    leading_space,
+                    byte_range: ByteIndex(range.start)..ByteIndex(range.end),
+                    format: format.clone(),
+                }
+            })
+            .collect(),
+        break_on_newline: job.break_on_newline,
+        halign: job.halign,
+        justify: job.justify,
+        first_row_min_height: if is_first_paragraph {
+            job.first_row_min_height
+        } else {
+            0.0
+        },
+        round_output_to_gui: job.round_output_to_gui,
+        keep_trailing_whitespace: job.keep_trailing_whitespace,
     }
 }
 

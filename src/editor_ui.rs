@@ -34,9 +34,11 @@ pub struct Editor {
     pending_edit: Option<PendingEdit>,
     selection: Option<(u64, CCursorRange)>,
     source: String,
+    /// Bumped whenever `source` is replaced, so a cached layout can name its text.
+    source_version: u64,
     parsed: Markdown,
     sections: rustidian::folding::Sections,
-    folded_layout: Option<FoldedLayout>,
+    layout_cache: Option<LayoutCache>,
     tables: crate::table_ui::Tables,
     completion_key: String,
     completion_selected: usize,
@@ -96,6 +98,7 @@ pub fn record_document_edit(
         .unwrap_or_else(|| CCursorRange::one(CCursor::new(0)));
     let mut undoer = state.undoer();
     undoer.add_undo(&(range, before.text.clone()));
+    undoer.feed_state(ctx.input(|input| input.time), &(range, after.text.clone()));
     undoer.add_undo(&(range, after.text.clone()));
     state.set_undoer(undoer);
 }
@@ -147,23 +150,72 @@ enum Edit {
     Insert { text: String, caret_back: usize },
 }
 
+#[derive(Clone, PartialEq)]
 struct LiveImage {
     range: Range<usize>,
     block: Option<Range<usize>>,
     uri: String,
     size: egui::Vec2,
+    math: Option<usize>,
 }
 
 // Keep the original allocation alive so its pointer identifies the font
 // layout safely. One cached value bounds memory while avoiding row/mesh
 // cloning again on idle frames and repeated layout passes during typing.
-struct FoldedLayout {
-    original: Arc<egui::Galley>,
+/// The last galley with everything it was built from. Rebuilding the layout
+/// job for an unchanged note costs milliseconds in a large note, so a frame
+/// without edits (or a second layouter call in the same frame) reuses it.
+struct LayoutCache {
+    key: LayoutKey,
+    /// The font layout before folds, tables and images reshape it, by
+    /// paragraph: an edit lays out only the paragraphs it changed.
+    paragraphs: egui::text::ParagraphLayout,
+    galley: Arc<egui::Galley>,
+}
+
+#[derive(Clone, PartialEq)]
+struct LayoutKey {
+    version: u64,
+    width: f32,
     live: bool,
-    images: Vec<(Range<usize>, [u32; 2], bool)>,
+    plain_text: bool,
+    path: std::path::PathBuf,
+    active_line: Option<Range<usize>>,
+    matched: Option<Range<usize>>,
+    images: Vec<LiveImage>,
     hidden: Vec<Range<usize>>,
     tables: Vec<crate::table_ui::Placement>,
-    galley: Arc<egui::Galley>,
+    theme: ThemeKey,
+    syntax: u64,
+    /// Galleys point into the font atlas; a new atlas or scale needs new ones.
+    fonts: (u64, f32),
+}
+
+/// Everything `layout` reads from the theme.
+#[derive(Clone, PartialEq)]
+struct ThemeKey {
+    style: usize,
+    dark: bool,
+    scale: f32,
+    text: Color32,
+    weak: Color32,
+    code_background: Color32,
+    accent: Color32,
+}
+
+impl ThemeKey {
+    fn new(ui: &egui::Ui) -> Self {
+        let visuals = ui.visuals();
+        Self {
+            style: Arc::as_ptr(&ui.ctx().global_style()) as usize,
+            dark: visuals.dark_mode,
+            scale: crate::theme::document_size(ui, 1.0),
+            text: visuals.text_color(),
+            weak: visuals.weak_text_color(),
+            code_background: visuals.code_bg_color,
+            accent: visuals.hyperlink_color,
+        }
+    }
 }
 
 struct Decorations<'a> {
@@ -221,6 +273,7 @@ fn embedded_images(
     text: &str,
     vault: Option<&rustidian::vault::Vault>,
     from: &std::path::Path,
+    maths: &[rustidian::math::Span],
 ) -> Vec<LiveImage> {
     if !text.contains("![") {
         return Vec::new();
@@ -229,6 +282,11 @@ fn embedded_images(
     rustidian::assets::embedded_images(text)
         .into_iter()
         .filter_map(|image| {
+            if maths.iter().any(|math| {
+                math.range.start < image.range.end && math.range.end > image.range.start
+            }) {
+                return None;
+            }
             if text[image.range.clone()].contains('\n') {
                 return None;
             }
@@ -252,6 +310,7 @@ fn embedded_images(
                 block: None,
                 uri,
                 size: egui::vec2(width, height),
+                math: None,
             })
         })
         .collect()
@@ -265,7 +324,7 @@ fn live_images(
     parsed: &Markdown,
     active_line: Option<&Range<usize>>,
 ) -> Vec<LiveImage> {
-    let mut images = embedded_images(ui, text, vault, from);
+    let mut images = embedded_images(ui, text, vault, from, &parsed.maths);
     for block in &parsed.code_blocks {
         if !block.language.eq_ignore_ascii_case("mermaid")
             || active_line
@@ -283,6 +342,67 @@ fn live_images(
                 block: Some(block.range.clone()),
                 uri,
                 size,
+                math: None,
+            });
+        }
+    }
+    for (ordinal, math) in parsed.maths.iter().enumerate() {
+        if parsed
+            .callouts
+            .iter()
+            .any(|callout| callout.header.contains(&math.range.start))
+        {
+            continue;
+        }
+        if active_line
+            .is_some_and(|line| line.start < math.range.end && line.end >= math.range.start)
+        {
+            continue;
+        }
+        // Inline line breaks cannot be collapsed without moving editing positions.
+        if !math.display && text[math.range.clone()].contains('\n') {
+            continue;
+        }
+        let style = parsed
+            .spans
+            .get(
+                parsed
+                    .spans
+                    .partition_point(|span| span.range.end <= math.range.start),
+            )
+            .filter(|span| span.range.contains(&math.range.start))
+            .map(|span| span.style)
+            .unwrap_or_default();
+        let color = if let Some([r, g, b, a]) = style.html.color {
+            Color32::from_rgba_unmultiplied(r, g, b, a)
+        } else if style.link {
+            crate::theme::accent(ui)
+        } else if style.heading > 0 {
+            crate::theme::heading(ui, style.heading)
+        } else {
+            ui.visuals().text_color()
+        };
+        if let Ok(Some(formula)) = crate::math_ui::image(
+            ui,
+            &math.formula,
+            math.display,
+            crate::theme::prose_size(ui, style.heading),
+            color,
+        ) {
+            let scale = (ui.available_width().max(1.0) / formula.size.x).min(1.0);
+            let opening_end = text[math.range.clone()]
+                .find('\n')
+                .map_or(math.range.end, |offset| math.range.start + offset);
+            images.push(LiveImage {
+                range: if math.display {
+                    math.range.start..opening_end
+                } else {
+                    math.range.clone()
+                },
+                block: math.display.then(|| math.range.clone()),
+                uri: formula.uri,
+                size: formula.size * scale,
+                math: Some(ordinal),
             });
         }
     }
@@ -516,6 +636,21 @@ impl Editor {
 
     pub fn native_highlight(&mut self, tab: &Tab, color: rustidian::highlight::NativeColor) {
         self.edit(tab, Edit::NativeHighlight(color));
+    }
+
+    pub fn selected_text(&self, tab: &Tab) -> Option<String> {
+        let (_, selection) = self
+            .selection
+            .filter(|(id, range)| *id == tab.id() && !range.is_empty())?;
+        let range = selection.as_sorted_char_range();
+        Some(
+            tab.document
+                .text
+                .chars()
+                .skip(range.start.0)
+                .take(range.end.0 - range.start.0)
+                .collect(),
+        )
     }
 
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
@@ -855,6 +990,7 @@ impl Editor {
             self.parsed = Markdown::parse(&tab.document.text);
             self.sections = rustidian::folding::Sections::new(&tab.document.text, &self.parsed);
             self.source.clone_from(&tab.document.text);
+            self.source_version += 1;
         }
         let folds_id = id.with("editing-folds");
         let callouts_id = id.with("callout-folds");
@@ -886,15 +1022,29 @@ impl Editor {
             self.sections
                 .expand_at(cursor.primary.index.0, &mut collapsed);
         }
+        // One walk over the text per cursor end; a caret needs only one.
+        let byte_of = |character: usize| {
+            tab.document
+                .text
+                .char_indices()
+                .nth(character)
+                .map_or(tab.document.text.len(), |(i, _)| i)
+        };
+        let cursor_bytes = cursor.map(|cursor| {
+            let [first, last] = cursor.sorted_cursors();
+            let first_byte = byte_of(first.index.0);
+            let last_byte = if last.index == first.index {
+                first_byte
+            } else {
+                byte_of(last.index.0)
+            };
+            (first_byte, last_byte)
+        });
         let active_line = if live && ui.memory(|m| m.has_focus(id)) {
-            cursor.map(|cursor| {
-                let byte = tab
-                    .document
-                    .text
-                    .char_indices()
-                    .nth(cursor.primary.index.0)
-                    .map_or(tab.document.text.len(), |(i, _)| i);
-                let start = tab.document.text[..byte].rfind('\n').map_or(0, |i| i + 1);
+            cursor_bytes.map(|(first_byte, byte)| {
+                let start = tab.document.text[..first_byte]
+                    .rfind('\n')
+                    .map_or(0, |i| i + 1);
                 let end = tab.document.text[byte..]
                     .find('\n')
                     .map_or(tab.document.text.len(), |i| byte + i);
@@ -903,15 +1053,9 @@ impl Editor {
         } else {
             None
         };
-        let caret = active_line.as_ref().and(cursor).and_then(|cursor| {
-            (cursor.primary == cursor.secondary).then(|| {
-                tab.document
-                    .text
-                    .char_indices()
-                    .nth(cursor.primary.index.0)
-                    .map_or(tab.document.text.len(), |(i, _)| i)
-            })
-        });
+        let caret = active_line.as_ref().and(cursor.zip(cursor_bytes)).and_then(
+            |(cursor, (first_byte, _))| (cursor.primary == cursor.secondary).then_some(first_byte),
+        );
         let selected_match = if find.open {
             find_matches(&tab.document.text, &find.query)
                 .get(find.selected)
@@ -922,7 +1066,8 @@ impl Editor {
         let source = &self.source;
         let parsed = &self.parsed;
         let sections = &self.sections;
-        let folded_layout = &mut self.folded_layout;
+        let layout_cache = &mut self.layout_cache;
+        let source_version = self.source_version;
         let tables = &mut self.tables;
         let mut table_placements = Vec::new();
         let from = &tab.document.path;
@@ -938,7 +1083,6 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start)
         });
-        let mut cached_layout: Option<(f32, Arc<egui::Galley>)> = None;
         let mut updated_parsed = None;
         let mut layouter =
             |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| -> Arc<egui::Galley> {
@@ -947,12 +1091,13 @@ impl Editor {
                     images = live_images(ui, source, vault, from, parsed, active_line.as_ref());
                     retain_visible_images(&mut images, sections, &collapsed);
                 }
-                if let Some((previous_width, galley)) = &cached_layout
-                    && galley.text() == text
-                    && (width - previous_width).abs() < 0.1
-                {
-                    return galley.clone();
-                }
+                // An edit moves the caret to its end; the line there is the active one,
+                // which the next frame's caret confirms. Using the pre-edit line would
+                // style the new text as inactive for one frame and lay out twice.
+                let active_line = match &active_line {
+                    Some(line) if text != source => Some(edited_line(source, text, line)),
+                    line => line.clone(),
+                };
                 let parsed = if text == source {
                     parsed
                 } else {
@@ -1034,6 +1179,35 @@ impl Editor {
                 } else {
                     Vec::new()
                 };
+                let key = LayoutKey {
+                    version: if text == source {
+                        source_version
+                    } else {
+                        source_version + 1
+                    },
+                    width,
+                    live,
+                    plain_text,
+                    path: from.to_owned(),
+                    active_line: active_line.clone(),
+                    matched: selected_match.clone(),
+                    images: images.clone(),
+                    hidden,
+                    tables: table_placements.clone(),
+                    theme: ThemeKey::new(ui),
+                    syntax: crate::syntax::generation(),
+                    fonts: (
+                        ui.fonts(|fonts| fonts.layout_generation()),
+                        ui.ctx().pixels_per_point(),
+                    ),
+                };
+                if text == source
+                    && let Some(cached) = layout_cache.as_ref()
+                    && cached.key == key
+                {
+                    return cached.galley.clone();
+                }
+                let hidden = &key.hidden;
                 let job = if plain_text {
                     crate::syntax::source_job(ui, text, from, width, selected_match.as_ref())
                 } else {
@@ -1050,36 +1224,13 @@ impl Editor {
                         },
                     )
                 };
-                let original = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                let decorated = !hidden.is_empty() || !table_placements.is_empty();
-                let image_layout: Vec<_> = if !decorated {
-                    Vec::new()
-                } else {
-                    images
-                        .iter()
-                        .map(|image| {
-                            (
-                                image.range.clone(),
-                                [image.size.x.to_bits(), image.size.y.to_bits()],
-                                active_line.as_ref().is_some_and(|line| {
-                                    line.start < image.range.end && line.end >= image.range.start
-                                }),
-                            )
-                        })
-                        .collect()
-                };
-                if decorated
-                    && let Some(cached) = folded_layout.as_ref()
-                    && Arc::ptr_eq(&cached.original, &original)
-                    && cached.live == live
-                    && cached.images == image_layout
-                    && cached.hidden == hidden
-                    && cached.tables == table_placements
-                {
-                    cached_layout = Some((width, cached.galley.clone()));
-                    return cached.galley.clone();
-                }
-                let mut galley = original.clone();
+                let previous = layout_cache
+                    .as_ref()
+                    .filter(|cached| cached.key.fonts == key.fonts)
+                    .map(|cached| &cached.paragraphs);
+                let (original, paragraphs) =
+                    ui.fonts_mut(|fonts| fonts.layout_job_incremental(job, previous));
+                let mut galley = original;
                 space_rows(
                     &mut galley,
                     text,
@@ -1090,21 +1241,13 @@ impl Editor {
                 );
                 reserve_table_rows(&mut galley, &table_placements);
                 if !hidden.is_empty() {
-                    collapse_rows(&mut galley, &hidden);
+                    collapse_rows(&mut galley, hidden);
                 }
-                if decorated {
-                    *folded_layout = Some(FoldedLayout {
-                        original,
-                        live,
-                        images: image_layout,
-                        hidden,
-                        tables: table_placements.clone(),
-                        galley: galley.clone(),
-                    });
-                } else {
-                    *folded_layout = None;
-                }
-                cached_layout = Some((width, galley.clone()));
+                *layout_cache = Some(LayoutCache {
+                    key,
+                    paragraphs,
+                    galley: galley.clone(),
+                });
                 galley
             };
         let text_height = layouter(ui, &tab.document.text, ui.available_width())
@@ -1223,6 +1366,8 @@ impl Editor {
             self.sections = rustidian::folding::Sections::new(&tab.document.text, &parsed);
             self.parsed = parsed;
             self.source.clone_from(&tab.document.text);
+            // The layouter's last call laid out this text under the next version.
+            self.source_version += 1;
         }
         if output.response.changed() {
             tab.edited();
@@ -1346,30 +1491,54 @@ impl Editor {
             let character = tab.document.text[..image.range.start].chars().count();
             let caret = positioned.at(character);
             let mut origin = output.galley_pos + caret.min.to_vec2();
-            if image.block.is_some() {
+            if image.block.is_some() && image.math.is_none() {
                 origin.x = output.galley_pos.x;
             }
             let rect = egui::Rect::from_min_size(
                 origin
                     + egui::vec2(
-                        if active || image.block.is_some() {
+                        if active || image.block.is_some() && image.math.is_none() {
                             0.0
                         } else {
                             -image.size.x
                         },
-                        if active { 29.16 } else { 0.0 },
+                        if active {
+                            29.16
+                        } else if image.math.is_some() && image.block.is_none() {
+                            (caret.height() - image.size.y).max(0.0) / 2.0
+                        } else {
+                            0.0
+                        },
                     ),
                 image.size,
             );
             ui.expand_to_include_rect(rect);
-            let response = ui.put(
-                rect,
-                egui::Image::new(&image.uri)
-                    .fit_to_exact_size(image.size)
-                    .sense(egui::Sense::click()),
-            );
+            let widget = egui::Image::new(&image.uri)
+                .fit_to_exact_size(image.size)
+                .sense(egui::Sense::click());
+            let response = if let Some(math) = image.math {
+                // Revealing one source removes its image. Keep the remaining
+                // formulas' interaction identities stable across that change.
+                ui.push_id((id, "live-math", math), |ui| ui.put(rect, widget))
+                    .inner
+            } else {
+                ui.put(rect, widget)
+            };
             crate::ui_probe::record(ui.ctx(), format!("embed:{ordinal}"), response.rect);
-            if image.block.is_some() {
+            if let Some(math) = image.math {
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    format!(
+                        "math-live:{}:{math}",
+                        if image.block.is_some() {
+                            "display"
+                        } else {
+                            "inline"
+                        }
+                    ),
+                    response.rect,
+                );
+            } else if image.block.is_some() {
                 crate::ui_probe::record(ui.ctx(), "mermaid-live", response.rect);
             }
             if active {
@@ -2257,6 +2426,47 @@ fn paint_image_selection(
     ui.painter().set(shape, egui::Shape::Vec(shapes));
 }
 
+/// The line holding the end of the change from `before` to `after`.
+fn edited_line(before: &str, after: &str, previous: &Range<usize>) -> Range<usize> {
+    let mut prefix = before
+        .bytes()
+        .zip(after.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    while !after.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+    let suffix = before[prefix..]
+        .bytes()
+        .rev()
+        .zip(after[prefix..].bytes().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut end = after.len() - suffix;
+    while !after.is_char_boundary(end) {
+        end += 1;
+    }
+    if before.len() == after.len() && prefix == after.len() {
+        return previous.clone();
+    }
+    // An insertion that repeats what precedes it (Enter at the end of a line
+    // adds a newline before the existing one) happened at the earlier place.
+    if prefix + suffix == before.len() {
+        while prefix > 0
+            && end > prefix
+            && after.as_bytes()[prefix - 1] == after.as_bytes()[end - 1]
+            && after.is_char_boundary(prefix - 1)
+            && after.is_char_boundary(end - 1)
+        {
+            prefix -= 1;
+            end -= 1;
+        }
+    }
+    let start = after[..end].rfind('\n').map_or(0, |i| i + 1);
+    let end = after[end..].find('\n').map_or(after.len(), |i| end + i);
+    start..end
+}
+
 fn layout(
     ui: &egui::Ui,
     text: &str,
@@ -2300,7 +2510,12 @@ fn layout(
     } else {
         Vec::new()
     };
+    let bold = FontFamily::Name("bold".into());
+    let semibold = FontFamily::Name("semibold".into());
+    let italic = FontFamily::Name("italic".into());
     let mut character = 0;
+    // Spans and code blocks are both in text order: walk the blocks once.
+    let mut code_index = 0;
     for span in &parsed.spans {
         // Split at line boundaries so a multiline emphasis doesn't reveal all its markers.
         let mut start = span.range.start;
@@ -2308,22 +2523,30 @@ fn layout(
             let end = start + section.len();
             let style = span.style;
             let active = active_line.is_some_and(|line| start <= line.end && end > line.start);
+            while parsed
+                .code_blocks
+                .get(code_index)
+                .is_some_and(|block| block.range.end <= start)
+            {
+                code_index += 1;
+            }
             let code_block = parsed
                 .code_blocks
-                .get(
-                    parsed
-                        .code_blocks
-                        .partition_point(|block| block.range.end <= start),
-                )
+                .get(code_index)
                 .filter(|block| block.range.contains(&start));
             let code_active = code_block.is_some_and(|block| {
                 active_line.is_some_and(|line| {
                     line.start < block.range.end && line.end >= block.range.start
                 })
             });
-            let image = images
-                .iter()
-                .find(|image| start >= image.range.start && end <= image.range.end);
+            let image = images.iter().find(|image| {
+                let content_end = if image.math.is_some() && image.block.is_some() {
+                    start + section.trim_end_matches(['\r', '\n']).len()
+                } else {
+                    end
+                };
+                start >= image.range.start && content_end <= image.range.end
+            });
             let hidden = live
                 && (style.task_marker
                     || style.property
@@ -2337,12 +2560,7 @@ fn layout(
             } else if hidden {
                 0.01
             } else if style.heading > 0 {
-                match style.heading {
-                    1 => 32.436,
-                    2 => 28.836,
-                    3 => 25.632,
-                    _ => 22.788,
-                }
+                crate::theme::prose_size(ui, style.heading) / font_scale
             } else if style.block_code {
                 crate::code_ui::FONT_SIZE
             } else if style.code {
@@ -2351,14 +2569,14 @@ fn layout(
                 18.0
             };
             let size = size * font_scale;
-            let family = if style.code {
+            let family = if style.code || style.math {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
-                FontFamily::Name("bold".into())
+                bold.clone()
             } else if style.html.bold.unwrap_or(style.strong) {
-                FontFamily::Name("semibold".into())
+                semibold.clone()
             } else if style.html.italic.unwrap_or(style.italic) {
-                FontFamily::Name("italic".into())
+                italic.clone()
             } else {
                 FontFamily::Proportional
             };
@@ -2377,7 +2595,11 @@ fn layout(
             } else {
                 ui.visuals().text_color()
             };
-            let count = section.chars().count();
+            let count = if matched.is_some() {
+                section.chars().count()
+            } else {
+                0
+            };
             let highlighted = matched
                 .is_some_and(|range| character < range.end && character + count > range.start);
             let display = if live && style.bullet && !active && !style.task_marker {
@@ -2426,7 +2648,11 @@ fn layout(
                 } else if live && style.property {
                     0.01
                 } else if let Some(image) = image.filter(|_| !active) {
-                    image.size.y + 16.0
+                    if image.math.is_some() && image.block.is_none() {
+                        image.size.y.max(29.16 * font_scale)
+                    } else {
+                        image.size.y + 16.0
+                    }
                 } else if style.block_code {
                     crate::code_ui::LINE_HEIGHT * font_scale
                 } else if section == "\n" {
@@ -2493,6 +2719,253 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn edited_line_is_the_line_where_the_change_ends() {
+        let before = "one\ntwo\nthree";
+        let previous = 4..7;
+        assert_eq!(
+            super::edited_line(before, "one\ntwo!\nthree", &previous),
+            4..8
+        );
+        assert_eq!(
+            super::edited_line(before, "one\ntw\nthree", &previous),
+            4..6
+        );
+        assert_eq!(
+            super::edited_line(before, "one\ntwo\n\nthree", &previous),
+            8..8
+        );
+        assert_eq!(
+            super::edited_line(before, "one\ntwoo\nthree", &previous),
+            4..8
+        );
+        assert_eq!(super::edited_line(before, "one\nthree", &previous), 4..9);
+        assert_eq!(
+            super::edited_line(before, "one\ntwo\nthree πx", &previous),
+            8..17
+        );
+        assert_eq!(
+            super::edited_line(before, "πne\ntwo\nthree", &previous),
+            0..4
+        );
+        assert_eq!(super::edited_line(before, before, &previous), previous);
+    }
+
+    /// The paragraph-reusing layout must equal egui's own layout of the same
+    /// job after any edit, and must reuse every unchanged paragraph.
+    #[test]
+    fn incremental_layout_matches_full_layout_across_random_edits() {
+        use egui::text::{LayoutJob, TextFormat};
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let formats = [
+            TextFormat {
+                font_id: FontId::new(14.0, FontFamily::Proportional),
+                ..Default::default()
+            },
+            TextFormat {
+                font_id: FontId::new(12.0, FontFamily::Monospace),
+                color: Color32::RED,
+                ..Default::default()
+            },
+            TextFormat {
+                font_id: FontId::new(18.0, FontFamily::Name("bold".into())),
+                italics: true,
+                underline: Stroke::new(1.0, Color32::GREEN),
+                line_height: Some(30.0),
+                ..Default::default()
+            },
+        ];
+        let job_of = |pieces: &[(String, TextFormat)], width: f32| {
+            let mut job = LayoutJob {
+                first_row_min_height: 20.0,
+                ..Default::default()
+            };
+            job.wrap.max_width = width;
+            for (text, format) in pieces {
+                job.append(text, 0.0, format.clone());
+            }
+            job
+        };
+        let alphabet: Vec<char> = "ab c\nd\nπ e".chars().collect();
+        let mut rng = fastrand::Rng::with_seed(20261027);
+        let mut pieces: Vec<(String, TextFormat)> = (0..12)
+            .map(|i| {
+                (
+                    format!("piece {i} with some words\n"),
+                    formats[i % formats.len()].clone(),
+                )
+            })
+            .collect();
+        let mut previous: Option<egui::text::ParagraphLayout> = None;
+        for round in 0..60 {
+            for _ in 0..rng.usize(1..4) {
+                let index = rng.usize(..pieces.len());
+                match rng.usize(..3) {
+                    0 => {
+                        let text = &mut pieces[index].0;
+                        let offsets: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
+                        let at = offsets
+                            .get(rng.usize(..offsets.len() + 1))
+                            .copied()
+                            .unwrap_or(text.len());
+                        text.insert(at, alphabet[rng.usize(..alphabet.len())]);
+                    }
+                    1 => {
+                        let text = &mut pieces[index].0;
+                        let count = text.chars().count();
+                        if let Some((at, c)) = text.char_indices().nth(rng.usize(..count.max(1))) {
+                            text.replace_range(at..at + c.len_utf8(), "");
+                        }
+                    }
+                    _ => pieces[index].1 = formats[rng.usize(..formats.len())].clone(),
+                }
+            }
+            let width = if round % 2 == 0 { 120.0 } else { f32::INFINITY };
+            let job = job_of(&pieces, width);
+            let full = ctx.fonts_mut(|fonts| fonts.layout_job(job.clone()));
+            let (incremental, layout) =
+                ctx.fonts_mut(|fonts| fonts.layout_job_incremental(job, previous.as_ref()));
+            assert_eq!(
+                format!("{incremental:#?}"),
+                format!("{full:#?}"),
+                "round {round}"
+            );
+            previous = Some(layout);
+        }
+        // One edited single-line piece lays out one paragraph; the rest keep their galleys.
+        let pieces: Vec<(String, TextFormat)> = (0..12)
+            .map(|i| (format!("piece {i}\n"), formats[i % formats.len()].clone()))
+            .collect();
+        let (_, first) =
+            ctx.fonts_mut(|fonts| fonts.layout_job_incremental(job_of(&pieces, 120.0), None));
+        let mut edited = pieces.clone();
+        edited[5].0.insert(7, 'x');
+        let (_, second) = ctx
+            .fonts_mut(|fonts| fonts.layout_job_incremental(job_of(&edited, 120.0), Some(&first)));
+        for (index, (old, new)) in first.galleys().iter().zip(second.galleys()).enumerate() {
+            assert_eq!(Arc::ptr_eq(old, new), index != 5, "paragraph {index}");
+        }
+        edited[8].1 = formats[0].clone();
+        let (_, third) = ctx
+            .fonts_mut(|fonts| fonts.layout_job_incremental(job_of(&edited, 120.0), Some(&second)));
+        for (index, (old, new)) in second.galleys().iter().zip(third.galleys()).enumerate() {
+            assert_eq!(Arc::ptr_eq(old, new), index != 8, "paragraph {index}");
+        }
+    }
+
+    #[test]
+    fn external_document_edit_replaces_a_real_widget_redo_branch() {
+        use rustidian::vault::Document;
+        let ctx = egui::Context::default();
+        let root = std::path::Path::new("/disposable-agent-history");
+        let id = egui::Id::unique("agent-history-widget");
+        let mut document = Document::new("Note.md".into());
+        document.text = "Original note".into();
+        document_history(&ctx, root, &document.path).store(&ctx, id);
+        let frame = |document: &mut Document, time, events: Vec<egui::Event>| {
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            let events = std::iter::once(egui::Event::ModifiersChanged(
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+            ))
+            .chain(events)
+            .collect();
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.add(
+                        TextEdit::multiline(&mut document.text)
+                            .id(id)
+                            .desired_width(400.0),
+                    );
+                },
+            )
+            .drop_without_applying_deltas();
+        };
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+        };
+        frame(&mut document, 0.0, vec![]);
+        frame(
+            &mut document,
+            0.1,
+            vec![egui::Event::Paste("Prior edit ".into())],
+        );
+        assert_ne!(document.text, "Original note");
+        frame(&mut document, 0.2, vec![key(Key::Z)]);
+        assert_eq!(document.text, "Original note");
+        let before = document.clone();
+        document.text = "Agent replacement".into();
+        record_document_edit(&ctx, root, &before, &document);
+        frame(&mut document, 0.3, vec![key(Key::Y)]);
+        assert_eq!(
+            document.text, "Agent replacement",
+            "Applying an external edit must discard the old Redo branch"
+        );
+        frame(&mut document, 0.4, vec![key(Key::Z)]);
+        assert_eq!(document.text, "Original note");
+        frame(&mut document, 0.5, vec![key(Key::Y)]);
+        assert_eq!(document.text, "Agent replacement");
+        frame(&mut document, 0.6, vec![key(Key::Y)]);
+        assert_eq!(
+            document.text, "Agent replacement",
+            "Extra Redo must never resurrect the earlier discarded edit"
+        );
+    }
+
+    #[test]
+    fn inactive_display_math_hides_opening_delimiters_and_retains_source_positions() {
+        let source = "Before\n\n$$\nx^2\n$$\n\nAfter";
+        let parsed = Markdown::parse(source);
+        let image = LiveImage {
+            range: 8..10,
+            block: Some(8..17),
+            uri: "bytes://math-layout-test.svg".into(),
+            size: egui::vec2(80.0, 40.0),
+            math: Some(0),
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let job = layout(
+                ui,
+                source,
+                &parsed,
+                920.0,
+                Decorations {
+                    live: true,
+                    active_line: None,
+                    matched: None,
+                    images: std::slice::from_ref(&image),
+                },
+            );
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+            assert_eq!(galley.text(), source);
+            assert_eq!(galley.end().index.0, source.chars().count());
+            let opening = galley.layout_from_cursor(CCursor::new(8));
+            assert!(
+                galley.rows[opening.row].visuals.mesh.is_empty(),
+                "Inactive display math must not paint its opening dollars under the formula"
+            );
+            assert!(galley.rows[opening.row].height() >= 40.0);
+            let after = galley.layout_from_cursor(CCursor::new(19));
+            assert!(
+                !galley.rows[after.row].visuals.mesh.is_empty(),
+                "Hiding formula source must preserve the following prose"
+            );
+        })
+        .drop_without_applying_deltas();
+    }
+
     fn pressed(key: Key) -> egui::Event {
         egui::Event::Key {
             key,
@@ -2775,6 +3248,7 @@ mod tests {
         crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx, true);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::theme::document_style(ui, crate::theme::DEFAULT_DOCUMENT_FONT_SIZE);
             for live in [false, true] {
                 let job = layout(
                     ui,

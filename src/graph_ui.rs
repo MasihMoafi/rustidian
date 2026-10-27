@@ -1,4 +1,7 @@
-use crate::{theme, ui_probe};
+use crate::{
+    graph_animation::{Playback, Timeline},
+    theme, ui_probe,
+};
 use eframe::egui::{
     self, Align, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
 };
@@ -15,7 +18,7 @@ use std::{
         Arc,
         mpsc::{self, Receiver},
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 pub enum Action {
@@ -43,6 +46,7 @@ struct Scene {
     geometry: Geometry,
     degree: Vec<usize>,
     labels: Vec<usize>,
+    timeline: Timeline,
 }
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
@@ -159,6 +163,7 @@ enum DragTarget {
 
 struct Drag {
     target: DragTarget,
+    button: egui::PointerButton,
     cancelled: bool,
 }
 
@@ -171,6 +176,7 @@ struct Pane {
     fit: bool,
     positions: HashMap<PathBuf, [f32; 2]>,
     drag: Option<Drag>,
+    playback: Option<Playback>,
 }
 
 impl Default for Pane {
@@ -184,6 +190,7 @@ impl Default for Pane {
             fit: true,
             positions: HashMap::new(),
             drag: None,
+            playback: None,
         }
     }
 }
@@ -265,6 +272,7 @@ impl Manager {
                 }
                 pane.positions.clear();
                 pane.drag = None;
+                pane.playback = None;
                 pane.ready = Some(Arc::new(ready));
             }
         }
@@ -314,6 +322,7 @@ impl Manager {
             pane.fit = true;
             pane.positions.clear();
             pane.drag = None;
+            pane.playback = None;
         }
         let mut action = None;
         ui.add_enabled_ui(!blocked, |ui| {
@@ -411,11 +420,13 @@ impl Manager {
                             }
                             let mut labels = view.nodes.clone();
                             labels.sort_by_key(|&index| std::cmp::Reverse(degree[index]));
+                            let timeline = chronology(&source, &graph, &view);
                             Scene {
                                 view,
                                 geometry,
                                 degree,
                                 labels,
+                                timeline,
                             }
                         });
                     let _ = sender.send(Ready {
@@ -437,6 +448,14 @@ impl Manager {
             match &ready.result {
                 Ok(scene) => {
                     let Scene { view, geometry, .. } = scene;
+                    if let Some(playback) = &mut pane.playback {
+                        if playback.tick(ui.input(|input| input.unstable_dt)) {
+                            ui.ctx().request_repaint_after(Duration::from_millis(16));
+                        } else {
+                            pane.playback = None;
+                            ui.ctx().request_repaint();
+                        }
+                    }
                     if pane.fit {
                         let reserved = if pane.preferences.settings {
                             panel_width + 20.0
@@ -488,6 +507,32 @@ impl Manager {
                     ui_probe::metric(ui.ctx(), "node-count", view.nodes.len() as f32);
                     ui_probe::metric(ui.ctx(), "edge-count", view.edges.len() as f32);
                     ui_probe::metric(ui.ctx(), "layout-iterations", geometry.iterations as f32);
+                    ui_probe::metric(
+                        ui.ctx(),
+                        "animation-running",
+                        if pane.playback.is_some() { 1.0 } else { 0.0 },
+                    );
+                    if let Some(playback) = &pane.playback {
+                        let count = view
+                            .nodes
+                            .iter()
+                            .filter(|&&node| scene.timeline.alpha(node, playback.elapsed) > 0.0)
+                            .count();
+                        if let Some(date) = scene.timeline.date(playback.elapsed) {
+                            let date: chrono::DateTime<chrono::Local> = date.into();
+                            painter.text(
+                                rect.left_bottom() + egui::vec2(12.0, -12.0),
+                                egui::Align2::LEFT_BOTTOM,
+                                format!(
+                                    "{} · {count}/{} notes",
+                                    date.format("%Y-%m-%d"),
+                                    view.nodes.len()
+                                ),
+                                FontId::proportional(13.0),
+                                ui.visuals().text_color(),
+                            );
+                        }
+                    }
                     if view.nodes.is_empty() {
                         painter.text(
                             rect.center(),
@@ -787,6 +832,28 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             ui.label(label);
             slider(ui, egui::Slider::new(value, range), probe);
         }
+        let running = pane.playback.is_some();
+        let available = pane.ready.as_ref().is_some_and(|ready| {
+            ready
+                .result
+                .as_ref()
+                .is_ok_and(|scene| !scene.view.nodes.is_empty())
+        });
+        let animate = ui.add_enabled(available, egui::Button::new(if running { "Stop animation" } else { "Animate" }))
+            .on_hover_text("Replay notes by creation time; use modification time when creation time is unavailable.");
+        ui_probe::record(
+            ui.ctx(),
+            if running { "animate-stop" } else { "animate" },
+            animate.rect,
+        );
+        if animate.clicked() {
+            pane.playback = if running {
+                None
+            } else {
+                Some(Playback::default())
+            };
+            ui.ctx().request_repaint();
+        }
         ui.add_space(4.0);
     }
     if section(ui, &mut pane.preferences.sections[3], "Forces") {
@@ -828,7 +895,43 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
         pane.preferences.forces = Forces::default();
         pane.preferences.display = Display::default();
         pane.fit = true;
+        pane.playback = None;
     }
+}
+
+fn chronology(source: &Vault, graph: &Graph, view: &View) -> Timeline {
+    let mut dates = vec![None; graph.nodes.len()];
+    for &node in &view.nodes {
+        if matches!(graph.nodes[node].kind, Kind::Note | Kind::Attachment) {
+            dates[node] = std::fs::metadata(source.root.join(&graph.nodes[node].path))
+                .ok()
+                .and_then(|metadata| metadata.created().or_else(|_| metadata.modified()).ok());
+        }
+    }
+    // Virtual targets appear with their first real neighbor, never before it.
+    for edge in &view.edges {
+        for (from, to) in [(edge.from, edge.to), (edge.to, edge.from)] {
+            if matches!(graph.nodes[to].kind, Kind::Tag | Kind::Unresolved)
+                && let Some(date) = dates[from]
+            {
+                let date = date.checked_add(Duration::from_nanos(1)).unwrap_or(date);
+                dates[to] = Some(dates[to].map_or(date, |before| before.min(date)));
+            }
+        }
+    }
+    Timeline::new(
+        graph.nodes.len(),
+        view.nodes
+            .iter()
+            .map(|&node| (node, dates[node].unwrap_or(SystemTime::UNIX_EPOCH)))
+            .collect(),
+    )
+}
+
+fn node_opacity(pane: &Pane, scene: &Scene, node: usize) -> f32 {
+    pane.playback
+        .as_ref()
+        .map_or(1.0, |playback| scene.timeline.alpha(node, playback.elapsed))
 }
 
 fn direction_color(ui: &egui::Ui, relation: u8) -> Color32 {
@@ -925,6 +1028,7 @@ fn node_at(pane: &Pane, ready: &Ready, scene: &Scene, rect: Rect, pointer: Pos2)
         .nodes
         .iter()
         .copied()
+        .filter(|&node| node_opacity(pane, scene, node) > 0.0)
         .filter(|&node| {
             screen_position(pane, &ready.graph, &scene.geometry, node, rect).distance_sq(pointer)
                 <= (node_radius(pane, scene, node).max(7.0) + 4.0).powi(2)
@@ -951,11 +1055,17 @@ fn interact(
         pane.drag = None;
         return;
     }
+    let start_button = [egui::PointerButton::Middle, egui::PointerButton::Primary]
+        .into_iter()
+        .find(|&button| response.drag_started_by(button));
     if pane.drag.is_none()
-        && response.drag_started_by(egui::PointerButton::Primary)
+        && let Some(button) = start_button
         && let Some(origin) = ui.input(|input| input.pointer.press_origin())
     {
-        let target = if let Some(node) = node_at(pane, ready, scene, response.rect, origin) {
+        let node = (button == egui::PointerButton::Primary)
+            .then(|| node_at(pane, ready, scene, response.rect, origin))
+            .flatten();
+        let target = if let Some(node) = node {
             let path = ready.graph.nodes[node].path.clone();
             DragTarget::Node {
                 before: pane.positions.get(&path).copied(),
@@ -971,6 +1081,7 @@ fn interact(
         };
         pane.drag = Some(Drag {
             target,
+            button,
             cancelled: false,
         });
     }
@@ -993,7 +1104,7 @@ fn interact(
         drag.cancelled = true;
     }
     let (down, pointer) = ui.input(|input| {
-        let down = input.pointer.primary_down();
+        let down = input.pointer.button_down(drag.button);
         // A release and a later hover can share one frame. Commit the release
         // position, not that later hover, and include the drag threshold distance.
         let pointer = if down {
@@ -1002,10 +1113,10 @@ fn interact(
             input.events.iter().rev().find_map(|event| match event {
                 egui::Event::PointerButton {
                     pos,
-                    button: egui::PointerButton::Primary,
+                    button,
                     pressed: false,
                     ..
-                } => Some(*pos),
+                } if *button == drag.button => Some(*pos),
                 _ => None,
             })
         };
@@ -1069,6 +1180,10 @@ fn paint(
         .flatten();
     let mut directions = HashMap::<usize, u8>::new();
     for edge in &view.edges {
+        let opacity = node_opacity(pane, scene, edge.from).min(node_opacity(pane, scene, edge.to));
+        if opacity <= 0.0 {
+            continue;
+        }
         if pane.preferences.display.colors == ColorMode::LinkDirection {
             if anchor == Some(edge.to) {
                 *directions.entry(edge.from).or_default() |= 1;
@@ -1098,7 +1213,10 @@ fn paint(
         } else {
             ui.visuals().weak_text_color().gamma_multiply(0.42)
         };
-        let stroke = Stroke::new(pane.preferences.display.thickness.max(0.25), color);
+        let stroke = Stroke::new(
+            pane.preferences.display.thickness.max(0.25),
+            color.gamma_multiply(opacity),
+        );
         if pane.preferences.display.arrows && (end - start).length() > radius * 2.0 {
             let direction = (end - start).normalized();
             let begin = start + direction * radius;
@@ -1109,6 +1227,10 @@ fn paint(
         }
     }
     for &index in &view.nodes {
+        let opacity = node_opacity(pane, scene, index);
+        if opacity <= 0.0 {
+            continue;
+        }
         let node = &graph.nodes[index];
         let point = screen(index);
         if !rect.expand(50.0).contains(point) {
@@ -1134,7 +1256,7 @@ fn paint(
                 Kind::Note => ui.visuals().weak_text_color(),
             }
         };
-        painter.circle_filled(point, size, color);
+        painter.circle_filled(point, size * opacity.sqrt(), color.gamma_multiply(opacity));
         if ui_probe::enabled() {
             ui_probe::record(
                 ui.ctx(),
@@ -1155,16 +1277,20 @@ fn paint(
             .copied()
             .filter(|index| Some(*index) != hovered),
     ) {
+        let opacity = node_opacity(pane, scene, index);
+        if opacity <= 0.0 {
+            continue;
+        }
         let node = &graph.nodes[index];
         let point = screen(index);
         if !rect.expand(300.0).contains(point) || (fade == 0.0 && hovered != Some(index)) {
             continue;
         }
         let active = hovered == Some(index);
-        let color = ui
-            .visuals()
-            .text_color()
-            .gamma_multiply(if active { 1.0 } else { fade });
+        let color =
+            ui.visuals()
+                .text_color()
+                .gamma_multiply(if active { opacity } else { fade * opacity });
         let font = FontId::proportional(16.0);
         let galley = egui::WidgetText::from(RichText::new(&node.label).color(color)).into_galley(
             ui,
@@ -1200,6 +1326,13 @@ fn paint(
         response.clone().on_hover_ui(|ui| {
             ui.label(RichText::new(&graph.nodes[index].label).size(13.0));
         });
+    }
+    if pane
+        .drag
+        .as_ref()
+        .is_some_and(|drag| drag.button == egui::PointerButton::Middle && !drag.cancelled)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
     if interactive
         && response.clicked()

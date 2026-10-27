@@ -28,6 +28,7 @@ pub const OPEN_FILE: &str = "Open file…";
 pub const OPEN_FOLDER: &str = "Open folder…";
 pub const OPEN_FILE_SHORTCUT: &str = "Ctrl+Shift+O";
 pub const OPEN_FOLDER_SHORTCUT: &str = "Ctrl+Alt+O";
+pub const OPEN_AGENT: &str = "Agent: Open agent tab";
 pub const OPEN_GRAPH: &str = "Graph view: Open graph view";
 pub const OPEN_LOCAL_GRAPH: &str = "Graph view: Open local graph";
 pub const INCREASE_FONT_SIZE: &str = "Increase font size";
@@ -54,6 +55,11 @@ pub const ALL: &[Command] = &[
     Command {
         name: OPEN_FOLDER,
         shortcut: OPEN_FOLDER_SHORTCUT,
+        scope: Scope::Global,
+    },
+    Command {
+        name: OPEN_AGENT,
+        shortcut: "Ctrl+Shift+A",
         scope: Scope::Global,
     },
     Command {

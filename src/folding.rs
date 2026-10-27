@@ -21,11 +21,16 @@ impl Sections {
     pub fn new(source: &str, parsed: &Markdown) -> Self {
         let mut sections = Vec::new();
         let mut occurrences = HashMap::new();
-        let offsets: Vec<_> = source
-            .char_indices()
-            .map(|(byte, _)| byte)
-            .chain([source.len()])
-            .collect();
+        // Headings come in text order, so one forward walk converts their bytes to characters.
+        let mut counted = (0, 0);
+        let mut chars_at = |byte: usize| {
+            if byte < counted.0 {
+                counted = (0, 0);
+            }
+            counted = (byte, counted.1 + source[counted.0..byte].chars().count());
+            counted.1
+        };
+        let total_chars = source.chars().count();
         for &start in &parsed.heading_starts {
             let first_end = source[start..]
                 .find('\n')
@@ -65,15 +70,15 @@ impl Sections {
             let occurrence = occurrences.entry((level, title)).or_insert(0);
             let key = format!("{level}:{title}:{occurrence}");
             *occurrence += 1;
-            let char_start = offsets.binary_search(&start).unwrap();
-            let char_end = offsets.binary_search(&end).unwrap();
+            let char_start = chars_at(start);
+            let char_end = chars_at(end);
             sections.push(Section {
                 key,
                 level,
                 heading: start..end,
                 body: end..source.len(),
                 heading_chars: char_start..char_end,
-                body_chars: char_end..offsets.len() - 1,
+                body_chars: char_end..total_chars,
             });
         }
         for index in 0..sections.len() {

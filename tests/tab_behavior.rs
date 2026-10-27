@@ -219,6 +219,15 @@ fn plain_text_opens_in_source_mode_and_markdown_keeps_live_mode() {
     assert_eq!(markdown.view, View::Live);
     markdown.open(Document::new("Another.TXT".into())).unwrap();
     assert_eq!(markdown.view, View::Source);
+    // Leaving the text document returns the note's own modes, not Source.
+    tab.replace(Document::new("Note.md".into()));
+    assert_eq!(tab.view, View::Live);
+    let mut note = Tab::new(Document::new("Note.md".into()));
+    note.set_view(View::Read);
+    note.replace(Document::new("record.json".into()));
+    assert_eq!(note.view, View::Source);
+    note.replace(Document::new("Note.md".into()));
+    assert_eq!((note.view, note.editing_view()), (View::Read, View::Live));
 }
 
 #[test]

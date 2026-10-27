@@ -62,11 +62,13 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent", "agent-real", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
-    reports = ROOT / "reports"
+    reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
-    run_lock = (reports / ".gui-smoke.lock").open("w")
+    (ROOT / "reports").mkdir(exist_ok=True)
+    run_lock = (ROOT / "reports" / ".gui-smoke.lock").open("w")
     try:
         fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -100,6 +102,16 @@ def main():
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
+        if args.section == "system-theme":
+            # Keyfile changes are visible to separate processes, without reading
+            # or writing the user's dconf database or using their session bus.
+            environment["GSETTINGS_BACKEND"] = "keyfile"
+            (base / "config").mkdir(parents=True, exist_ok=True)
+            for setting, value in (("color-scheme", "prefer-dark"), ("gtk-theme", "Adwaita")):
+                subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", setting, value],
+                    env=environment, check=True, timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (fixture / "System appearance.md").write_bytes(
+                "# System appearance\r\n\r\nKeep this note exactly: فارسی π.\r\n".encode())
         display_ready = False
         for _ in range(30):
             geometry = subprocess.run(
@@ -147,7 +159,12 @@ def main():
             window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
                 stdout=log, stderr=log)
             time.sleep(.4)
+        if args.section == "desktop-vault":
+            import vault_loading_checks
+            fixture = vault_loading_checks.prepare(base, environment, fixture)
         launch_command = [str(ROOT / args.binary), str(fixture)]
+        if args.section == "desktop-vault":
+            launch_command = [str(ROOT / args.binary)]
         if args.open_file:
             startup_path = fixture / f"Open me سلام.{args.open_file}"
             startup_text = "fn main() {\n    // Original text سلام\n    let value = 42;\n    println!(\"Hello\");\n}\n" if args.open_file == "rs" else "# File opening\n\nOriginal text سلام\n"
@@ -157,10 +174,41 @@ def main():
             bundled_binary = base / "rustidian"
             shutil.copy2(ROOT / args.binary, bundled_binary)
             launch_command = [str(bundled_binary)]
+        watch_folders = 1 + sum(path.is_dir() and not any(part.startswith(".") for part in path.relative_to(fixture).parts)
+                                for path in fixture.rglob("*"))
+        if args.section == "speed":
+            environment["RUSTIDIAN_FRAME_LOG"] = str(base / "frames.log")
+            # The shape of the measured note: prose with headings, inline code, bold,
+            # lists, quotes and tables between Python and text blocks.
+            def step(number):
+                parts = [f"## Step {number}\n\n"] if number % 3 == 0 else []
+                parts.append(f"Call `total(values)` on **step {number}** data before the next helper runs; "
+                             "it keeps the running sum exact and skips `None` entries.\n\n")
+                if number % 4 == 0:
+                    parts.append("- check `value > 0` first\n\n")
+                if number % 12 == 0:
+                    parts.append("> Keep **inputs** small.\n\n")
+                if number % 37 == 0:
+                    parts.append("| Input | Result |\n| --- | --- |\n" + "".join(f"| {row} | {row * 2} |\n" for row in range(7)) + "\n")
+                parts.append(f"```python\ndef total_{number}(values):\n    return sum(value * {number} for value in values if value)\n```\n\n"
+                             if number % 10 < 7 else "```text\nexpected output: 42\n```\n\n")
+                return "".join(parts)
+            (fixture / "Large code note.md").write_text("# Large code note\n\n" + "".join(map(step, range(375))))
+        if args.section == "watch-limit":
+            # Sparse, so it costs no disk; reading it is what a polling fallback would repeat.
+            with (fixture / "Recording.mp4").open("wb") as recording:
+                recording.truncate(512 << 20)
+            # A private limit that fits the vault's watches once but not twice.
+            launch_command = ["unshare", "--user", "--map-root-user", "sh", "-c",
+                              f'echo {2 * watch_folders - 1} > /proc/sys/user/max_inotify_watches && exec "$@"',
+                              "sh", *launch_command]
         def launch_app(command):
             (base / "ui-probe.json").unlink(missing_ok=True)
             return subprocess.Popen(command, cwd=base, env=environment, stdout=log, stderr=log)
 
+        if args.section in ("agent", "agent-real"):
+            import agent_checks
+            agent_checks.prepare(base, environment, real=args.section == "agent-real")
         app = launch_app(launch_command)
         results = []
         (reports / "gui-results.json").write_text(json.dumps({"status": "running", "checks": []}, indent=2)+"\n")
@@ -383,6 +431,7 @@ def main():
                 if value in title:
                     return
                 time.sleep(.05)
+            capture("failed-title")
             raise AssertionError((value, title))
 
         def open_note(value, *, title=None):
@@ -1072,7 +1121,7 @@ def main():
                         picture = f"native-highlight-{name.lower()}-{view.split()[0].lower()}.png"
                         capture(picture)
                         box = tuple(round(value) for value in control_bounds(control))
-                        count = sum(tinted(r, g, b) for r, g, b in pixel_data(Image.open(ROOT / "reports" / picture).crop(box).convert("RGB")))
+                        count = sum(tinted(r, g, b) for r, g, b in pixel_data(Image.open(reports / picture).crop(box).convert("RGB")))
                         assert count > 15, (name, view, count)
                     command("Switch appearance")
                     command("Reading view")
@@ -1564,6 +1613,282 @@ def main():
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
+            def sidebar_boundary_checks():
+                nonlocal app, window
+                protected = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = []
+                open_note("Home")
+                command("Reading view")
+
+                def inspect(stage, dark, mode):
+                    # PanelState deliberately retains the pre-drag width while
+                    # held. The live editor boundary is the actual allocation.
+                    left, top, _, bottom = control_bounds("sidebar:explorer")
+                    right = control_bounds("tab-strip-background")[0]
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    reference = picture.getpixel((round(left + 3), round(bottom - 75)))
+                    coverage = []
+                    for start in range(round(left + 4), round(right - 4), 6):
+                        pixels = [picture.getpixel((x, y))
+                                  for x in range(start, min(start + 6, round(right - 3)), 2)
+                                  for y in range(round(top + 200), round(bottom - 80), 3)]
+                        coverage.append(sum(max(abs(a-b) for a,b in zip(pixel,reference)) <= 3
+                                            for pixel in pixels) / len(pixels))
+                    sample = dict(stage=stage, dark=dark, mode=mode,
+                                  bounds=[left,top,right,bottom], reference_rgb=reference,
+                                  background_coverage=coverage)
+                    observations.append(sample)
+                    (reports/"sidebar-boundary.json").write_text(json.dumps(observations,indent=2)+"\n")
+                    capture(f"native-sidebar-{'dark' if dark else 'light'}-{mode}-{stage}.png")
+                    assert coverage and min(coverage) >= .65, ("Unpainted sidebar gap at the minimum drag boundary", sample)
+                    return right-left
+
+                def drag_to(x):
+                    edge = control_bounds("tab-strip-background")[0]
+                    xdo("mousemove", "--sync", str(round(edge-1)), "450", "mousedown", "1")
+                    pause()
+                    xdo("mousemove", "--sync", str(x), "450")
+                    pause()
+
+                for dark in (False, True):
+                    set_theme(dark)
+                    for mode, button in (("files", "button:File explorer"),
+                                         ("search", "button:Search notes"),
+                                         ("bookmarks", "bookmarks-tab")):
+                        click_control(button)
+                        # Exactly the reported gesture: overshoot the left edge,
+                        # hold at the clamp, release, then drag back outward.
+                        drag_to(0)
+                        try:
+                            inspect("held-minimum", dark, mode)
+                        finally:
+                            xdo("mouseup", "1")
+                        pause()
+                        minimum = inspect("released-minimum", dark, mode)
+                        assert minimum <= 240, ("Sidebar must remain compact",minimum)
+                        if mode != "bookmarks":
+                            edge = control_bounds("tab-strip-background")[0]
+                            for control in ("button:New note · Ctrl+N", "new-folder", "file-sort", "file-collapse"):
+                                bounds = control_bounds(control)
+                                assert bounds[2] <= edge-8, ("Sidebar toolbar control clipped at minimum",control,bounds,edge)
+                            click_control("new-folder")
+                            control_bounds("dialog-input")
+                            key("Escape")
+                        drag_to(450)
+                        xdo("mouseup", "1"); pause()
+                        assert inspect("expanded-again", dark, mode) >= minimum+80
+                    click_control("button:File explorer")
+                    drag_to(0); xdo("mouseup", "1"); pause()
+                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    app.wait(timeout=5)
+                    app = launch_app(launch_command); window = ready_window()
+                    inspect("restarted-minimum", dark, "files")
+                    results.append(f"{'Dark' if dark else 'Light'} sidebar has no unpainted gap while held at the far-left clamp, after release, outward drag and restart; Files/Search/Bookmarks fit and controls work")
+                assert all(path.read_bytes()==data for path,data in protected.items()), "Sidebar resizing changed a note"
+
+            def toolbar_fill_checks():
+                protected = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = []
+                for dark in (True, False):
+                    set_theme(dark)
+                    for count in (0, 1, 8):
+                        close_tabs()
+                        for _ in range(count): key("ctrl+t")
+                        for width in (1440, 900):
+                            xdo("windowsize",window,str(width),"960");pause()
+                            for sidebar in (False, True):
+                                if bool(control_bounds("sidebar:details", required=False)) != sidebar:
+                                    click_control("toggle-right-sidebar")
+                                strip = control_bounds("tab-strip-background")
+                                toggle = control_bounds("toggle-right-sidebar")
+                                details = control_bounds("sidebar:details", required=False)
+                                expected = details[0] if details else width
+                                assert abs(strip[2]-expected) <= 1.0, ("Toolbar must fill its actual pane",strip,expected)
+                                assert 8 <= strip[2]-toggle[2] <= 12, ("Trailing control must align to the shared inset",strip,toggle)
+                                picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                                y = round(strip[1]+2)
+                                reference = picture.getpixel((round(strip[0]+2),y))
+                                edge = picture.getpixel((round(strip[2]-2),y))
+                                assert max(abs(a-b) for a,b in zip(reference,edge)) <= 1, ("Unpainted toolbar stripe remains",reference,edge,strip)
+                                observations.append({"dark":dark,"tabs":count,"width":width,"sidebar":sidebar,"strip":strip,"toggle":toggle,"edge_rgb":edge})
+                            if count in (0,8): capture(f"native-toolbar-fill-{'dark' if dark else 'light'}-{count}-{width}.png")
+                    results.append(f"Actual {'dark' if dark else 'light'} toolbar fills its pane with zero, one and crowded tabs, wide/narrow windows and either sidebar state")
+                (reports/"native-toolbar-fill-measurements.json").write_text(json.dumps(observations,indent=2)+"\n")
+                assert all(path.read_bytes()==data for path,data in protected.items())
+
+            def middle_pan_checks():
+                note = fixture / "Notes/Middle pan.md"
+                target = fixture / "Pan target.md"
+                source = "# Middle pan\n\n[[Pan target]]\n\n" + "\n\n".join(
+                    f"Paragraph {index}: Drag this actual note text to move the page. "
+                    "The same note must remain unchanged in each editing and reading mode. " * 3
+                    for index in range(80)
+                ) + "\n"
+                note.write_bytes(source.encode())
+                target.write_bytes(b"# Pan target\n\nA middle click opens this note in another tab.\n")
+                originals = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = {"pages": {}, "graph": {}}
+
+                def retain():
+                    (reports / "native-middle-pan-observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                def unchanged():
+                    for path, expected in originals.items():
+                        assert path.read_bytes() == expected, ("Panning must not edit a file", str(path.relative_to(fixture)))
+
+                def position():
+                    return control_bounds("document-scroll-y")[0]
+
+                def drag(start, delta, button="2", cancel=False):
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", button)
+                    try:
+                        time.sleep(.1)
+                        for step in range(1, 9):
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
+                            time.sleep(.035)
+                        if cancel:
+                            # --clearmodifiers releases held mouse buttons too.
+                            xdo("key", "Escape"); pause()
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 17)), str(round(start[1] + delta[1] - 19)))
+                            pause()
+                    finally:
+                        xdo("mouseup", button)
+                    xdo("mousemove", "--sync", "0", "0")
+                    pause()
+
+                def text_point(mode, *, preview=False):
+                    bounds = control_bounds("document-viewport")
+                    top, bottom = bounds[1] + 80, bounds[3] - 100
+                    if mode == "Reading view" or preview:
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        candidates = [box for name, box in controls.items() if name.startswith("reading-block:")
+                                      and top <= box[1] < box[3] <= bottom
+                                      and (not preview or box[0] >= (bounds[0] + bounds[2]) / 2 - 2)]
+                        assert candidates, ("A real visible paragraph is needed for the drag", mode, bounds)
+                        box = min(candidates, key=lambda box: box[1])
+                        return box[0] + min(35, (box[2] - box[0]) / 2), (box[1] + box[3]) / 2
+                    editor = control_bounds("editor")
+                    return max(bounds[0], editor[0]) + 35, (top + bottom) / 2
+
+                time.sleep(.7)
+                command("Refresh vault")
+                open_note("Middle pan")
+                for mode in ("Live preview", "Source editing", "Reading view", "Split source"):
+                    command(mode)
+                    viewport = control_bounds("document-viewport")
+                    xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round((viewport[1] + viewport[3]) / 2)))
+                    xdo("click", "--repeat", "2", "--delay", "80", "5")
+                    pause()
+                    before = position()
+                    assert before >= 300, (mode, before)
+                    capture("native-middle-pan-" + mode.split()[0].lower() + "-before.png")
+                    start = text_point(mode)
+                    drag(start, (12, -90))
+                    after_text = position()
+                    assert abs(after_text - before - 90) <= 3, ("Middle-dragging text must pan the page without wheel scaling", mode, before, after_text)
+                    start = text_point(mode)
+                    viewport = control_bounds("document-viewport")
+                    drag(start, (viewport[0] - 25 - start[0], -70))
+                    after_outside = position()
+                    assert abs(after_outside - after_text - 70) <= 3, ("Leaving the document must keep panning its original scroller", mode, after_text, after_outside)
+                    before_cancel = position()
+                    drag(text_point(mode), (8, -60), cancel=True)
+                    after_cancel = position()
+                    assert abs(after_cancel - before_cancel) <= 3, ("Escape must restore the complete page drag and ignore later held movement", mode, before_cancel, after_cancel)
+                    if mode == "Split source":
+                        drag(text_point(mode, preview=True), (0, -55))
+                        assert abs(position() - after_cancel - 55) <= 3, ("The Split preview must pan the shared document", after_cancel, position())
+                    key("ctrl+s")
+                    unchanged()
+                    capture("native-middle-pan-" + mode.split()[0].lower() + "-after.png")
+                    observations["pages"][mode] = {"before": before, "after_text": after_text, "after_leaving_viewport": after_outside, "before_escape": before_cancel, "after_escape": after_cancel, "final": position()}
+                    retain()
+                    results.append(mode + ": real middle-drag on text panned at pointer distance, retained the originating pane outside its bounds, cancelled on Escape, and preserved every fixture byte")
+
+                command("Reading view")
+                viewport = control_bounds("document-viewport")
+                xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round((viewport[1] + viewport[3]) / 2)))
+                xdo("click", "--repeat", "25", "--delay", "10", "4")
+                pause()
+                assert position() < 1
+                count = control_bounds("tab-count")[0]
+                click_control("reading-block:1", button="2", hold=.15)
+                title_contains("Pan target")
+                assert control_bounds("tab-count")[0] == count + 1, "A stationary middle click on a link must still open another tab"
+                unchanged()
+                results.append("A stationary middle click on a Reading link still opened its target in a new tab; all note bytes stayed unchanged")
+
+                graph_root = base / "Middle pan graph"
+                graph_root.mkdir()
+                graph_sources = {"Focus.md": b"# Focus\n\n[[Other]]\n[[Peer]]\n", "Other.md": b"# Other\n\n[[Focus]]\n", "Peer.md": b"# Peer\n"}
+                for name, text in graph_sources.items():
+                    (graph_root / name).write_bytes(text)
+                command("Open vault"); key("ctrl+a"); paste_text(str(graph_root), held=True); key("Return")
+                title_contains(graph_root.name)
+                open_note("Focus")
+                command("Graph view: Open graph view")
+                prefix = "global-graph"
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    if controls.get(prefix + ":busy", [1])[0] == 0 and controls.get(prefix + ":node-count", [-1])[0] == 3:
+                        break
+                    time.sleep(.05)
+                else:
+                    raise AssertionError(("The private graph did not settle", controls))
+                if control_bounds(prefix + ":settings-open")[0]:
+                    click_control(prefix + ":settings", hold=.15)
+                click_control(prefix + ":fit", hold=.15)
+                xdo("mousemove", "0", "0"); pause(); pause()
+
+                def camera():
+                    return [control_bounds(prefix + ":" + key)[0] for key in ("pan-x", "pan-y", "zoom")]
+
+                def nodes():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return {name.split(":node:", 1)[1]: [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+                            for name, box in controls.items() if name.startswith(prefix + ":node:")}
+
+                def translated(before, after, delta):
+                    assert set(before) == set(after) == set(graph_sources), (before, after)
+                    assert all(abs(after[name][axis] - point[axis] - delta[axis]) < 2 for name, point in before.items() for axis in (0, 1)), ("Panning must translate all graph nodes equally", before, after, delta)
+
+                before = nodes(); before_camera = camera()
+                capture("native-middle-pan-graph-before.png")
+                drag(before["Focus.md"], (55, 34))
+                after = nodes(); after_camera = camera()
+                translated(before, after, (55, 34))
+                assert all(abs(after_camera[axis] - before_camera[axis] - delta) < 2 for axis, delta in enumerate((55, 34))), ("Middle dragging a node must pan the camera", before_camera, after_camera)
+                assert abs(after_camera[2] - before_camera[2]) < .001, "Middle pan must not zoom"
+                drag(after["Focus.md"], (28, -26), cancel=True)
+                translated(after, nodes(), (0, 0))
+                assert all(abs(left - right) < .5 for left, right in zip(camera(), after_camera)), "Escape must restore the whole middle-button camera drag"
+                observations["graph"]["middle_over_node"] = {"before": before, "after": after, "camera_before": before_camera, "camera_after": after_camera}
+                retain()
+                capture("native-middle-pan-graph-after.png")
+                results.append("Middle dragging directly over a graph node panned every dot and the camera equally without changing relative node positions or zoom; Escape rolled the complete drag back")
+
+                before = nodes(); before_camera = camera()
+                drag(before["Focus.md"], (-37, 29), button="1")
+                after = nodes()
+                assert all(abs(left - right) < .5 for left, right in zip(camera(), before_camera)), "Primary node dragging must retain the camera"
+                assert all(abs(after["Focus.md"][axis] - before["Focus.md"][axis] - delta) < 2 for axis, delta in enumerate((-37, 29)))
+                assert all(abs(after[name][axis] - point[axis]) < 1 for name, point in before.items() if name != "Focus.md" for axis in (0, 1)), "Primary dragging must move only the selected node"
+                canvas = control_bounds(prefix + ":canvas")
+                blank = (canvas[0] + 30, canvas[3] - 35)
+                assert all(sum((point[axis] - blank[axis]) ** 2 for axis in (0, 1)) > 25 ** 2 for point in after.values()), "The primary canvas control must begin on blank canvas"
+                before = after; before_camera = camera()
+                drag(blank, (28, -21), button="1")
+                translated(before, nodes(), (28, -21))
+                assert all(abs(camera()[axis] - before_camera[axis] - delta) < 2 for axis, delta in enumerate((28, -21)))
+                assert abs(camera()[2] - before_camera[2]) < .001
+                for name, text in graph_sources.items():
+                    assert (graph_root / name).read_bytes() == text, name
+                unchanged()
+                observations["graph"]["primary_regressions"] = {"node_after": after, "canvas_after": nodes(), "camera_after": camera()}
+                retain()
+                results.append("Primary graph dragging still moved one node independently and panned blank canvas; all graph and original page fixture bytes stayed unchanged")
+
             def diagram_checks():
                 path = fixture / "Notes/Diagram check.md"
                 source = "# Diagram check\n\n| Note | State |\n| --- | --- |\n| One | Ready |\n\n```mermaid\nflowchart LR\n A[Write] --> B[Read]\n```\n\nEnd.\n"
@@ -1628,6 +1953,168 @@ def main():
                 control_bounds("mermaid-error")
                 assert invalid.read_text() == "```mermaid\nnot a diagram\n```\n"
                 results.append("Tables and native Mermaid render in Reading and Live, stay literal in Source, reuse the same diagram through hover/scroll, and invalid syntax retains its source")
+
+            def math_checks():
+                close_tabs()
+                note = fixture / "Math check.md"
+                original = (ROOT / "tests/fixtures/math.md").read_bytes()
+                note.write_bytes(original)
+                destination = fixture / "Math destination.md"
+                destination.write_bytes(b"# Math destination\n\nKEEP_DESTINATION_BYTES\n")
+                originals = {path: path.read_bytes() for path in fixture.rglob("*")
+                             if path.is_file() and path.suffix in (".md", ".txt", ".rs", ".py", ".html")}
+                time.sleep(.7)
+                open_note("Math check")
+                observations = []
+
+                def controls():
+                    return json.loads((base / "ui-probe.json").read_text())
+
+                def formulas(mode):
+                    prefix = "math-live:" if mode == "live" else "math-"
+                    deadline = time.monotonic() + 6
+                    while time.monotonic() < deadline:
+                        current = controls()
+                        inline = {name: box for name, box in current.items()
+                                  if name.startswith(prefix + "inline:")}
+                        display_boxes = {name: box for name, box in current.items()
+                                         if name.startswith(prefix + "display:")}
+                        if len(inline) >= 2 and len(display_boxes) >= 3:
+                            return inline, display_boxes
+                        assert app.poll() is None
+                        time.sleep(.05)
+                    capture("native-math-missing-" + mode + ".png")
+                    raise AssertionError(("Inline and three display formulas must actually paint", mode, inline, display_boxes))
+
+                def painted(box, *, fit=True):
+                    viewport = control_bounds("document-viewport")
+                    left, top, right, bottom = box
+                    if fit:
+                        assert left >= viewport[0]-1 and right <= viewport[2]+1, ("Formula escaped the document", box, viewport)
+                    assert top >= viewport[1]-1 and bottom <= viewport[3]+1, ("Formula must be fully visible", box, viewport)
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    left, top, right, bottom = map(round, box)
+                    assert right-left >= 4 and bottom-top >= 6, box
+                    background = picture.getpixel((left, top))
+                    ink = [(x,y) for y in range(top+1, bottom-1) for x in range(left+1, right-1)
+                           if pixel_contrast(picture.getpixel((x,y)), background) >= 3]
+                    assert len(ink) >= 8, ("A formula rectangle without visible glyphs is not a render", box, len(ink))
+                    assert max(y for _,y in ink)-min(y for _,y in ink) >= 4, ("Formula ink collapsed", box)
+                    return len(ink)
+
+                def sample(mode, appearance, label):
+                    inline, displays = formulas(mode)
+                    first_name, first = min(inline.items(), key=lambda item: (item[1][1], item[1][0]))
+                    selected = sorted(displays.items(), key=lambda item: item[1][1])[:3]
+                    ink = {name: painted(box) for name, box in [(first_name, first), *selected]}
+                    viewport = control_bounds("document-viewport")
+                    if mode == "split":
+                        assert all(box[0] >= (viewport[0]+viewport[2])/2-2 for _,box in selected), "Split formulas must stay in the preview column"
+                    observations.append({"mode":mode, "appearance":appearance, "size":label,
+                                         "formula_bounds":dict([(first_name,first),*selected]), "ink_pixels":ink,
+                                         "font":control_bounds("document-font-size")[0]})
+                    (reports / "native-math-measurements.json").write_text(json.dumps(observations,indent=2)+"\n")
+                    capture(f"native-math-{appearance}-{mode}-{label}.png")
+                    assert note.read_bytes() == original, "Changing the math view edited its source"
+                    return first_name, first
+
+                def font(size):
+                    actual = round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size-actual)):
+                        command("Increase font size" if size > actual else "Decrease font size")
+                    assert control_bounds("document-font-size")[0] == size
+
+                for dark in (True, False):
+                    set_theme(dark)
+                    appearance = "dark" if dark else "light"
+                    font(18)
+                    for command_name, mode in (("Reading view","reading"), ("Split source","split"), ("Live preview","live")):
+                        command(command_name)
+                        if mode == "live": key("ctrl+Home")
+                        _, initial = sample(mode, appearance, "18")
+                        font(19)
+                        if mode == "live": key("ctrl+Home")
+                        _, enlarged = sample(mode, appearance, "19")
+                        assert enlarged[2]-enlarged[0] > initial[2]-initial[0]+.2, ("Math must follow document font size", mode, initial, enlarged)
+                        font(18)
+                        if mode == "live": key("ctrl+Home")
+                        xdo("windowsize",window,"900","960");pause()
+                        sample(mode, appearance, "narrow")
+                        xdo("windowsize",window,"1440","960");pause()
+                    results.append(f"Real {appearance} math glyphs painted in Reading/Split/Live, followed font changes and fit a narrow native window without changing source bytes")
+
+                set_theme(True)
+                command("Live preview");key("ctrl+Home")
+                first_name, _ = sample("live", "dark", "source-edit-before")
+                click_control(first_name)
+                control_bounds("editor-focused")
+                assert control_bounds(first_name, required=False) is None, "Clicking a formula must reveal its editable source"
+                key("Home");key("shift+End");key("ctrl+c")
+                selected = subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3)
+                assert selected == r"Before $\frac{a}{b}$ after.", ("Formula click must lead to the literal source",repr(selected))
+                paste_text(r"Before $\frac{a+1}{b}$ after.")
+                key("ctrl+s")
+                changed = original.replace(b"\\frac{a}{b}",b"\\frac{a+1}{b}",1)
+                assert note.read_bytes() == changed, "Editing the revealed formula changed unrelated source"
+                capture("native-math-source-edit.png")
+                key("ctrl+z");key("ctrl+s")
+                assert note.read_bytes() == original, "Undo failed to restore exact formula bytes"
+                key("ctrl+w");open_note("Math check");command("Reading view")
+                sample("reading", "dark", "reopened")
+                assert note.read_bytes() == original
+                results.append("Clicking actual Live math revealed literal LaTeX; a real edit/Save/Undo/Save and close/reopen preserved exact original bytes")
+
+                # The neighboring prose must remain painted around the inline image.
+                first = min(formulas("reading")[0].values(),key=lambda box:(box[1],box[0]))
+                painted([first[0]-55,first[1],first[0]-3,first[3]],fit=False)
+                painted([first[2]+3,first[1],first[2]+54,first[3]],fit=False)
+                link = control_bounds("reading-block:2")
+                xdo("mousemove","--sync",str(round(link[0]+20)),str(round((link[1]+link[3])/2)),"click","1");pause()
+                title_contains("Math destination")
+                assert destination.read_bytes() == originals[destination]
+                open_note("Math check");command("Reading view")
+                formulas("reading")
+                xdo("mousemove","900","700","click","--repeat","8","--delay","10","5");pause()
+                capture("native-math-literal-fallbacks.png")
+                table_math = {name:box for name,box in controls().items() if name.startswith("math-table:")}
+                assert table_math, "A table cell must paint its formula"
+                for box in table_math.values(): painted(box)
+                painted(control_bounds("math-inline:8"))
+                copied = []
+                visible = controls()
+                viewport = control_bounds("document-viewport")
+                for name,box in sorted(visible.items()):
+                    if not name.startswith("reading-block:") or box[1] < viewport[1] or box[3] > viewport[3] or box[3]-box[1] > 60:
+                        continue
+                    left,top,right,bottom=box;y=round((top+bottom)/2)
+                    xdo("mousemove","--sync",str(round(left)),str(y),"mousedown","1")
+                    xdo("mousemove","--sync",str(round(right+3)),str(y),"mouseup","1")
+                    key("ctrl+c")
+                    copied.append(subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3))
+                assert any("$5" in text and "$10" in text and "$20" in text for text in copied), ("Currency must remain visible literal text",copied)
+                assert any(r"$\rustidianUnknown{x}$" in text for text in copied), ("Unknown math must retain selectable source",copied)
+                assert any("Unclosed $math stays literal." in text for text in copied), ("Unclosed math must retain selectable source",copied)
+                click_control("copy-code:0")
+                literal_code = subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3)
+                assert literal_code == "$\\frac{never}{render}$\n", ("A code fence must retain its literal math source",repr(literal_code))
+                results.append("Neighboring prose stayed painted, its link navigated normally, and code/currency/unclosed/unknown math remained visible selectable literal source")
+
+                command("Live preview");key("ctrl+Home");formulas("live")
+                # Let the bounded worker drain, then provoke hover-only frames.
+                previous=None;stable=0;deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    count=control_bounds("math-render-count")[0]
+                    stable=stable+1 if count==previous else 0
+                    previous=count
+                    if stable>=3:break
+                    time.sleep(.15)
+                assert stable>=3, "The formula worker did not settle"
+                assert control_bounds("math-render-us")[0]>0
+                for x in (800,850,900,800):
+                    xdo("mousemove","--sync",str(x),"500");pause()
+                assert control_bounds("math-render-count")[0]==previous, "Idle/hover regenerated cached formulas"
+                assert all(path.read_bytes()==data for path,data in originals.items()), "Math views changed a document in the disposable vault"
+                results.append("A settled formula cache survived idle/hover frames without rerendering, and all original vault document bytes remained unchanged")
 
             def quick_ranking_checks():
                 close_tabs()
@@ -1871,16 +2358,43 @@ def main():
                 title_contains("Navigation UI")
                 command("Reading view")
                 requests = reports / "browser-requests.txt"
-                for block, expected_uri in [(3, file_uri), (4, evidence.as_uri()), (5, attachment.as_uri()), (6, evidence.as_uri())]:
-                    before_requests = requests.read_text() if requests.exists() else ""
+
+                def handler_requests():
+                    return requests.read_text() if requests.exists() else ""
+
+                def external_link(block, expected_uri):
+                    before_requests = handler_requests()
                     click_link(block)
                     deadline = time.monotonic() + 3
-                    while (not requests.exists() or requests.read_text() == before_requests) and time.monotonic() < deadline:
+                    while handler_requests() == before_requests and time.monotonic() < deadline:
                         time.sleep(.05)
-                    assert requests.exists() and expected_uri in requests.read_text()[len(before_requests):], f"File link {block} must reach the desktop file handler"
+                    assert expected_uri in handler_requests()[len(before_requests):], f"File link {block} must reach the desktop file handler"
                     title_contains("Navigation UI")
                     time.sleep(.4)
                     assert not control_bounds("page-preview-create", required=False), "An existing file must not offer to create a missing note"
+
+                external_link(3, file_uri)
+                external_link(4, evidence.as_uri())
+                # An in-vault text document such as .json opens in the app's source editor, in the same tab.
+                before_requests = handler_requests()
+                before = tab_count()
+                click_link(5)
+                title_contains("record.json")
+                control_bounds("tab:Notes/record.json")
+                assert tab_count() == before, "A plain click must open the text document in the source tab"
+                control_bounds("editor-focused")
+                key("ctrl+a")
+                key("ctrl+c")
+                shown = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, timeout=5).decode()
+                assert shown == '{"attachment":"original evidence"}\n', repr(shown)
+                capture("native-navigation-text-document.png")
+                time.sleep(.4)
+                assert handler_requests() == before_requests, "An in-vault text document must not reach the desktop file handler"
+                key("alt+Left")
+                title_contains("Navigation UI")
+                # Back from a text document returns to the note's Reading view, as Back does after the Markdown hops above.
+                control_bounds("reading-block:6")
+                external_link(6, evidence.as_uri())
                 assert not fixture.joinpath("file:").exists(), "A URI must not create spurious notes"
                 assert evidence.read_text() == '{"proof":"original evidence"}\n'
                 assert attachment.read_text() == '{"attachment":"original evidence"}\n'
@@ -1888,7 +2402,7 @@ def main():
                 assert note.read_text() == source
                 assert target.read_text() == target_source
                 capture("native-navigation.png")
-                results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, and all source bytes stay intact")
+                results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, outside files reach the desktop handler while an in-vault .json opens in the app's source editor, and all source bytes stay intact")
 
                 plan = fixture / "Notes/Plan UI.md"
                 spec = fixture / "Notes/spec.md"
@@ -1968,7 +2482,7 @@ def main():
                 assert note.read_text() == source
                 def marked_pixels(name, control):
                     capture(name)
-                    path = ROOT / "reports" / name
+                    path = reports / name
                     box = tuple(round(value) for value in control_bounds(control))
                     return sum(r > g > b + 20 and r - g < 45 for r, g, b in pixel_data(Image.open(path).crop(box).convert("RGB")))
                 command("Reading view")
@@ -2186,6 +2700,7 @@ def main():
                     assert count >= 2 if required else count == 0, (color, count)
 
             def syntax_checks():
+                set_theme(True)
                 source = (ROOT / "tests/fixtures/syntax.md").read_text()
                 note = fixture / "Syntax GUI.md"
                 note.write_text(source)
@@ -2281,6 +2796,7 @@ def main():
                 results.append("Actual TS/TSX source files and Source/Live/Reading fences rendered keyword/string/comment colors in both themes; real edit/Save/Undo/Save preserved every original CRLF byte")
 
             def reading_code_checks():
+                set_theme(True)
                 # The compact-tab check can restore a previously open outline.
                 # This fixture measures the 920px reader with that pane closed.
                 if control_bounds("panel:outline", required=False) is not None:
@@ -3662,6 +4178,140 @@ def main():
                 assert child.read_text() == original
                 capture("native-file-toolbar.png")
                 results.append("The generated Collapse All icon collapsed nested folders, which could be reopened without changing the note")
+            # Dedicated section: list-order fixtures must not leak into the accumulated all-suite vault.
+            def sidebar_keys_checks():
+                sources = {}
+                for index in range(40):
+                    path = fixture / f"Keyboard nav {index:02}.md"
+                    sources[path] = f"# Keyboard nav {index:02}\n\nABCDE"
+                    path.write_text(sources[path])
+                command("Refresh vault")
+                for index in (2, 0, 1):
+                    open_note(f"Keyboard nav {index:02}")
+                    command("Bookmark current file")
+                click_control("bookmarks-tab")
+                click_control("bookmark:Keyboard nav 02.md")
+                control_bounds("sidebar-list-focused")
+                key("Up"); title_contains("Keyboard nav 02")
+                capture("native-bookmark-boundary-focus.png")
+                control_bounds("sidebar-list-focused")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Down"); title_contains("Keyboard nav 01")
+                key("Down"); title_contains("Keyboard nav 01")
+                key("Up"); title_contains("Keyboard nav 00")
+                # A context menu owns its arrows until dismissed.
+                click_control("bookmark:Keyboard nav 00.md", "3")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Escape")
+                key("ctrl+comma")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Escape")
+                click_control("bookmark:Keyboard nav 00.md")
+                key("Down"); title_contains("Keyboard nav 01")
+                capture("native-bookmark-arrows.png")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("Bookmarks follow saved order and boundaries; context menus and dialogs retain their arrows; every fixture byte is unchanged")
+                click_control("button:File explorer")
+                open_note("Keyboard nav 00")
+                command("Source editing")
+                click_control("file:Keyboard nav 00.md")
+                key("Down")
+                title_contains("Keyboard nav 01")
+                key("Up")
+                title_contains("Keyboard nav 00")
+                click_control("file:Keyboard nav 00.md")
+                key("Down")
+                title_contains("Keyboard nav 01")
+                for index in range(2, 35):
+                    key("Down")
+                    title_contains(f"Keyboard nav {index:02}")
+                pause()
+                bounds = control_bounds("file:Keyboard nav 34.md")
+                viewport = control_bounds("file-tree-viewport")
+                assert bounds[1] >= viewport[1] and bounds[3] <= viewport[3], (bounds, viewport)
+                capture("native-sidebar-arrows-offscreen.png")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("Clicking or reclicking a note retains Up/Down navigation and offscreen destinations scroll into view without edits")
+                click_control("editor")
+                control_bounds("editor-focused")
+                key("Up"); key("Down"); title_contains("Keyboard nav 34")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("Clicking note text transfers focus and ordinary editor arrows stay in the current note")
+                # Reverse-order and list-boundary checks use the actual rendered order.
+                click_control("file-sort"); click_control("sort-descending")
+                open_note("Keyboard nav 01")
+                # The explorer retains its own scroll position after Quick Open.
+                xdo("mousemove", "150", "400", "click", "--repeat", "60", "--delay", "1", "5")
+                pause()
+                click_control("file:Keyboard nav 01.md")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Up"); title_contains("Keyboard nav 01")
+                click_control("file-sort"); click_control("sort-ascending")
+                group = fixture / "Keyboard folder"
+                group.mkdir()
+                for name in ("A", "B"):
+                    path = group / f"Folder {name}.md"
+                    sources[path] = f"# Folder {name}\n"
+                    path.write_text(sources[path])
+                hidden = group / "Hidden"
+                hidden.mkdir()
+                hidden_note = hidden / "Hidden child.md"
+                sources[hidden_note] = "# Hidden child\n"
+                hidden_note.write_text(sources[hidden_note])
+                command("Refresh vault")
+                open_note("Folder A")
+                xdo("mousemove", "150", "400", "click", "--repeat", "60", "--delay", "1", "4")
+                pause()
+                click_control("file:Keyboard folder/Folder A.md")
+                key("Down"); title_contains("Folder B")
+                key("Up"); title_contains("Folder A")
+                assert control_bounds("file:Keyboard folder/Hidden/Hidden child.md", required=False) is None
+                results.append("Files follow current reverse sort and expanded-folder order, skipping collapsed children")
+                key("ctrl+shift+f"); key("ctrl+a"); type_text("Keyboard nav")
+                before_title = xdo("getwindowname", window)
+                key("Down"); assert xdo("getwindowname", window) == before_title
+                click_control("search:Keyboard nav 00.md")
+                key("Down"); title_contains("Keyboard nav 01")
+                key("Up"); title_contains("Keyboard nav 00")
+                key("Up"); title_contains("Keyboard nav 00")
+                key("End"); title_contains("Keyboard nav 39")
+                key("Down"); title_contains("Keyboard nav 39")
+                pause()
+                capture("native-search-arrows-last.png")
+                bounds = control_bounds("search:Keyboard nav 39.md")
+                viewport = control_bounds("search-viewport")
+                assert bounds[1] >= viewport[1] and bounds[3] <= viewport[3], (bounds, viewport)
+                key("Home"); title_contains("Keyboard nav 00")
+                capture("native-search-arrows.png")
+                results.append("Search text keeps its arrows; selecting a result enables filtered navigation, clamped boundaries and offscreen Home/End")
+                long_group = fixture / "Long search"
+                long_group.mkdir()
+                long_name = "A " + "Long title " * 12
+                for name in (long_name, "B short"):
+                    path = long_group / (name + ".md")
+                    sources[path] = "# Bounded result\n"
+                    path.write_text(sources[path])
+                command("Refresh vault")
+                click_control("search-input"); key("ctrl+a"); type_text("path:Long search/")
+                edge = control_bounds("tab-strip-background")[0]
+                xdo("mousemove", "--sync", str(round(edge-1)), "450", "mousedown", "1")
+                pause()
+                xdo("mousemove", "--sync", "0", "450")
+                pause()
+                xdo("mouseup", "1")
+                pause()
+                pane = control_bounds("sidebar:explorer")
+                assert pane[2] - pane[0] <= 240, pane
+                click_control("search:Long search/" + long_name + ".md")
+                key("Down"); title_contains("B short")
+                key("Up"); title_contains(long_name)
+                bounds = control_bounds("search:Long search/" + long_name + ".md")
+                assert bounds[3] - bounds[1] <= 34, bounds
+                capture("native-sidebar-long-title.png")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("At the minimum sidebar width, a long Search title stays on one line and adjacent-note arrows preserve every source byte")
+
+
             def keyboard_focus_checks():
                 key("ctrl+t")
                 command("Source editing",available=False)
@@ -3687,11 +4337,11 @@ def main():
                 for same_note in (False,True):
                     if not same_note:open_note("Keyboard mode anchor")
                     click_control("file:Keyboard sidebar.md");title_contains("Keyboard sidebar")
-                    control_bounds("editor-focused");key("ctrl+End");key("Left");type_text("<");key("ctrl+s")
+                    key("Return");control_bounds("editor-focused");key("ctrl+End");key("Left");type_text("<");key("ctrl+s")
                     assert sidebar_note.read_text()==sidebar_source[:-1]+"<"+sidebar_source[-1:]
                     key("ctrl+z");key("ctrl+s");assert sidebar_note.read_text()==sidebar_source
                 open_note("First steps")
-                results.append("Opening a sidebar note and clicking its selected name again both returned text focus; real arrow/edit/Undo/save actions preserved the note and other documents")
+                results.append("Enter after opening or reclicking a sidebar note transferred text focus; real arrow/edit/Undo/save actions preserved the note and other documents")
                 key("ctrl+shift+f")
                 key("ctrl+a")
                 type_text("path:Notes/")
@@ -4138,6 +4788,116 @@ def main():
                 title_contains("Note04999")
                 capture("native-large-explorer.png")
                 results.append("The native explorer scrolled through 5,000 files and opened the final row; folder toggling retained the complete scroll range")
+            def watch_limit_checks():
+                # 27 Oct: re-registering a 44,104-folder vault on each folder change
+                # hit the system limit and fell back to re-reading every file.
+                def watches():
+                    count = 0
+                    for info in Path(f"/proc/{app.pid}/fdinfo").iterdir():
+                        try:
+                            count += sum(line.startswith("inotify wd:") for line in info.read_text().splitlines())
+                        except FileNotFoundError:
+                            pass
+                    return count
+
+                def polling():
+                    return [task.name for task in Path(f"/proc/{app.pid}/task").iterdir()
+                            if (task / "comm").read_text().startswith("notify-rs poll")]
+
+                def settle(predicate, message):
+                    deadline = time.monotonic() + 8
+                    while not predicate():
+                        assert time.monotonic() < deadline, (message, watches(), polling())
+                        time.sleep(.1)
+
+                settle(lambda: watches() == watch_folders, "The vault must hold one watch per included folder")
+                click_control("button:File explorer")
+                pause()
+                click_control("file-collapse")
+                later = fixture / "Watched later"
+                later.mkdir()
+                assert control_bounds("folder:Watched later")
+                time.sleep(1)
+                ticks = lambda: sum(map(int, Path(f"/proc/{app.pid}/stat").read_text().rsplit(")", 1)[1].split()[11:13]))
+                before, idle_started = ticks(), time.monotonic()
+                time.sleep(5)
+                idle = (ticks() - before) / os.sysconf("SC_CLK_TCK") / (time.monotonic() - idle_started)
+                assert idle < .03, f"An idle window used {idle:.1%} of a CPU"
+                settle(lambda: watches() == watch_folders + 1, "A new folder must add one watch to the existing ones")
+                assert not polling(), "A folder change fell back to polling"
+                (later / "Late note.md").write_text("# Late note\n")
+                time.sleep(1)
+                key("ctrl+o")
+                type_text("Late note")
+                assert control_bounds("quick-open:Watched later/Late note.md")
+                key("Escape")
+                results.append(f"An external folder added one native watch under a limit too small to register the vault twice; the idle window then used {idle:.1%} of a CPU, and a note created in the folder reached Quick open")
+                shutil.rmtree(later)
+                settle(lambda: control_bounds("folder:Watched later", required=False) is None,
+                       "The removed folder stayed in the explorer")
+                settle(lambda: watches() == watch_folders, "Removing a folder must release its watch")
+                assert not polling(), "Removing a folder fell back to polling"
+                results.append("Removing the folder released its watch without polling")
+
+            def speed_checks():
+                # 27 Oct, on a real 86 KB note with 375 code blocks: opening it froze one
+                # frame for 764 ms, and each frame laid the note out once per queued
+                # keystroke, so typing took 58 ms per frame (488 ms at worst).
+                # Also 27 Oct: after a 64-character burst the frames that caught up took
+                # 201 and 379 ms, and the autosave 600 ms later wrote and fsynced the note
+                # inside a frame.
+                frames = base / "frames.log"
+
+                def frame_ms(action):
+                    """Every frame's time, and the times of frames that ended after the action."""
+                    before = frames.stat().st_size
+                    action()
+                    done = time.time() * 1000
+                    time.sleep(1.5)
+                    with frames.open() as log:
+                        log.seek(before)
+                        rows = [(int(row[1]) / 1000, int(row[2])) for row in map(str.split, log) if row]
+                    return sorted(ms for ms, _ in rows), [ms for ms, ended in rows if ended > done]
+
+                opening, _ = frame_ms(lambda: open_note("Large code note"))
+                # Opening focuses the editor; a click could land on a rendered table.
+                key("ctrl+End")
+                typed = " quick brown fox" * 4
+                # A burst queues several keystrokes into each frame; the 1.5 s after it
+                # includes the autosave.
+                typing, settling = frame_ms(lambda: xdo("type", "--clearmodifiers", "--delay", "1", "--", typed))
+                note = fixture / "Large code note.md"
+                deadline = time.monotonic() + 5
+                while not note.read_text().rstrip().endswith(typed.strip()) and time.monotonic() < deadline:
+                    time.sleep(.1)
+                assert note.read_text().rstrip().endswith(typed.strip()), "The typing did not reach the end of the note"
+                measured = (f"opening's slowest frame took {opening[-1]:.0f} ms; typing took "
+                            f"{typing[len(typing) // 2]:.0f} ms per frame, {typing[-1]:.0f} ms at worst; "
+                            f"after the burst the slowest frame took {max(settling, default=0):.0f} ms")
+                assert max(settling, default=0) <= 50, measured
+                assert opening[-1] < 150 and typing[len(typing) // 2] < 30 and typing[-1] < 100, measured
+                results.append(f"On an 86 KB note with 375 code blocks, {measured}")
+
+            def instance_checks():
+                # 27 Oct: five windows from separate launches stayed alive for hours.
+                def launch(*arguments):
+                    try:
+                        return subprocess.run([str(ROOT / args.binary), *map(str, arguments)], env=environment,
+                                              cwd=base, capture_output=True, timeout=10).returncode
+                    except subprocess.TimeoutExpired:
+                        raise AssertionError("A second launch kept running instead of handing over to the open window")
+                assert launch() == 0 and app.poll() is None, "A plain second launch must leave the first window running"
+                assert len(xdo("search", "--onlyvisible", "--name", "Rustidian").split()) == 1, "A second launch opened another window"
+                note = fixture / "Notes/First steps.md"
+                assert launch(note.relative_to(base)) == 0, "Opening a file from a second launch failed"
+                title_contains(note.stem)
+                results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there")
+                # click_control would assert the app still runs after the click.
+                left, top, right, bottom = control_bounds("window:Close window")
+                xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+                assert app.wait(timeout=5) == 0, "Closing the window must end its process"
+                results.append("Closing the window ended its process")
+
             def folder_checks():
                 click_control("button:File explorer")
                 pause()
@@ -4355,6 +5115,7 @@ def main():
                 image_bytes = attachment.read_bytes()
                 click_control("bookmark:Assets/Attachment.png")
                 title_contains("Attachment")
+                key("Return")
                 type_text("BOOKMARKED_IMAGE_READ_ONLY")
                 key("ctrl+b")
                 key("ctrl+s")
@@ -4836,6 +5597,101 @@ def main():
                 key("ctrl+w")
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
+
+            def system_theme_checks():
+                nonlocal app, window
+                originals = {path.relative_to(fixture): path.read_bytes()
+                    for path in fixture.rglob("*") if path.is_file()}
+                open_note("System appearance"); command("Reading view")
+                observations = []
+                selected_palette = "teal"
+
+                def saved_state():
+                    states = [json.loads(path.read_text())
+                        for path in (base / "state/rustidian").glob("*.json")]
+                    matching = [state for state in states
+                        if any(path == "System appearance.md" for path, _ in state.get("tabs", []))]
+                    assert len(matching) == 1, ("Expected this private vault's saved state", states)
+                    return matching[0]
+
+                def expect(dark, system, stage):
+                    expected = {("teal", True): (23, 27, 29), ("teal", False): (247, 246, 242),
+                        ("elpis-gold", True): (28, 27, 23), ("elpis-gold", False): (251, 248, 239)}[(selected_palette, dark)]
+                    deadline = time.monotonic() + 7
+                    stable_since = None
+                    actual = None
+                    while time.monotonic() < deadline:
+                        assert app.poll() is None, "App exited while following system appearance"
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        header = controls.get("button:More options")
+                        if header:
+                            actual = ImageGrab.grab(xdisplay=display).getpixel(
+                                (round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                        matches = (controls.get("appearance-system", [None])[0] == int(system)
+                            and controls.get("appearance-dark", [None])[0] == int(dark)
+                            and actual is not None
+                            and max(abs(a - b) for a, b in zip(actual, expected)) <= 2)
+                        if matches:
+                            stable_since = stable_since or time.monotonic()
+                            if time.monotonic() - stable_since >= .6:
+                                observations.append(dict(stage=stage, dark=dark, system=system,
+                                    background_rgb=actual, expected_rgb=expected))
+                                (reports / "native-system-theme-observations.json").write_text(
+                                    json.dumps(observations, indent=2) + "\n")
+                                capture("native-system-theme-" + stage + ".png")
+                                return
+                        else:
+                            stable_since = None
+                        time.sleep(.05)
+                    raise AssertionError(("System appearance did not settle", stage, dark, system,
+                        actual, expected, controls.get("appearance-system"), controls.get("appearance-dark")))
+
+                def change_os(value):
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", value],
+                        env=environment, check=True, timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    actual = subprocess.check_output(
+                        ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                        env=environment, text=True, timeout=5).strip().strip("'")
+                    assert actual == value, ("Private OS preference was not written", actual, value)
+
+                def choose(label):
+                    command("Open settings"); click_control("settings-page:Appearance")
+                    click_control("settings-dark"); click_control("settings-theme:" + label); key("Escape")
+                    assert saved_state()["appearance"] == label.lower()
+
+                def restart():
+                    nonlocal app, window
+                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    app = launch_app(launch_command); window = ready_window()
+                    title_contains("System appearance")
+                    assert control_bounds("view-mode:Reading")
+
+                expect(True, True, "startup-dark")
+                command("Open settings"); click_control("settings-page:Appearance")
+                click_control("settings-palette:Elpis Gold"); key("Escape")
+                selected_palette = "elpis-gold"
+                expect(True, True, "gold-dark")
+                change_os("prefer-light"); expect(False, True, "live-light")
+                results.append("A new private profile defaults to System; changing the real keyfile OS preference redraws the native app from dark to light without a click, retaining the selected gold palette")
+
+                choose("Dark"); expect(True, False, "explicit-dark")
+                change_os("prefer-dark"); change_os("prefer-light")
+                expect(True, False, "dark-ignores-os-light")
+                choose("Light"); expect(False, False, "explicit-light")
+                change_os("prefer-dark"); expect(False, False, "light-ignores-os-dark")
+                results.append("Explicit Dark and Light choices remain stable when the private OS preference changes to the opposite color")
+
+                choose("System"); expect(True, True, "rejoined-dark")
+                change_os("prefer-light"); expect(False, True, "rejoined-light")
+                restart(); expect(False, True, "restored-system-light")
+                assert saved_state()["appearance"] == "system"
+                assert saved_state()["palette"] == "elpis-gold"
+                change_os("prefer-dark"); expect(True, True, "restored-system-live-dark")
+                choose("Light"); restart(); expect(False, False, "restored-explicit-light")
+                assert saved_state()["appearance"] == "light"
+                assert all((fixture / name).read_bytes() == data for name, data in originals.items())
+                assert {path.relative_to(fixture) for path in fixture.rglob("*") if path.is_file()} == set(originals)
+                results.append("Returning to System resumes live following; real restarts preserve System and explicit Light independently of OS color, retain the palette, and preserve every original fixture file byte")
 
             def settings_checks():
                 nonlocal app, window
@@ -6535,6 +7391,69 @@ def main():
                 assert not failures, ("Native visual/control regressions", observations)
                 results.append("Actual graph dots and labels stay compact; graph and Settings slider thumbs remain filled and compact through idle/hover/drag in both themes, with all fixture bytes preserved")
 
+            def graph_animation_checks():
+                nonlocal app, window
+                root = base/"Animation vault";root.mkdir()
+                sources = {}
+                for index in range(20):
+                    name = f"{index:02} Timeline.md"
+                    text = "# Timeline\n\n" + " ".join(f"[[{other:02} Timeline]]" for other in range(20) if other != index) + "\n"
+                    (root/name).write_text(text);sources[name]=text.encode()
+                    time.sleep(.01)
+                command("Open vault");key("ctrl+a");paste_text(str(root),held=True);key("Return")
+                title_contains(root.name);open_note("00 Timeline")
+
+                def ready(prefix):
+                    deadline=time.monotonic()+8
+                    while time.monotonic()<deadline:
+                        if control_bounds(prefix+":busy")[0]==0 and control_bounds(prefix+":node-count")[0]==20:return
+                        time.sleep(.05)
+                    raise AssertionError("Animation fixture did not load")
+
+                def actual_nodes(prefix):
+                    data=json.loads((base/"ui-probe.json").read_text())
+                    return {key[len(prefix+":node:"):] for key in data if key.startswith(prefix+":node:")}
+
+                for local in (False,True):
+                    prefix="local-graph" if local else "global-graph"
+                    command("Graph view: Open local graph" if local else "Graph view: Open graph view")
+                    ready(prefix)
+                    for dark in (True,False):
+                        set_theme(dark)
+                        if not control_bounds(prefix+":animate",required=False):
+                            click_control(prefix+":section:display")
+                        control_bounds(prefix+":animate")
+                        full=actual_nodes(prefix)
+                        assert len(full)==20,(prefix,full)
+                        click_control(prefix+":animate")
+                        early=actual_nodes(prefix)
+                        capture(f"native-animation-{'local' if local else 'global'}-{'dark' if dark else 'light'}-early.png")
+                        assert "00 Timeline.md" in early and "19 Timeline.md" not in early,(prefix,early)
+                        assert 0 < len(early) < len(full)
+                        counts=[len(early)]
+                        for _ in range(8):
+                            time.sleep(.15);counts.append(len(actual_nodes(prefix)))
+                        assert counts==sorted(counts) and counts[-1]>counts[0],counts
+                        click_control(prefix+":animate-stop")
+                        assert actual_nodes(prefix)==full
+                        click_control(prefix+":animate")
+                        deadline=time.monotonic()+14
+                        while control_bounds(prefix+":animation-running")[0] and time.monotonic()<deadline:time.sleep(.1)
+                        assert control_bounds(prefix+":animation-running")[0]==0
+                        assert actual_nodes(prefix)==full
+                        capture(f"native-animation-{'local' if local else 'global'}-{'dark' if dark else 'light'}-finished.png")
+                        results.append(f"{'Local' if local else 'Global'} {'dark' if dark else 'light'} Animate reveals oldest-first, advances actual painted nodes, stops cleanly and finishes with the exact full graph")
+                    if not local:
+                        click_control(prefix+":animate")
+                        xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                        app=launch_app(launch_command[:1]+[str(root)]);window=ready_window()
+                        ready(prefix)
+                        assert control_bounds(prefix+":animation-running")[0]==0
+                        assert len(actual_nodes(prefix))==20
+                        command("Close current tab");open_note("00 Timeline")
+                assert all((root/name).read_bytes()==data for name,data in sources.items()),"Graph animation changed a note"
+                results.append("Transient animation does not restart itself on app restart, and every original note byte is unchanged")
+
             def graph_checks():
                 nonlocal app, window
                 graph_root = base / "Graph native vault"
@@ -7126,10 +8045,35 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "system-theme":
+                system_theme_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "system-theme"}))
+                return
+            if args.section == "graph-animation":
+                graph_animation_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
             if args.section == "graph-state":
                 graph_state_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "graph-state"}))
+                return
+            if args.section == "sidebar-boundary":
+                sidebar_boundary_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section == "toolbar-fill":
+                toolbar_fill_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section == "middle-pan":
+                middle_pan_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "middle-pan"}))
                 return
             if args.section == "palette-queued":
                 palette_queue_checks()
@@ -7292,6 +8236,19 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "tables"}))
                 return
+            if args.section == "desktop-vault":
+                import vault_loading_checks
+                def restart_desktop(arguments):
+                    nonlocal app, window
+                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    app.wait(timeout=5)
+                    app = launch_app([str(ROOT / args.binary), *map(str, arguments)])
+                    window = ready_window()
+                vault_loading_checks.run(dict(locals(), restart_desktop=restart_desktop,
+                    current_app=lambda: app, current_window=lambda: window))
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "vaults":
                 vault_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -7301,6 +8258,11 @@ def main():
                 reading_code_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "reading-code"}))
+                return
+            if args.section == "sidebar-keys":
+                sidebar_keys_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "sidebar-keys"}))
                 return
             if args.section == "keyboard-focus":
                 keyboard_focus_checks()
@@ -7352,6 +8314,21 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "explorer"}))
                 return
+            if args.section == "speed":
+                speed_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "speed"}))
+                return
+            if args.section == "instance":
+                instance_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "instance"}))
+                return
+            if args.section == "watch-limit":
+                watch_limit_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "watch-limit"}))
+                return
             if args.section == "folders":
                 folder_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -7362,8 +8339,20 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
-            if args.section in ("hover", "title", "scrolling", "diagrams", "task-clipping"):
-                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "task-clipping":task_clip_checks}[args.section]()
+            if args.section in ("agent", "agent-real"):
+                import agent_checks
+                def restart_agent():
+                    nonlocal app, window
+                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    app.wait(timeout=5)
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                agent_checks.run(dict(locals(), restart_agent=restart_agent))
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section in ("hover", "title", "scrolling", "diagrams", "math", "task-clipping"):
+                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "math":math_checks, "task-clipping":task_clip_checks}[args.section]()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
@@ -7719,6 +8708,7 @@ def main():
                 title_checks,
                 scrolling_checks,
                 diagram_checks,
+                math_checks,
                 large_search_checks,
                 folder_checks,
                 explorer_checks,
@@ -7727,6 +8717,7 @@ def main():
                 system_open_checks,
                 graph_checks,
                 graph_state_checks,
+                graph_animation_checks,
                 visual_controls_checks,
                 emoji_checks,
                 file_toolbar_checks,
@@ -7757,6 +8748,7 @@ def main():
                 settings_checks,
                 font_controls_checks,
                 workspace_checks,
+                sidebar_boundary_checks,
                 palette_queue_checks,
                 unicode_queue_checks,
                 recovery_checks,

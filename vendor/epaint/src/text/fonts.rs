@@ -10,7 +10,7 @@ use crate::{
         family::{Family, FamilyKey},
         font_face::{FontFace, GlyphInfo, ShapedCluster, ShapedGlyph},
         font_provider::FontProviders,
-        galley_cache::GalleyCache,
+        galley_cache::{GalleyCache, ParagraphLayout},
         glyph_atlas::{GlyphAllocation, GlyphAtlas, OutlineGlyph, RasterGlyphAllocation},
         styled_metrics::StyledMetrics,
         text_layout::layout,
@@ -41,6 +41,11 @@ impl ViewportKey {
         Self(value)
     }
 }
+
+/// Bumped whenever galleys laid out earlier stop being valid: a new [`Fonts`]
+/// or a cleared galley cache. Lets an application that keeps a [`Galley`] across
+/// passes know when to lay it out again (see [`FontsView::layout_generation`]).
+static LAYOUT_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 #[derive(Default)]
 struct ViewportGalleyCache {
@@ -94,7 +99,10 @@ impl Fonts {
     pub fn new(options: TextOptions, definitions: FontDefinitions) -> Self {
         Self {
             fonts: FontsImpl::new(options, definitions),
-            galley_caches: Default::default(),
+            galley_caches: {
+                LAYOUT_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                Default::default()
+            },
         }
     }
 
@@ -118,7 +126,7 @@ impl Fonts {
     pub fn add_glyph_rasterizer(&mut self, glyph_rasterizer: GlyphRasterizer) -> bool {
         let changed = self.fonts.add_glyph_rasterizer(glyph_rasterizer);
         if changed {
-            self.galley_caches.clear();
+            self.clear_galley_caches();
         }
         changed
     }
@@ -128,7 +136,7 @@ impl Fonts {
     /// Pass an empty list to only use the installed fonts.
     pub fn set_glyph_rasterizers(&mut self, glyph_rasterizers: Vec<GlyphRasterizer>) {
         self.fonts.set_glyph_rasterizers(glyph_rasterizers);
-        self.galley_caches.clear();
+        self.clear_galley_caches();
     }
 
     /// Ask these for fonts, after the [`FontDefinitions`].
@@ -158,7 +166,7 @@ impl Fonts {
     pub fn set_missing_glyph_policy(&mut self, policy: MissingGlyphPolicy) {
         if self.fonts.missing_glyph_policy != policy {
             self.fonts.missing_glyph_policy = policy;
-            self.galley_caches.clear(); // Cached galleys may contain tofu.
+            self.clear_galley_caches(); // Cached galleys may contain tofu.
         }
     }
 
@@ -177,11 +185,11 @@ impl Fonts {
     pub fn begin_pass(&mut self, options: TextOptions, viewport_key: ViewportKey) {
         if self.fonts.options() != &options {
             self.fonts.set_options(options);
-            self.galley_caches.clear(); // Galleys point into the old atlas.
+            self.clear_galley_caches(); // Galleys point into the old atlas.
         } else if 0.8 < self.fonts.glyphs.fill_ratio() {
             // The parsed faces are still fine; only the bitmaps need to go.
             self.fonts.glyphs.clear();
-            self.galley_caches.clear(); // Galleys point into the old atlas.
+            self.clear_galley_caches(); // Galleys point into the old atlas.
         }
 
         let viewport_cache = self.galley_caches.entry(viewport_key).or_default();
@@ -295,6 +303,12 @@ impl Fonts {
     ///
     /// This uses the default layout-cache namespace. Integrations that render multiple
     /// independently scheduled viewports must use [`Self::with_pixels_per_point_for_viewport`].
+    /// Forget every cached galley; they point into an old atlas or old fonts.
+    fn clear_galley_caches(&mut self) {
+        self.galley_caches.clear();
+        LAYOUT_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn with_pixels_per_point(&mut self, pixels_per_point: f32) -> FontsView<'_> {
         self.with_pixels_per_point_for_viewport(pixels_per_point, ViewportKey::default())
     }
@@ -424,6 +438,29 @@ impl FontsView<'_> {
             job,
             allow_split_paragraphs,
         )
+    }
+
+    /// Lay out `job` paragraph by paragraph, reusing the paragraph galleys of
+    /// `previous` (what this call returned last time) for every paragraph whose
+    /// text and sections did not change.
+    ///
+    /// Unlike [`Self::layout_job`] this neither hashes the whole job nor the
+    /// unchanged paragraphs, so editing one line of a long text costs one
+    /// paragraph. The result is only valid while [`Self::layout_generation`]
+    /// is unchanged.
+    pub fn layout_job_incremental(
+        &mut self,
+        job: LayoutJob,
+        previous: Option<&ParagraphLayout>,
+    ) -> (Arc<Galley>, ParagraphLayout) {
+        *self.used_since_begin_pass = true;
+        self.galley_cache
+            .layout_incremental(self.fonts, self.pixels_per_point, job, previous)
+    }
+
+    /// Changes whenever galleys from earlier passes stop being valid.
+    pub fn layout_generation(&self) -> u64 {
+        LAYOUT_GENERATION.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn num_galleys_in_cache(&self) -> usize {
