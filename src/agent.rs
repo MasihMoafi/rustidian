@@ -362,11 +362,7 @@ struct Connection {
 }
 
 impl Connection {
-    fn spawn(
-        command: Command,
-        stop: Arc<AtomicBool>,
-        shutdown: Arc<AtomicBool>,
-    ) -> Result<Self> {
+    fn spawn(command: Command, stop: Arc<AtomicBool>, shutdown: Arc<AtomicBool>) -> Result<Self> {
         if stop.load(Ordering::Acquire) || shutdown.load(Ordering::Acquire) {
             return Err(Failure::Stopped);
         }
