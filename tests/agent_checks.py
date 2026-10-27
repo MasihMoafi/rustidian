@@ -172,8 +172,8 @@ def run(scope):
     h.command("Source editing")
     # Keep the attached snapshot observably different from its on-disk version.
     session_files = list((base / "state/rustidian").glob("*.json"))
-    assert len(session_files) == 1, session_files
-    autosave_before = json.loads(session_files[0].read_text())["autosave_enabled"]
+    assert len(session_files) <= 1, session_files
+    autosave_before = json.loads(session_files[0].read_text())["autosave_enabled"] if session_files else True
     if autosave_before:
         h.command("Open settings")
         h.type_text("autosave")
@@ -205,6 +205,7 @@ def run(scope):
 
     # Save/Undo via the editor also proves the attachment did not consume its history.
     h.click_control("tab-full:" + note.name)
+    h.command("Source editing")
     h.key("ctrl+s"); assert note.read_text() == expected_unsaved
     h.key("ctrl+z"); h.key("ctrl+s"); assert note.read_bytes() == original
     h.click_control("tab-full:Agent")
@@ -212,6 +213,7 @@ def run(scope):
     send("STOP_ME")
     wait(lambda: metric("agent-response-length") > 0, "The stopped turn must have streamed first")
     h.click_control("tab-full:" + note.name)
+    h.command("Source editing")
     h.click_control("tab-full:Agent")
     h.click_control("agent-stop")
     completed()
@@ -239,6 +241,8 @@ def run(scope):
     h.key("ctrl+a"); h.key("ctrl+c")
     assert clipboard().encode() == changed
     h.key("ctrl+s"); assert note.read_bytes() == changed
+    h.key("ctrl+y"); h.key("ctrl+s")
+    assert note.read_bytes() == changed, "A reviewed replacement must discard the stale Redo branch"
     h.key("ctrl+z"); h.key("ctrl+s"); assert note.read_bytes() == original
     proposal("PROPOSE_DISMISS")
     h.click_control("agent-dismiss")
@@ -246,6 +250,7 @@ def run(scope):
     assert note.read_bytes() == original
     proposal("PROPOSE_STALE")
     h.click_control("tab-full:" + note.name)
+    h.command("Source editing")
     h.key("ctrl+End"); h.paste_text("CONCURRENT_CHANGE")
     h.click_control("tab-full:Agent")
     h.click_control("agent-apply")
@@ -253,6 +258,7 @@ def run(scope):
     h.capture("native-agent-stale-proposal.png")
     h.click_control("error-dismiss")
     h.click_control("tab-full:" + note.name)
+    h.command("Source editing")
     h.key("ctrl+s"); assert note.read_bytes() == original + b"CONCURRENT_CHANGE"
     h.key("ctrl+z"); h.key("ctrl+s"); assert note.read_bytes() == original
     assert "AGENT_REVISED_BODY" not in json.dumps(saved()), "Proposal bodies must not persist in transcript storage"

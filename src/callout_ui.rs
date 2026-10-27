@@ -99,6 +99,8 @@ pub fn header(
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &model.title));
     crate::ui_probe::record(ui.ctx(), format!("callout:{ordinal}"), response.rect);
-    let link = response.clicked().then_some(hovered_link).flatten();
+    let link = crate::theme::link_clicked(&response)
+        .then_some(hovered_link)
+        .flatten();
     (response, link)
 }

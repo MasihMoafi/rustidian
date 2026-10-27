@@ -60,6 +60,16 @@ impl PagePan {
                         });
                     self.desired = None;
                 }
+                // The note pane reserves middle-button input for panning and
+                // links. Winit emits PRIMARY paste on press, before a drag can
+                // be distinguished, so never let that event mutate a note.
+                Event::MiddleClickPaste { pos, .. }
+                    if self
+                        .viewport
+                        .is_some_and(|viewport| viewport.rect.contains(*pos)) =>
+                {
+                    continue;
+                }
                 Event::PointerMoved(pos) => self.motion(*pos, threshold),
                 Event::PointerButton {
                     pos,
@@ -199,6 +209,41 @@ mod tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    #[test]
+    fn note_pan_suppresses_primary_selection_paste_but_preserves_keyboard_paste_and_other_fields() {
+        let ctx = egui::Context::default();
+        let mut pan = PagePan {
+            viewport: Some(viewport()),
+            ..Default::default()
+        };
+        let inside = egui::pos2(200.0, 100.0);
+        let outside = egui::pos2(2.0, 2.0);
+        let other_field = Event::MiddleClickPaste {
+            pos: outside,
+            text: "other field".into(),
+        };
+        let keyboard = Event::Paste("keyboard paste".into());
+        let mut input = raw(vec![
+            button(inside, PointerButton::Middle, true),
+            Event::MiddleClickPaste {
+                pos: inside,
+                text: "must not enter note".into(),
+            },
+            keyboard.clone(),
+            other_field.clone(),
+            Event::PointerMoved(inside + egui::vec2(0.0, 80.0)),
+            button(inside, PointerButton::Middle, false),
+        ]);
+        pan.raw_input(&ctx, &mut input, true);
+        assert!(input.events.contains(&keyboard));
+        assert!(input.events.contains(&other_field));
+        assert!(
+            !input.events.iter().any(
+                |event| matches!(event, Event::MiddleClickPaste { pos, .. } if *pos == inside)
+            )
+        );
     }
 
     #[test]

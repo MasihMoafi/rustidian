@@ -147,6 +147,10 @@ pub fn prose_size(ui: &egui::Ui, heading: u8) -> f32 {
     )
 }
 
+pub fn link_clicked(response: &egui::Response) -> bool {
+    response.clicked() || response.clicked_by(egui::PointerButton::Middle)
+}
+
 pub fn hover_fill(ui: &egui::Ui) -> Color32 {
     ui.visuals().widgets.hovered.weak_bg_fill
 }

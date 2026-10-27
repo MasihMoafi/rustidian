@@ -1040,7 +1040,7 @@ fn show_blocks(
                         first.union(last).translate(response.rect.min.to_vec2()),
                     );
                 }
-                if response.clicked() {
+                if crate::theme::link_clicked(&response) {
                     clicked = follow_destination(destination, native_links);
                 }
             }
@@ -1371,7 +1371,7 @@ fn show_table(
                             format!("table-link:{ordinal}:{row_index}:{column}:{link_index}"),
                             rect,
                         );
-                        if response.clicked() {
+                        if crate::theme::link_clicked(&response) {
                             follow = follow_destination(destination, native_links);
                         }
                         if response.hovered()

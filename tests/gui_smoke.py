@@ -1640,7 +1640,8 @@ def main():
                             xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
                             time.sleep(.035)
                         if cancel:
-                            key("Escape")
+                            # --clearmodifiers releases held mouse buttons too.
+                            xdo("key", "Escape"); pause()
                             xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 17)), str(round(start[1] + delta[1] - 19)))
                             pause()
                     finally:
@@ -7855,7 +7856,7 @@ def main():
                 import agent_checks
                 def restart_agent():
                     nonlocal app, window
-                    key("ctrl+q")
+                    xdo("key", "--clearmodifiers", "ctrl+q")
                     app.wait(timeout=5)
                     app = launch_app(launch_command)
                     window = ready_window()

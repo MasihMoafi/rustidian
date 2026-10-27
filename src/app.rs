@@ -2825,17 +2825,19 @@ impl NotesApp {
                                                 );
                                             }
                                             if rect.intersects(ui.clip_rect()) {
+                                                let probe_path = if tab.view == View::Agent {
+                                                    "Agent".into()
+                                                } else {
+                                                    tab.document.path.display().to_string()
+                                                };
                                                 crate::ui_probe::record(
                                                     ui.ctx(),
-                                                    format!("tab:{}", tab.document.path.display()),
+                                                    format!("tab:{probe_path}"),
                                                     rect.intersect(ui.clip_rect()),
                                                 );
                                                 crate::ui_probe::record(
                                                     ui.ctx(),
-                                                    format!(
-                                                        "tab-full:{}",
-                                                        tab.document.path.display()
-                                                    ),
+                                                    format!("tab-full:{probe_path}"),
                                                     rect,
                                                 );
                                             }

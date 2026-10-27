@@ -96,6 +96,7 @@ pub fn record_document_edit(
         .unwrap_or_else(|| CCursorRange::one(CCursor::new(0)));
     let mut undoer = state.undoer();
     undoer.add_undo(&(range, before.text.clone()));
+    undoer.feed_state(ctx.input(|input| input.time), &(range, after.text.clone()));
     undoer.add_undo(&(range, after.text.clone()));
     state.set_undoer(undoer);
 }
@@ -1445,7 +1446,7 @@ impl Editor {
             let rect = egui::Rect::from_min_size(
                 origin
                     + egui::vec2(
-                        if active || image.block.is_some() {
+                        if active || image.block.is_some() && image.math.is_none() {
                             0.0
                         } else {
                             -image.size.x
@@ -2614,6 +2615,73 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn external_document_edit_replaces_a_real_widget_redo_branch() {
+        use rustidian::vault::Document;
+        let ctx = egui::Context::default();
+        let root = std::path::Path::new("/disposable-agent-history");
+        let id = egui::Id::unique("agent-history-widget");
+        let mut document = Document::new("Note.md".into());
+        document.text = "Original note".into();
+        document_history(&ctx, root, &document.path).store(&ctx, id);
+        let frame = |document: &mut Document, time, events: Vec<egui::Event>| {
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            let events = std::iter::once(egui::Event::ModifiersChanged(
+                egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+            ))
+            .chain(events)
+            .collect();
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.add(
+                        TextEdit::multiline(&mut document.text)
+                            .id(id)
+                            .desired_width(400.0),
+                    );
+                },
+            )
+            .drop_without_applying_deltas();
+        };
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+        };
+        frame(&mut document, 0.0, vec![]);
+        frame(
+            &mut document,
+            0.1,
+            vec![egui::Event::Paste("Prior edit ".into())],
+        );
+        assert_ne!(document.text, "Original note");
+        frame(&mut document, 0.2, vec![key(Key::Z)]);
+        assert_eq!(document.text, "Original note");
+        let before = document.clone();
+        document.text = "Agent replacement".into();
+        record_document_edit(&ctx, root, &before, &document);
+        frame(&mut document, 0.3, vec![key(Key::Y)]);
+        assert_eq!(
+            document.text, "Agent replacement",
+            "Applying an external edit must discard the old Redo branch"
+        );
+        frame(&mut document, 0.4, vec![key(Key::Z)]);
+        assert_eq!(document.text, "Original note");
+        frame(&mut document, 0.5, vec![key(Key::Y)]);
+        assert_eq!(document.text, "Agent replacement");
+        frame(&mut document, 0.6, vec![key(Key::Y)]);
+        assert_eq!(
+            document.text, "Agent replacement",
+            "Extra Redo must never resurrect the earlier discarded edit"
+        );
+    }
+
     #[test]
     fn inactive_display_math_hides_opening_delimiters_and_retains_source_positions() {
         let source = "Before\n\n$$\nx^2\n$$\n\nAfter";
