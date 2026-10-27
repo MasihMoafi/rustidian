@@ -59,6 +59,11 @@ pub struct NotesApp {
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
+    agent: crate::agent_ui::Workspace,
+    agent_note: Option<u64>,
+    page_pan: crate::page_pan::PagePan,
+    pub(crate) appearance: theme::Appearance,
+    system_theme: theme::SystemTheme,
     pub(crate) palette: theme::palette::Palette,
     pub(crate) confirm_trash: bool,
     dialog_skip_trash: bool,
@@ -130,7 +135,7 @@ impl NotesApp {
         started: Instant,
         startup_document: Option<PathBuf>,
     ) -> Self {
-        theme::apply(&cc.egui_ctx, true);
+        theme::apply_appearance(&cc.egui_ctx, theme::Appearance::System);
         theme::install_fonts(&cc.egui_ctx);
         theme::install_icons(&cc.egui_ctx);
         let mut app = Self {
@@ -145,7 +150,12 @@ impl NotesApp {
             search_focus: false,
             show_left: true,
             show_right: false,
-            dark: true,
+            dark: cc.egui_ctx.theme() == egui::Theme::Dark,
+            agent: Default::default(),
+            agent_note: None,
+            page_pan: Default::default(),
+            appearance: Default::default(),
+            system_theme: Default::default(),
             palette: Default::default(),
             cache: CommonMarkCache::default(),
             dialog: None,
@@ -228,7 +238,7 @@ impl NotesApp {
 
     fn focus_editor(&mut self) {
         self.editor.focus = self.tabs.get(self.active).is_some_and(|tab| {
-            !matches!(tab.view, View::Read | View::Graph)
+            !matches!(tab.view, View::Read | View::Graph | View::Agent)
                 && !tab.document.is_blank()
                 && !tab.document.is_image()
         });
@@ -243,6 +253,9 @@ impl NotesApp {
     }
 
     fn load_vault(&mut self, root: &Path) {
+        self.agent = Default::default();
+        self.agent_note = None;
+        self.page_pan = Default::default();
         self.persist_session();
         self.loading_root = Some(root.to_owned());
         self.queue_index(root.to_owned());
@@ -667,10 +680,9 @@ impl NotesApp {
 
     fn open_note_at(&mut self, path: &Path, new_tab: bool) {
         let new_tab = new_tab
-            || self
-                .tabs
-                .get(self.active)
-                .is_some_and(|tab| tab.pinned && tab.document.path != path);
+            || self.tabs.get(self.active).is_some_and(|tab| {
+                tab.view == View::Agent || tab.pinned && tab.document.path != path
+            });
         if !new_tab
             && self
                 .tabs
@@ -849,11 +861,9 @@ impl NotesApp {
     }
 
     fn save(&mut self, index: usize) -> bool {
-        if self
-            .tabs
-            .get(index)
-            .is_some_and(|tab| tab.view == View::Graph && !tab.document.dirty())
-        {
+        if self.tabs.get(index).is_some_and(|tab| {
+            matches!(tab.view, View::Graph | View::Agent) && !tab.document.dirty()
+        }) {
             return true;
         }
         if self
@@ -939,7 +949,9 @@ impl NotesApp {
                 })
                 .unwrap_or_else(|| Err("Open a vault first.".into()));
         }
-        if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty) && self.view() == View::Graph {
+        if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty)
+            && matches!(self.view(), View::Graph | View::Agent)
+        {
             return;
         }
         if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty)
@@ -1205,6 +1217,11 @@ impl NotesApp {
             return;
         }
         if self.dialog.is_none() {
+            if ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::A)
+            }) {
+                self.open_agent();
+            }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Comma)) {
                 self.ask(Dialog::Settings);
             }
@@ -2035,7 +2052,10 @@ impl NotesApp {
     }
 
     fn details(&mut self, ui: &mut egui::Ui) {
-        if !self.show_right || ui.available_width() < 700.0 || self.view() == View::Graph {
+        if !self.show_right
+            || ui.available_width() < 700.0
+            || matches!(self.view(), View::Graph | View::Agent)
+        {
             return;
         }
         let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document) else {
@@ -2185,7 +2205,7 @@ impl NotesApp {
     }
 
     fn open_global_graph(&mut self) {
-        if self.vault.is_none() || self.view() == View::Graph {
+        if self.vault.is_none() || matches!(self.view(), View::Graph | View::Agent) {
             return;
         }
         if self
@@ -2196,7 +2216,7 @@ impl NotesApp {
         {
             return;
         }
-        if self.tabs.is_empty() || self.tabs[self.active].pinned {
+        if self.tabs.is_empty() || self.tabs[self.active].pinned || self.view() == View::Agent {
             self.new_tab();
         }
         self.tabs[self.active].set_view(View::Graph);
@@ -2275,6 +2295,22 @@ impl NotesApp {
                     return;
                 }
                 self.tab_strip(ui);
+                if self.view() == View::Agent {
+                    if let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone()) {
+                        let action = egui::Frame::NONE
+                            .inner_margin(14)
+                            .show(ui, |ui| self.agent.show(ui, &root))
+                            .inner;
+                        match action {
+                            Some(crate::agent_ui::Action::Attach) => self.attach_agent_note(),
+                            Some(crate::agent_ui::Action::Apply { proposal, original }) => {
+                                self.apply_agent_edit(proposal, original)
+                            }
+                            None => {}
+                        }
+                    }
+                    return;
+                }
                 if self.view() == View::Graph {
                     egui::Frame::NONE
                         .inner_margin(12)
@@ -2577,89 +2613,91 @@ impl NotesApp {
         let mut add_property = false;
         let mut renamed_title = None;
         let title = tab.document.title();
-        let scroll = ScrollArea::vertical()
+        let area = ScrollArea::vertical()
             .id_salt(("document", tab.id(), tab.editor_path()))
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                theme::document_style(ui, self.document_font_size);
-                let width = ui.available_width();
-                let content_width = if self.editor_preferences.readable_line_length {
-                    width.min(920.0)
-                } else {
-                    width
-                }
-                .min((width - 48.0).max(100.0));
-                crate::ui_probe::metric(ui.ctx(), "document-content-width", content_width);
-                let margin = ((width - content_width) / 2.0).max(0.0);
-                if view == View::Split {
-                    ui.columns(2, |columns| {
-                        follow = self.editor.show(
-                            &mut columns[0],
-                            tab,
-                            id,
-                            &mut self.find,
-                            &mut self.files,
-                            self.vault.as_ref(),
-                        );
-                        let preview_link = preview::show(
-                            &mut columns[1],
-                            &mut self.cache,
-                            tab,
-                            anchor.as_deref(),
-                            self.vault.as_ref(),
-                        );
-                        follow = follow.take().or(preview_link);
-                    });
-                } else {
-                    ui.horizontal_top(|ui| {
-                        ui.add_space(margin);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(content_width, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(content_width);
-                                ui.add_space(32.0);
-                                if self.editor_preferences.inline_title
-                                    && let Some(name) =
-                                        self.title.show(ui, &tab.document.path, &title)
-                                {
-                                    renamed_title = Some((tab.document.path.clone(), name));
-                                }
-                                if self.title.take_body_focus() {
-                                    self.editor.focus = true;
-                                }
-                                if self.editor_preferences.inline_title {
-                                    ui.add_space(16.218);
-                                }
-                                if matches!(view, View::Live | View::Read) {
-                                    add_property = self.properties.show(ui, tab);
-                                }
-                                if view == View::Read {
-                                    follow = preview::show(
-                                        ui,
-                                        &mut self.cache,
-                                        tab,
-                                        anchor.as_deref(),
-                                        self.vault.as_ref(),
-                                    );
-                                } else {
-                                    follow = self.editor.show(
-                                        ui,
-                                        tab,
-                                        id,
-                                        &mut self.find,
-                                        &mut self.files,
-                                        self.vault.as_ref(),
-                                    );
-                                }
-                                ui.add_space(ui.available_height().max(80.0));
-                            },
-                        );
-                    });
-                }
-            });
+            .auto_shrink([false, false]);
+        let scroll_id =
+            ui.make_persistent_id(egui::IdSalt::new(("document", tab.id(), tab.editor_path())));
+        let scroll = self.page_pan.scroll_area(scroll_id, area).show(ui, |ui| {
+            theme::document_style(ui, self.document_font_size);
+            let width = ui.available_width();
+            let content_width = if self.editor_preferences.readable_line_length {
+                width.min(920.0)
+            } else {
+                width
+            }
+            .min((width - 48.0).max(100.0));
+            crate::ui_probe::metric(ui.ctx(), "document-content-width", content_width);
+            let margin = ((width - content_width) / 2.0).max(0.0);
+            if view == View::Split {
+                ui.columns(2, |columns| {
+                    follow = self.editor.show(
+                        &mut columns[0],
+                        tab,
+                        id,
+                        &mut self.find,
+                        &mut self.files,
+                        self.vault.as_ref(),
+                    );
+                    let preview_link = preview::show(
+                        &mut columns[1],
+                        &mut self.cache,
+                        tab,
+                        anchor.as_deref(),
+                        self.vault.as_ref(),
+                    );
+                    follow = follow.take().or(preview_link);
+                });
+            } else {
+                ui.horizontal_top(|ui| {
+                    ui.add_space(margin);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(content_width, 0.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_width(content_width);
+                            ui.add_space(32.0);
+                            if self.editor_preferences.inline_title
+                                && let Some(name) = self.title.show(ui, &tab.document.path, &title)
+                            {
+                                renamed_title = Some((tab.document.path.clone(), name));
+                            }
+                            if self.title.take_body_focus() {
+                                self.editor.focus = true;
+                            }
+                            if self.editor_preferences.inline_title {
+                                ui.add_space(16.218);
+                            }
+                            if matches!(view, View::Live | View::Read) {
+                                add_property = self.properties.show(ui, tab);
+                            }
+                            if view == View::Read {
+                                follow = preview::show(
+                                    ui,
+                                    &mut self.cache,
+                                    tab,
+                                    anchor.as_deref(),
+                                    self.vault.as_ref(),
+                                );
+                            } else {
+                                follow = self.editor.show(
+                                    ui,
+                                    tab,
+                                    id,
+                                    &mut self.find,
+                                    &mut self.files,
+                                    self.vault.as_ref(),
+                                );
+                            }
+                            ui.add_space(ui.available_height().max(80.0));
+                        },
+                    );
+                });
+            }
+        });
         crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
+        self.page_pan.viewport(&scroll);
         crate::ui_probe::metric(
             ui.ctx(),
             "document-scroll-y",
@@ -2699,10 +2737,11 @@ impl NotesApp {
         let mut close = None;
         let mut pin = None;
         let mut moved = None;
-        egui::Frame::NONE
+        let strip = egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 0))
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                 ui.horizontal(|ui| {
                     let count = self.tabs.len().max(1) as f32;
@@ -2710,7 +2749,7 @@ impl NotesApp {
                     let width = if self.tabs.is_empty() {
                         0.0
                     } else {
-                        (ui.available_width() - 88.0)
+                        (ui.available_width() - 148.0)
                             .max(80.0)
                             .min(200.0 * count + 4.0 * (count - 1.0))
                     };
@@ -3043,12 +3082,23 @@ impl NotesApp {
                     if new_tab.clicked() {
                         self.new_tab();
                     }
-                    ui.add_space((ui.available_width() - 42.0).max(0.0));
-                    if icon_button(ui, Icon::SidebarRight, "Toggle right sidebar").clicked() {
-                        self.show_right = !self.show_right;
+                    let agent = ui
+                        .button("Agent")
+                        .on_hover_text("Open agent tab · Ctrl+Shift+A");
+                    crate::ui_probe::record(ui.ctx(), "open-agent", agent.rect);
+                    if agent.clicked() {
+                        self.open_agent();
                     }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let toggle = icon_button(ui, Icon::SidebarRight, "Toggle right sidebar");
+                        crate::ui_probe::record(ui.ctx(), "toggle-right-sidebar", toggle.rect);
+                        if toggle.clicked() {
+                            self.show_right = !self.show_right;
+                        }
+                    });
                 });
             });
+        crate::ui_probe::record(ui.ctx(), "tab-strip-background", strip.response.rect);
         if let Some((id, slot)) = moved
             && let Some(from) = self.tabs.iter().position(|tab| tab.id() == id)
         {
@@ -4069,7 +4119,7 @@ impl NotesApp {
             if let Some(tab) = self.tabs.get(self.active).filter(|tab| {
                 !tab.document.is_blank()
                     && !tab.document.is_image()
-                    && !matches!(tab.view, View::Read | View::Graph)
+                    && !matches!(tab.view, View::Read | View::Graph | View::Agent)
             }) {
                 self.editor.native_highlight(tab, color);
                 ctx.request_repaint();
@@ -4086,7 +4136,8 @@ impl NotesApp {
             });
         if let Some(color) = highlight {
             if let Some(tab) = self.tabs.get(self.active).filter(|tab| {
-                !tab.document.is_image() && !matches!(tab.view, View::Read | View::Graph)
+                !tab.document.is_image()
+                    && !matches!(tab.view, View::Read | View::Graph | View::Agent)
             }) {
                 self.editor.highlight(tab, color);
                 ctx.request_repaint();
@@ -4096,6 +4147,7 @@ impl NotesApp {
             return;
         }
         match command {
+            rustidian::commands::OPEN_AGENT => self.open_agent(),
             rustidian::commands::OPEN_GRAPH => self.open_global_graph(),
             rustidian::commands::OPEN_LOCAL_GRAPH if self.local_graph_available() => {
                 self.graph.local_open = true;
@@ -4257,6 +4309,7 @@ impl NotesApp {
             "Toggle right sidebar" => self.show_right = !self.show_right,
             "Switch appearance" => {
                 self.dark = !self.dark;
+                self.appearance = theme::Appearance::from_dark(self.dark);
                 theme::apply(ctx, self.dark);
             }
             "Refresh vault" => {
@@ -4303,7 +4356,7 @@ impl NotesApp {
         self.tabs.get(self.active).is_some_and(|tab| {
             !tab.document.is_blank()
                 && !tab.document.is_image()
-                && !matches!(tab.view, View::Read | View::Graph)
+                && !matches!(tab.view, View::Read | View::Graph | View::Agent)
         })
     }
 
@@ -4412,6 +4465,12 @@ impl NotesApp {
 
 impl eframe::App for NotesApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.system_theme.update(ctx, raw, self.appearance);
+        self.page_pan.raw_input(
+            ctx,
+            raw,
+            !self.interaction_blocked() && !matches!(self.view(), View::Graph | View::Agent),
+        );
         let live_tab = self
             .tabs
             .get(self.active)
@@ -4422,6 +4481,17 @@ impl eframe::App for NotesApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.dark = ctx.theme() == egui::Theme::Dark;
+        crate::ui_probe::metric(
+            &ctx,
+            "appearance-system",
+            if self.appearance == theme::Appearance::System {
+                1.0
+            } else {
+                0.0
+            },
+        );
+        crate::ui_probe::metric(&ctx, "appearance-dark", if self.dark { 1.0 } else { 0.0 });
         let local_graph_open = self.graph.local_open;
         // Event modifiers retain the gesture even if Control was released in
         // this frame. The editor consumes Ctrl+Enter before following its link.
@@ -4443,6 +4513,21 @@ impl eframe::App for NotesApp {
             })
         });
         self.background(&ctx);
+        if let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone()) {
+            self.agent.poll(&ctx, &root);
+            crate::ui_probe::metric(
+                &ctx,
+                "agent-has-context",
+                f32::from(u8::from(self.agent.context().is_some())),
+            );
+        }
+        if let Some(tab) = self.tabs.get(self.active).filter(|tab| {
+            !matches!(tab.view, View::Agent | View::Graph)
+                && !tab.document.is_blank()
+                && !tab.document.is_image()
+        }) {
+            self.agent_note = Some(tab.id());
+        }
         if crate::table_layout::take_changed(&ctx)
             && let Err(error) = self.write_session()
         {
@@ -4496,6 +4581,7 @@ impl eframe::App for NotesApp {
                             View::Source => "Source mode",
                             View::Split => "Split view",
                             View::Graph => "Graph",
+                            View::Agent => "Agent",
                         };
                         if self.editor_preferences.show_mode {
                             let response = ui.add(egui::Label::new(
@@ -4596,5 +4682,117 @@ impl eframe::App for NotesApp {
             );
             self.first_frame = false;
         }
+    }
+}
+
+impl NotesApp {
+    fn attach_agent_note(&mut self) {
+        let tab = self
+            .tabs
+            .get(self.active)
+            .filter(|tab| {
+                !matches!(tab.view, View::Agent | View::Graph)
+                    && !tab.document.is_blank()
+                    && !tab.document.is_image()
+            })
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|tab| Some(tab.id()) == self.agent_note)
+            });
+        if let Some(tab) = tab {
+            self.agent.attach(crate::agent::NoteContext {
+                path: tab.document.path.to_string_lossy().into_owned(),
+                text: tab.document.text.clone(),
+                selection: self.editor.selected_text(tab),
+            });
+        } else {
+            self.error = Some("Open a note to attach it to the agent.".into());
+        }
+    }
+
+    fn open_agent(&mut self) {
+        let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone()) else {
+            self.error = Some("Open a vault before using the agent.".into());
+            return;
+        };
+        self.agent.poll(&self.ctx, &root);
+        if self.tabs.get(self.active).is_some_and(|tab| {
+            !matches!(tab.view, View::Agent | View::Graph)
+                && !tab.document.is_blank()
+                && !tab.document.is_image()
+        }) {
+            self.attach_agent_note();
+        }
+        if let Some(index) = self.tabs.iter().position(|tab| tab.view == View::Agent) {
+            self.active = index;
+        } else {
+            let mut tab = Tab::new(Document::blank());
+            tab.set_view(View::Agent);
+            self.tabs.push(tab);
+            self.active = self.tabs.len() - 1;
+        }
+        self.editor.focus = false;
+        self.page_preview.close();
+        self.find = Default::default();
+        self.ctx.request_repaint();
+    }
+
+    fn apply_agent_edit(
+        &mut self,
+        proposal: crate::agent::Proposal,
+        original: crate::agent::NoteContext,
+    ) {
+        let path = Path::new(&original.path);
+        let target = self.tabs.iter().position(|tab| {
+            tab.document.path == path && !matches!(tab.view, View::Agent | View::Graph)
+        });
+        let Some(index) = target else {
+            self.error = Some("Reopen and attach the note before applying this proposal.".into());
+            return;
+        };
+        if proposal.path != original.path
+            || self
+                .tabs
+                .iter()
+                .any(|tab| tab.document.path == path && tab.document.text != original.text)
+        {
+            self.error = Some(
+                "The note changed after this request. Attach it again and request a fresh edit."
+                    .into(),
+            );
+            return;
+        }
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        let current = &self.tabs[index].document;
+        match vault.read(path) {
+            Ok(disk) if current.saved_text() == Some(disk.text.as_str()) => {}
+            _ => {
+                self.error = Some(
+                    "The file changed on disk. Reopen and attach it again before applying an edit."
+                        .into(),
+                );
+                return;
+            }
+        }
+        let before = current.clone();
+        if before.text == proposal.text {
+            return;
+        }
+        for tab in self.tabs.iter_mut().filter(|tab| tab.document.path == path) {
+            tab.document.text.clone_from(&proposal.text);
+            tab.edited();
+        }
+        crate::editor_ui::record_document_edit(
+            &self.ctx,
+            &vault.root,
+            &before,
+            &self.tabs[index].document,
+        );
+        self.active = index;
+        self.status = "Applied agent edit · Ctrl+Z to undo".into();
+        self.focus_editor();
     }
 }

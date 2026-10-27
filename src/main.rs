@@ -1,3 +1,5 @@
+mod agent;
+mod agent_ui;
 mod app;
 mod callout_ui;
 mod code_ui;
@@ -9,6 +11,7 @@ mod graph_ui;
 mod image_view;
 mod math_inline;
 mod math_ui;
+mod page_pan;
 mod page_preview;
 mod preview;
 mod properties_ui;

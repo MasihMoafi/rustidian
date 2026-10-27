@@ -43,9 +43,14 @@ fn reserve(
     leading: f32,
     size: egui::Vec2,
 ) {
-    // Letter spacing is applied between glyphs, so keep the first two original
-    // characters together. All characters remain available to selection/copy.
+    // epaint also applies section letter spacing before its first glyph when
+    // the paragraph already has text. Reserve the width only before the second
+    // original character, keeping the first at the normal prose boundary.
     let first = raw
+        .char_indices()
+        .nth(1)
+        .map_or(raw.len(), |(byte, _)| byte);
+    let second = raw
         .char_indices()
         .nth(2)
         .map_or(raw.len(), |(byte, _)| byte);
@@ -55,10 +60,12 @@ fn reserve(
     format.underline = egui::Stroke::NONE;
     format.strikethrough = egui::Stroke::NONE;
     format.line_height = Some(format.line_height.unwrap_or(0.0).max(size.y));
-    format.extra_letter_spacing = size.x;
-    job.append(&raw[..first], leading, format.clone());
     format.extra_letter_spacing = 0.0;
-    job.append(&raw[first..], 0.0, format);
+    job.append(&raw[..first], leading, format.clone());
+    format.extra_letter_spacing = size.x;
+    job.append(&raw[first..second], 0.0, format.clone());
+    format.extra_letter_spacing = 0.0;
+    job.append(&raw[second..], 0.0, format);
 }
 
 pub fn paint(
@@ -67,7 +74,10 @@ pub fn paint(
     origin: egui::Pos2,
     placement: &Placement,
 ) -> egui::Rect {
-    let caret = galley.pos_from_cursor(egui::text::CCursor::new(placement.character));
+    let caret = galley.pos_from_cursor(egui::text::CCursor {
+        index: placement.character.into(),
+        prefer_next_row: true,
+    });
     let rect = egui::Rect::from_min_size(
         origin
             + egui::vec2(
@@ -102,27 +112,41 @@ mod tests {
         ctx.run_ui(egui::RawInput::default(), |ui| {
             let format =
                 egui::TextFormat::simple(egui::FontId::proportional(18.0), egui::Color32::WHITE);
-            let mut job = egui::text::LayoutJob::default();
-            job.wrap.max_width = 120.0;
-            job.append("π before ", 0.0, format.clone());
-            reserve(
-                &mut job,
-                "$x^2$",
-                format.clone(),
-                0.0,
-                egui::vec2(64.0, 38.0),
-            );
-            job.append(" after", 0.0, format);
-            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-            assert_eq!(galley.text(), "π before $x^2$ after");
-            assert_eq!(galley.end().index.0, 20);
-            let first = galley.pos_from_cursor(egui::text::CCursor::new(9));
-            let after = galley.pos_from_cursor(egui::text::CCursor::new(14));
-            assert!(after.left() - first.left() >= 63.0);
-            assert!(galley.size().y >= 38.0);
-            assert!(galley.rows.len() >= 2);
-            assert!(galley.size().x <= 121.0);
-            assert_eq!(first.top(), after.top());
+            for width in [120.0, 400.0] {
+                let mut job = egui::text::LayoutJob::default();
+                job.wrap.max_width = width;
+                job.append("π before ", 0.0, format.clone());
+                reserve(
+                    &mut job,
+                    "$x^2$",
+                    format.clone(),
+                    0.0,
+                    egui::vec2(64.0, 38.0),
+                );
+                job.append(" after", 0.0, format.clone());
+                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                assert_eq!(galley.text(), "π before $x^2$ after");
+                assert_eq!(galley.end().index.0, 20);
+                let first = galley.pos_from_cursor(egui::text::CCursor {
+                    index: 9.into(),
+                    prefer_next_row: true,
+                });
+                let after = galley.pos_from_cursor(egui::text::CCursor::new(14));
+                assert!((after.left() - first.left() - 64.0).abs() < 1.0,
+                    "width={width}, first={first:?}, after={after:?}, rows={:?}", galley.rows.iter().map(|row| (row.rect(), row.char_count_including_newline().0)).collect::<Vec<_>>());
+                assert!(galley.size().y >= 38.0);
+                assert!(galley.size().x <= width + 1.0);
+                assert_eq!(first.top(), after.top(), "width={width}, first={first:?}, after={after:?}");
+                if width == 120.0 {
+                    assert!(galley.rows.len() >= 2);
+                } else {
+                    let cursor = galley.layout_from_cursor(egui::text::CCursor::new(9));
+                    let row = &galley.rows[cursor.row];
+                    let previous = &row.glyphs[cursor.column.0 - 1];
+                    assert!((first.left() - row.pos.x - previous.max_x()).abs() < 1.0,
+                        "The formula must follow the preceding space without an extra formula-width gap");
+                }
+            }
         })
         .drop_without_applying_deltas();
     }

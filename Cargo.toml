@@ -34,7 +34,7 @@ ratex-types = "=0.1.15"
 ratex-svg = { version = "=0.1.15", default-features = false, features = ["embed-fonts"] }
 notify = "8.2"
 nucleo-matcher = "0.3"
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1", features = ["fs", "process"] }
 trash = "5.2"
 percent-encoding = "2.3"
 serde_yaml_ng = "0.10"

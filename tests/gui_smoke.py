@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "toolbar-fill", "middle-pan", "agent", "agent-real", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -102,6 +102,16 @@ def main():
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
+        if args.section == "system-theme":
+            # Keyfile changes are visible to separate processes, without reading
+            # or writing the user's dconf database or using their session bus.
+            environment["GSETTINGS_BACKEND"] = "keyfile"
+            (base / "config").mkdir(parents=True, exist_ok=True)
+            for setting, value in (("color-scheme", "prefer-dark"), ("gtk-theme", "Adwaita")):
+                subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", setting, value],
+                    env=environment, check=True, timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (fixture / "System appearance.md").write_bytes(
+                "# System appearance\r\n\r\nKeep this note exactly: فارسی π.\r\n".encode())
         display_ready = False
         for _ in range(30):
             geometry = subprocess.run(
@@ -163,6 +173,9 @@ def main():
             (base / "ui-probe.json").unlink(missing_ok=True)
             return subprocess.Popen(command, cwd=base, env=environment, stdout=log, stderr=log)
 
+        if args.section in ("agent", "agent-real"):
+            import agent_checks
+            agent_checks.prepare(base, environment, real=args.section == "agent-real")
         app = launch_app(launch_command)
         results = []
         (reports / "gui-results.json").write_text(json.dumps({"status": "running", "checks": []}, indent=2)+"\n")
@@ -1565,6 +1578,208 @@ def main():
                 scrollbar_pixels(path, source)
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
+
+            def toolbar_fill_checks():
+                protected = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = []
+                for dark in (True, False):
+                    set_theme(dark)
+                    for count in (0, 1, 8):
+                        close_tabs()
+                        for _ in range(count): key("ctrl+t")
+                        for width in (1440, 900):
+                            xdo("windowsize",window,str(width),"960");pause()
+                            for sidebar in (False, True):
+                                if bool(control_bounds("sidebar:details", required=False)) != sidebar:
+                                    click_control("toggle-right-sidebar")
+                                strip = control_bounds("tab-strip-background")
+                                toggle = control_bounds("toggle-right-sidebar")
+                                details = control_bounds("sidebar:details", required=False)
+                                expected = details[0] if details else width
+                                assert abs(strip[2]-expected) <= 1.0, ("Toolbar must fill its actual pane",strip,expected)
+                                assert 8 <= strip[2]-toggle[2] <= 12, ("Trailing control must align to the shared inset",strip,toggle)
+                                picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                                y = round(strip[1]+2)
+                                reference = picture.getpixel((round(strip[0]+2),y))
+                                edge = picture.getpixel((round(strip[2]-2),y))
+                                assert max(abs(a-b) for a,b in zip(reference,edge)) <= 1, ("Unpainted toolbar stripe remains",reference,edge,strip)
+                                observations.append({"dark":dark,"tabs":count,"width":width,"sidebar":sidebar,"strip":strip,"toggle":toggle,"edge_rgb":edge})
+                            if count in (0,8): capture(f"native-toolbar-fill-{'dark' if dark else 'light'}-{count}-{width}.png")
+                    results.append(f"Actual {'dark' if dark else 'light'} toolbar fills its pane with zero, one and crowded tabs, wide/narrow windows and either sidebar state")
+                (reports/"native-toolbar-fill-measurements.json").write_text(json.dumps(observations,indent=2)+"\n")
+                assert all(path.read_bytes()==data for path,data in protected.items())
+
+            def middle_pan_checks():
+                note = fixture / "Notes/Middle pan.md"
+                target = fixture / "Pan target.md"
+                source = "# Middle pan\n\n[[Pan target]]\n\n" + "\n\n".join(
+                    f"Paragraph {index}: Drag this actual note text to move the page. "
+                    "The same note must remain unchanged in each editing and reading mode. " * 3
+                    for index in range(80)
+                ) + "\n"
+                note.write_bytes(source.encode())
+                target.write_bytes(b"# Pan target\n\nA middle click opens this note in another tab.\n")
+                originals = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = {"pages": {}, "graph": {}}
+
+                def retain():
+                    (reports / "native-middle-pan-observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                def unchanged():
+                    for path, expected in originals.items():
+                        assert path.read_bytes() == expected, ("Panning must not edit a file", str(path.relative_to(fixture)))
+
+                def position():
+                    return control_bounds("document-scroll-y")[0]
+
+                def drag(start, delta, button="2", cancel=False):
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", button)
+                    try:
+                        time.sleep(.1)
+                        for step in range(1, 9):
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
+                            time.sleep(.035)
+                        if cancel:
+                            key("Escape")
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 17)), str(round(start[1] + delta[1] - 19)))
+                            pause()
+                    finally:
+                        xdo("mouseup", button)
+                    xdo("mousemove", "--sync", "0", "0")
+                    pause()
+
+                def text_point(mode, *, preview=False):
+                    bounds = control_bounds("document-viewport")
+                    top, bottom = bounds[1] + 80, bounds[3] - 100
+                    if mode == "Reading view" or preview:
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        candidates = [box for name, box in controls.items() if name.startswith("reading-block:")
+                                      and top <= box[1] < box[3] <= bottom
+                                      and (not preview or box[0] >= (bounds[0] + bounds[2]) / 2 - 2)]
+                        assert candidates, ("A real visible paragraph is needed for the drag", mode, bounds)
+                        box = min(candidates, key=lambda box: box[1])
+                        return box[0] + min(35, (box[2] - box[0]) / 2), (box[1] + box[3]) / 2
+                    editor = control_bounds("editor")
+                    return max(bounds[0], editor[0]) + 35, (top + bottom) / 2
+
+                time.sleep(.7)
+                command("Refresh vault")
+                open_note("Middle pan")
+                for mode in ("Live preview", "Source editing", "Reading view", "Split source"):
+                    command(mode)
+                    viewport = control_bounds("document-viewport")
+                    xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round((viewport[1] + viewport[3]) / 2)))
+                    xdo("click", "--repeat", "2", "--delay", "80", "5")
+                    pause()
+                    before = position()
+                    assert before >= 300, (mode, before)
+                    capture("native-middle-pan-" + mode.split()[0].lower() + "-before.png")
+                    start = text_point(mode)
+                    drag(start, (12, -90))
+                    after_text = position()
+                    assert abs(after_text - before - 90) <= 3, ("Middle-dragging text must pan the page without wheel scaling", mode, before, after_text)
+                    start = text_point(mode)
+                    viewport = control_bounds("document-viewport")
+                    drag(start, (viewport[0] - 25 - start[0], -70))
+                    after_outside = position()
+                    assert abs(after_outside - after_text - 70) <= 3, ("Leaving the document must keep panning its original scroller", mode, after_text, after_outside)
+                    before_cancel = position()
+                    drag(text_point(mode), (8, -60), cancel=True)
+                    after_cancel = position()
+                    assert abs(after_cancel - before_cancel) <= 3, ("Escape must restore the complete page drag and ignore later held movement", mode, before_cancel, after_cancel)
+                    if mode == "Split source":
+                        drag(text_point(mode, preview=True), (0, -55))
+                        assert abs(position() - after_cancel - 55) <= 3, ("The Split preview must pan the shared document", after_cancel, position())
+                    key("ctrl+s")
+                    unchanged()
+                    capture("native-middle-pan-" + mode.split()[0].lower() + "-after.png")
+                    observations["pages"][mode] = {"before": before, "after_text": after_text, "after_leaving_viewport": after_outside, "before_escape": before_cancel, "after_escape": after_cancel, "final": position()}
+                    retain()
+                    results.append(mode + ": real middle-drag on text panned at pointer distance, retained the originating pane outside its bounds, cancelled on Escape, and preserved every fixture byte")
+
+                command("Reading view")
+                viewport = control_bounds("document-viewport")
+                xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round((viewport[1] + viewport[3]) / 2)))
+                xdo("click", "--repeat", "25", "--delay", "10", "4")
+                pause()
+                assert position() < 1
+                count = control_bounds("tab-count")[0]
+                click_control("reading-block:1", button="2", hold=.15)
+                title_contains("Pan target")
+                assert control_bounds("tab-count")[0] == count + 1, "A stationary middle click on a link must still open another tab"
+                unchanged()
+                results.append("A stationary middle click on a Reading link still opened its target in a new tab; all note bytes stayed unchanged")
+
+                graph_root = base / "Middle pan graph"
+                graph_root.mkdir()
+                graph_sources = {"Focus.md": b"# Focus\n\n[[Other]]\n[[Peer]]\n", "Other.md": b"# Other\n\n[[Focus]]\n", "Peer.md": b"# Peer\n"}
+                for name, text in graph_sources.items():
+                    (graph_root / name).write_bytes(text)
+                command("Open vault"); key("ctrl+a"); paste_text(str(graph_root), held=True); key("Return")
+                title_contains(graph_root.name)
+                open_note("Focus")
+                command("Graph view: Open graph view")
+                prefix = "global-graph"
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    if controls.get(prefix + ":busy", [1])[0] == 0 and controls.get(prefix + ":node-count", [-1])[0] == 3:
+                        break
+                    time.sleep(.05)
+                else:
+                    raise AssertionError(("The private graph did not settle", controls))
+                if control_bounds(prefix + ":settings-open")[0]:
+                    click_control(prefix + ":settings", hold=.15)
+                click_control(prefix + ":fit", hold=.15)
+                xdo("mousemove", "0", "0"); pause(); pause()
+
+                def camera():
+                    return [control_bounds(prefix + ":" + key)[0] for key in ("pan-x", "pan-y", "zoom")]
+
+                def nodes():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return {name.split(":node:", 1)[1]: [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+                            for name, box in controls.items() if name.startswith(prefix + ":node:")}
+
+                def translated(before, after, delta):
+                    assert set(before) == set(after) == set(graph_sources), (before, after)
+                    assert all(abs(after[name][axis] - point[axis] - delta[axis]) < 2 for name, point in before.items() for axis in (0, 1)), ("Panning must translate all graph nodes equally", before, after, delta)
+
+                before = nodes(); before_camera = camera()
+                capture("native-middle-pan-graph-before.png")
+                drag(before["Focus.md"], (55, 34))
+                after = nodes(); after_camera = camera()
+                translated(before, after, (55, 34))
+                assert all(abs(after_camera[axis] - before_camera[axis] - delta) < 2 for axis, delta in enumerate((55, 34))), ("Middle dragging a node must pan the camera", before_camera, after_camera)
+                assert abs(after_camera[2] - before_camera[2]) < .001, "Middle pan must not zoom"
+                drag(after["Focus.md"], (28, -26), cancel=True)
+                translated(after, nodes(), (0, 0))
+                assert all(abs(left - right) < .5 for left, right in zip(camera(), after_camera)), "Escape must restore the whole middle-button camera drag"
+                observations["graph"]["middle_over_node"] = {"before": before, "after": after, "camera_before": before_camera, "camera_after": after_camera}
+                retain()
+                capture("native-middle-pan-graph-after.png")
+                results.append("Middle dragging directly over a graph node panned every dot and the camera equally without changing relative node positions or zoom; Escape rolled the complete drag back")
+
+                before = nodes(); before_camera = camera()
+                drag(before["Focus.md"], (-37, 29), button="1")
+                after = nodes()
+                assert all(abs(left - right) < .5 for left, right in zip(camera(), before_camera)), "Primary node dragging must retain the camera"
+                assert all(abs(after["Focus.md"][axis] - before["Focus.md"][axis] - delta) < 2 for axis, delta in enumerate((-37, 29)))
+                assert all(abs(after[name][axis] - point[axis]) < 1 for name, point in before.items() if name != "Focus.md" for axis in (0, 1)), "Primary dragging must move only the selected node"
+                canvas = control_bounds(prefix + ":canvas")
+                blank = (canvas[0] + 30, canvas[3] - 35)
+                assert all(sum((point[axis] - blank[axis]) ** 2 for axis in (0, 1)) > 25 ** 2 for point in after.values()), "The primary canvas control must begin on blank canvas"
+                before = after; before_camera = camera()
+                drag(blank, (28, -21), button="1")
+                translated(before, nodes(), (28, -21))
+                assert all(abs(camera()[axis] - before_camera[axis] - delta) < 2 for axis, delta in enumerate((28, -21)))
+                assert abs(camera()[2] - before_camera[2]) < .001
+                for name, text in graph_sources.items():
+                    assert (graph_root / name).read_bytes() == text, name
+                unchanged()
+                observations["graph"]["primary_regressions"] = {"node_after": after, "canvas_after": nodes(), "camera_after": camera()}
+                retain()
+                results.append("Primary graph dragging still moved one node independently and panned blank canvas; all graph and original page fixture bytes stayed unchanged")
 
             def diagram_checks():
                 path = fixture / "Notes/Diagram check.md"
@@ -5001,6 +5216,101 @@ def main():
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
 
+            def system_theme_checks():
+                nonlocal app, window
+                originals = {path.relative_to(fixture): path.read_bytes()
+                    for path in fixture.rglob("*") if path.is_file()}
+                open_note("System appearance"); command("Reading view")
+                observations = []
+                selected_palette = "teal"
+
+                def saved_state():
+                    states = [json.loads(path.read_text())
+                        for path in (base / "state/rustidian").glob("*.json")]
+                    matching = [state for state in states
+                        if any(path == "System appearance.md" for path, _ in state.get("tabs", []))]
+                    assert len(matching) == 1, ("Expected this private vault's saved state", states)
+                    return matching[0]
+
+                def expect(dark, system, stage):
+                    expected = {("teal", True): (23, 27, 29), ("teal", False): (247, 246, 242),
+                        ("elpis-gold", True): (28, 27, 23), ("elpis-gold", False): (251, 248, 239)}[(selected_palette, dark)]
+                    deadline = time.monotonic() + 7
+                    stable_since = None
+                    actual = None
+                    while time.monotonic() < deadline:
+                        assert app.poll() is None, "App exited while following system appearance"
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        header = controls.get("button:More options")
+                        if header:
+                            actual = ImageGrab.grab(xdisplay=display).getpixel(
+                                (round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                        matches = (controls.get("appearance-system", [None])[0] == int(system)
+                            and controls.get("appearance-dark", [None])[0] == int(dark)
+                            and actual is not None
+                            and max(abs(a - b) for a, b in zip(actual, expected)) <= 2)
+                        if matches:
+                            stable_since = stable_since or time.monotonic()
+                            if time.monotonic() - stable_since >= .6:
+                                observations.append(dict(stage=stage, dark=dark, system=system,
+                                    background_rgb=actual, expected_rgb=expected))
+                                (reports / "native-system-theme-observations.json").write_text(
+                                    json.dumps(observations, indent=2) + "\n")
+                                capture("native-system-theme-" + stage + ".png")
+                                return
+                        else:
+                            stable_since = None
+                        time.sleep(.05)
+                    raise AssertionError(("System appearance did not settle", stage, dark, system,
+                        actual, expected, controls.get("appearance-system"), controls.get("appearance-dark")))
+
+                def change_os(value):
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", value],
+                        env=environment, check=True, timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    actual = subprocess.check_output(
+                        ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                        env=environment, text=True, timeout=5).strip().strip("'")
+                    assert actual == value, ("Private OS preference was not written", actual, value)
+
+                def choose(label):
+                    command("Open settings"); click_control("settings-page:Appearance")
+                    click_control("settings-dark"); click_control("settings-theme:" + label); key("Escape")
+                    assert saved_state()["appearance"] == label.lower()
+
+                def restart():
+                    nonlocal app, window
+                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    app = launch_app(launch_command); window = ready_window()
+                    title_contains("System appearance")
+                    assert control_bounds("view-mode:Reading")
+
+                expect(True, True, "startup-dark")
+                command("Open settings"); click_control("settings-page:Appearance")
+                click_control("settings-palette:Elpis Gold"); key("Escape")
+                selected_palette = "elpis-gold"
+                expect(True, True, "gold-dark")
+                change_os("prefer-light"); expect(False, True, "live-light")
+                results.append("A new private profile defaults to System; changing the real keyfile OS preference redraws the native app from dark to light without a click, retaining the selected gold palette")
+
+                choose("Dark"); expect(True, False, "explicit-dark")
+                change_os("prefer-dark"); change_os("prefer-light")
+                expect(True, False, "dark-ignores-os-light")
+                choose("Light"); expect(False, False, "explicit-light")
+                change_os("prefer-dark"); expect(False, False, "light-ignores-os-dark")
+                results.append("Explicit Dark and Light choices remain stable when the private OS preference changes to the opposite color")
+
+                choose("System"); expect(True, True, "rejoined-dark")
+                change_os("prefer-light"); expect(False, True, "rejoined-light")
+                restart(); expect(False, True, "restored-system-light")
+                assert saved_state()["appearance"] == "system"
+                assert saved_state()["palette"] == "elpis-gold"
+                change_os("prefer-dark"); expect(True, True, "restored-system-live-dark")
+                choose("Light"); restart(); expect(False, False, "restored-explicit-light")
+                assert saved_state()["appearance"] == "light"
+                assert all((fixture / name).read_bytes() == data for name, data in originals.items())
+                assert {path.relative_to(fixture) for path in fixture.rglob("*") if path.is_file()} == set(originals)
+                results.append("Returning to System resumes live following; real restarts preserve System and explicit Light independently of OS color, retain the palette, and preserve every original fixture file byte")
+
             def settings_checks():
                 nonlocal app, window
                 note=fixture/"Notes/Settings controls.md"
@@ -7290,10 +7600,25 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "system-theme":
+                system_theme_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "system-theme"}))
+                return
             if args.section == "graph-state":
                 graph_state_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "graph-state"}))
+                return
+            if args.section == "toolbar-fill":
+                toolbar_fill_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section == "middle-pan":
+                middle_pan_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "middle-pan"}))
                 return
             if args.section == "palette-queued":
                 palette_queue_checks()
@@ -7525,6 +7850,18 @@ def main():
                 large_search_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
+                return
+            if args.section in ("agent", "agent-real"):
+                import agent_checks
+                def restart_agent():
+                    nonlocal app, window
+                    key("ctrl+q")
+                    app.wait(timeout=5)
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                agent_checks.run(dict(locals(), restart_agent=restart_agent))
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
             if args.section in ("hover", "title", "scrolling", "diagrams", "math", "task-clipping"):
                 {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "math":math_checks, "task-clipping":task_clip_checks}[args.section]()

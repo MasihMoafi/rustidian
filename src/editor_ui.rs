@@ -152,7 +152,7 @@ struct LiveImage {
     block: Option<Range<usize>>,
     uri: String,
     size: egui::Vec2,
-    math: bool,
+    math: Option<usize>,
 }
 
 // Keep the original allocation alive so its pointer identifies the font
@@ -259,7 +259,7 @@ fn embedded_images(
                 block: None,
                 uri,
                 size: egui::vec2(width, height),
-                math: false,
+                math: None,
             })
         })
         .collect()
@@ -291,11 +291,11 @@ fn live_images(
                 block: Some(block.range.clone()),
                 uri,
                 size,
-                math: false,
+                math: None,
             });
         }
     }
-    for math in &parsed.maths {
+    for (ordinal, math) in parsed.maths.iter().enumerate() {
         if parsed
             .callouts
             .iter()
@@ -351,7 +351,7 @@ fn live_images(
                 block: math.display.then(|| math.range.clone()),
                 uri: formula.uri,
                 size: formula.size * scale,
-                math: true,
+                math: Some(ordinal),
             });
         }
     }
@@ -585,6 +585,21 @@ impl Editor {
 
     pub fn native_highlight(&mut self, tab: &Tab, color: rustidian::highlight::NativeColor) {
         self.edit(tab, Edit::NativeHighlight(color));
+    }
+
+    pub fn selected_text(&self, tab: &Tab) -> Option<String> {
+        let (_, selection) = self
+            .selection
+            .filter(|(id, range)| *id == tab.id() && !range.is_empty())?;
+        let range = selection.as_sorted_char_range();
+        Some(
+            tab.document
+                .text
+                .chars()
+                .skip(range.start.0)
+                .take(range.end.0 - range.start.0)
+                .collect(),
+        )
     }
 
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
@@ -1424,7 +1439,7 @@ impl Editor {
             let character = tab.document.text[..image.range.start].chars().count();
             let caret = positioned.at(character);
             let mut origin = output.galley_pos + caret.min.to_vec2();
-            if image.block.is_some() && !image.math {
+            if image.block.is_some() && image.math.is_none() {
                 origin.x = output.galley_pos.x;
             }
             let rect = egui::Rect::from_min_size(
@@ -1437,7 +1452,7 @@ impl Editor {
                         },
                         if active {
                             29.16
-                        } else if image.math && image.block.is_none() {
+                        } else if image.math.is_some() && image.block.is_none() {
                             (caret.height() - image.size.y).max(0.0) / 2.0
                         } else {
                             0.0
@@ -1446,18 +1461,23 @@ impl Editor {
                 image.size,
             );
             ui.expand_to_include_rect(rect);
-            let response = ui.put(
-                rect,
-                egui::Image::new(&image.uri)
-                    .fit_to_exact_size(image.size)
-                    .sense(egui::Sense::click()),
-            );
+            let widget = egui::Image::new(&image.uri)
+                .fit_to_exact_size(image.size)
+                .sense(egui::Sense::click());
+            let response = if let Some(math) = image.math {
+                // Revealing one source removes its image. Keep the remaining
+                // formulas' interaction identities stable across that change.
+                ui.push_id((id, "live-math", math), |ui| ui.put(rect, widget))
+                    .inner
+            } else {
+                ui.put(rect, widget)
+            };
             crate::ui_probe::record(ui.ctx(), format!("embed:{ordinal}"), response.rect);
-            if image.math {
+            if let Some(math) = image.math {
                 crate::ui_probe::record(
                     ui.ctx(),
                     format!(
-                        "math-live:{}:{ordinal}",
+                        "math-live:{}:{math}",
                         if image.block.is_some() {
                             "display"
                         } else {
@@ -2418,9 +2438,14 @@ fn layout(
                     line.start < block.range.end && line.end >= block.range.start
                 })
             });
-            let image = images
-                .iter()
-                .find(|image| start >= image.range.start && end <= image.range.end);
+            let image = images.iter().find(|image| {
+                let content_end = if image.math.is_some() && image.block.is_some() {
+                    start + section.trim_end_matches(['\r', '\n']).len()
+                } else {
+                    end
+                };
+                start >= image.range.start && content_end <= image.range.end
+            });
             let hidden = live
                 && (style.task_marker
                     || style.property
@@ -2518,7 +2543,7 @@ fn layout(
                 } else if live && style.property {
                     0.01
                 } else if let Some(image) = image.filter(|_| !active) {
-                    if image.math && image.block.is_none() {
+                    if image.math.is_some() && image.block.is_none() {
                         image.size.y.max(29.16 * font_scale)
                     } else {
                         image.size.y + 16.0
@@ -2589,6 +2614,50 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn inactive_display_math_hides_opening_delimiters_and_retains_source_positions() {
+        let source = "Before\n\n$$\nx^2\n$$\n\nAfter";
+        let parsed = Markdown::parse(source);
+        let image = LiveImage {
+            range: 8..10,
+            block: Some(8..17),
+            uri: "bytes://math-layout-test.svg".into(),
+            size: egui::vec2(80.0, 40.0),
+            math: Some(0),
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let job = layout(
+                ui,
+                source,
+                &parsed,
+                920.0,
+                Decorations {
+                    live: true,
+                    active_line: None,
+                    matched: None,
+                    images: std::slice::from_ref(&image),
+                },
+            );
+            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+            assert_eq!(galley.text(), source);
+            assert_eq!(galley.end().index.0, source.chars().count());
+            let opening = galley.layout_from_cursor(CCursor::new(8));
+            assert!(
+                galley.rows[opening.row].visuals.mesh.is_empty(),
+                "Inactive display math must not paint its opening dollars under the formula"
+            );
+            assert!(galley.rows[opening.row].height() >= 40.0);
+            let after = galley.layout_from_cursor(CCursor::new(19));
+            assert!(
+                !galley.rows[after.row].visuals.mesh.is_empty(),
+                "Hiding formula source must preserve the following prose"
+            );
+        })
+        .drop_without_applying_deltas();
+    }
+
     fn pressed(key: Key) -> egui::Event {
         egui::Event::Key {
             key,
@@ -2871,6 +2940,7 @@ mod tests {
         crate::theme::install_fonts(&ctx);
         crate::theme::apply(&ctx, true);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::theme::document_style(ui, crate::theme::DEFAULT_DOCUMENT_FONT_SIZE);
             for live in [false, true] {
                 let job = layout(
                     ui,

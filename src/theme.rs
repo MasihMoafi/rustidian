@@ -6,6 +6,41 @@ mod emoji_glyphs;
 #[path = "palette.rs"]
 pub mod palette;
 
+#[path = "system_theme.rs"]
+mod system_theme;
+pub use system_theme::SystemTheme;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    pub fn from_dark(dark: bool) -> Self {
+        if dark { Self::Dark } else { Self::Light }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+
+    fn preference(self) -> egui::ThemePreference {
+        match self {
+            Self::System => egui::ThemePreference::System,
+            Self::Dark => egui::ThemePreference::Dark,
+            Self::Light => egui::ThemePreference::Light,
+        }
+    }
+}
+
 pub const ACCENT: Color32 = Color32::from_rgb(101, 183, 182);
 pub const DARK_BG: Color32 = Color32::from_rgb(23, 27, 29);
 pub const DARK_SIDE: Color32 = Color32::from_rgb(17, 21, 23);
@@ -180,11 +215,22 @@ pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
 }
 
 pub fn apply(ctx: &egui::Context, dark: bool) {
+    apply_appearance(ctx, Appearance::from_dark(dark));
+}
+
+pub fn apply_appearance(ctx: &egui::Context, appearance: Appearance) {
+    ctx.set_theme(appearance.preference());
     palette::select(ctx, palette::current(ctx));
     ctx.options_mut(|options| {
         options.input_options.line_scroll_speed = 150.0;
         options.input_options.wheel_smoothing = false;
     });
+    for dark in [false, true] {
+        apply_style(ctx, dark);
+    }
+}
+
+fn apply_style(ctx: &egui::Context, dark: bool) {
     let mut visuals = if dark {
         Visuals::dark()
     } else {
@@ -263,8 +309,8 @@ pub fn apply(ctx: &egui::Context, dark: bool) {
         visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.3);
         visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
     }
-    ctx.set_visuals(visuals);
-    ctx.all_styles_mut(|style| {
+    ctx.style_mut_of(egui::Theme::from_dark_mode(dark), |style| {
+        style.visuals = visuals;
         style.animation_time = 0.12;
         style.scroll_animation = egui::style::ScrollAnimation::none();
         interface_fonts(style);
@@ -942,6 +988,39 @@ pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool)
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn system_appearance_changes_both_custom_styles_and_explicit_choices_ignore_os_changes() {
+        use super::{Appearance, apply_appearance};
+        use eframe::egui::{self, Theme};
+        let ctx = egui::Context::default();
+        for appearance in [Appearance::System, Appearance::Dark, Appearance::Light] {
+            apply_appearance(&ctx, appearance);
+            for system_theme in [Theme::Light, Theme::Dark, Theme::Light] {
+                ctx.run_ui(
+                    egui::RawInput {
+                        system_theme: Some(system_theme),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let dark = match appearance {
+                            Appearance::System => system_theme == Theme::Dark,
+                            Appearance::Dark => true,
+                            Appearance::Light => false,
+                        };
+                        assert_eq!(ui.visuals().dark_mode, dark);
+                        assert_eq!(
+                            ui.visuals().window_fill,
+                            super::palette::Palette::Teal.background(dark)
+                        );
+                        assert_eq!(egui::TextStyle::Button.resolve(ui.style()).size, 14.0);
+                        assert_eq!(ui.spacing().scroll.bar_width, 6.0);
+                    },
+                )
+                .drop_without_applying_deltas();
+            }
+        }
+    }
+
     #[test]
     fn document_font_controls_change_glyphs_without_resizing_other_ui() {
         use eframe::egui;

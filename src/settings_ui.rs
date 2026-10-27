@@ -80,7 +80,9 @@ impl Page {
 
     fn matches(self, query: &str) -> bool {
         let terms = match self {
-            Self::Appearance => "appearance base color scheme theme dark light font text size",
+            Self::Appearance => {
+                "appearance base color scheme theme system dark light font text size"
+            }
             Self::Interface => "interface zoom",
             Self::Editor => {
                 "editor editing files save autosave default view source live preview inline title readable line length status mode"
@@ -180,6 +182,7 @@ impl NotesApp {
         ui.set_width(width);
         let before = (
             self.dark,
+            self.appearance,
             self.palette,
             self.ui_zoom,
             self.document_font_size,
@@ -287,22 +290,21 @@ impl NotesApp {
                                     row(
                                         ui,
                                         "Base color scheme",
-                                        "Choose the default color scheme.",
+                                        "Follow your system or choose a light or dark appearance.",
                                         |ui| {
-                                            let before = self.dark;
+                                            let before = self.appearance;
                                             let response = egui::ComboBox::from_id_salt(
                                                 "settings-color-scheme",
                                             )
                                             .icon(combo_chevron)
-                                            .selected_text(if self.dark { "Dark" } else { "Light" })
+                                            .selected_text(self.appearance.label())
                                             .show_ui(ui, |ui| {
                                                 theme::menu_style(ui);
-                                                for (dark, label) in
-                                                    [(true, "Dark"), (false, "Light")]
-                                                {
+                                                for appearance in [theme::Appearance::System, theme::Appearance::Dark, theme::Appearance::Light] {
+                                                    let label = appearance.label();
                                                     let response = ui.selectable_value(
-                                                        &mut self.dark,
-                                                        dark,
+                                                        &mut self.appearance,
+                                                        appearance,
                                                         label,
                                                     );
                                                     crate::ui_probe::record(
@@ -317,7 +319,7 @@ impl NotesApp {
                                                 "settings-dark",
                                                 response.response.rect,
                                             );
-                                            self.dark != before
+                                            self.appearance != before
                                         },
                                     );
                                 ui.separator();
@@ -560,9 +562,13 @@ impl NotesApp {
             });
         });
         if changed {
+            theme::palette::select(ctx, self.palette);
+            theme::apply_appearance(ctx, self.appearance);
+            self.dark = ctx.theme() == egui::Theme::Dark;
             if let Err(error) = self.write_session() {
                 (
                     self.dark,
+                    self.appearance,
                     self.palette,
                     self.ui_zoom,
                     self.document_font_size,
@@ -574,11 +580,11 @@ impl NotesApp {
                     self.confirm_trash,
                 ) = before;
                 self.error = Some(format!("Settings weren’t saved: {error}"));
+                theme::palette::select(ctx, self.palette);
+                theme::apply_appearance(ctx, self.appearance);
             } else {
                 self.settings_saved();
             }
-            theme::palette::select(ctx, self.palette);
-            theme::apply(ctx, self.dark);
             ctx.set_zoom_factor(self.ui_zoom);
             ctx.request_repaint();
         }

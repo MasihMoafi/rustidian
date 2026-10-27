@@ -159,6 +159,7 @@ enum DragTarget {
 
 struct Drag {
     target: DragTarget,
+    button: egui::PointerButton,
     cancelled: bool,
 }
 
@@ -951,11 +952,17 @@ fn interact(
         pane.drag = None;
         return;
     }
+    let start_button = [egui::PointerButton::Middle, egui::PointerButton::Primary]
+        .into_iter()
+        .find(|&button| response.drag_started_by(button));
     if pane.drag.is_none()
-        && response.drag_started_by(egui::PointerButton::Primary)
+        && let Some(button) = start_button
         && let Some(origin) = ui.input(|input| input.pointer.press_origin())
     {
-        let target = if let Some(node) = node_at(pane, ready, scene, response.rect, origin) {
+        let node = (button == egui::PointerButton::Primary)
+            .then(|| node_at(pane, ready, scene, response.rect, origin))
+            .flatten();
+        let target = if let Some(node) = node {
             let path = ready.graph.nodes[node].path.clone();
             DragTarget::Node {
                 before: pane.positions.get(&path).copied(),
@@ -971,6 +978,7 @@ fn interact(
         };
         pane.drag = Some(Drag {
             target,
+            button,
             cancelled: false,
         });
     }
@@ -993,7 +1001,7 @@ fn interact(
         drag.cancelled = true;
     }
     let (down, pointer) = ui.input(|input| {
-        let down = input.pointer.primary_down();
+        let down = input.pointer.button_down(drag.button);
         // A release and a later hover can share one frame. Commit the release
         // position, not that later hover, and include the drag threshold distance.
         let pointer = if down {
@@ -1002,10 +1010,10 @@ fn interact(
             input.events.iter().rev().find_map(|event| match event {
                 egui::Event::PointerButton {
                     pos,
-                    button: egui::PointerButton::Primary,
+                    button,
                     pressed: false,
                     ..
-                } => Some(*pos),
+                } if *button == drag.button => Some(*pos),
                 _ => None,
             })
         };
@@ -1200,6 +1208,13 @@ fn paint(
         response.clone().on_hover_ui(|ui| {
             ui.label(RichText::new(&graph.nodes[index].label).size(13.0));
         });
+    }
+    if pane
+        .drag
+        .as_ref()
+        .is_some_and(|drag| drag.button == egui::PointerButton::Middle && !drag.cancelled)
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
     }
     if interactive
         && response.clicked()

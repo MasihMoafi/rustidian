@@ -16,6 +16,7 @@ pub enum View {
     Read,
     Split,
     Graph,
+    Agent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,7 +135,9 @@ impl Tab {
     }
 
     pub fn title(&self) -> String {
-        if self.view == View::Graph {
+        if self.view == View::Agent {
+            "Agent".into()
+        } else if self.view == View::Graph {
             "Graph view".into()
         } else {
             self.document.title()
@@ -142,7 +145,7 @@ impl Tab {
     }
 
     pub fn into_closed(self) -> Option<ClosedTab> {
-        if self.document.is_blank() && self.view != View::Graph {
+        if self.document.is_blank() && !matches!(self.view, View::Graph | View::Agent) {
             return None;
         }
         let fingerprint = if self.document.dirty() {
@@ -207,6 +210,9 @@ impl Tab {
     }
 
     pub fn set_view(&mut self, view: View) {
+        if self.view == View::Agent && view != View::Agent {
+            return;
+        }
         if self.document.is_image() && view != View::Graph {
             return;
         }
@@ -231,7 +237,7 @@ impl Tab {
     }
 
     pub fn toggle_reading(&mut self) {
-        if self.document.is_image() || self.view == View::Graph {
+        if self.document.is_image() || matches!(self.view, View::Graph | View::Agent) {
             return;
         }
         self.view = if self.view == View::Read {

@@ -19,6 +19,8 @@ struct Session {
     right: bool,
     dark: bool,
     #[serde(default)]
+    appearance: Option<theme::Appearance>,
+    #[serde(default)]
     palette: theme::palette::Palette,
     #[serde(default)]
     sort_descending: bool,
@@ -68,6 +70,11 @@ fn location(root: &Path) -> Option<PathBuf> {
 }
 
 impl Session {
+    fn appearance(&self) -> theme::Appearance {
+        self.appearance
+            .unwrap_or_else(|| theme::Appearance::from_dark(self.dark))
+    }
+
     fn restore_tabs(&self, vault: &Vault) -> (Vec<Tab>, usize) {
         let mut tabs = Vec::new();
         let mut active = 0;
@@ -114,6 +121,7 @@ impl NotesApp {
             return false;
         };
         (self.tabs, self.active) = session.restore_tabs(vault);
+        self.appearance = session.appearance();
         self.graph.restore(session.graph.unwrap_or_default());
         self.show_left = session.left;
         crate::table_layout::restore(ctx, session.table_layouts);
@@ -128,7 +136,6 @@ impl NotesApp {
         };
         self.restore_sidebars = [true; 2];
         self.right_tab = session.right_tab.min(2);
-        self.dark = session.dark;
         self.palette = session.palette;
         theme::palette::select(ctx, self.palette);
         self.ui_zoom = if session.ui_zoom.is_finite() {
@@ -160,7 +167,8 @@ impl NotesApp {
         self.bookmarks = session.bookmarks;
         self.bookmarks.sanitize();
         self.show_bookmarks = session.bookmarks_open;
-        theme::apply(ctx, self.dark);
+        theme::apply_appearance(ctx, self.appearance);
+        self.dark = ctx.theme() == egui::Theme::Dark;
         !self.tabs.is_empty()
     }
 
@@ -192,6 +200,7 @@ impl NotesApp {
             left: self.show_left,
             right: self.show_right,
             dark: self.dark,
+            appearance: Some(self.appearance),
             palette: self.palette,
             sort_descending: self.sort_descending,
             bookmarks: self.bookmarks.clone(),
@@ -275,5 +284,22 @@ mod tests {
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(restored.tabs.len(), 1);
         assert_eq!(restored.tabs[0].0, std::path::Path::new("Home.md"));
+    }
+
+    #[test]
+    fn appearance_restores_legacy_choices_and_persists_system_independently_of_current_color() {
+        for dark in [false, true] {
+            let legacy =
+                format!(r#"{{"tabs":[],"active":0,"left":true,"right":false,"dark":{dark}}}"#);
+            let mut state: Session = serde_json::from_str(&legacy).unwrap();
+            assert_eq!(
+                state.appearance(),
+                crate::theme::Appearance::from_dark(dark)
+            );
+            state.appearance = Some(crate::theme::Appearance::System);
+            let restored: Session =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(restored.appearance(), crate::theme::Appearance::System);
+        }
     }
 }
