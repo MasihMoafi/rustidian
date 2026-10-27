@@ -2566,6 +2566,7 @@ def main():
                     assert count >= 2 if required else count == 0, (color, count)
 
             def syntax_checks():
+                set_theme(True)
                 source = (ROOT / "tests/fixtures/syntax.md").read_text()
                 note = fixture / "Syntax GUI.md"
                 note.write_text(source)
@@ -2661,6 +2662,7 @@ def main():
                 results.append("Actual TS/TSX source files and Source/Live/Reading fences rendered keyword/string/comment colors in both themes; real edit/Save/Undo/Save preserved every original CRLF byte")
 
             def reading_code_checks():
+                set_theme(True)
                 # The compact-tab check can restore a previously open outline.
                 # This fixture measures the 920px reader with that pane closed.
                 if control_bounds("panel:outline", required=False) is not None:

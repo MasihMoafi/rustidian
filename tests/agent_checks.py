@@ -146,6 +146,7 @@ def run(scope):
         send(label)
         completed()
         h.control_bounds("agent-apply")
+        h.pause()  # Let the transcript's bottom scroll position settle before pointer input.
         assert note.read_bytes() == original, "Preparing a proposal wrote the note"
 
     def clipboard():
@@ -273,7 +274,8 @@ def run(scope):
     h.key("ctrl+z"); h.key("ctrl+s"); assert note.read_bytes() == original
     proposal("PROPOSE_DISMISS")
     h.click_control("agent-dismiss")
-    assert h.control_bounds("agent-apply", required=False) is None
+    wait(lambda: h.control_bounds("agent-apply", required=False) is None,
+         "Dismiss must remove the review without another user action")
     assert note.read_bytes() == original
     proposal("PROPOSE_STALE")
     h.click_control("tab-full:" + note.name)
