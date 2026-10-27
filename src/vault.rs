@@ -823,6 +823,7 @@ fn prose_lines(text: &str) -> impl Iterator<Item = &str> {
 
 pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let mut links = Vec::new();
+    let maths = crate::math::spans(text);
     for line in prose_lines(text) {
         let offset = line.as_ptr() as usize - text.as_ptr() as usize;
         let bytes = line.as_bytes();
@@ -850,7 +851,11 @@ pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
             {
                 let end = cursor + 2 + end;
                 let target = line[cursor + 2..end].trim();
-                if !target.is_empty() {
+                if !target.is_empty()
+                    && !maths.iter().any(|math| {
+                        math.range.start < offset + end + 2 && math.range.end > offset + cursor
+                    })
+                {
                     // Markdown tables escape the alias separator: [[Note\|Label]].
                     links.push((
                         offset + cursor..offset + end + 2,

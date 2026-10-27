@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     args = parser.parse_args()
     reports = ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -1628,6 +1628,168 @@ def main():
                 control_bounds("mermaid-error")
                 assert invalid.read_text() == "```mermaid\nnot a diagram\n```\n"
                 results.append("Tables and native Mermaid render in Reading and Live, stay literal in Source, reuse the same diagram through hover/scroll, and invalid syntax retains its source")
+
+            def math_checks():
+                close_tabs()
+                note = fixture / "Math check.md"
+                original = (ROOT / "tests/fixtures/math.md").read_bytes()
+                note.write_bytes(original)
+                destination = fixture / "Math destination.md"
+                destination.write_bytes(b"# Math destination\n\nKEEP_DESTINATION_BYTES\n")
+                originals = {path: path.read_bytes() for path in fixture.rglob("*")
+                             if path.is_file() and path.suffix in (".md", ".txt", ".rs", ".py", ".html")}
+                time.sleep(.7)
+                open_note("Math check")
+                observations = []
+
+                def controls():
+                    return json.loads((base / "ui-probe.json").read_text())
+
+                def formulas(mode):
+                    prefix = "math-live:" if mode == "live" else "math-"
+                    deadline = time.monotonic() + 6
+                    while time.monotonic() < deadline:
+                        current = controls()
+                        inline = {name: box for name, box in current.items()
+                                  if name.startswith(prefix + "inline:")}
+                        display_boxes = {name: box for name, box in current.items()
+                                         if name.startswith(prefix + "display:")}
+                        if len(inline) >= 2 and len(display_boxes) >= 3:
+                            return inline, display_boxes
+                        assert app.poll() is None
+                        time.sleep(.05)
+                    capture("native-math-missing-" + mode + ".png")
+                    raise AssertionError(("Inline and three display formulas must actually paint", mode, inline, display_boxes))
+
+                def painted(box, *, fit=True):
+                    viewport = control_bounds("document-viewport")
+                    left, top, right, bottom = box
+                    if fit:
+                        assert left >= viewport[0]-1 and right <= viewport[2]+1, ("Formula escaped the document", box, viewport)
+                    assert top >= viewport[1]-1 and bottom <= viewport[3]+1, ("Formula must be fully visible", box, viewport)
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    left, top, right, bottom = map(round, box)
+                    assert right-left >= 4 and bottom-top >= 6, box
+                    background = picture.getpixel((left, top))
+                    ink = [(x,y) for y in range(top+1, bottom-1) for x in range(left+1, right-1)
+                           if pixel_contrast(picture.getpixel((x,y)), background) >= 3]
+                    assert len(ink) >= 8, ("A formula rectangle without visible glyphs is not a render", box, len(ink))
+                    assert max(y for _,y in ink)-min(y for _,y in ink) >= 4, ("Formula ink collapsed", box)
+                    return len(ink)
+
+                def sample(mode, appearance, label):
+                    inline, displays = formulas(mode)
+                    first_name, first = min(inline.items(), key=lambda item: (item[1][1], item[1][0]))
+                    selected = sorted(displays.items(), key=lambda item: item[1][1])[:3]
+                    ink = {name: painted(box) for name, box in [(first_name, first), *selected]}
+                    viewport = control_bounds("document-viewport")
+                    if mode == "split":
+                        assert all(box[0] >= (viewport[0]+viewport[2])/2-2 for _,box in selected), "Split formulas must stay in the preview column"
+                    observations.append({"mode":mode, "appearance":appearance, "size":label,
+                                         "formula_bounds":dict([(first_name,first),*selected]), "ink_pixels":ink,
+                                         "font":control_bounds("document-font-size")[0]})
+                    (reports / "native-math-measurements.json").write_text(json.dumps(observations,indent=2)+"\n")
+                    capture(f"native-math-{appearance}-{mode}-{label}.png")
+                    assert note.read_bytes() == original, "Changing the math view edited its source"
+                    return first_name, first
+
+                def font(size):
+                    actual = round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size-actual)):
+                        command("Increase font size" if size > actual else "Decrease font size")
+                    assert control_bounds("document-font-size")[0] == size
+
+                for dark in (True, False):
+                    set_theme(dark)
+                    appearance = "dark" if dark else "light"
+                    font(18)
+                    for command_name, mode in (("Reading view","reading"), ("Split source","split"), ("Live preview","live")):
+                        command(command_name)
+                        if mode == "live": key("ctrl+Home")
+                        _, initial = sample(mode, appearance, "18")
+                        font(19)
+                        if mode == "live": key("ctrl+Home")
+                        _, enlarged = sample(mode, appearance, "19")
+                        assert enlarged[2]-enlarged[0] > initial[2]-initial[0]+.2, ("Math must follow document font size", mode, initial, enlarged)
+                        font(18)
+                        if mode == "live": key("ctrl+Home")
+                        xdo("windowsize",window,"900","960");pause()
+                        sample(mode, appearance, "narrow")
+                        xdo("windowsize",window,"1440","960");pause()
+                    results.append(f"Real {appearance} math glyphs painted in Reading/Split/Live, followed font changes and fit a narrow native window without changing source bytes")
+
+                set_theme(True)
+                command("Live preview");key("ctrl+Home")
+                first_name, _ = sample("live", "dark", "source-edit-before")
+                click_control(first_name)
+                control_bounds("editor-focused")
+                assert control_bounds(first_name, required=False) is None, "Clicking a formula must reveal its editable source"
+                key("Home");key("shift+End");key("ctrl+c")
+                selected = subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3)
+                assert selected == r"Before $\frac{a}{b}$ after.", ("Formula click must lead to the literal source",repr(selected))
+                paste_text(r"Before $\frac{a+1}{b}$ after.")
+                key("ctrl+s")
+                changed = original.replace(b"\\frac{a}{b}",b"\\frac{a+1}{b}",1)
+                assert note.read_bytes() == changed, "Editing the revealed formula changed unrelated source"
+                capture("native-math-source-edit.png")
+                key("ctrl+z");key("ctrl+s")
+                assert note.read_bytes() == original, "Undo failed to restore exact formula bytes"
+                key("ctrl+w");open_note("Math check");command("Reading view")
+                sample("reading", "dark", "reopened")
+                assert note.read_bytes() == original
+                results.append("Clicking actual Live math revealed literal LaTeX; a real edit/Save/Undo/Save and close/reopen preserved exact original bytes")
+
+                # The neighboring prose must remain painted around the inline image.
+                first = min(formulas("reading")[0].values(),key=lambda box:(box[1],box[0]))
+                painted([first[0]-55,first[1],first[0]-3,first[3]],fit=False)
+                painted([first[2]+3,first[1],first[2]+54,first[3]],fit=False)
+                link = control_bounds("reading-block:2")
+                xdo("mousemove","--sync",str(round(link[0]+20)),str(round((link[1]+link[3])/2)),"click","1");pause()
+                title_contains("Math destination")
+                assert destination.read_bytes() == originals[destination]
+                open_note("Math check");command("Reading view")
+                formulas("reading")
+                xdo("mousemove","900","700","click","--repeat","8","--delay","10","5");pause()
+                capture("native-math-literal-fallbacks.png")
+                table_math = {name:box for name,box in controls().items() if name.startswith("math-table:")}
+                assert table_math, "A table cell must paint its formula"
+                for box in table_math.values(): painted(box)
+                painted(control_bounds("math-inline:8"))
+                copied = []
+                visible = controls()
+                viewport = control_bounds("document-viewport")
+                for name,box in sorted(visible.items()):
+                    if not name.startswith("reading-block:") or box[1] < viewport[1] or box[3] > viewport[3] or box[3]-box[1] > 60:
+                        continue
+                    left,top,right,bottom=box;y=round((top+bottom)/2)
+                    xdo("mousemove","--sync",str(round(left)),str(y),"mousedown","1")
+                    xdo("mousemove","--sync",str(round(right+3)),str(y),"mouseup","1")
+                    key("ctrl+c")
+                    copied.append(subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3))
+                assert any("$5" in text and "$10" in text and "$20" in text for text in copied), ("Currency must remain visible literal text",copied)
+                assert any(r"$\rustidianUnknown{x}$" in text for text in copied), ("Unknown math must retain selectable source",copied)
+                assert any("Unclosed $math stays literal." in text for text in copied), ("Unclosed math must retain selectable source",copied)
+                click_control("copy-code:0")
+                literal_code = subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3)
+                assert literal_code == "$\\frac{never}{render}$\n", ("A code fence must retain its literal math source",repr(literal_code))
+                results.append("Neighboring prose stayed painted, its link navigated normally, and code/currency/unclosed/unknown math remained visible selectable literal source")
+
+                command("Live preview");key("ctrl+Home");formulas("live")
+                # Let the bounded worker drain, then provoke hover-only frames.
+                previous=None;stable=0;deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    count=control_bounds("math-render-count")[0]
+                    stable=stable+1 if count==previous else 0
+                    previous=count
+                    if stable>=3:break
+                    time.sleep(.15)
+                assert stable>=3, "The formula worker did not settle"
+                assert control_bounds("math-render-us")[0]>0
+                for x in (800,850,900,800):
+                    xdo("mousemove","--sync",str(x),"500");pause()
+                assert control_bounds("math-render-count")[0]==previous, "Idle/hover regenerated cached formulas"
+                assert all(path.read_bytes()==data for path,data in originals.items()), "Math views changed a document in the disposable vault"
+                results.append("A settled formula cache survived idle/hover frames without rerendering, and all original vault document bytes remained unchanged")
 
             def quick_ranking_checks():
                 close_tabs()
@@ -7362,8 +7524,8 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
-            if args.section in ("hover", "title", "scrolling", "diagrams", "task-clipping"):
-                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "task-clipping":task_clip_checks}[args.section]()
+            if args.section in ("hover", "title", "scrolling", "diagrams", "math", "task-clipping"):
+                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "math":math_checks, "task-clipping":task_clip_checks}[args.section]()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
@@ -7719,6 +7881,7 @@ def main():
                 title_checks,
                 scrolling_checks,
                 diagram_checks,
+                math_checks,
                 large_search_checks,
                 folder_checks,
                 explorer_checks,

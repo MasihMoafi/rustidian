@@ -8,6 +8,7 @@ pub mod graph;
 pub mod graph_layout;
 pub mod highlight;
 pub mod inline_style;
+pub mod math;
 pub mod metadata;
 pub mod native_picker;
 pub mod navigation;

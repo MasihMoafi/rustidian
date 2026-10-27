@@ -1,7 +1,10 @@
 use eframe::egui;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
-use std::sync::Arc;
+use std::{
+    cell::RefCell,
+    sync::{Arc, Weak},
+};
 
 #[derive(Clone, Default)]
 struct Inline {
@@ -14,6 +17,7 @@ struct Inline {
     native_highlight: Option<rustidian::highlight::NativeColor>,
     html: rustidian::inline_style::Style,
     link: Option<String>,
+    math: Option<rustidian::math::Span>,
 }
 #[derive(Clone, Default)]
 struct Block {
@@ -21,6 +25,7 @@ struct Block {
     heading: u8,
     quote: bool,
     code: Option<Code>,
+    math: Option<Inline>,
     table: Option<Table>,
     rule: bool,
     image: Option<String>,
@@ -55,6 +60,7 @@ struct Table {
 /// Share the reading renderer's inline styles with editable table cells.
 pub(crate) struct TableCell {
     parts: Vec<Inline>,
+    painted: RefCell<Option<(Weak<egui::Galley>, Vec<crate::math_inline::Placement>)>>,
 }
 
 impl TableCell {
@@ -65,8 +71,9 @@ impl TableCell {
             parts: parsed
                 .blocks
                 .into_iter()
-                .flat_map(|block| block.parts)
+                .flat_map(|block| block.math.into_iter().chain(block.parts))
                 .collect(),
+            painted: RefCell::new(None),
         }
     }
 
@@ -84,12 +91,27 @@ impl TableCell {
         let mut job = egui::text::LayoutJob::default();
         job.wrap.max_width = width;
         job.first_row_min_height = crate::theme::document_size(ui, 23.4);
+        let mut math = Vec::new();
         for part in &self.parts {
             let mut format = inline_format(ui, part, 0, Some(header));
             if let Some(color) = color {
                 format.color = color;
             }
-            job.append(&part.text, 0.0, format);
+            if let Some(formula) = &part.math {
+                if let Some(placement) = crate::math_inline::append(
+                    ui,
+                    &mut job,
+                    &part.text,
+                    &formula.formula,
+                    formula.display,
+                    format,
+                    0.0,
+                ) {
+                    math.push(placement);
+                }
+            } else {
+                job.append(&part.text, 0.0, format);
+            }
         }
         if job.sections.is_empty() {
             job.append(
@@ -98,7 +120,19 @@ impl TableCell {
                 inline_format(ui, &Inline::default(), 0, Some(header)),
             );
         }
-        ui.fonts_mut(|fonts| fonts.layout_job(job))
+        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+        *self.painted.borrow_mut() = Some((Arc::downgrade(&galley), math));
+        galley
+    }
+
+    pub fn paint(&self, ui: &egui::Ui, galley: &Arc<egui::Galley>, origin: egui::Pos2) {
+        if let Some((owner, placements)) = &*self.painted.borrow()
+            && owner.ptr_eq(&Arc::downgrade(galley))
+        {
+            for placement in placements {
+                crate::math_inline::paint(ui, galley, origin, placement);
+            }
+        }
     }
 
     pub fn link_at(&self, character: usize) -> Option<&str> {
@@ -125,10 +159,12 @@ impl Parsed {
             ..Self::default()
         };
         let mut marked = source.to_owned();
+        let math = rustidian::math::spans(source);
         if source.contains("==") {
             for range in rustidian::editor::Markdown::parse(source)
                 .highlights
                 .into_iter()
+                .filter(|range| !math.iter().any(|math| ranges_overlap(range, &math.range)))
                 .rev()
             {
                 let native = rustidian::highlight::NativeColor::prefix(
@@ -142,6 +178,7 @@ impl Parsed {
             }
         }
         let source = marked.as_str();
+        let math = rustidian::math::spans(source);
         let mut block = Block::default();
         let mut style = Inline::default();
         let mut highlights = Vec::new();
@@ -161,6 +198,7 @@ impl Parsed {
                 || block.image.is_some()
                 || block.task.is_some()
                 || block.code.is_some()
+                || block.math.is_some()
                 || block.table.is_some()
                 || block.callout.is_some()
             {
@@ -169,7 +207,10 @@ impl Parsed {
         };
         for (event, range) in Parser::new_ext(
             source,
-            Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS,
+            Options::ENABLE_STRIKETHROUGH
+                | Options::ENABLE_TABLES
+                | Options::ENABLE_TASKLISTS
+                | Options::ENABLE_MATH,
         )
         .into_offset_iter()
         {
@@ -185,6 +226,8 @@ impl Parsed {
                     event,
                     Event::Text(_)
                         | Event::Code(_)
+                        | Event::InlineMath(_)
+                        | Event::DisplayMath(_)
                         | Event::SoftBreak
                         | Event::HardBreak
                         | Event::Start(
@@ -327,6 +370,29 @@ impl Parsed {
                         });
                     }
                 }
+                Event::InlineMath(_) | Event::DisplayMath(_) => {
+                    let part = Inline {
+                        text: source[range.clone()].into(),
+                        math: math.iter().find(|math| math.range == range).cloned(),
+                        ..style.clone()
+                    };
+                    if part.math.as_ref().is_some_and(|math| math.display) && block.table.is_none()
+                    {
+                        let quote = block.quote;
+                        let list_depth = block.list_depth;
+                        flush(&mut block, &mut parsed.blocks);
+                        parsed.blocks.push(Block {
+                            math: Some(part),
+                            quote,
+                            list_depth,
+                            ..Default::default()
+                        });
+                        block.quote = quote;
+                        block.list_depth = list_depth;
+                    } else {
+                        block.parts.push(part);
+                    }
+                }
                 Event::Code(text) => block.parts.push(Inline {
                     text: text.into_string(),
                     code: true,
@@ -429,7 +495,11 @@ pub fn prepare(text: &str) -> (String, Vec<(String, String)>) {
     let mut output = String::new();
     let mut links = Vec::new();
     let mut previous = 0;
+    let math = rustidian::math::spans(text);
     for (span, target) in rustidian::vault::wiki_spans(text) {
+        if math.iter().any(|math| ranges_overlap(&span, &math.range)) {
+            continue;
+        }
         let destination = format!("rust-note-{}", links.len());
         let label = target
             .split_once('|')
@@ -442,6 +512,28 @@ pub fn prepare(text: &str) -> (String, Vec<(String, String)>) {
     }
     output.push_str(&text[previous..]);
     (output, links)
+}
+
+fn ranges_overlap(first: &std::ops::Range<usize>, second: &std::ops::Range<usize>) -> bool {
+    first.start < second.end && second.start < first.end
+}
+
+fn prepare_images(markdown: &str, resolve: impl Fn(&str) -> Option<String>) -> String {
+    let mut prepared = String::new();
+    let mut previous = 0;
+    for math in rustidian::math::spans(markdown) {
+        prepared.push_str(&rustidian::assets::prepare_images(
+            &markdown[previous..math.range.start],
+            &resolve,
+        ));
+        prepared.push_str(&markdown[math.range.clone()]);
+        previous = math.range.end;
+    }
+    prepared.push_str(&rustidian::assets::prepare_images(
+        &markdown[previous..],
+        resolve,
+    ));
+    prepared
 }
 
 pub fn show(
@@ -462,7 +554,7 @@ pub fn show(
         .map_or(0, |properties| properties.range.end);
     let text = &text[body..];
     let (markdown, links) = prepare(text);
-    let markdown = rustidian::assets::prepare_images(&markdown, |destination| {
+    let markdown = prepare_images(&markdown, |destination| {
         let target = links
             .iter()
             .find(|(id, _)| id == destination)
@@ -641,6 +733,56 @@ fn show_blocks(
             ui.add_space(8.0);
             continue;
         }
+        if let Some(part) = &block.math {
+            let formula = part.math.as_ref().unwrap();
+            ui.add_space(12.0);
+            let response = ui
+                .vertical(|ui| {
+                    match crate::math_ui::image(
+                        ui,
+                        &formula.formula,
+                        true,
+                        crate::theme::document_size(ui, 18.0),
+                        ui.visuals().text_color(),
+                    ) {
+                        Ok(Some(mut rendered)) => {
+                            rendered.size *=
+                                (ui.available_width().max(1.0) / rendered.size.x).min(1.0);
+                            let response = ui.add(
+                                egui::Image::new(&rendered.uri).fit_to_exact_size(rendered.size),
+                            );
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("math-display:{index}"),
+                                response.rect,
+                            );
+                            response.context_menu(|ui| {
+                                if ui.button("Copy LaTeX").clicked() {
+                                    ui.ctx().copy_text(part.text.clone());
+                                    ui.close();
+                                }
+                            });
+                        }
+                        Ok(None) => {
+                            ui.label(egui::RichText::new(&part.text).monospace());
+                        }
+                        Err(error) => {
+                            let response = ui
+                                .label(egui::RichText::new(&part.text).monospace())
+                                .on_hover_text(error);
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("math-error:{index}"),
+                                response.rect,
+                            );
+                        }
+                    }
+                })
+                .response;
+            crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);
+            ui.add_space(12.0);
+            continue;
+        }
         if let Some(table) = &block.table {
             ui.add_space(16.0);
             if let Some(link) = show_table(ui, table, native_links, table_index, from) {
@@ -730,6 +872,7 @@ fn show_blocks(
             })
         .max(1.0);
         let mut destinations = Vec::new();
+        let mut math = Vec::new();
         let mut character = 0;
         for (part_index, part) in block.parts.iter().enumerate() {
             let mut format = inline_format(ui, part, block.heading, None);
@@ -737,15 +880,26 @@ fn show_blocks(
                 format.color = ui.visuals().weak_text_color();
                 format.strikethrough = egui::Stroke::new(1.0, format.color);
             }
-            job.append(
-                &part.text,
-                if part_index == 0 && block.list_depth > 0 && block.task.is_none() {
-                    20.0 + 31.5 * block.list_depth.saturating_sub(1) as f32
-                } else {
-                    0.0
-                },
-                format,
-            );
+            let leading = if part_index == 0 && block.list_depth > 0 && block.task.is_none() {
+                20.0 + 31.5 * block.list_depth.saturating_sub(1) as f32
+            } else {
+                0.0
+            };
+            if let Some(formula) = &part.math {
+                if let Some(placement) = crate::math_inline::append(
+                    ui,
+                    &mut job,
+                    &part.text,
+                    &formula.formula,
+                    formula.display,
+                    format,
+                    leading,
+                ) {
+                    math.push(placement);
+                }
+            } else {
+                job.append(&part.text, leading, format);
+            }
             let end = character + part.text.chars().count();
             if let Some(link) = &part.link {
                 destinations.push((character..end, link));
@@ -799,6 +953,14 @@ fn show_blocks(
                 }
             })
             .inner;
+        for placement in &math {
+            let rect = crate::math_inline::paint(ui, &galley, response.rect.min, placement);
+            crate::ui_probe::record(
+                ui.ctx(),
+                format!("math-inline:{}", placement.character),
+                rect,
+            );
+        }
         crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);
         if let Some(id) = headings[index] {
             let mut collapsed = ui
@@ -898,18 +1060,18 @@ fn inline_format(
     heading: u8,
     table_header: Option<bool>,
 ) -> egui::TextFormat {
-    let size = crate::theme::document_size(
-        ui,
-        match heading {
-            1 => 32.436,
-            2 => 28.836,
-            3 => 25.632,
-            4.. => 22.788,
-            _ if part.code && table_header.is_some() => crate::code_ui::FONT_SIZE,
-            _ if part.code => 16.0,
-            _ => 18.0,
-        },
-    );
+    let size = if heading > 0 || !part.code {
+        crate::theme::prose_size(ui, heading)
+    } else {
+        crate::theme::document_size(
+            ui,
+            if table_header.is_some() {
+                crate::code_ui::FONT_SIZE
+            } else {
+                16.0
+            },
+        )
+    };
     let family = if part.code {
         egui::FontFamily::Monospace
     } else if heading == 1 || part.html.bold == Some(true) {
@@ -987,6 +1149,61 @@ fn follow_destination(destination: &str, native_links: &[(String, String)]) -> O
     }
 }
 
+const INLINE_PADDING: f32 = 3.9375;
+
+fn table_job(
+    ui: &egui::Ui,
+    parts: &[Inline],
+    header: bool,
+    width: f32,
+) -> (egui::text::LayoutJob, Vec<crate::math_inline::Placement>) {
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = width;
+    job.first_row_min_height = 23.4;
+    let mut math = Vec::new();
+    let mut previous_code = false;
+    for part in parts {
+        let leading = INLINE_PADDING * (usize::from(part.code) + usize::from(previous_code)) as f32;
+        let format = inline_format(ui, part, 0, Some(header));
+        if let Some(formula) = &part.math {
+            if let Some(placement) = crate::math_inline::append(
+                ui,
+                &mut job,
+                &part.text,
+                &formula.formula,
+                formula.display,
+                format,
+                leading,
+            ) {
+                math.push(placement);
+            }
+        } else {
+            job.append(&part.text, leading, format);
+        }
+        previous_code = part.code;
+    }
+    if parts.is_empty() {
+        job.append(
+            "",
+            0.0,
+            inline_format(ui, &Inline::default(), 0, Some(header)),
+        );
+    }
+    (job, math)
+}
+
+fn table_line_height(galley: &egui::Galley, has_code: bool, has_math: bool) -> f32 {
+    let height: f32 = if has_code { 23.625 } else { 23.4 };
+    if has_math {
+        galley
+            .rows
+            .iter()
+            .fold(height, |height, row| height.max(row.height()))
+    } else {
+        height
+    }
+}
+
 fn show_table(
     ui: &mut egui::Ui,
     table: &Table,
@@ -994,8 +1211,7 @@ fn show_table(
     ordinal: usize,
     from: &std::path::Path,
 ) -> Option<String> {
-    use egui::text::{CCursor, LayoutJob};
-    const INLINE_PADDING: f32 = 3.9375;
+    use egui::text::CCursor;
     let columns = table.alignments.len();
     let mut widths = vec![0.0_f32; columns];
     let mut heights = Vec::new();
@@ -1004,21 +1220,12 @@ fn show_table(
         let mut shaped_row = Vec::new();
         let mut height = 23.4_f32;
         for (column, parts) in row.iter().enumerate() {
-            let mut job = LayoutJob::default();
-            job.wrap.max_width = f32::INFINITY;
-            job.first_row_min_height = 23.4;
+            let (job, math) = table_job(ui, parts, row_index == 0, f32::INFINITY);
             let mut character = 0;
             let mut links = Vec::new();
             let mut code_ranges = Vec::new();
             let mut previous_code = false;
             for part in parts {
-                let leading =
-                    INLINE_PADDING * (usize::from(part.code) + usize::from(previous_code)) as f32;
-                job.append(
-                    &part.text,
-                    leading,
-                    inline_format(ui, part, 0, Some(row_index == 0)),
-                );
                 let end = character + part.text.chars().count();
                 if let Some(destination) = &part.link {
                     links.push((character..end, destination));
@@ -1029,22 +1236,15 @@ fn show_table(
                 character = end;
                 previous_code = part.code;
             }
-            if parts.is_empty() {
-                job.append(
-                    "",
-                    0.0,
-                    inline_format(ui, &Inline::default(), 0, Some(row_index == 0)),
-                );
-            }
             let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-            let line_height = if code_ranges.is_empty() { 23.4 } else { 23.625 };
+            let line_height = table_line_height(&galley, !code_ranges.is_empty(), !math.is_empty());
             crate::theme::set_line_height(&mut galley, line_height);
             let content_width = galley.size().x + if previous_code { INLINE_PADDING } else { 0.0 };
             if let Some(width) = widths.get_mut(column) {
                 *width = width.max(content_width + 17.0);
             }
             height = height.max(galley.size().y);
-            shaped_row.push((galley, content_width, links, code_ranges));
+            shaped_row.push((galley, content_width, links, code_ranges, math));
         }
         heights.push(height + 9.0);
         cells.push(shaped_row);
@@ -1055,14 +1255,20 @@ fn show_table(
         widths = resized;
         for (row, cells) in cells.iter_mut().enumerate() {
             let mut height = 23.4_f32;
-            for (column, (galley, content_width, _, code_ranges)) in cells.iter_mut().enumerate() {
-                let mut job = (*galley.job).clone();
-                job.wrap.max_width = (widths[column] - 17.0).max(1.0);
-                *galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-                crate::theme::set_line_height(
-                    galley,
-                    if code_ranges.is_empty() { 23.4 } else { 23.625 },
+            for (column, (galley, content_width, _, code_ranges, math)) in
+                cells.iter_mut().enumerate()
+            {
+                let (job, placements) = table_job(
+                    ui,
+                    &table.rows[row][column],
+                    row == 0,
+                    (widths[column] - 17.0).max(1.0),
                 );
+                *math = placements;
+                *galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                let line_height =
+                    table_line_height(galley, !code_ranges.is_empty(), !math.is_empty());
+                crate::theme::set_line_height(galley, line_height);
                 *content_width = galley.size().x;
                 height = height.max(galley.size().y);
             }
@@ -1089,7 +1295,7 @@ fn show_table(
             let mut y = start.y;
             for (row_index, row) in cells.iter().enumerate() {
                 let mut x = start.x;
-                for (column, (galley, width, links, codes)) in row.iter().enumerate() {
+                for (column, (galley, width, links, codes, math)) in row.iter().enumerate() {
                     let Some(&cell_width) = widths.get(column) else {
                         continue;
                     };
@@ -1124,6 +1330,17 @@ fn show_table(
                     }
                     let text_rect = egui::Rect::from_min_size(position, galley.size());
                     ui.put(text_rect, egui::Label::new(galley.clone()).selectable(true));
+                    for placement in math {
+                        let rect = crate::math_inline::paint(ui, galley, position, placement);
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!(
+                                "math-table:{ordinal}:{row_index}:{column}:{}",
+                                placement.character
+                            ),
+                            rect.intersect(ui.clip_rect()),
+                        );
+                    }
                     crate::ui_probe::record(
                         ui.ctx(),
                         format!("table-text:{ordinal}:{row_index}:{column}"),
@@ -1199,6 +1416,89 @@ mod callout_tests;
 mod tests {
     use super::{Parsed, TableCell, prepare};
     use eframe::egui;
+
+    #[test]
+    fn preview_transforms_do_not_rewrite_math_as_links_highlights_or_images() {
+        let raw_math = "$[[x]] ==y== ![z](missing.png)$";
+        let source = format!("[[Home]] {raw_math} ==outside==\n\n![Outside](outside.png)");
+        let (prepared, links) = prepare(&source);
+        assert_eq!(links, [("rust-note-0".into(), "Home".into())]);
+        let prepared = super::prepare_images(&prepared, |_| Some("file:///resolved.png".into()));
+        assert!(prepared.contains(raw_math));
+        assert!(prepared.contains("![Outside](<file:///resolved.png>)"));
+        let parsed = Parsed::new(&prepared);
+        assert!(!parsed.fallback);
+        let parts: Vec<_> = parsed
+            .blocks
+            .iter()
+            .flat_map(|block| &block.parts)
+            .collect();
+        let math = parts.iter().find(|part| part.math.is_some()).unwrap();
+        assert_eq!(math.text, raw_math);
+        assert_eq!(
+            math.math.as_ref().unwrap().formula,
+            "[[x]] ==y== ![z](missing.png)"
+        );
+        assert!(
+            parts
+                .iter()
+                .any(|part| part.text == "outside" && part.highlight.is_some())
+        );
+    }
+
+    #[test]
+    fn reading_math_keeps_surrounding_prose_nested_blocks_and_literal_prices() {
+        let source = "Before $x$ after\n\n$$\\frac{a}{b}$$\n\n> [!note]\n> Inline $y$\n>\n> $$z^2$$\n>\n> | Formula |\n> | --- |\n> | $w$ |\n\nAfter $5 and$10.";
+        let parsed = Parsed::new(source);
+        assert!(!parsed.fallback);
+        assert_eq!(
+            parsed.blocks[0]
+                .parts
+                .iter()
+                .map(|part| part.text.as_str())
+                .collect::<String>(),
+            "Before $x$ after"
+        );
+        assert_eq!(
+            parsed.blocks[0]
+                .parts
+                .iter()
+                .filter_map(|part| part.math.as_ref())
+                .map(|math| math.formula.as_str())
+                .collect::<Vec<_>>(),
+            ["x"]
+        );
+        let display = parsed.blocks[1].math.as_ref().unwrap();
+        assert_eq!(display.text, "$$\\frac{a}{b}$$");
+        assert_eq!(display.math.as_ref().unwrap().formula, "\\frac{a}{b}");
+        let callout = parsed
+            .blocks
+            .iter()
+            .find_map(|block| block.callout.as_ref())
+            .unwrap();
+        assert!(callout.children.iter().any(|block| {
+            block
+                .math
+                .as_ref()
+                .is_some_and(|part| part.math.as_ref().is_some_and(|math| math.formula == "z^2"))
+        }));
+        let table = callout
+            .children
+            .iter()
+            .find_map(|block| block.table.as_ref())
+            .unwrap();
+        assert_eq!(table.rows[1][0][0].text, "$w$");
+        assert_eq!(table.rows[1][0][0].math.as_ref().unwrap().formula, "w");
+        let last = parsed.blocks.last().unwrap();
+        assert_eq!(
+            last.parts
+                .iter()
+                .map(|part| part.text.as_str())
+                .collect::<String>(),
+            "After $5 and$10."
+        );
+        assert!(last.parts.iter().all(|part| part.math.is_none()));
+    }
 
     #[test]
     fn an_empty_native_mark_is_invisible_and_keeps_the_next_color() {

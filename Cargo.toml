@@ -28,6 +28,10 @@ egui_extras = { version = "0.37", default-features = false, features = ["svg", "
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 walkdir = "2.5"
 pulldown-cmark = { version = "0.13.4", default-features = false }
+ratex-parser = { version = "=0.1.15", default-features = false }
+ratex-layout = { version = "=0.1.15", default-features = false }
+ratex-types = "=0.1.15"
+ratex-svg = { version = "=0.1.15", default-features = false, features = ["embed-fonts"] }
 notify = "8.2"
 nucleo-matcher = "0.3"
 rustix = { version = "1.1", features = ["fs"] }

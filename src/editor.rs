@@ -33,6 +33,7 @@ pub struct Style {
     pub italic: bool,
     pub strike: bool,
     pub code: bool,
+    pub math: bool,
     pub link: bool,
     pub hidden: bool,
     pub quote: bool,
@@ -69,6 +70,7 @@ pub struct Markdown {
     pub callouts: Vec<crate::callouts::Callout>,
     pub tasks: Vec<Task>,
     pub highlights: Vec<Range<usize>>,
+    pub maths: Vec<crate::math::Span>,
 }
 
 #[derive(Clone, Debug)]
@@ -210,6 +212,7 @@ pub fn complete_link(text: &mut String, completion: &LinkCompletion, target: &st
 
 impl Markdown {
     pub fn parse(text: &str) -> Self {
+        let mut maths = crate::math::spans(text);
         let mut styles = vec![Style::default(); text.len()];
         let mut heading_starts = Vec::new();
         let mut item_starts = Vec::new();
@@ -225,7 +228,10 @@ impl Markdown {
         let mut table = None;
         for (event, range) in Parser::new_ext(
             text,
-            Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS,
+            Options::ENABLE_STRIKETHROUGH
+                | Options::ENABLE_TABLES
+                | Options::ENABLE_TASKLISTS
+                | Options::ENABLE_MATH,
         )
         .into_offset_iter()
         {
@@ -388,6 +394,7 @@ impl Markdown {
             }
         }
         if let Ok(Some(properties)) = crate::metadata::frontmatter(text) {
+            maths.retain(|math| !properties.range.contains(&math.range.start));
             heading_starts.retain(|start| !properties.range.contains(start));
             item_starts.retain(|start| !properties.range.contains(start));
             setext_markers.retain(|range| !properties.range.contains(&range.start));
@@ -423,7 +430,11 @@ impl Markdown {
                 continue;
             }
             for index in (run..next).step_by(2) {
-                if styles[index].code || styles[index].hidden || styles[index].property {
+                if styles[index].code
+                    || styles[index].hidden
+                    || styles[index].property
+                    || maths.iter().any(|math| math.range.contains(&index))
+                {
                     continue;
                 }
                 if let Some(start) = opening.take() {
@@ -476,6 +487,12 @@ impl Markdown {
             });
         }
         for (range, _) in crate::vault::wiki_spans(text) {
+            if maths
+                .iter()
+                .any(|math| math.range.start < range.end && math.range.end > range.start)
+            {
+                continue;
+            }
             patch(&mut styles, range.clone(), |s| s.link = true);
             let prefix = text[range.start + 2..range.end - 2]
                 .find('|')
@@ -492,6 +509,11 @@ impl Markdown {
         }
         if text.contains("![") {
             for image in crate::assets::embedded_images(text) {
+                if maths.iter().any(|math| {
+                    math.range.start < image.range.end && math.range.end > image.range.start
+                }) {
+                    continue;
+                }
                 patch(&mut styles, image.range, |style| style.image = true);
             }
         }
@@ -544,10 +566,28 @@ impl Markdown {
         }
         heading_starts.dedup();
         item_starts.dedup();
+        for math in &maths {
+            patch(&mut styles, math.range.clone(), |style| {
+                style.math = true;
+                style.code = false;
+                style.marker = false;
+                style.hidden = false;
+            });
+        }
         let mut spans = Vec::new();
         let mut start = 0;
+        let mut math_boundaries = maths
+            .iter()
+            .flat_map(|math| [math.range.start, math.range.end])
+            .peekable();
         for (index, _) in text.char_indices().skip(1) {
-            if styles[index] != styles[start] {
+            while math_boundaries
+                .peek()
+                .is_some_and(|boundary| *boundary < index)
+            {
+                math_boundaries.next();
+            }
+            if styles[index] != styles[start] || math_boundaries.peek() == Some(&index) {
                 spans.push(Span {
                     range: start..index,
                     style: styles[start],
@@ -572,7 +612,35 @@ impl Markdown {
             callouts,
             tasks,
             highlights,
+            maths,
         }
+    }
+}
+
+#[cfg(test)]
+mod math_decoration_tests {
+    use super::*;
+
+    #[test]
+    fn formula_contents_do_not_become_markdown_controls_or_hidden_properties() {
+        let source =
+            "---\nvalue: '$private$'\n---\n\n$![x](sample.png) [[note]] a==b$\n\n==outside==";
+        let parsed = Markdown::parse(source);
+        assert_eq!(parsed.maths.len(), 1);
+        let math = &parsed.maths[0];
+        assert!(source[math.range.clone()].starts_with("$![x]"));
+        for span in parsed
+            .spans
+            .iter()
+            .filter(|span| math.range.contains(&span.range.start))
+        {
+            assert!(span.style.math);
+            assert!(
+                !span.style.image && !span.style.link && !span.style.marker && !span.style.hidden
+            );
+        }
+        assert_eq!(parsed.highlights.len(), 1);
+        assert_eq!(&source[parsed.highlights[0].clone()], "==outside==");
     }
 }
 

@@ -714,6 +714,18 @@ impl Tables {
                                         })
                                         .layouter(&mut layouter),
                                 );
+                                if !focused {
+                                    let mut math_ui =
+                                        ui.new_child(egui::UiBuilder::new().max_rect(inner));
+                                    math_ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+                                    cell.presentation.paint(
+                                        &math_ui,
+                                        &rendered,
+                                        alignment
+                                            .align_size_within_rect(rendered.size(), inner)
+                                            .min,
+                                    );
+                                }
                                 crate::ui_probe::record(
                                     ui.ctx(),
                                     format!("edit-table-cell:{table}:{row}:{column}"),

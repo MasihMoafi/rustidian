@@ -99,6 +99,19 @@ pub fn document_size(ui: &egui::Ui, size: f32) -> f32 {
     size * (TextStyle::Body.resolve(ui.style()).size / f32::from(DEFAULT_DOCUMENT_FONT_SIZE))
 }
 
+pub fn prose_size(ui: &egui::Ui, heading: u8) -> f32 {
+    document_size(
+        ui,
+        match heading {
+            1 => 32.436,
+            2 => 28.836,
+            3 => 25.632,
+            4.. => 22.788,
+            _ => 18.0,
+        },
+    )
+}
+
 pub fn hover_fill(ui: &egui::Ui) -> Color32 {
     ui.visuals().widgets.hovered.weak_bg_fill
 }

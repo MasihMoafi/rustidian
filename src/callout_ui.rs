@@ -66,6 +66,7 @@ pub fn header(
             ui.add(crate::theme::icon_image(icon, ink));
             let galley = title.layout_color(ui, true, width, Some(ink));
             let response = ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::hover()));
+            title.paint(ui, &galley, response.rect.min);
             if let Some(pointer) = ui
                 .ctx()
                 .pointer_hover_pos()

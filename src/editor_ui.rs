@@ -152,6 +152,7 @@ struct LiveImage {
     block: Option<Range<usize>>,
     uri: String,
     size: egui::Vec2,
+    math: bool,
 }
 
 // Keep the original allocation alive so its pointer identifies the font
@@ -221,6 +222,7 @@ fn embedded_images(
     text: &str,
     vault: Option<&rustidian::vault::Vault>,
     from: &std::path::Path,
+    maths: &[rustidian::math::Span],
 ) -> Vec<LiveImage> {
     if !text.contains("![") {
         return Vec::new();
@@ -229,6 +231,11 @@ fn embedded_images(
     rustidian::assets::embedded_images(text)
         .into_iter()
         .filter_map(|image| {
+            if maths.iter().any(|math| {
+                math.range.start < image.range.end && math.range.end > image.range.start
+            }) {
+                return None;
+            }
             if text[image.range.clone()].contains('\n') {
                 return None;
             }
@@ -252,6 +259,7 @@ fn embedded_images(
                 block: None,
                 uri,
                 size: egui::vec2(width, height),
+                math: false,
             })
         })
         .collect()
@@ -265,7 +273,7 @@ fn live_images(
     parsed: &Markdown,
     active_line: Option<&Range<usize>>,
 ) -> Vec<LiveImage> {
-    let mut images = embedded_images(ui, text, vault, from);
+    let mut images = embedded_images(ui, text, vault, from, &parsed.maths);
     for block in &parsed.code_blocks {
         if !block.language.eq_ignore_ascii_case("mermaid")
             || active_line
@@ -283,6 +291,67 @@ fn live_images(
                 block: Some(block.range.clone()),
                 uri,
                 size,
+                math: false,
+            });
+        }
+    }
+    for math in &parsed.maths {
+        if parsed
+            .callouts
+            .iter()
+            .any(|callout| callout.header.contains(&math.range.start))
+        {
+            continue;
+        }
+        if active_line
+            .is_some_and(|line| line.start < math.range.end && line.end >= math.range.start)
+        {
+            continue;
+        }
+        // Inline line breaks cannot be collapsed without moving editing positions.
+        if !math.display && text[math.range.clone()].contains('\n') {
+            continue;
+        }
+        let style = parsed
+            .spans
+            .get(
+                parsed
+                    .spans
+                    .partition_point(|span| span.range.end <= math.range.start),
+            )
+            .filter(|span| span.range.contains(&math.range.start))
+            .map(|span| span.style)
+            .unwrap_or_default();
+        let color = if let Some([r, g, b, a]) = style.html.color {
+            Color32::from_rgba_unmultiplied(r, g, b, a)
+        } else if style.link {
+            crate::theme::accent(ui)
+        } else if style.heading > 0 {
+            crate::theme::heading(ui, style.heading)
+        } else {
+            ui.visuals().text_color()
+        };
+        if let Ok(Some(formula)) = crate::math_ui::image(
+            ui,
+            &math.formula,
+            math.display,
+            crate::theme::prose_size(ui, style.heading),
+            color,
+        ) {
+            let scale = (ui.available_width().max(1.0) / formula.size.x).min(1.0);
+            let opening_end = text[math.range.clone()]
+                .find('\n')
+                .map_or(math.range.end, |offset| math.range.start + offset);
+            images.push(LiveImage {
+                range: if math.display {
+                    math.range.start..opening_end
+                } else {
+                    math.range.clone()
+                },
+                block: math.display.then(|| math.range.clone()),
+                uri: formula.uri,
+                size: formula.size * scale,
+                math: true,
             });
         }
     }
@@ -888,13 +957,22 @@ impl Editor {
         }
         let active_line = if live && ui.memory(|m| m.has_focus(id)) {
             cursor.map(|cursor| {
+                let [first, last] = cursor.sorted_cursors();
+                let first_byte = tab
+                    .document
+                    .text
+                    .char_indices()
+                    .nth(first.index.0)
+                    .map_or(tab.document.text.len(), |(i, _)| i);
                 let byte = tab
                     .document
                     .text
                     .char_indices()
-                    .nth(cursor.primary.index.0)
+                    .nth(last.index.0)
                     .map_or(tab.document.text.len(), |(i, _)| i);
-                let start = tab.document.text[..byte].rfind('\n').map_or(0, |i| i + 1);
+                let start = tab.document.text[..first_byte]
+                    .rfind('\n')
+                    .map_or(0, |i| i + 1);
                 let end = tab.document.text[byte..]
                     .find('\n')
                     .map_or(tab.document.text.len(), |i| byte + i);
@@ -1346,7 +1424,7 @@ impl Editor {
             let character = tab.document.text[..image.range.start].chars().count();
             let caret = positioned.at(character);
             let mut origin = output.galley_pos + caret.min.to_vec2();
-            if image.block.is_some() {
+            if image.block.is_some() && !image.math {
                 origin.x = output.galley_pos.x;
             }
             let rect = egui::Rect::from_min_size(
@@ -1357,7 +1435,13 @@ impl Editor {
                         } else {
                             -image.size.x
                         },
-                        if active { 29.16 } else { 0.0 },
+                        if active {
+                            29.16
+                        } else if image.math && image.block.is_none() {
+                            (caret.height() - image.size.y).max(0.0) / 2.0
+                        } else {
+                            0.0
+                        },
                     ),
                 image.size,
             );
@@ -1369,7 +1453,20 @@ impl Editor {
                     .sense(egui::Sense::click()),
             );
             crate::ui_probe::record(ui.ctx(), format!("embed:{ordinal}"), response.rect);
-            if image.block.is_some() {
+            if image.math {
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    format!(
+                        "math-live:{}:{ordinal}",
+                        if image.block.is_some() {
+                            "display"
+                        } else {
+                            "inline"
+                        }
+                    ),
+                    response.rect,
+                );
+            } else if image.block.is_some() {
                 crate::ui_probe::record(ui.ctx(), "mermaid-live", response.rect);
             }
             if active {
@@ -2337,12 +2434,7 @@ fn layout(
             } else if hidden {
                 0.01
             } else if style.heading > 0 {
-                match style.heading {
-                    1 => 32.436,
-                    2 => 28.836,
-                    3 => 25.632,
-                    _ => 22.788,
-                }
+                crate::theme::prose_size(ui, style.heading) / font_scale
             } else if style.block_code {
                 crate::code_ui::FONT_SIZE
             } else if style.code {
@@ -2351,7 +2443,7 @@ fn layout(
                 18.0
             };
             let size = size * font_scale;
-            let family = if style.code {
+            let family = if style.code || style.math {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
                 FontFamily::Name("bold".into())
@@ -2426,7 +2518,11 @@ fn layout(
                 } else if live && style.property {
                     0.01
                 } else if let Some(image) = image.filter(|_| !active) {
-                    image.size.y + 16.0
+                    if image.math && image.block.is_none() {
+                        image.size.y.max(29.16 * font_scale)
+                    } else {
+                        image.size.y + 16.0
+                    }
                 } else if style.block_code {
                     crate::code_ui::LINE_HEIGHT * font_scale
                 } else if section == "\n" {
