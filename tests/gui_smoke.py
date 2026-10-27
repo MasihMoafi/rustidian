@@ -63,10 +63,12 @@ def main():
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
-    reports = ROOT / "reports"
+    reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
-    run_lock = (reports / ".gui-smoke.lock").open("w")
+    (ROOT / "reports").mkdir(exist_ok=True)
+    run_lock = (ROOT / "reports" / ".gui-smoke.lock").open("w")
     try:
         fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:

@@ -617,33 +617,6 @@ impl Markdown {
     }
 }
 
-#[cfg(test)]
-mod math_decoration_tests {
-    use super::*;
-
-    #[test]
-    fn formula_contents_do_not_become_markdown_controls_or_hidden_properties() {
-        let source =
-            "---\nvalue: '$private$'\n---\n\n$![x](sample.png) [[note]] a==b$\n\n==outside==";
-        let parsed = Markdown::parse(source);
-        assert_eq!(parsed.maths.len(), 1);
-        let math = &parsed.maths[0];
-        assert!(source[math.range.clone()].starts_with("$![x]"));
-        for span in parsed
-            .spans
-            .iter()
-            .filter(|span| math.range.contains(&span.range.start))
-        {
-            assert!(span.style.math);
-            assert!(
-                !span.style.image && !span.style.link && !span.style.marker && !span.style.hidden
-            );
-        }
-        assert_eq!(parsed.highlights.len(), 1);
-        assert_eq!(&source[parsed.highlights[0].clone()], "==outside==");
-    }
-}
-
 fn patch(styles: &mut [Style], range: Range<usize>, mut f: impl FnMut(&mut Style)) {
     for style in &mut styles[range] {
         f(style);
@@ -807,4 +780,31 @@ pub fn find_matches(text: &str, needle: &str) -> Vec<Range<usize>> {
                 .then_some(i..i + needle.len())
         })
         .collect()
+}
+
+#[cfg(test)]
+mod math_decoration_tests {
+    use super::*;
+
+    #[test]
+    fn formula_contents_do_not_become_markdown_controls_or_hidden_properties() {
+        let source =
+            "---\nvalue: '$private$'\n---\n\n$![x](sample.png) [[note]] a==b$\n\n==outside==";
+        let parsed = Markdown::parse(source);
+        assert_eq!(parsed.maths.len(), 1);
+        let math = &parsed.maths[0];
+        assert!(source[math.range.clone()].starts_with("$![x]"));
+        for span in parsed
+            .spans
+            .iter()
+            .filter(|span| math.range.contains(&span.range.start))
+        {
+            assert!(span.style.math);
+            assert!(
+                !span.style.image && !span.style.link && !span.style.marker && !span.style.hidden
+            );
+        }
+        assert_eq!(parsed.highlights.len(), 1);
+        assert_eq!(&source[parsed.highlights[0].clone()], "==outside==");
+    }
 }

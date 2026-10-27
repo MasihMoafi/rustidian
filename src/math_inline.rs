@@ -83,7 +83,7 @@ pub fn paint(
         ui.ctx(),
         format!(
             "math-fragment:{:x}:{}",
-            ui.id().value(),
+            ui.scope_id().value(),
             placement.character
         ),
         rect,
