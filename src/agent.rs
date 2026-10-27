@@ -110,11 +110,6 @@ impl Agent {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
         let (events, receiver) = mpsc::sync_channel(64);
         let stop = Arc::new(AtomicBool::new(false));
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -252,6 +247,103 @@ impl From<String> for Failure {
 
 type Result<T> = std::result::Result<T, Failure>;
 
+// The npm entry point spawns a second process. Launch its installed native
+// executable directly so Linux's parent-death signal owns the actual server.
+#[cfg(target_os = "linux")]
+fn native_codex(command: Command) -> Result<Command> {
+    use std::{fs::File, os::unix::fs::PermissionsExt};
+    if command.get_program() != "codex" {
+        return Ok(command);
+    }
+    let executable = std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|path| path.join("codex"))
+                .find(|path| {
+                    path.metadata().is_ok_and(|metadata| {
+                        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                    })
+                })
+        })
+        .and_then(|path| path.canonicalize().ok())
+        .ok_or_else(|| {
+            Failure::Error(
+                "Cannot find Codex CLI. Install Codex CLI and sign in, then try again.".into(),
+            )
+        })?;
+    let native = |path: &std::path::Path| {
+        let mut magic = [0; 4];
+        File::open(path)
+            .and_then(|mut file| file.read_exact(&mut magic))
+            .is_ok()
+            && magic == *b"\x7fELF"
+    };
+    let mut target = executable.clone();
+    if !native(&target) {
+        let package = executable
+            .parent()
+            .filter(|directory| directory.ends_with("bin"))
+            .and_then(std::path::Path::parent)
+            .filter(|directory| {
+                executable
+                    .file_name()
+                    .is_some_and(|name| name == "codex.js")
+                    && std::fs::read(directory.join("package.json"))
+                        .ok()
+                        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                        .is_some_and(|identity| identity["name"] == "@openai/codex")
+            });
+        let platform = match std::env::consts::ARCH {
+            "x86_64" => Some(("codex-linux-x64", "x86_64-unknown-linux-musl")),
+            "aarch64" => Some(("codex-linux-arm64", "aarch64-unknown-linux-musl")),
+            _ => None,
+        };
+        let resolved = package
+            .zip(platform)
+            .and_then(|(package, (dependency, triple))| {
+                let suffix = std::path::Path::new("vendor")
+                    .join(triple)
+                    .join("bin/codex");
+                [
+                    package
+                        .join("node_modules/@openai")
+                        .join(dependency)
+                        .join(&suffix),
+                    package
+                        .parent()
+                        .unwrap_or(package)
+                        .join(dependency)
+                        .join(&suffix),
+                    package.join(suffix),
+                ]
+                .into_iter()
+                .find(|path| native(path))
+            });
+        if let Some(resolved) = resolved {
+            target = resolved;
+        } else if crate::ui_probe::enabled() {
+            // The existing native GUI probe supplies a disposable protocol
+            // script through PATH. Ordinary runs never accept launch wrappers.
+            return Ok(command);
+        } else {
+            return Err("Cannot locate the native Codex server behind this launcher. Install the official Codex CLI or put its native executable on PATH.".to_string().into());
+        }
+    }
+    let mut direct = Command::new(target);
+    direct.args(command.get_args());
+    for (name, value) in command.get_envs() {
+        if let Some(value) = value {
+            direct.env(name, value);
+        } else {
+            direct.env_remove(name);
+        }
+    }
+    if let Some(directory) = command.get_current_dir() {
+        direct.current_dir(directory);
+    }
+    Ok(direct)
+}
+
 struct Connection {
     child: Child,
     incoming: Receiver<std::result::Result<Value, String>>,
@@ -271,12 +363,44 @@ struct Connection {
 
 impl Connection {
     fn spawn(
-        mut command: Command,
+        command: Command,
         stop: Arc<AtomicBool>,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self> {
         if stop.load(Ordering::Acquire) || shutdown.load(Ordering::Acquire) {
             return Err(Failure::Stopped);
+        }
+        #[cfg(target_os = "linux")]
+        let mut command = native_codex(command)?;
+        #[cfg(not(target_os = "linux"))]
+        let mut command = command;
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+            #[cfg(target_os = "linux")]
+            {
+                let parent = rustix::process::getpid();
+                // SAFETY: after fork this closure only makes prctl/getppid
+                // syscalls and constructs an OS error; no locks or allocation.
+                unsafe {
+                    command.pre_exec(move || {
+                        rustix::process::set_parent_process_death_signal(Some(
+                            rustix::process::Signal::KILL,
+                        ))?;
+                        if rustix::process::getppid() != Some(parent) {
+                            return Err(std::io::Error::from_raw_os_error(
+                                rustix::io::Errno::INTR.raw_os_error(),
+                            ));
+                        }
+                        Ok(())
+                    });
+                }
+            }
         }
         let mut child = command.spawn().map_err(|error| {
             Failure::Error(format!(
@@ -824,7 +948,7 @@ fn verify_isolation(inventory: &Value) -> Result<()> {
     })?;
     if !inventory["nextCursor"].is_null()
         || servers.iter().any(|server| {
-            server["runtime_status"] != "disabled"
+            server["runtimeStatus"] != "disabled"
                 || !server["tools"]
                     .as_object()
                     .is_some_and(|tools| tools.is_empty())
@@ -947,7 +1071,7 @@ for line in sys.stdin:
         result={'thread':{'id':'thread-test'},'sandbox':{'type':'readOnly'},'approvalPolicy':'never'}
     elif method == 'mcpServerStatus/list':
         assert params['threadId']=='thread-test'
-        result={'data':[{'name':'mail.with.dot','runtime_status':'connected','tools':{'send_mail':{}}}] if mode=='unisolated' else [],'nextCursor':None}
+        result={'data':[{'name':'mail.with.dot','runtimeStatus':'connected' if mode=='unisolated' else 'disabled','tools':{'send_mail':{}} if mode=='unisolated' else {}}],'nextCursor':None}
     elif method == 'turn/start':
         assert params['sandboxPolicy']=={'type':'readOnly','networkAccess':False}
         assert params['approvalPolicy']=='never'
