@@ -13,9 +13,12 @@ pub struct Done {
     pub result: Result<()>,
 }
 
+/// The tab that asked, and the write it asked for.
+type Job = (u64, PendingSave);
+
 #[derive(Default)]
 pub struct Writer {
-    worker: Option<(Sender<(u64, PendingSave)>, Receiver<Done>)>,
+    worker: Option<(Sender<Job>, Receiver<Done>)>,
     in_flight: HashSet<u64>,
     finished: Vec<Done>,
 }
@@ -28,7 +31,7 @@ impl Writer {
     /// Queues one write; `wake` runs after each finished write.
     pub fn submit(&mut self, tab: u64, save: PendingSave, wake: impl Fn() + Send + 'static) {
         if self.worker.is_none() {
-            let (jobs, job_receiver) = mpsc::channel::<(u64, PendingSave)>();
+            let (jobs, job_receiver) = mpsc::channel::<Job>();
             let (done_sender, done) = mpsc::channel();
             let spawned = std::thread::Builder::new()
                 .name("rustidian-autosave".into())
