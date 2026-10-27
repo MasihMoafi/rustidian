@@ -21,6 +21,10 @@ on:
         description: 'Create and retain the Debian package only after selected GUI and package checks pass'
         type: boolean
         default: false
+      keep_binary:
+        description: 'With gui_only: build the exact release profile and keep the binary for a local install'
+        type: boolean
+        default: false
       sections:
         description: 'Space-separated native GUI sections'
         type: string
@@ -107,8 +111,9 @@ jobs:
       - name: Build optimized Rustidian
         env:
           GUI_ONLY: ${{ inputs.gui_only }}
+          KEEP_BINARY: ${{ inputs.keep_binary }}
         run: |
-          if test "$GUI_ONLY" = true; then
+          if test "$GUI_ONLY" = true && test "$KEEP_BINARY" != true; then
             CARGO_PROFILE_RELEASE_LTO=false cargo rustc --locked --release --bin rustidian -- -C opt-level=2 2>&1 | tee reports/build.log
           else
             cargo build --locked --release --bin rustidian 2>&1 | tee reports/build.log
@@ -147,6 +152,8 @@ jobs:
         env:
           GUI_SECTIONS: ${{ inputs.sections }}
         run: |
+          # watch-limit gives the app a private inotify limit in a user namespace.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           read -ra sections <<< "$GUI_SECTIONS"
           test "${#sections[@]}" -gt 0
           gui_status=0
@@ -164,6 +171,15 @@ jobs:
             fi
           done
           exit "$gui_status"
+      - name: Retain candidate binary
+        if: ${{ always() && inputs.gui_only && inputs.keep_binary }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-candidate-${{ github.sha }}
+          path: |
+            target/release/rustidian
+            reports/
+          retention-days: 1
       - name: Check core behavior for the package candidate
         if: ${{ inputs.gui_only && inputs.package_after_checks }}
         run: CARGO_PROFILE_RELEASE_LTO=false cargo test --locked --release --no-default-features --lib --tests --no-fail-fast 2>&1 | tee reports/package-core-tests.log
