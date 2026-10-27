@@ -705,10 +705,6 @@ impl std::ops::Index<usize> for Styles {
 }
 
 /// Both input and output selections use Unicode scalar indices, as egui does.
-pub fn surround(text: &mut String, selection: Range<usize>, marker: &str) -> Range<usize> {
-    wrap(text, selection, marker, marker)
-}
-
 pub fn wrap(
     text: &mut String,
     selection: Range<usize>,
@@ -841,17 +837,21 @@ pub fn find_matches(text: &str, needle: &str) -> Vec<Range<usize>> {
     if needle.len() > haystack.len() {
         return Vec::new();
     }
-    haystack
-        .windows(needle.len())
-        .enumerate()
-        .filter_map(|(i, window)| {
-            window
-                .iter()
-                .zip(&needle)
-                .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
-                .then_some(i..i + needle.len())
-        })
-        .collect()
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while start + needle.len() <= haystack.len() {
+        let hit = haystack[start..start + needle.len()]
+            .iter()
+            .zip(&needle)
+            .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()));
+        if hit {
+            matches.push(start..start + needle.len());
+            start += needle.len();
+        } else {
+            start += 1;
+        }
+    }
+    matches
 }
 
 #[cfg(test)]

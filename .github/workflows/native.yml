@@ -32,3 +32,5 @@ jobs:
         run: cargo +1.95.0 clippy --locked --no-default-features --lib --tests -- -D warnings
       - name: Run core and integration tests
         run: cargo +1.95.0 test --locked --no-default-features --lib --tests --no-fail-fast
+      - name: Run desktop binary unit tests
+        run: cargo +1.95.0 test --locked --bin rustidian --no-fail-fast

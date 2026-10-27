@@ -1,4 +1,4 @@
-use rustidian::editor::{Markdown, find_matches, surround};
+use rustidian::editor::{Markdown, find_matches, wrap};
 
 #[test]
 fn wiki_alias_visibility_uses_original_byte_offsets_for_escaped_table_delimiters() {
@@ -213,14 +213,17 @@ fn fenced_code_decorations_keep_literal_text_and_handle_unclosed_blocks() {
 #[test]
 fn formatting_and_find_keep_unicode_and_reject_empty_search() {
     let mut text = "Hello 你好 and hello 👋".to_owned();
-    let selected = surround(&mut text, 6..8, "**");
+    let selected = wrap(&mut text, 6..8, "**", "**");
     assert_eq!(text, "Hello **你好** and hello 👋");
     assert_eq!(selected, 8..10);
-    let selected = surround(&mut text, selected, "**");
+    let selected = wrap(&mut text, selected, "**", "**");
     assert_eq!(text, "Hello 你好 and hello 👋");
     assert_eq!(selected, 6..8);
     assert_eq!(find_matches(&text, "hello"), vec![0..5, 13..18]);
     assert_eq!(find_matches(&text, "你好"), vec![6..8]);
+    // Hits never overlap, so Replace all cannot rewrite one match inside another.
+    assert_eq!(find_matches("----", "--"), vec![0..2, 2..4]);
+    assert_eq!(find_matches("aaa", "aa"), vec![0..2]);
     assert!(find_matches(&text, "").is_empty());
     assert!(find_matches(&text, "missing").is_empty());
 }

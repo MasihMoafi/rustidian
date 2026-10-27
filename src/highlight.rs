@@ -51,17 +51,6 @@ impl Color {
     }
 }
 
-/// Read a mark's inert background through the shared inline-style parser.
-pub fn mark_color(tag: &str) -> Option<Rgba> {
-    if let Some(crate::inline_style::Tag::Open(crate::inline_style::Element::Mark, style)) =
-        crate::inline_style::parse(tag)
-    {
-        style.background
-    } else {
-        None
-    }
-}
-
 /// Core Obsidian 1.14.4 color markers. Keep portable Highlightr colors above.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NativeColor {

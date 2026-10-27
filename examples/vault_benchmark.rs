@@ -13,7 +13,7 @@ fn main() {
         let mut searches = Vec::new();
         for query in ["connected", "note 04999", "你好", "absent_query_zzzz"] {
             let started = Instant::now();
-            let hits = std::hint::black_box(vault.search(query)).len();
+            let hits = std::hint::black_box(vault.query(query).unwrap()).len();
             searches.push(serde_json::json!({"query": query, "hits": hits, "us": started.elapsed().as_micros()}));
         }
         let source = "# Heading\n\n**Bold** text with [[Home]] and `code`.\n\n".repeat(2000);

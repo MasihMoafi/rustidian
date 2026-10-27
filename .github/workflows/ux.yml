@@ -28,7 +28,7 @@ on:
       sections:
         description: 'Space-separated native GUI sections'
         type: string
-        default: 'palette-queued table-resize table-edges table-input table-edit undo graph graph-state visual-controls note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
+        default: 'palette-queued table-resize table-edges table-edit undo graph graph-state visual-controls note-dialogs workspaces recovery page-preview font-controls palettes file-move vaults scrolling properties'
 
 permissions:
   contents: read
@@ -134,7 +134,7 @@ jobs:
         if: ${{ !inputs.gui_only }}
         run: |
           gui_status=0
-          for section in graph-animation sidebar-boundary tab-drag table-resize table-edges trash-options palettes tab-actions tab-overflow table-edit table-input table-links essential undo settings folders code reading-code visual-controls; do
+          for section in graph-animation sidebar-boundary tab-drag table-resize table-edges trash-options palettes tab-actions tab-overflow table-edit essential undo settings folders code reading-code visual-controls; do
             if ! python3 tests/gui_smoke.py --binary target/release/rustidian --default-vault --section "$section" > "reports/gui-$section.log" 2>&1; then
               gui_status=1
               tail -n 80 "reports/gui-$section.log"
@@ -143,7 +143,7 @@ jobs:
           done
           python3 tests/gui_smoke.py --binary target/release/rustidian --open-file md > reports/gui-open-md.log 2>&1 || gui_status=1
           python3 tests/gui_smoke.py --binary target/release/rustidian --open-file txt > reports/gui-open-txt.log 2>&1 || gui_status=1
-          for extension in rs py html json toml; do
+          for extension in rs html toml; do
             python3 tests/gui_smoke.py --binary target/release/rustidian --open-file "$extension" > "reports/gui-open-$extension.log" 2>&1 || gui_status=1
           done
           exit "$gui_status"

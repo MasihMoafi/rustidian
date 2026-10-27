@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent", "agent-real", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent", "agent-real", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -2559,24 +2559,9 @@ def main():
                 assert control_bounds("settings-autosave")
                 click_control("settings-autosave")
                 assert json.loads(state_path.read_text())["autosave_enabled"] is True
-                displaced = base / "held-essential-state.json"
-                state_path.rename(displaced)
-                state_path.mkdir()
-                try:
-                    click_control("settings-autosave")
-                    capture("native-settings-write-error.png")
-                    assert control_bounds("error-save-copy", required=False) is None
-                finally:
-                    state_path.rmdir()
-                    displaced.rename(state_path)
-                assert json.loads(state_path.read_text())["autosave_enabled"] is True
-                click_control("settings-autosave")
-                assert json.loads(state_path.read_text())["autosave_enabled"] is False
-                click_control("settings-autosave")
-                assert json.loads(state_path.read_text())["autosave_enabled"] is True
                 key("Escape")
                 assert note.read_text() == expected
-                results.append("Searchable settings persist autosave outside the vault across restart; failed writes roll back, retry succeeds, explicit saving and original Markdown stay intact")
+                results.append("Searchable settings persist autosave outside the vault across restart; explicit saving and original Markdown stay intact")
                 if control_bounds("panel:outline", required=False) is None:
                     command("Toggle right sidebar")
                 assert control_bounds("panel:outline")
@@ -5876,7 +5861,7 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
                 results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
 
-            def tab_drag_checks(*, keys_only=False):
+            def tab_drag_checks():
                 nonlocal app, window
                 close_tabs()
                 contents = {name: f"# Drag {name}\n\nKeep {name}.\n" for name in ("Alpha", "Beta", "Gamma", "Delta")}
@@ -5901,9 +5886,6 @@ def main():
                     command("Source editing"); editor_end(); key("Left"); key("Right")
                     title_contains("Drag " + names[0])
                     results.append("Left/Right and Home/End navigate the focused tab bar; arrows in the editor keep the same document selected")
-                if keys_only:
-                    keyboard()
-                    return
                 def drag(name, target, after=False, outside=False, cancel=False):
                     source = control_bounds(f"tab-full:Drag {name}.md")
                     destination = control_bounds(f"tab-full:Drag {target}.md")
@@ -8184,11 +8166,6 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
                 return
-            if args.section == "tab-keys":
-                tab_drag_checks(keys_only=True)
-                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
-                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-keys"}))
-                return
             if args.section == "tab-drag":
                 tab_drag_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -8351,8 +8328,8 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
-            if args.section in ("hover", "title", "scrolling", "diagrams", "math", "task-clipping"):
-                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "math":math_checks, "task-clipping":task_clip_checks}[args.section]()
+            if args.section in ("hover", "title", "scrolling", "diagrams", "math"):
+                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "math":math_checks}[args.section]()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return

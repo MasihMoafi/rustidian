@@ -140,14 +140,16 @@ impl Vault {
             .file_stem()
             .and_then(|name| name.to_str())
             .ok_or("Invalid file name.")?;
-        let extension = from
-            .extension()
-            .and_then(|name| name.to_str())
-            .ok_or("Invalid file extension.")?;
+        let extension = from.extension().and_then(|name| name.to_str());
         for counter in 0_u64.. {
             let destination = if counter == 0 {
                 first.clone()
             } else {
+                // "Makefile 1" would no longer count as a text document, so an
+                // extension-less file keeps its name or stays where it is.
+                let Some(extension) = extension else {
+                    return Err("A file with this name already exists in that folder.".into());
+                };
                 folder.join(format!("{stem} {counter}.{extension}"))
             };
             let absolute = self.root.join(&destination);
@@ -196,11 +198,15 @@ impl Vault {
         if from == to {
             return Err("Choose a different name.".into());
         }
+        if crate::vault::is_ignored_path(to) {
+            return Err("Choose a visible destination inside this vault.".into());
+        }
         let folder = self.folders.iter().any(|path| path == from);
-        let image = self.attachments.iter().any(|path| path == from);
+        let attachment = self.attachments.iter().any(|path| path == from);
+        let image = attachment && crate::assets::is_image(from);
         let kind = if folder {
             MoveKind::Folder
-        } else if image {
+        } else if attachment {
             MoveKind::Image
         } else {
             MoveKind::Note
@@ -214,12 +220,15 @@ impl Vault {
         {
             return Err("Keep the image filename extension when renaming or moving it.".into());
         }
+        if attachment && !image && !crate::vault::is_text_document(to) {
+            return Err("Keep a text filename extension when renaming a text file.".into());
+        }
         if folder && to.starts_with(from) {
             return Err("A folder cannot move inside itself.".into());
         }
         let original = if folder {
             self.folder_path(from)?
-        } else if image {
+        } else if attachment {
             self.safe_file_path(from, false)?
         } else {
             self.safe_path(from, false)?
@@ -228,7 +237,7 @@ impl Vault {
             .map_err(|error| format!("Cannot read source: {error}"))?;
         if metadata.file_type().is_symlink()
             || (folder && !metadata.is_dir())
-            || (image && !metadata.is_file())
+            || (attachment && !metadata.is_file())
         {
             return Err("Choose an existing file or folder inside this vault.".into());
         }
@@ -243,14 +252,14 @@ impl Vault {
                 .filter(|note| note.path.starts_with(from))
                 .map(|note| self.read(&note.path))
                 .collect::<Result<Vec<_>>>()?
-        } else if image {
+        } else if attachment {
             Vec::new()
         } else {
             vec![self.read(from)?]
         };
         let destination = if folder {
             self.folder_path(to)?
-        } else if image {
+        } else if attachment {
             self.safe_file_path(to, false)?
         } else {
             self.safe_path(to, false)?

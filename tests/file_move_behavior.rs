@@ -102,7 +102,7 @@ fn still_valid_unique_names_need_no_rewrite_even_in_a_mixed_reference_file() {
         "[[Source|Short]]\n[Short](Source.md)\n",
     )
     .unwrap();
-    vault.refresh().unwrap();
+    vault = Vault::open(root.path()).unwrap();
     let updates = vault
         .begin_move_file(Path::new("From/Source.md"), Path::new("To"), false)
         .unwrap()
@@ -393,4 +393,30 @@ fn occupied_symlinks_are_preserved_and_numbered_without_following_them() {
     assert!(!outside.path().join("Missing.md").exists());
     assert!(root.path().join("To/Source 2.md").is_dir());
     assert!(!root.path().join("Source.md").exists());
+}
+
+#[test]
+fn extension_less_text_files_move_but_never_take_an_unopenable_numbered_name() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("Build")).unwrap();
+    fs::write(root.path().join("Makefile"), "all:\n\techo ok\n").unwrap();
+    fs::write(root.path().join("Build/Makefile"), "occupied\n").unwrap();
+    let mut vault = Vault::open(root.path()).unwrap();
+    let error = vault
+        .begin_move_file(Path::new("Makefile"), Path::new("Build"), false)
+        .err()
+        .expect("a collision must be refused");
+    assert!(error.contains("already exists"), "{error}");
+    assert!(root.path().join("Makefile").is_file());
+    fs::remove_file(root.path().join("Build/Makefile")).unwrap();
+    let updates = vault
+        .begin_move_file(Path::new("Makefile"), Path::new("Build"), false)
+        .unwrap()
+        .unwrap();
+    assert_eq!(updates.path(), Path::new("Build/Makefile"));
+    assert_eq!(
+        fs::read_to_string(root.path().join("Build/Makefile")).unwrap(),
+        "all:\n\techo ok\n"
+    );
+    assert!(!root.path().join("Makefile").exists());
 }

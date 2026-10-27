@@ -175,10 +175,6 @@ impl Vault {
             .into_owned()
     }
 
-    pub fn refresh(&mut self) -> Result<()> {
-        self.refresh_cancellable(|| false)
-    }
-
     fn refresh_cancellable(&mut self, cancelled: impl Fn() -> bool) -> Result<()> {
         if !self.root.is_dir() {
             return Err("The vault folder is no longer available.".into());
@@ -445,7 +441,7 @@ impl Vault {
         let extension = from
             .extension()
             .and_then(|value| value.to_str())
-            .ok_or("Invalid file extension.")?;
+            .ok_or("Add a filename extension before copying this file.")?;
         let parent = from.parent().unwrap_or(Path::new(""));
         for counter in 1_u64.. {
             let path = parent.join(format!("{stem} {counter}.{extension}"));
@@ -471,10 +467,6 @@ impl Vault {
             }
         }
         Err("Cannot find an available copy name.".into())
-    }
-
-    pub fn search(&self, query: &str) -> Vec<&Note> {
-        self.query(query).unwrap_or_default()
     }
 
     pub(crate) fn rebuild_lookup(&mut self) {
@@ -934,12 +926,5 @@ pub fn wiki_links(text: &str) -> Vec<String> {
     wiki_spans(text)
         .into_iter()
         .map(|(_, target)| target)
-        .collect()
-}
-
-pub fn headings(text: &str) -> Vec<(usize, String)> {
-    crate::structure::outline(text)
-        .into_iter()
-        .map(|heading| (heading.level, heading.title))
         .collect()
 }

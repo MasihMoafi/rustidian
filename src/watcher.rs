@@ -99,23 +99,6 @@ impl Watch {
     }
 }
 
-/// Watch every included folder under `root`.
-pub fn watch(root: &Path, handler: impl EventHandler) -> Result<Watch> {
-    let folders = walkdir::WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| {
-            entry.depth() == 0 || !crate::vault::is_ignored_path(Path::new(entry.file_name()))
-        })
-        .filter_map(std::result::Result::ok)
-        .filter(|entry| entry.depth() > 0 && entry.file_type().is_dir())
-        .filter_map(|entry| entry.path().strip_prefix(root).ok().map(Path::to_owned))
-        .collect::<Vec<_>>();
-    let mut watch = Watch::new(root, handler)?;
-    watch.update(&folders, || false)?;
-    Ok(watch)
-}
-
 /// A plain sentence for a watch failure; notify's own text lists raw paths.
 pub fn describe(error: &notify::Error) -> String {
     let reason = match &error.kind {

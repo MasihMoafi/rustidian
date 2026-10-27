@@ -84,7 +84,7 @@ fn nested_inline_styles_restore_outer_formatting_and_hide_only_paired_tags() {
 }
 
 #[test]
-fn literal_code_yaml_and_unbalanced_tags_keep_their_original_source() {
+fn literal_code_yaml_and_unbalanced_tags_stay_unstyled() {
     for source in [
         "`<span style='color:#123456'>literal</span>`",
         "```md\n<mark style='background:rgba(46,204,113,.4)'>literal</mark>\n```",
@@ -92,7 +92,6 @@ fn literal_code_yaml_and_unbalanced_tags_keep_their_original_source() {
         "<span style='color:#123456'>unclosed",
         "unopened</span>",
     ] {
-        let original = source.to_owned();
         let parsed = Markdown::parse(source);
         assert!(
             parsed
@@ -101,6 +100,5 @@ fn literal_code_yaml_and_unbalanced_tags_keep_their_original_source() {
                 .all(|span| span.style.html == Style::default()),
             "{source}"
         );
-        assert_eq!(source, original);
     }
 }

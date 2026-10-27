@@ -69,7 +69,18 @@ impl Recorder {
                         }
                         prune_after = Instant::now();
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        // The window closed or switched vaults: keep what was waiting for its interval.
+                        let now = chrono::Local::now().timestamp_millis();
+                        for (path, entry) in pending.drain() {
+                            if let Err(error) =
+                                history.record(&path, &entry.text, now, &entry.config, true)
+                            {
+                                let _ = errors.send(error);
+                            }
+                        }
+                        break;
+                    }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
                 if Instant::now() >= prune_after {

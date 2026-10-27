@@ -490,3 +490,41 @@ fn snapshot_data_is_private_and_linked_storage_cannot_replace_a_note() {
     );
     assert_eq!(fs::read(original).unwrap(), b"# Keep\n");
 }
+
+#[test]
+fn closing_the_recorder_writes_the_snapshot_waiting_for_its_interval() {
+    use std::time::{Duration, Instant};
+    let base = tempfile::tempdir().unwrap();
+    let store = history(base.path());
+    let config = Config::default();
+    let path = Path::new("Home.md");
+    store
+        .record(
+            path,
+            "first",
+            chrono::Local::now().timestamp_millis(),
+            &config,
+            false,
+        )
+        .unwrap();
+    {
+        let recorder =
+            rustidian::recovery_capture::Recorder::start(store.clone(), config.clone(), || {});
+        assert!(recorder.capture(path, "deferred", &config));
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(store.versions(path).unwrap().len(), 1);
+    }
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        let versions = store.versions(path).unwrap();
+        if versions.len() == 2 {
+            assert_eq!(store.content(path, versions[0].id).unwrap(), "deferred");
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "Closing the recorder lost the deferred snapshot"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

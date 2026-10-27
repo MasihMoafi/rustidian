@@ -1,4 +1,4 @@
-use rustidian::vault::{Document, Vault, headings, wiki_links};
+use rustidian::vault::{Document, Vault, wiki_links};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -128,7 +128,7 @@ fn backlink_cache_tracks_saved_created_moved_and_externally_changed_notes() {
     );
     assert!(vault.resolve(Path::new("A.md"), "New").is_none());
     fs::write(dir.path().join("Deep/Moved.md"), "No links now").unwrap();
-    vault.refresh().unwrap();
+    vault = Vault::open(dir.path()).unwrap();
     assert!(vault.backlinks(Path::new("Home.md")).is_empty());
 }
 
@@ -278,23 +278,12 @@ fn resolves_links_and_backlinks_without_guessing_ambiguous_names() {
         Some("Notes/Idea.md".into())
     );
     assert_eq!(vault.backlinks(Path::new("Notes/Idea.md")).len(), 1);
-    assert!(
-        vault
-            .search("unrelated")
-            .iter()
-            .any(|note| note.path == Path::new("Other/Idea.md"))
-    );
-    assert!(vault.search("absent").is_empty());
 }
 
 #[test]
-fn markdown_metadata_ignores_fenced_code() {
+fn wiki_links_ignore_fenced_code() {
     let source = "# Title\n[[Real|label]]\n```rust\n# Not a heading\n[[Fake]]\n```\n## Second\n";
     assert_eq!(wiki_links(source), vec!["Real|label"]);
-    assert_eq!(
-        headings(source),
-        vec![(1, "Title".into()), (2, "Second".into())]
-    );
 }
 
 #[test]
@@ -410,7 +399,7 @@ fn follows_or_creates_links_without_overwriting_or_guessing_ambiguous_names() {
     assert!(vault.open_link("Home.md".as_ref(), "../Outside").is_err());
     std::fs::create_dir(root.path().join("Other")).unwrap();
     std::fs::write(root.path().join("Other/你好.v1.md"), "# Other\n").unwrap();
-    vault.refresh().unwrap();
+    vault = Vault::open(root.path()).unwrap();
     assert!(vault.open_link("Home.md".as_ref(), "你好.v1").is_err());
     assert!(!root.path().join("你好.v1.md").exists());
 }

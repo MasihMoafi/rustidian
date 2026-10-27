@@ -35,23 +35,28 @@ fn wait_for(
 #[test]
 fn vault_watcher_delivers_external_changes() {
     let _serial = SERIAL.lock().unwrap_or_else(|error| error.into_inner());
-    let vault = tempfile::tempdir().unwrap();
-    let note = vault.path().join("note.md");
-    fs::write(&note, "before").unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("note.md"), "before").unwrap();
     // A native folder-create event precedes recursive watch registration.
     // The GUI folder workflow covers immediate population and vault rescanning.
-    let folder = vault.path().join("nested");
-    fs::create_dir(&folder).unwrap();
+    fs::create_dir(dir.path().join("nested")).unwrap();
+    // Watch the indexed folders the way the app does after opening a vault.
+    let vault = rustidian::vault::Vault::open(dir.path()).unwrap();
     let (sender, receiver) = mpsc::channel();
-    let _watcher = rustidian::watcher::watch(vault.path(), move |event| {
+    let mut watch = rustidian::watcher::Watch::new(&vault.root, move |event| {
         sender.send(event).unwrap();
     })
     .expect("the vault must be watched");
+    watch
+        .update(&vault.folders, || false)
+        .expect("the vault must be watched");
     let wait_for =
         |path: &Path, kind: fn(notify::EventKind) -> bool| wait_for(&receiver, path, kind);
+    let note = vault.root.join("note.md");
     // Same-size writes within one timestamp tick still need to refresh the editor.
     fs::write(&note, "after!").unwrap();
     wait_for(&note, |kind| kind.is_modify());
+    let folder = vault.root.join("nested");
     let added = folder.join("added.md");
     fs::write(&added, "new").unwrap();
     wait_for(&added, |kind| kind.is_create());
@@ -60,7 +65,7 @@ fn vault_watcher_delivers_external_changes() {
     wait_for(&renamed, |kind| kind.is_modify() || kind.is_create());
     fs::remove_file(&renamed).unwrap();
     wait_for(&renamed, |kind| kind.is_remove());
-    let created = vault.path().join("new folder");
+    let created = vault.root.join("new folder");
     fs::create_dir(&created).unwrap();
     wait_for(&created, |kind| kind.is_create());
 }
