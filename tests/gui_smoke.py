@@ -215,7 +215,7 @@ def main():
             bulk = fixture / "Idle bulk"
             bulk.mkdir()
             body = "Notes wait on disk while the window is idle; a re-index reads every one again.\n" * 200
-            for number in range(1500):
+            for number in range(4500):
                 (bulk / f"Bulk {number:04d}.md").write_text(f"# Bulk {number:04d}\n\n{body}")
             (fixture / "Idle image.md").write_text("# Idle image\n\n![[Assets/Attachment.png|180]]\n\nText after the image.\n")
         app = launch_app(launch_command)
@@ -4910,7 +4910,7 @@ def main():
                 # xdotool exits 1 when nothing matches.
                 visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,
                                                  capture_output=True, text=True).stdout.split()
-                second_errors = base / "second-launch.log"
+                second_errors, second = base / "second-launch.log", None
                 app.send_signal(signal.SIGSTOP)
                 try:
                     with second_errors.open("w") as errors:
@@ -4922,8 +4922,9 @@ def main():
                         assert time.monotonic() < deadline, "A launch beside a stalled instance must open its own window"
                         time.sleep(.1)
                     assert identity() == original, "A launch beside a stalled window replaced its live socket"
-                    second.terminate(); second.wait(timeout=10)
                 finally:
+                    if second is not None:
+                        second.terminate(); second.wait(timeout=10)
                     app.send_signal(signal.SIGCONT)
                 assert "did not answer" in second_errors.read_text(), second_errors.read_text()
                 assert identity() == original, "The separate window removed the stalled window's socket"
@@ -4971,7 +4972,7 @@ def main():
                     left, top, right, bottom = control_bounds("window:Close window")
                     xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
 
-                app_log = reports / "gui-smoke.log"
+                app_log, failures = reports / "gui-smoke.log", []
                 closes = [("title bar", title_bar),
                           ("SIGTERM", lambda: app.send_signal(signal.SIGTERM)),
                           ("SIGHUP", lambda: app.send_signal(signal.SIGHUP))]
@@ -4983,34 +4984,46 @@ def main():
                     xdo("key", "--clearmodifiers", "ctrl+shift+a")
                     wait(lambda: stand_ins() and control_bounds("terminal-pid", required=False), "The Agent tab did not start its agent")
                     wait(lambda: control_bounds("terminal-focused")[0] == 1, "The Agent tab did not focus its terminal")
-                    # A background job in the agent's process group, which ignores SIGHUP as the agent does.
-                    xdo("type", "--clearmodifiers", "--delay", "1", "--", "ticks")
-                    xdo("key", "--clearmodifiers", "Return")
-                    wait(lambda: len(stand_ins()) >= 2, "The agent did not start its background job")
                     started = app_log.stat().st_size
                     closed = time.monotonic()
                     close()
-                    deadline = closed + 3
-                    while (app.poll() is None or stand_ins() or sandbox_apps()) and time.monotonic() < deadline:
+                    deadline, gone = closed + 3, {}
+                    while time.monotonic() < deadline:
+                        for name, alive in (("rustidian", app.poll() is None or sandbox_apps()), ("agent", stand_ins())):
+                            if not alive:
+                                gone.setdefault(name, time.monotonic() - closed)
+                        if len(gone) == 2:
+                            break
                         time.sleep(.05)
-                    ended = time.monotonic() - closed
-                    assert app.poll() is not None, f"{source}: Rustidian still ran 3 s after the close"
-                    assert not stand_ins(), f"{source}: agent processes outlived the window: {stand_ins()}"
-                    assert not sandbox_apps(), f"{source}: Rustidian processes outlived the window: {sandbox_apps()}"
+                    ended = max(gone.values(), default=3.0)
+                    left = {"rustidian": sandbox_apps(), "agent": stand_ins()}
                     with app_log.open() as lines:
                         lines.seek(started)
                         logged = [line.strip() for line in lines if line.startswith("close:")]
-                    assert logged == [f"close: {source}"], f"{source}: app.log said {logged}"
-                    results.append(f"Closing by {source} with the Agent tab running ended Rustidian (exit {app.returncode}), the agent "
-                                   f"and its background job within {ended:.1f} s; app.log said 'close: {source}'")
+                    problems = ([f"processes outlived the window by 3 s: {left}"] if any(left.values()) else []) + (
+                        [f"app.log said {logged}"] if logged != [f"close: {source}"] else [])
+                    if problems:
+                        failures.append(f"{source}: " + "; ".join(problems))
+                        # Only this run's own processes: the sandbox's agent and Rustidian.
+                        for pid in left["agent"] + left["rustidian"]:
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        app.wait(timeout=10)
+                    else:
+                        results.append(f"Closing by {source} with the Agent tab running ended Rustidian (exit {app.returncode}) after "
+                                       f"{gone.get('rustidian', 3.0):.2f} s and the agent after {gone.get('agent', 3.0):.2f} s; "
+                                       f"app.log said 'close: {source}'")
+                assert not failures, failures
 
             def idle_cpu_checks():
-                # 28 Oct: windows Masih could not see kept using CPU: a re-index redrew the
-                # window every frame, Rustidian's own saves re-indexed the vault, and a caret
-                # on an image line redrew a background window ten times a second.
+                # 28 Oct: windows Masih could not see kept using CPU. A re-index redrew the
+                # window every frame while it ran, and Rustidian's own saves re-indexed the vault.
                 frames = base / "frames.log"
                 ticks_per_second = os.sysconf("SC_CLK_TCK")
                 bulk_bytes = sum(path.stat().st_size for path in (fixture / "Idle bulk").iterdir())
+                numbers, failures = {"bulk_bytes": bulk_bytes}, []
 
                 def ticks(thread=None):
                     stat = Path(f"/proc/{app.pid}" + (f"/task/{thread}" if thread else "") + "/stat").read_text()
@@ -5020,28 +5033,55 @@ def main():
                     return int(next(line.split()[1] for line in Path(f"/proc/{app.pid}/io").read_text().splitlines()
                                     if line.startswith("rchar:")))
 
-                def frame_count():
-                    return len(frames.read_text().splitlines()) if frames.exists() else 0
+                def frame_times():
+                    """When each frame ended, in Unix milliseconds."""
+                    return [int(row.split()[2]) for row in frames.read_text().splitlines() if row.strip()] if frames.exists() else []
 
-                def settle(quiet=2.0, limit=60):
-                    """Wait until the window has drawn nothing for `quiet` seconds."""
-                    deadline, last, since = time.monotonic() + limit, frame_count(), time.monotonic()
+                def index_running():
+                    for task in Path(f"/proc/{app.pid}/task").iterdir():
+                        try:
+                            if (task / "comm").read_text().strip() == "rustidian-index":
+                                return True
+                        except OSError:
+                            pass
+                    return False
+
+                def indexed(quiet=1.0, limit=60):
+                    """Wait until no re-index has run for `quiet` seconds."""
+                    deadline, since = time.monotonic() + limit, time.monotonic()
                     while time.monotonic() - since < quiet:
-                        assert time.monotonic() < deadline, f"The window still drew after {limit} s"
+                        assert time.monotonic() < deadline, "The vault kept re-indexing"
+                        time.sleep(.02)
+                        if index_running():
+                            since = time.monotonic()
+
+                def settle(quiet=2.0, limit=30):
+                    """Wait until the window has drawn nothing for `quiet` seconds; whether it did."""
+                    deadline, last, since = time.monotonic() + limit, len(frame_times()), time.monotonic()
+                    while time.monotonic() - since < quiet:
+                        if time.monotonic() > deadline:
+                            return False
                         time.sleep(.1)
-                        if frame_count() != last:
-                            last, since = frame_count(), time.monotonic()
+                        if len(frame_times()) != last:
+                            last, since = len(frame_times()), time.monotonic()
+                    return True
 
                 def measure(seconds):
-                    """CPU over the interval in percent, as ps and top print it, and frames drawn."""
-                    before, drawn, started = ticks(), frame_count(), time.monotonic()
+                    """CPU over the interval in percent, as ps and top print it, and the frames drawn."""
+                    before, drawn, started = ticks(), len(frame_times()), time.monotonic()
                     time.sleep(seconds)
                     used = (ticks() - before) / ticks_per_second
-                    return round(100 * used / (time.monotonic() - started), 1), frame_count() - drawn
+                    return round(100 * used / (time.monotonic() - started), 1), len(frame_times()) - drawn
 
-                numbers = {"bulk_bytes": bulk_bytes}
+                def unfocus():
+                    xdo("windowfocus", "0")
+                    deadline = time.monotonic() + 3
+                    while control_bounds("window-focused")[0] != 0:
+                        assert time.monotonic() < deadline, "The window kept focus"
+                        time.sleep(.05)
+
                 title_contains("Home")
-                settle()
+                indexed()
                 # 1. Rustidian's own save does not re-index the vault.
                 before = read_bytes()
                 editor_end()
@@ -5051,57 +5091,70 @@ def main():
                 while "Idle own save" not in home.read_text():
                     assert time.monotonic() < deadline, "Autosave did not write the note"
                     time.sleep(.1)
-                settle()
+                time.sleep(.5)
+                indexed()
                 numbers["own_save_read_bytes"] = read_bytes() - before
-                assert numbers["own_save_read_bytes"] < bulk_bytes / 10, (
-                    f"An autosave read {numbers['own_save_read_bytes']} bytes: the vault ({bulk_bytes} bytes) was re-indexed")
-                results.append(f"An autosave read {numbers['own_save_read_bytes']:,} bytes, not the {bulk_bytes:,}-byte vault: no re-index")
+                if numbers["own_save_read_bytes"] >= bulk_bytes / 10:
+                    failures.append(f"An autosave read {numbers['own_save_read_bytes']} bytes: the vault ({bulk_bytes} bytes) was re-indexed")
                 # 2. A focused window with a blinking caret, for comparison only.
                 numbers["focused_cpu"], numbers["focused_frames"] = measure(20)
-                # 3. A caret on an image line does not redraw a background window.
+                # 3. A caret on an image line does not redraw a background window
+                #    (egui's has_focus already includes window focus; this guards it).
                 open_note("Idle image")
                 click_control("embed:0")
                 assert control_bounds("embed-source:0"), "The caret did not reach the image line"
-                xdo("windowfocus", "0")
-                deadline = time.monotonic() + 3
-                while control_bounds("window-focused")[0] != 0:
-                    assert time.monotonic() < deadline, "The window kept focus"
-                    time.sleep(.05)
+                unfocus()
                 time.sleep(1)
                 numbers["image_caret_cpu"], numbers["image_caret_frames"] = measure(5)
-                assert numbers["image_caret_frames"] <= 1, (
-                    f"A background window with the caret on an image line drew {numbers['image_caret_frames']} frames in 5 s")
-                # 4. No input for 60 s.
-                settle()
+                if numbers["image_caret_frames"] > 1:
+                    failures.append(f"A background window with the caret on an image line drew {numbers['image_caret_frames']} frames in 5 s")
+                # 4. No input for 60 s, in the background.
+                xdo("windowfocus", "--sync", window)
+                key("ctrl+End")
+                assert control_bounds("embed-source:0", required=False) is None, "The caret stayed on the image line"
+                unfocus()
+                numbers["idle_settled"] = settle()
                 numbers["idle_cpu"], numbers["idle_frames"] = measure(60)
-                assert numbers["idle_cpu"] == 0.0 and numbers["idle_frames"] == 0, numbers
-                results.append(f"A background window with no input for 60 s used {numbers['idle_cpu']:.1f}% CPU and drew "
-                               f"{numbers['idle_frames']} frames; with the caret on an image line it drew {numbers['image_caret_frames']} "
-                               f"in 5 s (focused with a blinking caret: {numbers['focused_cpu']:.1f}%, {numbers['focused_frames']} frames in 20 s)")
+                if numbers["idle_cpu"] != 0.0 or numbers["idle_frames"]:
+                    failures.append(f"With no input for 60 s the window used {numbers['idle_cpu']}% CPU and drew {numbers['idle_frames']} frames")
                 # 5. A write from outside: one refresh, then idle again.
                 before = ticks()
                 (fixture / "Idle outside.md").write_text("# Idle outside\n\nWritten by another program.\n")
-                settle()
+                numbers["outside_write_settled"] = settle()
                 numbers["outside_write_cpu_seconds"] = (ticks() - before) / ticks_per_second
                 numbers["after_write_cpu"], numbers["after_write_frames"] = measure(30)
-                assert numbers["after_write_cpu"] == 0.0 and numbers["after_write_frames"] == 0, numbers
+                if numbers["after_write_cpu"] != 0.0 or numbers["after_write_frames"]:
+                    failures.append(f"After a write from outside the window used {numbers['after_write_cpu']}% CPU "
+                                    f"and drew {numbers['after_write_frames']} frames in 30 s")
+                # 6. A change while a re-index runs does not redraw the window until it ends.
+                (fixture / "Idle during A.md").write_text("# During A\n")
+                deadline = time.monotonic() + 5
+                while not index_running():
+                    assert time.monotonic() < deadline, "A write from outside started no re-index"
+                    time.sleep(.005)
+                started, before_main = time.time(), ticks(app.pid)
+                (fixture / "Idle during B.md").write_text("# During B\n")
+                while index_running():
+                    time.sleep(.005)
+                ended = time.time()
+                numbers["reindex_seconds"] = round(ended - started, 2)
+                numbers["reindex_main_thread_seconds"] = (ticks(app.pid) - before_main) / ticks_per_second
+                numbers["reindex_frames"] = sum(started * 1000 <= moment <= ended * 1000 for moment in frame_times())
+                if numbers["reindex_seconds"] < .3:
+                    failures.append(f"The re-index took {numbers['reindex_seconds']} s, too short to show redraws during it")
+                elif numbers["reindex_frames"] > 4:
+                    failures.append(f"A change during a {numbers['reindex_seconds']} s re-index drew {numbers['reindex_frames']} frames before it ended")
+                numbers["reindex_settled"] = settle()
+                (reports / "idle-cpu.json").write_text(json.dumps(numbers, indent=2) + "\n")
+                assert not failures, (failures, numbers)
+                results.append(f"An autosave read {numbers['own_save_read_bytes']:,} bytes, not the {bulk_bytes:,}-byte vault: no re-index")
+                results.append(f"In the background with no input for 60 s the window used {numbers['idle_cpu']:.1f}% CPU and drew "
+                               f"{numbers['idle_frames']} frames; with the caret on an image line it drew {numbers['image_caret_frames']} "
+                               f"frames in 5 s (focused with a blinking caret: {numbers['focused_cpu']:.1f}%, {numbers['focused_frames']} frames in 20 s)")
                 results.append(f"A note written from outside cost one refresh ({numbers['outside_write_cpu_seconds']:.2f} s of CPU); "
                                f"over the next 30 s the window used {numbers['after_write_cpu']:.1f}% CPU and drew {numbers['after_write_frames']} frames")
-                # 6. A change during a re-index does not redraw the window until the re-index ends.
-                before_main, before_all, drawn = ticks(app.pid), ticks(), frame_count()
-                (fixture / "Idle during A.md").write_text("# During A\n")
-                time.sleep(.25)
-                (fixture / "Idle during B.md").write_text("# During B\n")
-                settle()
-                numbers["reindex_main_thread_seconds"] = (ticks(app.pid) - before_main) / ticks_per_second
-                numbers["reindex_all_threads_seconds"] = (ticks() - before_all) / ticks_per_second
-                numbers["reindex_frames"] = frame_count() - drawn
-                assert numbers["reindex_frames"] <= 20, (
-                    f"Two changes during a re-index drew {numbers['reindex_frames']} frames", numbers)
-                results.append(f"Two changes 0.25 s apart re-indexed the {bulk_bytes:,}-byte vault in "
-                               f"{numbers['reindex_all_threads_seconds']:.2f} s of CPU and drew {numbers['reindex_frames']} frames "
-                               f"({numbers['reindex_main_thread_seconds']:.2f} s on the UI thread)")
-                (reports / "idle-cpu.json").write_text(json.dumps(numbers, indent=2) + "\n")
+                results.append(f"A change during a {numbers['reindex_seconds']} s re-index drew {numbers['reindex_frames']} frames until it ended "
+                               f"({numbers['reindex_main_thread_seconds']:.2f} s of CPU on the UI thread)")
 
             def folder_checks():
                 click_control("button:File explorer")

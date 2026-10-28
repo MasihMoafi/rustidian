@@ -1585,10 +1585,7 @@ impl Editor {
                 selection_shape,
                 selection,
             );
-            // As egui's own caret: none, and no blinking, in a window without focus.
-            if let Some(range) = output.cursor_range
-                && ui.input(|input| input.focused)
-            {
+            if let Some(range) = output.cursor_range {
                 let key = (range.primary.index.0, range.secondary.index.0);
                 let now = ui.input(|input| input.time);
                 if self.image_cursor != Some(key) || output.response.changed() {
@@ -3334,5 +3331,41 @@ mod tests {
             frame.textures_delta.clear();
             assert_eq!(text, source);
         }
+    }
+
+    #[test]
+    fn a_find_selection_stops_waiting_for_an_editor_without_focus() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut document = rustidian::vault::Document::new("Note.md".into());
+        document.text = "alpha beta".into();
+        let mut tab = Tab::new(document);
+        // The bar closed on "beta" while focus went elsewhere.
+        let mut find = Find {
+            restore: Some(6..10),
+            ..Default::default()
+        };
+        let mut editor = Editor::default();
+        let mut files = FileMatcher::new(Vec::new());
+        let id = egui::Id::new("note-editor");
+        let mut waiting = Vec::new();
+        for frame in 0..8 {
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(f64::from(frame) * 0.1),
+                    ..Default::default()
+                },
+                |ui| {
+                    editor.show(ui, &mut tab, id, &mut find, &mut files, None);
+                },
+            )
+            .drop_without_applying_deltas();
+            waiting.push(find.restore.is_some());
+        }
+        assert!(
+            waiting[0],
+            "The selection waits a moment for the editor's focus"
+        );
+        assert!(!waiting[7], "The wait for the editor's focus must end");
     }
 }
