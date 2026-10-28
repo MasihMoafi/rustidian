@@ -638,21 +638,6 @@ impl Editor {
         self.edit(tab, Edit::NativeHighlight(color));
     }
 
-    pub fn selected_text(&self, tab: &Tab) -> Option<String> {
-        let (_, selection) = self
-            .selection
-            .filter(|(id, range)| *id == tab.id() && !range.is_empty())?;
-        let range = selection.as_sorted_char_range();
-        Some(
-            tab.document
-                .text
-                .chars()
-                .skip(range.start.0)
-                .take(range.end.0 - range.start.0)
-                .collect(),
-        )
-    }
-
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
         self.edit(
             tab,

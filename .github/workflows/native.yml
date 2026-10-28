@@ -25,12 +25,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
       - name: Install declared Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
-      - name: Restore the Rust build cache
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        env:
-          RUSTUP_TOOLCHAIN: '1.95.0'
-        with:
-          cache-on-failure: true
       - name: Check formatting
         run: cargo +1.95.0 fmt --all -- --check
       - name: Check core and integration targets

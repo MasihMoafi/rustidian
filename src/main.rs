@@ -1,5 +1,3 @@
-mod agent;
-mod agent_ui;
 mod app;
 mod callout_ui;
 mod code_ui;
@@ -23,6 +21,7 @@ mod session;
 mod syntax;
 mod table_layout;
 mod table_ui;
+mod terminal_ui;
 mod theme;
 mod title_ui;
 mod ui_probe;

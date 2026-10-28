@@ -23,6 +23,7 @@ pub mod search;
 pub mod structure;
 pub mod tab;
 pub mod tables;
+pub mod terminal;
 pub mod vault;
 pub mod vaults;
 pub mod watcher;

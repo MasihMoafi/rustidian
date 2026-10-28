@@ -982,6 +982,34 @@ pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Respon
 }
 
 pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool) -> egui::Response {
+    toolbar_button(ui, tooltip, selected, |ui, rect, color| {
+        icon_image(icon, color).paint_at(
+            ui,
+            egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+        );
+    })
+}
+
+/// A toolbar button showing a symbol of the interface font, for an action
+/// that has no artwork of its own.
+pub fn glyph_button(ui: &mut egui::Ui, glyph: &str, tooltip: &str) -> egui::Response {
+    toolbar_button(ui, tooltip, false, |ui, rect, color| {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            FontId::proportional(18.0),
+            color,
+        );
+    })
+}
+
+fn toolbar_button(
+    ui: &mut egui::Ui,
+    tooltip: &str,
+    selected: bool,
+    paint: impl FnOnce(&egui::Ui, egui::Rect, Color32),
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
     crate::ui_probe::record(ui.ctx(), format!("button:{tooltip}"), rect);
     response.widget_info(|| {
@@ -997,10 +1025,7 @@ pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool)
         } else {
             ui.visuals().weak_text_color()
         };
-        icon_image(icon, color).paint_at(
-            ui,
-            egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
-        );
+        paint(ui, rect, color);
     }
     response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(tooltip).size(13.0));

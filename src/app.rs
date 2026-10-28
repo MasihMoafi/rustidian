@@ -95,7 +95,7 @@ pub struct NotesApp {
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
-    agent: crate::agent_ui::Workspace,
+    agent: crate::terminal_ui::Panel,
     page_pan: crate::page_pan::PagePan,
     pub(crate) appearance: theme::Appearance,
     system_theme: theme::SystemTheme,
@@ -1486,7 +1486,15 @@ impl NotesApp {
             if ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::A)
             }) {
-                self.open_agent();
+                if self.show_right
+                    && self.right_tab == 3
+                    && ctx.memory(|memory| memory.has_focus(crate::terminal_ui::focus_id()))
+                {
+                    self.show_right = false;
+                    self.focus_editor();
+                } else {
+                    self.open_agent();
+                }
             }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Comma)) {
                 self.ask(Dialog::Settings);
@@ -2449,13 +2457,9 @@ impl NotesApp {
         let root = agent_tab
             .then(|| self.vault.as_ref().map(|vault| vault.root.clone()))
             .flatten();
-        let note = agent_tab
-            .then(|| self.agent_note().map(|tab| tab.document.path.clone()))
-            .flatten();
         let mut selected = None;
         let mut follow = None;
         let mut jump = None;
-        let mut agent_action = None;
         self.prepare_sidebar(ui, "details", 1);
         egui::Panel::right("details")
             .default_size(234.0)
@@ -2486,7 +2490,16 @@ impl NotesApp {
                 ui.add_space(10.0);
                 if agent_tab {
                     match &root {
-                        Some(root) => agent_action = self.agent.show(ui, root, note.as_deref()),
+                        Some(root) => {
+                            // The editor's code font.
+                            let font = ui
+                                .scope(|ui| {
+                                    theme::document_style(ui, self.document_font_size);
+                                    egui::TextStyle::Monospace.resolve(ui.style())
+                                })
+                                .inner;
+                            self.agent.show(ui, root, &font);
+                        }
                         None => {
                             ui.label(RichText::new("Open a vault to use the agent").weak());
                         }
@@ -2590,19 +2603,6 @@ impl NotesApp {
         }
         if let Some(target) = follow {
             self.follow_link(&target);
-        }
-        match agent_action {
-            Some(crate::agent_ui::Action::Send) => self.send_to_agent(),
-            Some(crate::agent_ui::Action::Open(path)) => {
-                let relative = self
-                    .vault
-                    .as_ref()
-                    .and_then(|vault| path.strip_prefix(&vault.root).ok())
-                    .unwrap_or(&path)
-                    .to_owned();
-                self.open_note(&relative);
-            }
-            None => {}
         }
     }
 
@@ -3477,9 +3477,7 @@ impl NotesApp {
                         let agent = ui
                             .add_enabled_ui(self.vault.is_some(), |ui| {
                                 ui.selectable_label(showing, RichText::new("Agent").size(13.0))
-                                    .on_hover_text(
-                                        "Ask the agent about your notes or have it edit them",
-                                    )
+                                    .on_hover_text("Agent terminal")
                                     .on_disabled_hover_text("Open a vault first.")
                             })
                             .inner;
@@ -4860,6 +4858,7 @@ impl NotesApp {
 
 impl eframe::App for NotesApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        self.agent.raw_input(ctx, raw);
         self.system_theme.update(ctx, raw, self.appearance);
         self.page_pan.raw_input(
             ctx,
@@ -4943,9 +4942,6 @@ impl eframe::App for NotesApp {
             })
         });
         self.background(&ctx);
-        if let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone()) {
-            self.agent.poll(&ctx, &root);
-        }
         if crate::table_layout::take_changed(&ctx)
             && let Err(error) = self.write_session()
         {
@@ -5117,7 +5113,7 @@ impl eframe::App for NotesApp {
 }
 
 impl NotesApp {
-    /// The Agent lives in the right sidebar beside the open note.
+    /// The Agent terminal lives in the right sidebar beside the open note.
     fn open_agent(&mut self) {
         if self.vault.is_none() {
             self.error = Some("Open a vault before using the agent.".into());
@@ -5129,38 +5125,9 @@ impl NotesApp {
             self.sidebar_widths[1] = 380.0;
             self.restore_sidebars[1] = true;
         }
-        self.agent.focus_input();
+        self.agent.focus();
         self.editor.focus = false;
         self.page_preview.close();
         self.ctx.request_repaint();
-    }
-
-    fn agent_note(&self) -> Option<&Tab> {
-        self.tabs.get(self.active).filter(|tab| {
-            tab.view != View::Graph && !tab.document.is_blank() && !tab.document.is_image()
-        })
-    }
-
-    /// Sends the draft with the open note. With autosave on, a dirty note is
-    /// saved first so the vault the agent works in matches what it was shown.
-    fn send_to_agent(&mut self) {
-        let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone()) else {
-            return;
-        };
-        let mut context = None;
-        if self.agent.wants_note()
-            && let Some(dirty) = self.agent_note().map(|tab| tab.document.dirty())
-        {
-            if dirty && self.autosave_enabled {
-                self.save(self.active);
-            }
-            context = self.agent_note().map(|tab| crate::agent::NoteContext {
-                path: tab.document.path.to_string_lossy().into_owned(),
-                text: tab.document.text.clone(),
-                selection: self.editor.selected_text(tab),
-            });
-        }
-        let ctx = self.ctx.clone();
-        self.agent.send(&ctx, &root, context);
     }
 }
