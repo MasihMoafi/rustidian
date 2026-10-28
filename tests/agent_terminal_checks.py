@@ -423,15 +423,15 @@ def run(scope):
             h.capture(f"native-agent-terminal-{'dark' if dark else 'light'}-{width}x{height}.png", (width, height))
     h.results.append("Light and dark at 900×640 and 1440×960: tab, header, menu, Restart, status and terminal rows fit the sidebar without overlap")
 
-    # 18. Ctrl+Q in the terminal goes to the agent; from the editor it quits, ending the agent.
+    # 18. Ctrl+Q in the terminal goes to the agent; from the editor it asks, and Quit ends the agent.
     focus_terminal()
     h.key("ctrl+q")
     assert metric("terminal-focused") == 1, "Ctrl+Q in the terminal must not leave it"
     click("editor")
-    h.xdo("key", "--clearmodifiers", "ctrl+q")
+    h.confirm_quit()
     app.wait(timeout=10)
     wait(lambda: not stand_ins(), "An agent process outlived its window", timeout=5)
-    h.results.append("Ctrl+Q in the terminal reached the agent and kept the window; from the editor it quit and the agent ended")
+    h.results.append("Ctrl+Q in the terminal reached the agent and kept the window; from the editor it asked, Quit closed the window and the agent ended")
 
     # 19. The vault's choice survives a restart; killing Rustidian outright still ends the agent.
     app = h.relaunch()

@@ -12,7 +12,7 @@ pub fn disable_builtin_quit(ctx: &egui::Context) {
 
 /// Whether Ctrl+Q (Cmd+Q on macOS) was pressed with no other modifier;
 /// consumes it.
-pub fn quit_key(ctx: &egui::Context) -> bool {
+fn quit_key(ctx: &egui::Context) -> bool {
     ctx.input_mut(|input| {
         let before = input.events.len();
         input.events.retain(|event| {
@@ -28,6 +28,77 @@ pub fn quit_key(ctx: &egui::Context) -> bool {
         });
         input.events.len() < before
     })
+}
+
+/// What Ctrl+Q asks. It never closes the window by itself: on 28 Oct an
+/// accidental press closed Masih's windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuitQuestion {
+    /// "Quit Rustidian?"
+    Quit,
+    /// Unsaved edits: the unsaved-changes dialog asks, alone.
+    UnsavedChanges,
+}
+
+/// The question exact Ctrl+Q asks; consumes the key. `dirty` says whether
+/// edits are unsaved and is read only once Ctrl+Q was pressed.
+pub fn quit_question(ctx: &egui::Context, dirty: impl FnOnce() -> bool) -> Option<QuitQuestion> {
+    quit_key(ctx).then(|| {
+        if dirty() {
+            QuitQuestion::UnsavedChanges
+        } else {
+            QuitQuestion::Quit
+        }
+    })
+}
+
+/// "Quit Rustidian?", built like the unsaved-changes dialog. Quit or Enter
+/// closes the window; Cancel, Escape or a click outside keeps it. Returns
+/// the answer once given.
+pub fn quit_dialog(ctx: &egui::Context) -> Option<bool> {
+    let mut answer = None;
+    let response = egui::Modal::new(egui::Id::unique("quit-question"))
+        .frame(theme::dialog_frame(ctx))
+        .show(ctx, |ui| {
+            theme::dialog_style(ui);
+            ui.set_width(440.0);
+            ui.heading(format!("Quit {}?", rustidian::APP_NAME));
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                let quit = ui.button("Quit");
+                crate::ui_probe::record(ctx, "quit-confirm", quit.rect);
+                let cancel = ui.button("Cancel");
+                crate::ui_probe::record(ctx, "quit-cancel", cancel.rect);
+                // Keys answer the question; nothing behind it keeps the
+                // keyboard. This runs after the frame's other widgets, so
+                // keys typed just before Ctrl+Q still landed.
+                ui.memory_mut(|memory| {
+                    if let Some(id) = memory.focused()
+                        && id != quit.id
+                        && id != cancel.id
+                    {
+                        memory.surrender_focus(id);
+                    }
+                });
+                if cancel.clicked() {
+                    answer = Some(false);
+                } else if quit.clicked()
+                    || ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    })
+                {
+                    answer = Some(true);
+                }
+            });
+        });
+    crate::ui_probe::record(ctx, "dialog:quit", response.response.rect);
+    if answer.is_none() && response.should_close() {
+        answer = Some(false);
+    }
+    if answer == Some(true) {
+        close(ctx, "quit dialog");
+    }
+    answer
 }
 
 fn close_source_id() -> egui::Id {
@@ -331,30 +402,50 @@ fn resize_edges(ui: &egui::Ui) {
 mod tests {
     use super::*;
 
-    /// Run one frame in which Q is pressed with `modifiers`, as egui-winit
-    /// reports it on Linux; returns whether `quit_key` fired and whether the
-    /// frame asked to close the window.
-    fn press_q(ctx: &egui::Context, modifiers: egui::Modifiers) -> (bool, bool) {
-        let mut quit = false;
-        let output = ctx.run_ui(
-            egui::RawInput {
-                events: vec![egui::Event::Key {
-                    key: egui::Key::Q,
-                    physical_key: Some(egui::Key::Q),
-                    pressed: true,
-                    repeat: false,
-                    modifiers,
-                }],
-                ..Default::default()
-            },
-            |ui| quit |= quit_key(ui.ctx()),
-        );
-        let closes = output
+    /// A key press as egui-winit reports it on Linux.
+    fn press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// How many times `output` asked to close the window.
+    fn closes(output: &egui::FullOutput) -> usize {
+        output
             .viewport_output
             .get(&egui::ViewportId::ROOT)
-            .is_some_and(|viewport| viewport.commands.contains(&ViewportCommand::Close));
+            .map_or(0, |viewport| {
+                viewport
+                    .commands
+                    .iter()
+                    .filter(|command| **command == ViewportCommand::Close)
+                    .count()
+            })
+    }
+
+    /// Run one frame in which Q is pressed with `modifiers`, with edits
+    /// `dirty` or not; returns the question Ctrl+Q asked and whether the
+    /// frame asked to close the window.
+    fn press_q(
+        ctx: &egui::Context,
+        modifiers: egui::Modifiers,
+        dirty: bool,
+    ) -> (Option<QuitQuestion>, bool) {
+        let mut question = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![press(egui::Key::Q, modifiers)],
+                ..Default::default()
+            },
+            |ui| question = question.or(quit_question(ui.ctx(), || dirty)),
+        );
+        let closed = closes(&output) > 0;
         output.drop_without_applying_deltas();
-        (quit, closes)
+        (question, closed)
     }
 
     const CTRL: egui::Modifiers = egui::Modifiers {
@@ -364,20 +455,96 @@ mod tests {
     };
 
     #[test]
-    fn only_exact_ctrl_q_quits() {
+    fn only_exact_ctrl_q_asks_and_never_closes() {
         let ctx = egui::Context::default();
         disable_builtin_quit(&ctx);
-        assert_eq!(press_q(&ctx, CTRL), (true, false));
+        assert_eq!(
+            press_q(&ctx, CTRL, false),
+            (Some(QuitQuestion::Quit), false)
+        );
+        assert_eq!(
+            press_q(&ctx, CTRL, true),
+            (Some(QuitQuestion::UnsavedChanges), false),
+            "Unsaved edits get the unsaved-changes dialog, not the quit question"
+        );
         for (extra, name) in [
             (egui::Modifiers::SHIFT, "Ctrl+Shift+Q"),
             (egui::Modifiers::ALT, "Ctrl+Alt+Q"),
         ] {
             assert_eq!(
-                press_q(&ctx, CTRL | extra),
-                (false, false),
-                "{name} must neither quit nor close the window"
+                press_q(&ctx, CTRL | extra, false),
+                (None, false),
+                "{name} must neither ask nor close the window"
             );
         }
+    }
+
+    /// One frame of the quit dialog on an 800×600 window with `events`;
+    /// returns its answer and how many times the frame asked to close.
+    fn quit_frame(ctx: &egui::Context, events: Vec<egui::Event>) -> (Option<bool>, usize) {
+        let mut answer = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| answer = answer.or(quit_dialog(ui.ctx())),
+        );
+        let closed = closes(&output);
+        output.drop_without_applying_deltas();
+        (answer, closed)
+    }
+
+    /// A window showing the quit dialog and ready for an answer: the first
+    /// frame only measures the dialog.
+    fn asking() -> egui::Context {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        for _ in 0..2 {
+            assert_eq!(quit_frame(&ctx, Vec::new()), (None, 0));
+        }
+        ctx
+    }
+
+    #[test]
+    fn quit_dialog_closes_once_on_enter_and_never_on_cancel() {
+        let ctx = asking();
+        let enter = press(egui::Key::Enter, egui::Modifiers::NONE);
+        assert_eq!(quit_frame(&ctx, vec![enter]), (Some(true), 1));
+        assert_eq!(take_close_source(&ctx), "quit dialog");
+
+        let ctx = asking();
+        let escape = press(egui::Key::Escape, egui::Modifiers::NONE);
+        assert_eq!(quit_frame(&ctx, vec![escape]), (Some(false), 0));
+
+        let ctx = asking();
+        let outside = egui::pos2(20.0, 20.0);
+        let answers: Vec<_> = [true, false]
+            .into_iter()
+            .map(|pressed| {
+                quit_frame(
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(outside),
+                        egui::Event::PointerButton {
+                            pos: outside,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                )
+            })
+            .collect();
+        assert_eq!(
+            answers,
+            [(None, 0), (Some(false), 0)],
+            "A click outside the dialog must cancel it"
+        );
     }
 
     #[test]
@@ -387,23 +554,14 @@ mod tests {
         let builtin_closes = |modifiers| {
             let output = ctx.run_ui(
                 egui::RawInput {
-                    events: vec![egui::Event::Key {
-                        key: egui::Key::Q,
-                        physical_key: Some(egui::Key::Q),
-                        pressed: true,
-                        repeat: false,
-                        modifiers,
-                    }],
+                    events: vec![press(egui::Key::Q, modifiers)],
                     ..Default::default()
                 },
                 |_| {},
             );
-            let closes = output
-                .viewport_output
-                .get(&egui::ViewportId::ROOT)
-                .is_some_and(|viewport| viewport.commands.contains(&ViewportCommand::Close));
+            let closed = closes(&output) > 0;
             output.drop_without_applying_deltas();
-            closes
+            closed
         };
         assert!(builtin_closes(CTRL | egui::Modifiers::SHIFT));
         disable_builtin_quit(&ctx);

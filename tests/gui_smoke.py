@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -335,6 +335,12 @@ def main():
                 xdo(*pointer, "click", button)
             pause()
 
+        def confirm_quit():
+            # Ctrl+Q asks "Quit Rustidian?" first (28 Oct); Return answers Quit.
+            xdo("key", "--clearmodifiers", "ctrl+q")
+            control_bounds("quit-confirm")
+            xdo("key", "--clearmodifiers", "Return")
+
         def slider_pixels(name, label, dark):
             """Inspect the real thumb, including its idle, hover and held-drag states."""
             left, top, right, bottom = control_bounds(name)
@@ -499,7 +505,7 @@ def main():
                 assert startup_path.read_text() == expected, repr(startup_path.read_text())
                 assert (fixture / "Home.md").read_text() == (ROOT / "demo-vault/Home.md").read_text()
                 capture(f"file-open-{args.open_file}.png")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 second_path = fixture / f"Another file.{args.open_file}"
                 second_text = "A different document\n"
@@ -827,13 +833,20 @@ def main():
                 command("Source editing")
                 editor_end()
                 key("ctrl+a")
-                property_source = "---\naliases: [Notebook alias]\ntags: [notes/deep]\ndone: false\nscore: 3\n---\n\n# Properties GUI\nBody must stay exact.\n"
+                property_source = "---\naliases: [Notebook alias]\ntags: [notes/deep, alpha, beta]\ndone: false\nscore: 3\n---\n\n# Properties GUI\nBody must stay exact.\n"
                 type_text(property_source)
                 key("ctrl+s")
                 property_file = fixture / "Notes/Properties GUI.md"
                 assert property_file.read_text() == property_source, (repr(property_file.read_text()), repr(property_source))
                 command("Live preview")
                 capture("native-properties.png")
+                # 28 Oct: a tags row showed its type icon a line above the name and chips.
+                centres = {}
+                for part in ("type", "name", "item:0"):
+                    left, top, right, bottom = control_bounds("property:tags:" + part)
+                    centres[part] = (top + bottom) / 2
+                assert max(centres.values()) - min(centres.values()) <= 2, f"Tags row centres differ by more than 2 px: {centres}"
+                results.append(f"The tags row's type icon, name and first chip share one centre line: {centres}")
                 key("ctrl+o")
                 type_text("Notebook alias")
                 key("Return")
@@ -1065,7 +1078,7 @@ def main():
                 capture("native-image-tab-renamed.png")
                 results.append("An externally replaced image refreshed; image rename retained binary bytes and rewrote wiki and Markdown links")
 
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 state = json.loads(next((base / "state/rustidian").glob("*.json")).read_text())
                 assert ["Assets/Renamed viewer[1].png", "Read"] in state["tabs"], state
@@ -1688,7 +1701,7 @@ def main():
                         assert inspect("expanded-again", dark, mode) >= minimum+80
                     click_control("button:File explorer")
                     drag_to(0); xdo("mouseup", "1"); pause()
-                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    confirm_quit()
                     app.wait(timeout=5)
                     app = launch_app(launch_command); window = ready_window()
                     inspect("restarted-minimum", dark, "files")
@@ -2551,7 +2564,7 @@ def main():
                 key("ctrl+s")
                 expected = highlighted + " offline"
                 assert note.read_text() == expected
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -2870,7 +2883,7 @@ def main():
                 assert not first.exists()
                 assert any(path.read_bytes() == (source + "d").encode() for path in (base / "data/Trash/files").iterdir() if path.is_file())
                 results.append("D types normally outside menus; its visible menu mnemonic opens recoverable Trash, and cancelling does not save the skip-confirmation choice")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -3064,7 +3077,7 @@ def main():
                         capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")
                         assert note.read_text() == source
                     results.append(("Dark" if dark else "Light") + " palettes apply the requested native colors, save the actual selection and preserve Markdown")
-                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                confirm_quit(); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
                 expect_background((252,245,242))
                 command("Open settings"); click_control("settings-page:Appearance")
@@ -3180,7 +3193,7 @@ def main():
                 assert edge_note.read_bytes() == edge_source.encode()
                 results.append("A narrower real window fits all columns; widening restores chosen widths without editing the saved preference or note")
 
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -3296,7 +3309,7 @@ def main():
                     capture("native-table-resize-" + mode.split()[0].lower() + "-after.png")
                     results.append(mode + " resizes ordinary and callout table columns in both directions without changing note bytes")
                 before = control_bounds("table-resize:0:0")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -4140,7 +4153,7 @@ def main():
                 click_control("sort-descending")
                 pause()
                 assert control_bounds("folder:Toolbar folder")[1] < control_bounds("folder:Notes")[1]
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -4627,7 +4640,7 @@ def main():
                 nested.parent.mkdir()
                 nested_source = "# Nested\n\n[[Home]]\n"
                 nested.write_text(nested_source)
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app([launch_command[0], str(nested)])
                 window = ready_window()
@@ -4641,7 +4654,7 @@ def main():
                 results.append("Opening a nested note directly kept its registered vault, followed a root-level wiki link and avoided registering the note's subfolder")
                 manager()
                 recent(fixture)
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -5016,6 +5029,117 @@ def main():
                                        f"{gone.get('rustidian', 3.0):.2f} s and the agent after {gone.get('agent', 3.0):.2f} s; "
                                        f"app.log said 'close: {source}'")
                 assert not failures, failures
+
+            def quit_checks():
+                # 28 Oct: windows closed by themselves, most likely through an
+                # accidental Ctrl+Q. Ctrl+Q now asks "Quit Rustidian?" first.
+                nonlocal app, window
+                app_log, home = reports / "gui-smoke.log", fixture / "Home.md"
+                original = home.read_bytes()
+
+                def close_lines(start):
+                    with app_log.open() as lines:
+                        lines.seek(start)
+                        return [line.strip() for line in lines if line.startswith("close:")]
+
+                def click(name):
+                    # click_control would assert that the window survived the click.
+                    left, top, right, bottom = control_bounds(name)
+                    xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+
+                def ask(shot=None):
+                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    for name in ("dialog:quit", "quit-confirm", "quit-cancel"):
+                        control_bounds(name)
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    assert not any(name.startswith("pending-") for name in controls), "A clean note got the unsaved-changes dialog"
+                    if shot:
+                        time.sleep(.5)  # the dialog fades in
+                        capture(shot)
+
+                def kept(how):
+                    deadline = time.monotonic() + 3
+                    while control_bounds("dialog:quit", required=False):
+                        assert time.monotonic() < deadline, f"{how} left the quit dialog open"
+                        time.sleep(.05)
+                    time.sleep(.5)
+                    assert app.poll() is None, f"{how} closed the window"
+
+                def quits(how, answer):
+                    start = app_log.stat().st_size
+                    ask()
+                    answered = time.monotonic()
+                    answer()
+                    try:
+                        code = app.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        raise AssertionError(f"{how} left the window open for 3 s")
+                    assert code == 0 and close_lines(start) == ["close: quit dialog"], (how, code, close_lines(start))
+                    return time.monotonic() - answered
+
+                title_contains("Home")
+                set_theme(False)
+                command("Source editing")
+                editor_end()
+                control_bounds("editor-focused")
+                start = app_log.stat().st_size
+                ask("native-quit-dialog-light.png")
+                # Keys go to the question, never to the note or the app behind it.
+                xdo("type", "--clearmodifiers", "--delay", "1", "--", "typed")
+                key("ctrl+p")
+                key("Escape")
+                kept("Escape")
+                assert control_bounds("dialog-input", required=False) is None, "Ctrl+P under the question opened the palette"
+                ask()
+                click_control("quit-cancel")
+                kept("Cancel")
+                ask()
+                left, top, right, bottom = control_bounds("dialog:quit")
+                xdo("mousemove", "--sync", str(round(left) - 80), str(round((top + bottom) / 2)), "click", "1")
+                kept("A click outside the dialog")
+                set_theme(True)
+                ask("native-quit-dialog-dark.png")
+                key("Escape")
+                kept("Escape in the dark theme")
+                assert home.read_bytes() == original, "Keys typed under the question reached the note"
+                assert close_lines(start) == [], close_lines(start)
+                results.append("Ctrl+Q asked 'Quit Rustidian?' in light and dark; Escape, Cancel and a click outside each kept "
+                               "the window; keys typed under it changed nothing and app.log printed no close line")
+
+                # Unsaved edits get the unsaved-changes dialog alone, and its answer is final.
+                command("Open settings")
+                type_text("autosave")
+                click_control("settings-autosave")
+                wait_autosave(base / "state", False)
+                key("Escape")
+                editor_end()
+                type_text("UNSAVED_QUIT")
+                time.sleep(.75)
+                assert home.read_bytes() == original, "Autosave must be off for the unsaved case"
+                start = app_log.stat().st_size
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                control_bounds("pending-discard")
+                assert control_bounds("dialog:quit", required=False) is None, "Unsaved edits got the quit question"
+                capture("native-quit-unsaved.png")
+                click("pending-discard")
+                try:
+                    code = app.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    raise AssertionError("Discard asked another question instead of closing the window")
+                assert code == 0 and close_lines(start) == ["close: unsaved-changes dialog"], (code, close_lines(start))
+                assert home.read_bytes() == original, "Discard changed the note"
+                results.append("With an unsaved edit Ctrl+Q showed only the unsaved-changes dialog; Discard closed the window "
+                               "without a second question; app.log said 'close: unsaved-changes dialog'")
+
+                timings = {}
+                for how, answer in (("Quit", lambda: click("quit-confirm")),
+                                    ("Enter", lambda: xdo("key", "--clearmodifiers", "Return"))):
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                    title_contains("Home")
+                    timings[how] = quits(how, answer)
+                results.append("Ctrl+Q then Quit closed the window in {Quit:.2f} s, Ctrl+Q then Enter in {Enter:.2f} s; "
+                               "app.log said 'close: quit dialog' each time".format(**timings))
 
             def idle_cpu_checks():
                 # 28 Oct: windows Masih could not see kept using CPU. A re-index redrew the
@@ -5436,7 +5560,7 @@ def main():
                 command("Show bookmarks")
                 click_control(f"bookmark:{relative}")
                 title_contains("Bookmark renamed")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -5777,7 +5901,7 @@ def main():
                     raise AssertionError("The actual tab controls did not become readable")
                 expected_pins={"Pinned first.md":True,"Pinned second.md":False}
                 assert pinned()==expected_pins
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 sessions=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Pinned first.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1
                 session_path=sessions[0]
@@ -5803,7 +5927,7 @@ def main():
                 command("New tab");title_contains("New tab")
                 command("Close current tab");title_contains("Pinned third")
                 expected_pins=pinned()
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 assert persisted_pins()==expected_pins
                 app=launch_app(launch_command);window=ready_window()
                 assert pinned()==expected_pins
@@ -5919,7 +6043,7 @@ def main():
 
                 def restart():
                     nonlocal app, window
-                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    confirm_quit(); app.wait(timeout=5)
                     app = launch_app(launch_command); window = ready_window()
                     title_contains("System appearance")
                     assert control_bounds("view-mode:Reading")
@@ -5993,7 +6117,7 @@ def main():
                 assert not any(k.startswith("view-mode:") for k in json.loads((base/"ui-probe.json").read_text()))
                 assert note.read_text()==original
                 results.append("Real Editor switches hid the inline title, widened the document, selected Reading/Source for new tabs and hid the mode indicator without altering Markdown")
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 assert not control_bounds("note-title",required=False)
                 assert json.loads(path.read_text())["editor_preferences"]==dict(reading_view=True,source_mode=True,show_mode=False,inline_title=False,readable_line_length=False)
@@ -6103,7 +6227,7 @@ def main():
                 key("ctrl+y");key("ctrl+s");assert note.read_text()==original+"UNDO_FONT_PROOF"
                 key("ctrl+z");key("ctrl+s");assert note.read_text()==original
                 results.append("Source font changes returned editor focus and left existing text Undo/Redo intact, with exact saved bytes after each action")
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window();title_contains("Font controls");font(19)
                 editor_end();type_text("RESTART_FONT_PROOF");key("ctrl+z");key("ctrl+s");assert note.read_text()==original
                 results.append("A clean native restart restored document font size and mode; real focused editing still undid and saved unchanged bytes")
@@ -6171,7 +6295,7 @@ def main():
                 pick("settings-interface-font","DejaVu Serif")
                 assert saved()["interface"]=="DejaVu Serif" and crop("tab-full:Font families.md")!=tab
                 results.append("Monospace and Interface fonts each redrew their own text and were saved")
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window();title_contains("Font families");command("Reading view")
                 assert saved()=={"interface":"DejaVu Serif","text":"DejaVu Serif","monospace":"Liberation Mono"}
                 assert crop("reading-block:1")!=paragraph and crop("reading-block:2")!=code
@@ -6248,7 +6372,7 @@ def main():
                 command("Source editing")
                 editor_end(); type_text("UNDO_AFTER_DRAG"); key("ctrl+z"); key("ctrl+s")
                 assert all((fixture / f"Drag {name}.md").read_text() == source for name, source in contents.items())
-                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                confirm_quit(); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
                 assert order() == before, (before, order())
                 title_contains("Drag Alpha")
@@ -6970,7 +7094,7 @@ def main():
                 results.append("All four workspace commands work: active overwrite keeps one entry, fuzzy load selects it and cancelled save-and-load retains current tabs")
 
                 load("Writing");assert_layout(writing)
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 title_contains("Workspace A")
                 assert_layout(writing);filled_sidebars("restarted")
@@ -7261,7 +7385,7 @@ def main():
                 key("Escape");target.write_bytes(original);command("Refresh vault");pause()
                 results.append("A previously deleted note was recreated from its exact snapshot; a file appearing meanwhile was preserved without overwrite")
 
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 open_note("Recovery target")
                 history(3);choose_version(initial)
@@ -7748,7 +7872,7 @@ def main():
                         results.append(f"{'Local' if local else 'Global'} {'dark' if dark else 'light'} Animate reveals oldest-first, advances actual painted nodes, stops cleanly and finishes with the exact full graph")
                     if not local:
                         click_control(prefix+":animate")
-                        xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                        confirm_quit();app.wait(timeout=5)
                         app=launch_app(launch_command[:1]+[str(root)]);window=ready_window()
                         ready(prefix)
                         assert control_bounds(prefix+":animation-running")[0]==0
@@ -7887,7 +8011,7 @@ def main():
                 key("ctrl+t");open_note("Home")
                 assert control_bounds("tab-count")[0] == 2
                 assert control_bounds("global-graph:canvas", required=False) is None
-                xdo("key", "--clearmodifiers", "ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app([str(ROOT / args.binary), str(graph_root)]);window=ready_window()
                 title_contains("Home")
                 assert control_bounds("tab-count")[0] == 2
@@ -8104,7 +8228,7 @@ def main():
 
                 def restart(root):
                     nonlocal app
-                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    confirm_quit(); app.wait(timeout=5)
                     app = launch_app([str(ROOT / args.binary), str(root)])
                     return app
 
@@ -8538,7 +8662,7 @@ def main():
                 import vault_loading_checks
                 def restart_desktop(arguments):
                     nonlocal app, window
-                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    confirm_quit()
                     app.wait(timeout=5)
                     app = launch_app([str(ROOT / args.binary), *map(str, arguments)])
                     window = ready_window()
@@ -8617,8 +8741,8 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "speed"}))
                 return
-            if args.section in ("instance", "lifecycle", "idle-cpu"):
-                {"instance": instance_checks, "lifecycle": lifecycle_checks, "idle-cpu": idle_cpu_checks}[args.section]()
+            if args.section in ("instance", "lifecycle", "quit", "idle-cpu"):
+                {"instance": instance_checks, "lifecycle": lifecycle_checks, "quit": quit_checks, "idle-cpu": idle_cpu_checks}[args.section]()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
@@ -8947,7 +9071,7 @@ def main():
             key("ctrl+t")
             open_note("Created in GUI")
             command("Source editing")
-            xdo("key", "--clearmodifiers", "ctrl+q")
+            confirm_quit()
             app.wait(timeout=5)
             session_files = list((base / "state/rustidian").glob("*.json"))
             assert len(session_files) == 1

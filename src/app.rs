@@ -42,6 +42,8 @@ enum Pending {
     CloseTab(usize),
     CloseOtherTabs(u64),
     Quit,
+    /// Ctrl+Q's "Quit Rustidian?" question, asked when nothing is unsaved.
+    ConfirmQuit,
     ChangeVault,
     OpenVault(PathBuf, Option<PathBuf>),
     LoadWorkspace(String),
@@ -1492,7 +1494,7 @@ impl NotesApp {
         match pending {
             Pending::CloseTab(index) => self.close_tab(index),
             Pending::CloseOtherTabs(keep) => self.close_other_tabs(keep),
-            Pending::Quit => self.quit(ctx, "unsaved-changes dialog"),
+            Pending::Quit | Pending::ConfirmQuit => self.quit(ctx, "unsaved-changes dialog"),
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
             Pending::OpenVault(root, document) => {
                 self.startup_document = document;
@@ -1511,9 +1513,9 @@ impl NotesApp {
         crate::window::close(ctx, source);
     }
 
-    /// A close request from any source: Ctrl+Q, the title bar, the window
-    /// manager or a signal. Unsaved edits first ask; a close that goes ahead
-    /// prints `close: <source>`.
+    /// A close request from any source: the quit dialog, the title bar, the
+    /// window manager or a signal. Unsaved edits first ask; a close that goes
+    /// ahead prints `close: <source>`.
     fn on_close_request(&mut self, ctx: &egui::Context) {
         let source = crate::window::take_close_source(ctx);
         self.open_picker.cancel();
@@ -1607,8 +1609,11 @@ impl NotesApp {
                 self.step_tab(false);
             }
         }
-        if crate::window::quit_key(ctx) {
-            crate::window::close(ctx, "ctrl+q");
+        if let Some(question) = crate::window::quit_question(ctx, || self.dirty()) {
+            self.pending = Some(match question {
+                crate::window::QuitQuestion::Quit => Pending::ConfirmQuit,
+                crate::window::QuitQuestion::UnsavedChanges => Pending::Quit,
+            });
         }
         if ctx
             .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::T))
@@ -3609,6 +3614,15 @@ impl NotesApp {
                 } else {
                     ctx.request_repaint_after(Duration::from_millis(100));
                 }
+            }
+            return;
+        }
+        if matches!(self.pending, Some(Pending::ConfirmQuit)) {
+            if crate::window::quit_dialog(ctx).is_some() {
+                self.pending = None;
+            }
+            if self.pending.is_none() && self.dialog.is_none() && !self.allow_close {
+                self.focus_editor();
             }
             return;
         }

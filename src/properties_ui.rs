@@ -185,27 +185,34 @@ impl Properties {
             .show(ui, |ui| {
                 for field in &mut self.fields {
                     let mut kind = field.kind;
+                    // The grid centres each cell in its row; a tall row (wrapped tags) would
+                    // leave a free-height icon cell at the top, so the icon takes the same
+                    // fixed, centred 33.5 px cell as the name beside it.
                     let type_button = ui
-                        .scope(|ui| {
-                            ui.spacing_mut().button_padding = egui::vec2(2.0, 6.75);
-                            ui.spacing_mut().interact_size.x = 0.0;
-                            ui.visuals_mut().widgets.inactive.weak_bg_fill =
-                                egui::Color32::TRANSPARENT;
-                            let image = crate::theme::icon_image(
-                                kind.icon(&field.name),
-                                ui.visuals().weak_text_color(),
-                            );
-                            ui.menu_image_button(image, |ui| {
-                                for candidate in
-                                    [Kind::Text, Kind::List, Kind::Number, Kind::Checkbox]
-                                {
-                                    ui.selectable_value(&mut kind, candidate, candidate.name());
-                                }
-                                if ui.button("Remove property").clicked() {
-                                    removed = Some(field.name.clone());
-                                }
-                            })
-                        })
+                        .allocate_ui_with_layout(
+                            egui::vec2(24.0, 33.5),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().button_padding = egui::vec2(2.0, 6.75);
+                                ui.spacing_mut().interact_size.x = 0.0;
+                                ui.visuals_mut().widgets.inactive.weak_bg_fill =
+                                    egui::Color32::TRANSPARENT;
+                                let image = crate::theme::icon_image(
+                                    kind.icon(&field.name),
+                                    ui.visuals().weak_text_color(),
+                                );
+                                ui.menu_image_button(image, |ui| {
+                                    for candidate in
+                                        [Kind::Text, Kind::List, Kind::Number, Kind::Checkbox]
+                                    {
+                                        ui.selectable_value(&mut kind, candidate, candidate.name());
+                                    }
+                                    if ui.button("Remove property").clicked() {
+                                        removed = Some(field.name.clone());
+                                    }
+                                })
+                            },
+                        )
                         .inner;
                     crate::ui_probe::record(
                         ui.ctx(),
@@ -215,7 +222,7 @@ impl Properties {
                     type_button
                         .response
                         .on_hover_text(format!("{} property", kind.name()));
-                    ui.allocate_ui_with_layout(
+                    let label = ui.allocate_ui_with_layout(
                         egui::vec2(136.0, 33.5),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
@@ -227,8 +234,13 @@ impl Properties {
                                         .weak(),
                                 )
                                 .truncate(),
-                            );
+                            )
                         },
+                    );
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("property:{}:name", field.name),
+                        label.inner.rect,
                     );
                     let mut edited = false;
                     if kind != field.kind {
@@ -291,7 +303,7 @@ impl Properties {
                                     } else {
                                         egui::Color32::TRANSPARENT
                                     };
-                                    egui::Frame::NONE
+                                    let chip = egui::Frame::NONE
                                         .fill(fill)
                                         .corner_radius(8)
                                         .inner_margin(if tags {
@@ -347,6 +359,11 @@ impl Properties {
                                                 }
                                             });
                                         });
+                                    crate::ui_probe::record(
+                                        ui.ctx(),
+                                        format!("property:{}:item:{index}", field.name),
+                                        chip.response.rect,
+                                    );
                                 }
                                 if let Some(index) = remove {
                                     field.items.remove(index);
