@@ -15,7 +15,7 @@ use std::{
 
 /// The terminal's keyboard focus; while it has focus, keys go to the agent.
 pub fn focus_id() -> egui::Id {
-    egui::Id::new("agent-terminal")
+    egui::Id::unique("agent-terminal")
 }
 
 /// The vault's agent choice, in `$XDG_STATE_HOME/rustidian/agent/<vault>.json`.
@@ -99,7 +99,6 @@ impl Panel {
             let screen = parser.screen();
             (screen.application_cursor(), screen.bracketed_paste())
         };
-        let requested = std::mem::take(paste) == Paste::Requested;
         let mut bytes = Vec::new();
         raw.events.retain(|event| {
             if reserved(event) || !keyboard(event) {
@@ -112,10 +111,23 @@ impl Panel {
                     modifiers,
                     ..
                 } if modifiers.command && modifiers.shift => *paste = Paste::Wanted,
-                Event::Paste(text) if requested => bytes.extend(pasted(text, bracketed)),
+                // The clipboard may arrive a pass later: eframe's logic-only
+                // passes run this hook too. The request lasts until it arrives.
+                Event::Paste(text) if *paste == Paste::Requested => {
+                    bytes.extend(pasted(text, bracketed));
+                    *paste = Paste::None;
+                }
                 // Ctrl+V reaches egui as a paste; the agent reads images itself.
                 Event::Paste(_) | Event::PasteImage(_) => bytes.push(0x16),
-                event => bytes.extend(keys.encode(event, application_cursor)),
+                event => {
+                    // A key pressed meanwhile ends a request that got no text.
+                    if *paste == Paste::Requested
+                        && matches!(event, Event::Key { pressed: true, .. } | Event::Text(_))
+                    {
+                        *paste = Paste::None;
+                    }
+                    bytes.extend(keys.encode(event, application_cursor));
+                }
             }
             false
         });
@@ -603,6 +615,23 @@ impl Colors {
     }
 }
 
+/// WCAG's contrast ratio, from 1 (none) to 21 (black on white).
+fn contrast(first: Color32, second: Color32) -> f32 {
+    let luminance = |color: Color32| {
+        let channel = |value: u8| {
+            let value = f32::from(value) / 255.0;
+            if value <= 0.039_28 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
+    };
+    let (first, second) = (luminance(first), luminance(second));
+    (first.max(second) + 0.05) / (first.min(second) + 0.05)
+}
+
 fn rgb(color: Color32) -> [u8; 3] {
     [color.r(), color.g(), color.b()]
 }
@@ -622,6 +651,18 @@ impl Style {
         let mut background = colors.resolve(cell.bgcolor(), colors.background);
         if cell.inverse() {
             std::mem::swap(&mut foreground, &mut background);
+        }
+        // One palette cannot suit every pair (black on white is dark grey on
+        // grey in the light theme): on a coloured cell, text that would be
+        // hard to read takes the theme's text or panel colour instead.
+        if background != colors.background && contrast(foreground, background) < 3.0 {
+            foreground = if contrast(colors.foreground, background)
+                >= contrast(colors.background, background)
+            {
+                colors.foreground
+            } else {
+                colors.background
+            };
         }
         if cell.dim() {
             foreground = foreground.gamma_multiply(0.6);
@@ -848,22 +889,6 @@ mod tests {
         }
     }
 
-    fn contrast(first: Color32, second: Color32) -> f32 {
-        let luminance = |color: Color32| {
-            let channel = |value: u8| {
-                let value = f32::from(value) / 255.0;
-                if value <= 0.039_28 {
-                    value / 12.92
-                } else {
-                    ((value + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * channel(color.r()) + 0.7152 * channel(color.g()) + 0.0722 * channel(color.b())
-        };
-        let (first, second) = (luminance(first), luminance(second));
-        (first.max(second) + 0.05) / (first.min(second) + 0.05)
-    }
-
     #[test]
     fn every_ansi_colour_stays_legible_on_the_panel_in_both_themes() {
         use crate::theme::palette::Palette;
@@ -887,6 +912,26 @@ mod tests {
             }
             assert_eq!(colors.background, visuals.panel_fill);
             assert_eq!(colors.foreground, visuals.text_color());
+        }
+    }
+
+    #[test]
+    fn text_on_a_coloured_cell_stays_legible_in_both_themes() {
+        let ctx = egui::Context::default();
+        crate::theme::apply_appearance(&ctx, crate::theme::Appearance::System);
+        let mut parser = vt100::Parser::new(1, 20, 0);
+        parser.process(b"\x1b[30;47mB\x1b[0;47mW\x1b[0;31mR");
+        let screen = parser.screen();
+        for theme in [egui::Theme::Light, egui::Theme::Dark] {
+            let colors = Colors::new(&ctx.style_of(theme).visuals);
+            for col in [0, 1] {
+                let style = Style::of(screen.cell(0, col).unwrap(), &colors);
+                let ratio = contrast(style.foreground, style.background);
+                assert!(ratio >= 3.0, "{theme:?} column {col}: {ratio}");
+            }
+            // Legible text keeps its own colour.
+            let red = Style::of(screen.cell(0, 2).unwrap(), &colors);
+            assert_eq!(red.foreground, colors.ansi[1]);
         }
     }
 

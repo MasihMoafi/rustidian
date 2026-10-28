@@ -2,7 +2,7 @@
 
 A stand-in agent installed as `elpis` and `claude` (no `codex`) is first on PATH.
 It prints a banner, echoes each line as `you said: …`, reports its rows×cols for
-`size`, prints 1,200 numbered lines for `lines`, styled words for `colors`, and
+`size` (numbered, so each report is new), prints 1,200 numbered lines for `lines`, styled words for `colors`, and
 exits on `exit`. It never calls a model. The terminal's text is read from the UI
 probe's `terminal-row:<row>:<text>` entries.
 """
@@ -21,6 +21,7 @@ AGENT = r'''#!/bin/bash
 name=${0##*/}
 printf 'FAKE %s ready pid %s\n' "$name" "$$"
 trap 'printf "interrupted\n"' INT
+reports=0
 while :; do
   IFS= read -r line
   status=$?
@@ -28,7 +29,7 @@ while :; do
   if [ "$status" -ne 0 ]; then exit 0; fi
   case $line in
     exit) printf 'bye\n'; exit 0 ;;
-    size) read -r rows cols < <(stty size); printf 'size %sx%s\n' "$rows" "$cols" ;;
+    size) reports=$((reports + 1)); read -r rows cols < <(stty size); printf 'size %s: %sx%s\n' "$reports" "$rows" "$cols" ;;
     lines) for ((i = 1; i <= 1200; i++)); do printf 'line %s\n' "$i"; done ;;
     colors) printf '\033[1mbold\033[0m \033[3mitalic\033[0m \033[4munderline\033[0m \033[7minverse\033[0m \033[31mred\033[0m \033[32mgreen\033[0m \033[34mblue\033[0m \033[38;5;208morange\033[0m \033[38;2;0;160;255mtruecolor\033[0m \033[30;47mblack-on-white\033[0m\n' ;;
     *) printf 'you said: %s\n' "$line" ;;
@@ -87,6 +88,10 @@ def run(scope):
         found = [match for row in rows() if (match := re.search(pattern, row))]
         return found[-1] if found else None
 
+    def pid():
+        """The running agent's process, as the panel reports it."""
+        return int(metric("terminal-pid") or 0)
+
     def banner():
         match = latest(r"FAKE (\w+) ready pid (\d+)")
         return (match.group(1), int(match.group(2))) if match else None
@@ -98,10 +103,12 @@ def run(scope):
         h.pause()
 
     def size():
+        previous = latest(r"size (\d+): ")
+        count = int(previous.group(1)) if previous else 0
         enter("size")
-        wait(lambda: metric("terminal-rows"), "The terminal reports no size")
-        match = wait(lambda: latest(r"size (\d+)x(\d+)"), "The agent did not report its size")
-        reported = (int(match.group(1)), int(match.group(2)))
+        match = wait(lambda: (found := latest(r"size (\d+): (\d+)x(\d+)")) and int(found.group(1)) > count and found,
+                     "The agent did not report its size")
+        reported = (int(match.group(2)), int(match.group(3)))
         assert reported == (metric("terminal-rows"), metric("terminal-cols")), (reported, controls())
         return reported
 
@@ -176,22 +183,12 @@ def run(scope):
     shows("you said: after keys")
     h.results.append("Escape, Tab, Alt+x, Up, Ctrl+P, Ctrl+T and Ctrl+C reached the agent as terminal bytes; focus and the app stayed unchanged")
 
-    # 5. Ctrl+Shift+V pastes the clipboard.
-    owner = clipboard("pasted from the clipboard")
-    try:
-        h.key("ctrl+shift+v")
-        enter("")
-        shows("you said: pasted from the clipboard")
-    finally:
-        owner.terminate()
-        owner.wait(timeout=5)
-    h.results.append("Ctrl+Shift+V pasted the clipboard into the agent")
-
-    # 6. A wider sidebar gives the agent more columns.
+    # 5. A wider sidebar gives the agent more columns.
     before = size()
     pane = h.control_bounds("sidebar:details")
     y = str(round((pane[1] + pane[3]) / 2))
-    h.xdo("mousemove", "--sync", str(round(pane[0])), y, "mousedown", "1")
+    # Grab the edge from inside the panel: the editor covers its other half.
+    h.xdo("mousemove", "--sync", str(round(pane[0] + 2)), y, "mousedown", "1")
     h.pause()
     h.xdo("mousemove", "--sync", str(round(pane[0] - 200)), y)
     h.pause()
@@ -204,7 +201,7 @@ def run(scope):
     assert after[1] > before[1] and after[0] == before[0], (before, after)
     h.results.append(f"Dragging the sidebar wider resized the agent's terminal from {before[0]}x{before[1]} to {after[0]}x{after[1]}")
 
-    # 7. Styled output, then an idle panel draws no frames.
+    # 6. Styled output, then an idle panel draws no frames.
     enter("colors")
     shows("black-on-white")
     h.xdo("mousemove", "--sync", str(round((pane[0] + pane[2]) / 2)), str(round(pane[3] - 30)))
@@ -216,7 +213,7 @@ def run(scope):
     h.capture("native-agent-terminal-colors.png")
     h.results.append("Bold, italic, underline, inverse, 16, 256 and true colours drew; an idle terminal drew no frames for 1.5 s")
 
-    # 8. The wheel scrolls back at least 1,000 lines; new output returns to the bottom.
+    # 7. The wheel scrolls back at least 1,000 lines; new output returns to the bottom.
     enter("lines")
     shows("line 1200")
     terminal = h.control_bounds("agent-terminal")
@@ -231,8 +228,8 @@ def run(scope):
     wait(lambda: metric("terminal-scrollback") == 0, "New output must bring the view back to the bottom")
     h.results.append(f"The wheel scrolled back {offset:.0f} lines, to line {min(numbers)} of 1,200; new output returned to the bottom")
 
-    # 9. Choosing another agent restarts the terminal with it and persists per vault.
-    _, first = banner()
+    # 8. Choosing another agent restarts the terminal with it and persists per vault.
+    first = pid()
     h.click_control("agent-backend")
     h.click_control("agent-backend:Claude")
     wait(lambda: banner() and banner()[0] == "claude", "Choosing Claude did not start it")
@@ -242,8 +239,8 @@ def run(scope):
     assert len(saved) == 1 and json.loads(saved[0].read_text()) == {"backend": "claude"}, saved
     h.results.append("Choosing Claude ended the Elpis stand-in, started Claude and saved the choice for the vault")
 
-    # 10. Restart starts a fresh process on a fresh screen.
-    _, before_restart = banner()
+    # 9. Restart starts a fresh process on a fresh screen.
+    before_restart = pid()
     focus_terminal()
     enter("before restart")
     shows("you said: before restart")
@@ -253,35 +250,35 @@ def run(scope):
     wait(lambda: before_restart not in stand_ins(), "The restarted agent's old process remained")
     h.results.append("Restart ended the old process and showed a fresh banner on a fresh screen")
 
-    # 11. An agent that exits leaves its last screen and "Exited (code 0)"; Restart works again.
+    # 10. An agent that exits leaves its last screen and "Exited (code 0)"; Restart works again.
     focus_terminal()
     enter("exit")
     wait(lambda: "agent-exit:0" in controls(), "Exit did not show Exited (code 0)")
     assert "agent-status:Exited" in controls()
     shows("bye")
     h.capture("native-agent-terminal-exited.png")
-    _, exited = banner()
+    exited = pid()
     h.click_control("agent-restart")
     wait(lambda: banner() and banner()[1] != exited, "Restart after exit did not start a fresh agent")
     assert "agent-exit:0" not in controls()
     h.results.append("After exit the last screen stayed with Exited (code 0); Restart started a fresh agent")
 
-    # 12. Ctrl+Shift+A hides the tab from the terminal; the top-right button shows and hides it.
-    _, running = banner()
+    # 11. Ctrl+Shift+A hides the tab from the terminal; the top-right button shows and hides it.
+    running = pid()
     focus_terminal()
     h.key("ctrl+shift+a")
     wait(lambda: "agent-terminal" not in controls(), "Ctrl+Shift+A in the terminal did not hide the tab")
     assert running in stand_ins(), "Hiding the tab must not end the agent"
     h.click_control("toggle-agent")
     wait(lambda: "agent-terminal" in controls(), "The Agent button did not show the tab")
-    assert banner()[1] == running, "Showing the tab again must keep the same agent"
+    assert pid() == running, "Showing the tab again must keep the same agent"
     h.click_control("toggle-agent")
     wait(lambda: "agent-terminal" not in controls(), "The Agent button did not hide the tab")
     h.key("ctrl+shift+a")
     wait(lambda: "agent-terminal" in controls(), "Ctrl+Shift+A did not show the tab again")
     h.results.append("Ctrl+Shift+A hid the tab from the focused terminal; the Agent button showed and hid it; the agent kept running")
 
-    # 13. Both themes at two sizes: header and terminal inside the sidebar, nothing overlapping.
+    # 12. Both themes at two sizes: header and terminal inside the sidebar, nothing overlapping.
     enter("colors")
     shows("black-on-white")
     h.click_control("editor")
@@ -295,6 +292,18 @@ def run(scope):
             layout(h, controls, width, height)
             h.capture(f"native-agent-terminal-{'dark' if dark else 'light'}-{width}x{height}.png", (width, height))
     h.results.append("Light and dark at 900×640 and 1440×960: tab, header, menu, Restart, status and terminal rows fit the sidebar without overlap")
+
+    # 13. Ctrl+Shift+V pastes the clipboard.
+    focus_terminal()
+    owner = clipboard("pasted from the clipboard")
+    try:
+        h.key("ctrl+shift+v")
+        enter("")
+        shows("you said: pasted from the clipboard")
+    finally:
+        owner.terminate()
+        owner.wait(timeout=5)
+    h.results.append("Ctrl+Shift+V pasted the clipboard into the agent")
 
     # 14. Quitting from the terminal ends the agent; the vault's choice survives a restart.
     focus_terminal()
