@@ -694,8 +694,9 @@ impl Tables {
                                             ui.fonts_mut(|fonts| {
                                                 fonts.layout_no_wrap(
                                                     buffer.as_str().into(),
-                                                    egui::FontId::proportional(
+                                                    egui::FontId::new(
                                                         crate::theme::document_size(ui, 18.0),
+                                                        crate::theme::fonts::text("regular"),
                                                     ),
                                                     ui.visuals().text_color(),
                                                 )
@@ -713,8 +714,9 @@ impl Tables {
                                     inner,
                                     TextEdit::singleline(&mut cell.text)
                                         .id(field_id)
-                                        .font(egui::FontId::proportional(
+                                        .font(egui::FontId::new(
                                             crate::theme::document_size(ui, 18.0),
+                                            crate::theme::fonts::text("regular"),
                                         ))
                                         .frame(egui::Frame::NONE)
                                         .margin(0)

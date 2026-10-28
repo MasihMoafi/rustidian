@@ -1305,7 +1305,10 @@ impl Editor {
                     .desired_rows(1)
                     .min_size(egui::vec2(0.0, minimum_height))
                     .frame(egui::Frame::NONE)
-                    .font(FontId::proportional(crate::theme::document_size(ui, 18.0)))
+                    .font(FontId::new(
+                        crate::theme::document_size(ui, 18.0),
+                        crate::theme::fonts::text("regular"),
+                    ))
                     .layouter(&mut layouter)
                     .event_filter(egui::EventFilter {
                         tab: true,
@@ -2510,9 +2513,9 @@ fn layout(
     } else {
         Vec::new()
     };
-    let bold = FontFamily::Name("bold".into());
-    let semibold = FontFamily::Name("semibold".into());
-    let italic = FontFamily::Name("italic".into());
+    let bold = crate::theme::fonts::text("bold");
+    let semibold = crate::theme::fonts::text("semibold");
+    let italic = crate::theme::fonts::text("italic");
     let mut character = 0;
     // Spans and code blocks are both in text order: walk the blocks once.
     let mut code_index = 0;
@@ -2578,7 +2581,7 @@ fn layout(
             } else if style.html.italic.unwrap_or(style.italic) {
                 italic.clone()
             } else {
-                FontFamily::Proportional
+                crate::theme::fonts::text("regular")
             };
             let color = if hidden {
                 Color32::TRANSPARENT

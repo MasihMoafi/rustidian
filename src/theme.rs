@@ -6,6 +6,8 @@ mod emoji_glyphs;
 #[path = "palette.rs"]
 pub mod palette;
 
+#[path = "fonts.rs"]
+pub mod fonts;
 #[path = "system_theme.rs"]
 mod system_theme;
 pub use system_theme::SystemTheme;
@@ -116,9 +118,9 @@ pub fn document_style(ui: &mut egui::Ui, size: u8) {
     ] {
         if let Some(font) = style.text_styles.get_mut(&kind) {
             font.family = match kind {
-                TextStyle::Heading => FontFamily::Name("bold".into()),
+                TextStyle::Heading => fonts::text("bold"),
                 TextStyle::Monospace => FontFamily::Monospace,
-                _ => FontFamily::Proportional,
+                _ => fonts::text("regular"),
             };
             font.size = if kind == TextStyle::Body {
                 f32::from(size)
@@ -340,6 +342,12 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
 }
 
 pub fn install_fonts(ctx: &egui::Context) {
+    set_fonts(ctx, &fonts::Fonts::default());
+}
+
+/// Install Rustidian's fonts with the chosen families in front; returns the
+/// chosen names that are not installed.
+pub fn set_fonts(ctx: &egui::Context, chosen: &fonts::Fonts) -> Vec<String> {
     let mut fonts = egui::FontDefinitions::default();
     for (name, bytes) in [
         (
@@ -413,11 +421,13 @@ pub fn install_fonts(ctx: &egui::Context) {
         )))
         .into(),
     );
+    let missing = fonts::apply(&mut fonts, chosen);
     for family in fonts.families.values_mut() {
         family.push("emoji".into());
     }
     ctx.set_fonts(fonts);
     emoji_glyphs::install(ctx);
+    missing
 }
 
 #[cfg(test)]

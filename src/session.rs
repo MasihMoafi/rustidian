@@ -35,6 +35,8 @@ struct Session {
     #[serde(default)]
     document_font_size: Option<u8>,
     #[serde(default)]
+    fonts: Option<crate::theme::fonts::Fonts>,
+    #[serde(default)]
     editor_preferences: Option<crate::app::settings_ui::EditorPreferences>,
     #[serde(default = "default_autosave")]
     autosave_enabled: bool,
@@ -148,6 +150,9 @@ impl NotesApp {
         if let Some(size) = session.document_font_size {
             self.document_font_size = size.clamp(10, 30);
         }
+        if let Some(fonts) = session.fonts {
+            self.fonts = fonts;
+        }
         if let Some(preferences) = session.editor_preferences {
             self.editor_preferences = preferences;
         }
@@ -208,6 +213,7 @@ impl NotesApp {
             right_tab: self.right_tab,
             ui_zoom: self.ui_zoom,
             document_font_size: Some(self.document_font_size),
+            fonts: Some(self.fonts.clone()),
             editor_preferences: Some(self.editor_preferences.clone()),
             autosave_enabled: self.autosave_enabled,
             note_aids: Some(self.note_aids.clone()),

@@ -1075,17 +1075,17 @@ fn inline_format(
     let family = if part.code {
         egui::FontFamily::Monospace
     } else if heading == 1 || part.html.bold == Some(true) {
-        egui::FontFamily::Name("bold".into())
+        crate::theme::fonts::text("bold")
     } else if part
         .html
         .bold
         .unwrap_or(part.bold || heading > 0 || table_header == Some(true))
     {
-        egui::FontFamily::Name("semibold".into())
+        crate::theme::fonts::text("semibold")
     } else if part.html.italic.unwrap_or(part.italic) {
-        egui::FontFamily::Name("italic".into())
+        crate::theme::fonts::text("italic")
     } else {
-        egui::FontFamily::Proportional
+        crate::theme::fonts::text("regular")
     };
     let color = if let Some([red, green, blue, alpha]) = part.html.color {
         egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha)
@@ -1721,7 +1721,7 @@ mod tests {
                 styled.background,
                 egui::Color32::from_rgba_unmultiplied(46, 204, 113, 102)
             );
-            assert_eq!(styled.font_id.family, egui::FontFamily::Name("bold".into()));
+            assert_eq!(styled.font_id.family, crate::theme::fonts::text("bold"));
             let plain = galley
                 .job
                 .sections

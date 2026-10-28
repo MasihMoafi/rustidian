@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent", "agent-real", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent", "agent-real", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -5861,6 +5861,54 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
                 results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
 
+            def font_family_checks():
+                nonlocal app,window
+                close_tabs()
+                note=fixture/"Font families.md"
+                original="# Font families\n\nA paragraph with **bold**, *italic* and `code`.\n\n```rust\nlet keep = 1;\n```\n"
+                note.write_text(original);open_note("Font families");command("Reading view")
+                def crop(name):
+                    left,top,right,bottom=map(round,control_bounds(name))
+                    xdo("mousemove","--sync","0","0");pause()
+                    return ImageGrab.grab(xdisplay=display).convert("RGB").crop((left,top,right,bottom))
+                def pick(setting,family):
+                    command("Open settings");click_control("settings-page:Appearance")
+                    # The font rows end the Appearance page: scroll to its end.
+                    left,top,right,bottom=control_bounds("settings-font-size")
+                    xdo("mousemove","--sync",str(round(left)),str(round(bottom)))
+                    for _ in range(10):xdo("click","5")
+                    pause();click_control(setting)
+                    assert control_bounds(setting+"-search")
+                    type_text(family.lower(),delay=1)
+                    click_control(setting+":"+("Default" if not family else family))
+                    capture(f"native-{setting}-{family or 'default'}.png".replace(" ","-"))
+                    key("Escape");pause()
+                def saved():
+                    states=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Font families.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                    assert len(states)==1;return json.loads(states[0].read_text())["fonts"]
+                paragraph,code,tab=crop("reading-block:1"),crop("reading-block:2"),crop("tab-full:Font families.md")
+                pick("settings-text-font","DejaVu Serif")
+                assert saved()["text"]=="DejaVu Serif"
+                assert crop("reading-block:1")!=paragraph,"The text font must redraw note text"
+                assert crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab,"The text font must leave code and the interface unchanged"
+                command("Source editing");capture("native-font-families-source.png");command("Reading view")
+                results.append("Choosing the installed DejaVu Serif as Text font redrew note text, saved it, and left code blocks and tabs pixel-identical")
+                pick("settings-monospace-font","Liberation Mono")
+                assert saved()["monospace"]=="Liberation Mono" and crop("reading-block:2")!=code
+                pick("settings-interface-font","DejaVu Serif")
+                assert saved()["interface"]=="DejaVu Serif" and crop("tab-full:Font families.md")!=tab
+                results.append("Monospace and Interface fonts each redrew their own text and were saved")
+                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window();title_contains("Font families");command("Reading view")
+                assert saved()=={"interface":"DejaVu Serif","text":"DejaVu Serif","monospace":"Liberation Mono"}
+                assert crop("reading-block:1")!=paragraph and crop("reading-block:2")!=code
+                results.append("A restart restored all three fonts")
+                for setting in ("settings-text-font","settings-monospace-font","settings-interface-font"):pick(setting,"")
+                assert saved()=={"interface":"","text":"","monospace":""}
+                assert crop("reading-block:1")==paragraph and crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab
+                assert note.read_text()==original
+                results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
+
             def tab_drag_checks():
                 nonlocal app, window
                 close_tabs()
@@ -8353,6 +8401,11 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"font-controls"}))
                 return
+            if args.section == "font-families":
+                font_family_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"font-families"}))
+                return
             if args.section == "visual-controls":
                 visual_controls_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -8724,6 +8777,7 @@ def main():
                 tab_drag_checks,
                 settings_checks,
                 font_controls_checks,
+                font_family_checks,
                 workspace_checks,
                 sidebar_boundary_checks,
                 palette_queue_checks,

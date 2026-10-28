@@ -276,6 +276,6 @@ jobs:
       - name: Install package-check tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends xvfb xdotool xclip x11-utils x11-xserver-utils python3-pil python3-xlib desktop-file-utils xdg-utils libgl1-mesa-dri
+          sudo apt-get install -y --no-install-recommends xvfb xdotool xclip x11-utils x11-xserver-utils python3-pil python3-xlib desktop-file-utils xdg-utils libgl1-mesa-dri fontconfig fonts-dejavu-core fonts-liberation
       - name: Publish the verified installers directly from GitHub
         run: python3 scripts/publish-checked-release.py --run "$VERIFIED_RUN"

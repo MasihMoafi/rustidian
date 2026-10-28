@@ -81,7 +81,7 @@ impl Page {
     fn matches(self, query: &str) -> bool {
         let terms = match self {
             Self::Appearance => {
-                "appearance base color scheme theme system dark light font text size"
+                "appearance base color scheme theme system dark light font text size interface monospace family"
             }
             Self::Interface => "interface zoom",
             Self::Editor => {
@@ -186,6 +186,7 @@ impl NotesApp {
             self.palette,
             self.ui_zoom,
             self.document_font_size,
+            self.fonts.clone(),
             self.editor_preferences.clone(),
             self.autosave_enabled,
             self.note_aids.clone(),
@@ -340,6 +341,40 @@ impl NotesApp {
                                         response.changed()
                                     },
                                 );
+                                for (title, description, id, value, mono) in [
+                                    (
+                                        "Interface font",
+                                        "Font for menus, sidebars and dialogs.",
+                                        "settings-interface-font",
+                                        &mut self.fonts.interface,
+                                        false,
+                                    ),
+                                    (
+                                        "Text font",
+                                        "Font for editing and reading views.",
+                                        "settings-text-font",
+                                        &mut self.fonts.text,
+                                        false,
+                                    ),
+                                    (
+                                        "Monospace font",
+                                        "Font for code blocks and inline code.",
+                                        "settings-monospace-font",
+                                        &mut self.fonts.monospace,
+                                        true,
+                                    ),
+                                ] {
+                                    ui.separator();
+                                    let missing = self.missing_fonts.iter().any(|name| name == &*value);
+                                    let description = if missing {
+                                        format!("{value} is not installed; the default font is used.")
+                                    } else {
+                                        description.to_owned()
+                                    };
+                                    changed |= row(ui, title, &description, |ui| {
+                                        font_choice(ui, id, value, mono)
+                                    });
+                                }
                             }
                             Page::Interface => {
                                 changed |= row(
@@ -562,6 +597,9 @@ impl NotesApp {
             });
         });
         if changed {
+            if self.fonts != before.5 {
+                self.missing_fonts = theme::set_fonts(ctx, &self.fonts);
+            }
             theme::palette::select(ctx, self.palette);
             theme::apply_appearance(ctx, self.appearance);
             self.dark = ctx.theme() == egui::Theme::Dark;
@@ -572,6 +610,7 @@ impl NotesApp {
                     self.palette,
                     self.ui_zoom,
                     self.document_font_size,
+                    self.fonts,
                     self.editor_preferences,
                     self.autosave_enabled,
                     self.note_aids,
@@ -580,6 +619,7 @@ impl NotesApp {
                     self.confirm_trash,
                 ) = before;
                 self.error = Some(format!("Settings weren’t saved: {error}"));
+                self.missing_fonts = theme::set_fonts(ctx, &self.fonts);
                 theme::palette::select(ctx, self.palette);
                 theme::apply_appearance(ctx, self.appearance);
             } else {
@@ -618,6 +658,59 @@ fn row(
         .inner;
     ui.add_space(12.0);
     changed
+}
+
+/// An installed font family, or the default (empty), with a search field.
+fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> bool {
+    let before = value.clone();
+    let search_id = egui::Id::new(id).with("search");
+    let response = egui::ComboBox::from_id_salt(id)
+        .icon(theme::combo_chevron)
+        .width(180.0)
+        .height(320.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .selected_text(if value.is_empty() { "Default" } else { value.as_str() })
+        .show_ui(ui, |ui| {
+            theme::menu_style(ui);
+            // Each opening starts with an empty, focused search.
+            let opened = ui.data_mut(|data| data.remove_temp::<bool>(search_id.with("opened"))).is_some();
+            let mut search: String = if opened {
+                String::new()
+            } else {
+                ui.data(|data| data.get_temp(search_id)).unwrap_or_default()
+            };
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut search)
+                    .hint_text("Search fonts")
+                    .desired_width(f32::INFINITY),
+            );
+            if opened {
+                field.request_focus();
+            }
+            crate::ui_probe::record(ui.ctx(), format!("{id}-search"), field.rect);
+            ui.data_mut(|data| data.insert_temp(search_id, search.clone()));
+            let search = search.to_lowercase();
+            let names = std::iter::once("").chain(
+                theme::fonts::installed(mono)
+                    .iter()
+                    .map(String::as_str)
+                    .filter(|name| name.to_lowercase().contains(&search)),
+            );
+            for name in names {
+                let label = if name.is_empty() { "Default" } else { name };
+                let response = ui.selectable_label(*value == name, label);
+                crate::ui_probe::record(ui.ctx(), format!("{id}:{label}"), response.rect);
+                if response.clicked() {
+                    *value = name.to_owned();
+                    ui.close();
+                }
+            }
+        });
+    if response.response.clicked() {
+        ui.data_mut(|data| data.insert_temp(search_id.with("opened"), true));
+    }
+    crate::ui_probe::record(ui.ctx(), id, response.response.rect);
+    *value != before
 }
 
 fn toggle(ui: &mut egui::Ui, title: &str, description: &str, id: &str, value: &mut bool) -> bool {

@@ -140,6 +140,9 @@ pub struct NotesApp {
     pub(crate) right_tab: u8,
     pub(crate) ui_zoom: f32,
     pub(crate) document_font_size: u8,
+    pub(crate) fonts: theme::fonts::Fonts,
+    /// Chosen font names that are not installed, shown under the font settings.
+    pub(crate) missing_fonts: Vec<String>,
     pub(crate) editor_preferences: settings_ui::EditorPreferences,
     pub(crate) autosave_enabled: bool,
     autosave: rustidian::autosave::Writer,
@@ -235,6 +238,8 @@ impl NotesApp {
             right_tab: 0,
             ui_zoom: 1.0,
             document_font_size: theme::DEFAULT_DOCUMENT_FONT_SIZE,
+            fonts: Default::default(),
+            missing_fonts: Vec::new(),
             editor_preferences: Default::default(),
             autosave_enabled: true,
             autosave: Default::default(),
@@ -576,7 +581,7 @@ impl NotesApp {
                         self.bookmarks = Default::default();
                         self.right_tab = 0;
                         self.ui_zoom = 1.0;
-                        self.document_font_size = rustidian::paths::read_obsidian::<
+                        let appearance = rustidian::paths::read_obsidian::<
                             serde_json::Value,
                         >(
                             &vault.root, "appearance.json"
@@ -584,7 +589,9 @@ impl NotesApp {
                         .unwrap_or_else(|error| {
                             self.error = Some(error);
                             Default::default()
-                        })
+                        });
+                        self.fonts = theme::fonts::Fonts::from_obsidian(&appearance);
+                        self.document_font_size = appearance
                         .get("baseFontSize")
                         .and_then(serde_json::Value::as_u64)
                         .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
@@ -629,9 +636,9 @@ impl NotesApp {
                         }
                         self.vault = Some(vault);
                         self.vault_manager.close();
-                        if !self.restore_session(ctx)
-                            && let Some(path) = first
-                        {
+                        let restored = self.restore_session(ctx);
+                        self.missing_fonts = theme::set_fonts(ctx, &self.fonts);
+                        if !restored && let Some(path) = first {
                             self.open_note(&path);
                         }
                         if let Some(path) = self.startup_document.take() {
