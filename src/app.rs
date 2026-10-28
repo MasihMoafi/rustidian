@@ -581,10 +581,9 @@ impl NotesApp {
                         self.bookmarks = Default::default();
                         self.right_tab = 0;
                         self.ui_zoom = 1.0;
-                        let appearance = rustidian::paths::read_obsidian::<
-                            serde_json::Value,
-                        >(
-                            &vault.root, "appearance.json"
+                        let appearance = rustidian::paths::read_obsidian::<serde_json::Value>(
+                            &vault.root,
+                            "appearance.json",
                         )
                         .unwrap_or_else(|error| {
                             self.error = Some(error);
@@ -592,11 +591,11 @@ impl NotesApp {
                         });
                         self.fonts = theme::fonts::Fonts::from_obsidian(&appearance);
                         self.document_font_size = appearance
-                        .get("baseFontSize")
-                        .and_then(serde_json::Value::as_u64)
-                        .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
-                            size.clamp(10, 30) as u8
-                        });
+                            .get("baseFontSize")
+                            .and_then(serde_json::Value::as_u64)
+                            .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
+                                size.clamp(10, 30) as u8
+                            });
                         self.editor_preferences = Default::default();
                         self.autosave_enabled = true;
                         ctx.set_zoom_factor(1.0);

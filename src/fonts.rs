@@ -82,7 +82,11 @@ fn file(family: &str, face: &str) -> Option<egui::FontData> {
         _ => "",
     };
     let output = std::process::Command::new("fc-match")
-        .args(["-f", "%{file}\n%{index}\n%{family}", &format!("{family}{style}")])
+        .args([
+            "-f",
+            "%{file}\n%{index}\n%{family}",
+            &format!("{family}{style}"),
+        ])
         .output()
         .ok()?;
     let output = String::from_utf8_lossy(&output.stdout);

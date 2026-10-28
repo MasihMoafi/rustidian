@@ -669,11 +669,17 @@ fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> b
         .width(180.0)
         .height(320.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .selected_text(if value.is_empty() { "Default" } else { value.as_str() })
+        .selected_text(if value.is_empty() {
+            "Default"
+        } else {
+            value.as_str()
+        })
         .show_ui(ui, |ui| {
             theme::menu_style(ui);
             // Each opening starts with an empty, focused search.
-            let opened = ui.data_mut(|data| data.remove_temp::<bool>(search_id.with("opened"))).is_some();
+            let opened = ui
+                .data_mut(|data| data.remove_temp::<bool>(search_id.with("opened")))
+                .is_some();
             let mut search: String = if opened {
                 String::new()
             } else {
