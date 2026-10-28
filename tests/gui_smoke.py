@@ -4883,7 +4883,12 @@ def main():
                                                  capture_output=True, text=True).stdout.split()
                 xdo("windowunmap", "--sync", window)
                 assert not visible()
-                assert launch() == 0 and len(visible()) == 1, "A launch must bring back a window that is not shown"
+                assert launch() == 0
+                # The window answers before its next frame applies the re-show.
+                deadline = time.monotonic() + 3
+                while len(visible()) != 1:
+                    assert time.monotonic() < deadline, "A launch must bring back a window that is not shown"
+                    time.sleep(.05)
                 app.send_signal(signal.SIGSTOP)
                 try:
                     second = subprocess.Popen([str(ROOT / args.binary)], env=environment, cwd=base,
