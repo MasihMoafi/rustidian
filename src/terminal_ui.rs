@@ -843,9 +843,11 @@ fn run(
         return (last + 1, text, true);
     }
     if first.is_wide() || !first.contents().is_ascii() {
-        // Claude's tool-output corner is missing from the fonts; └ looks the same.
-        let text = contents(first).replace('\u{23BF}', "\u{2514}");
-        return (col + 1 + u16::from(first.is_wide()), text, false);
+        return (
+            col + 1 + u16::from(first.is_wide()),
+            substitute(&contents(first)),
+            false,
+        );
     }
     let mut end = col;
     let mut text = String::new();
@@ -857,6 +859,14 @@ fn run(
         end += 1;
     }
     (end.max(col + 1), text, false)
+}
+
+/// Claude's tool-output corner ⎿ is missing from the fonts and its bullet ⏺
+/// would come from the colour emoji font, losing its status colour: draw the
+/// box-drawing corner and the circle they look like.
+fn substitute(text: &str) -> String {
+    text.replace('\u{23BF}', "\u{2514}")
+        .replace('\u{23FA}', "\u{25CF}")
 }
 
 /// The dots, as (column, row) of a 2×4 grid, of a braille pattern: most
@@ -1171,6 +1181,12 @@ mod tests {
         assert_eq!(at(3), (12, "سلام دنیا".to_owned(), true));
         let (end, text, right_to_left) = at(12);
         assert_eq!((end, text.trim_end(), right_to_left), (20, " cd", false));
+    }
+
+    #[test]
+    fn glyphs_missing_from_the_fonts_take_their_look_alikes() {
+        assert_eq!(substitute("  ⎿  Read 3 files"), "  └  Read 3 files");
+        assert_eq!(substitute("⏺ Done"), "● Done");
     }
 
     #[test]
