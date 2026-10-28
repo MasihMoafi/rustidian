@@ -13,14 +13,22 @@ use std::{
     time::Duration,
 };
 
-/// A later launch's file or folder, or `None` to bring the window forward.
-pub type Request = Option<PathBuf>;
+/// A later launch's file or folder (`None` brings the window forward). The
+/// window answers on `shown` once it has drawn the request.
+pub struct Request {
+    pub path: Option<PathBuf>,
+    pub shown: mpsc::Sender<()>,
+}
+
+/// How long a running instance has to draw a request. One that cannot — its
+/// window is gone or never appeared — must not swallow the launch.
+const SHOWN_WITHIN: Duration = Duration::from_secs(2);
 
 fn socket() -> Option<PathBuf> {
     rustidian::vaults::location().map(|catalog| catalog.with_file_name("instance.sock"))
 }
 
-/// Give `input` to the running window; returns whether one accepted it.
+/// Give `input` to the running window; returns whether one drew it.
 pub fn hand_off(input: Option<&Path>) -> bool {
     let Some(mut stream) = socket().and_then(|path| UnixStream::connect(path).ok()) else {
         return false;
@@ -65,13 +73,15 @@ impl Instance {
                     {
                         continue;
                     }
-                    let request =
+                    let path =
                         (!message.is_empty()).then(|| PathBuf::from(OsStr::from_bytes(&message)));
-                    if sender.send(request).is_err() {
+                    let (shown, drawn) = mpsc::channel();
+                    if sender.send(Request { path, shown }).is_err() {
                         break;
                     }
                     ctx.request_repaint();
-                    let _ = (&stream).write_all(&[1]);
+                    let reply = u8::from(drawn.recv_timeout(SHOWN_WITHIN).is_ok());
+                    let _ = (&stream).write_all(&[reply]);
                 }
             });
         receiver

@@ -118,7 +118,8 @@ pub struct NotesApp {
     pub(crate) ctx: egui::Context,
     loading: Option<Loading>,
     /// Files and folders from later launches; see `instance`.
-    pub(crate) launches: Option<Receiver<Option<PathBuf>>>,
+    #[cfg(unix)]
+    pub(crate) launches: Option<Receiver<crate::instance::Request>>,
     watcher: Option<SharedWatch>,
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
     watch_overflow: Arc<AtomicBool>,
@@ -216,6 +217,7 @@ impl NotesApp {
             window_title: String::new(),
             ctx: cc.egui_ctx.clone(),
             loading: None,
+            #[cfg(unix)]
             launches: None,
             watcher: None,
             watch_events: None,
@@ -4850,15 +4852,19 @@ impl eframe::App for NotesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let frame_started = Instant::now();
         let ctx = ui.ctx().clone();
+        #[cfg(unix)]
         let launches: Vec<_> = self
             .launches
             .as_ref()
             .map(|launches| launches.try_iter().collect())
             .unwrap_or_default();
-        for request in launches {
+        #[cfg(unix)]
+        for crate::instance::Request { path, shown } in launches {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            if let Some(path) = request {
+            let _ = shown.send(());
+            if let Some(path) = path {
                 let kind = if path.is_dir() {
                     rustidian::native_picker::Kind::Folder
                 } else {

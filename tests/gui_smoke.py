@@ -4877,6 +4877,24 @@ def main():
                 assert launch(note.relative_to(base)) == 0, "Opening a file from a second launch failed"
                 title_contains(note.stem)
                 results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there")
+                # 28 Oct: a window that had vanished kept the instance socket, so every launch handed over to it and nothing appeared.
+                visible = lambda: xdo("search", "--onlyvisible", "--name", "Rustidian").split()
+                xdo("windowunmap", "--sync", window)
+                assert not visible()
+                assert launch() == 0 and len(visible()) == 1, "A launch must bring back a window that is not shown"
+                app.send_signal(signal.SIGSTOP)
+                try:
+                    second = subprocess.Popen([str(ROOT / args.binary)], env=environment, cwd=base,
+                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    deadline = time.monotonic() + 15
+                    while len(visible()) < 2:
+                        assert second.poll() is None, "A launch must not hand over to an instance that cannot draw"
+                        assert time.monotonic() < deadline, "A launch beside a stalled instance must open its own window"
+                        time.sleep(.1)
+                    second.terminate(); second.wait(timeout=10)
+                finally:
+                    app.send_signal(signal.SIGCONT)
+                results.append("A launch re-showed a hidden window, and beside an instance that could not draw it opened its own window")
                 # click_control would assert the app still runs after the click.
                 left, top, right, bottom = control_bounds("window:Close window")
                 xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
