@@ -5886,10 +5886,10 @@ def main():
                 def saved():
                     states=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Font families.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                     assert len(states)==1;return json.loads(states[0].read_text())["fonts"]
-                paragraph,code,tab=crop("reading-block:1"),crop("reading-block:2"),crop("tab-full:Font families.md")
+                paragraph,code,tab,title=crop("reading-block:1"),crop("reading-block:2"),crop("tab-full:Font families.md"),crop("note-title")
                 pick("settings-text-font","DejaVu Serif")
                 assert saved()["text"]=="DejaVu Serif"
-                assert crop("reading-block:1")!=paragraph,"The text font must redraw note text"
+                assert crop("reading-block:1")!=paragraph and crop("note-title")!=title,"The text font must redraw note text and the inline title"
                 assert crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab,"The text font must leave code and the interface unchanged"
                 command("Source editing");capture("native-font-families-source.png");command("Reading view")
                 results.append("Choosing the installed DejaVu Serif as Text font redrew note text, saved it, and left code blocks and tabs pixel-identical")
@@ -5905,7 +5905,7 @@ def main():
                 results.append("A restart restored all three fonts")
                 for setting in ("settings-text-font","settings-monospace-font","settings-interface-font"):pick(setting,"")
                 assert saved()=={"interface":"","text":"","monospace":""}
-                assert crop("reading-block:1")==paragraph and crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab
+                assert crop("reading-block:1")==paragraph and crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab and crop("note-title")==title
                 assert note.read_text()==original
                 results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
 
