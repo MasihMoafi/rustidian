@@ -287,6 +287,14 @@ def run(scope):
     h.results.append("Enter, Ctrl+Enter and Send on an empty or blank draft send nothing and show no error")
     assert h.control_bounds("tab-full:Agent", required=False) is None, "The Agent must not open as a phantom note tab"
     assert h.control_bounds("open-agent", required=False) is None, "The tab strip must not carry an Agent button"
+    # 28 Oct: "I don't see an agent button." The top-right Agent toggle shows and hides this sidebar tab only.
+    h.click_control("toggle-agent")
+    wait(lambda: h.control_bounds("agent-input", required=False) is None, "The Agent toggle must hide the open Agent")
+    h.click_control("toggle-agent")
+    h.control_bounds("agent-input")
+    assert h.control_bounds("tab-full:Agent", required=False) is None, "The Agent toggle must not open a note tab"
+    h.capture("native-agent-toggle.png")
+    h.results.append("The top-right Agent button hides the open Agent and shows it again as the right sidebar's tab, without a note tab")
     assert h.control_bounds("panel:outline") and h.control_bounds("panel:agent"), "Agent must be a right-sidebar tab beside Outline"
     assert metric("agent-has-context") == 1 and metric("agent-access-full") == 1
     initial_dark = metric("appearance-dark") == 1

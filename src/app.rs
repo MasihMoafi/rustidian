@@ -3466,6 +3466,24 @@ impl NotesApp {
                         if toggle.clicked() {
                             self.show_right = !self.show_right;
                         }
+                        let showing = self.show_right && self.right_tab == 3;
+                        let agent = ui
+                            .add_enabled_ui(self.vault.is_some(), |ui| {
+                                ui.selectable_label(showing, RichText::new("Agent").size(13.0))
+                                    .on_hover_text(
+                                        "Ask the agent about your notes or have it edit them",
+                                    )
+                                    .on_disabled_hover_text("Open a vault first.")
+                            })
+                            .inner;
+                        crate::ui_probe::record(ui.ctx(), "toggle-agent", agent.rect);
+                        if agent.clicked() {
+                            if showing {
+                                self.show_right = false;
+                            } else {
+                                self.open_agent();
+                            }
+                        }
                     });
                 });
             });
