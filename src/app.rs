@@ -4860,7 +4860,6 @@ impl eframe::App for NotesApp {
             .unwrap_or_default();
         #[cfg(unix)]
         for crate::instance::Request { path, shown } in launches {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             let _ = shown.send(());

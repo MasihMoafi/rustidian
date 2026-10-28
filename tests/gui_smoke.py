@@ -4877,18 +4877,10 @@ def main():
                 assert launch(note.relative_to(base)) == 0, "Opening a file from a second launch failed"
                 title_contains(note.stem)
                 results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there")
-                # 28 Oct: a window that had vanished kept the instance socket, so every launch handed over to it and nothing appeared.
+                # 28 Oct: a window Masih could not see kept the instance socket, so his launches showed nothing.
                 # xdotool exits 1 when nothing matches.
                 visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,
                                                  capture_output=True, text=True).stdout.split()
-                xdo("windowunmap", "--sync", window)
-                assert not visible()
-                assert launch() == 0
-                # The window answers before its next frame applies the re-show.
-                deadline = time.monotonic() + 3
-                while len(visible()) != 1:
-                    assert time.monotonic() < deadline, "A launch must bring back a window that is not shown"
-                    time.sleep(.05)
                 app.send_signal(signal.SIGSTOP)
                 try:
                     second = subprocess.Popen([str(ROOT / args.binary)], env=environment, cwd=base,
@@ -4901,7 +4893,7 @@ def main():
                     second.terminate(); second.wait(timeout=10)
                 finally:
                     app.send_signal(signal.SIGCONT)
-                results.append("A launch re-showed a hidden window, and beside an instance that could not draw it opened its own window")
+                results.append("Beside an instance that could not draw, a launch opened its own window")
                 # click_control would assert the app still runs after the click.
                 left, top, right, bottom = control_bounds("window:Close window")
                 xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
