@@ -312,52 +312,45 @@ impl Properties {
                                             egui::Margin::ZERO
                                         })
                                         .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                let width = ui
-                                                    .fonts_mut(|fonts| {
-                                                        fonts
-                                                            .layout_no_wrap(
-                                                                value.clone(),
-                                                                FontId::proportional(
-                                                                    crate::theme::document_size(
-                                                                        ui, 18.0,
-                                                                    ),
+                                            let width = ui
+                                                .fonts_mut(|fonts| {
+                                                    fonts
+                                                        .layout_no_wrap(
+                                                            value.clone(),
+                                                            FontId::proportional(
+                                                                crate::theme::document_size(
+                                                                    ui, 18.0,
                                                                 ),
-                                                                ui.visuals().text_color(),
-                                                            )
-                                                            .size()
-                                                            .x
-                                                            + 4.0
-                                                    })
-                                                    .clamp(24.0, value_width.max(24.0));
-                                                let mut input = TextEdit::singleline(value)
-                                                    .id_salt((
-                                                        &tab.document.path,
-                                                        &field.name,
-                                                        index,
-                                                    ))
-                                                    .font(FontId::proportional(
-                                                        crate::theme::document_size(ui, 18.0),
-                                                    ))
-                                                    .frame(egui::Frame::NONE)
-                                                    .desired_width(width);
-                                                if tags {
-                                                    input =
-                                                        input.text_color(crate::theme::accent(ui));
-                                                }
-                                                edited |= ui.add(input).changed();
-                                                if ui
-                                                    .add(
-                                                        egui::Button::new(
-                                                            RichText::new("×").size(14.0).weak(),
+                                                            ),
+                                                            ui.visuals().text_color(),
                                                         )
-                                                        .frame_when_inactive(false),
+                                                        .size()
+                                                        .x
+                                                        + 4.0
+                                                })
+                                                .clamp(24.0, value_width.max(24.0));
+                                            let mut input = TextEdit::singleline(value)
+                                                .id_salt((&tab.document.path, &field.name, index))
+                                                .font(FontId::proportional(
+                                                    crate::theme::document_size(ui, 18.0),
+                                                ))
+                                                .frame(egui::Frame::NONE)
+                                                .desired_width(width);
+                                            if tags {
+                                                input = input.text_color(crate::theme::accent(ui));
+                                            }
+                                            edited |= ui.add(input).changed();
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new("×").size(14.0).weak(),
                                                     )
-                                                    .clicked()
-                                                {
-                                                    remove = Some(index);
-                                                }
-                                            });
+                                                    .frame_when_inactive(false),
+                                                )
+                                                .clicked()
+                                            {
+                                                remove = Some(index);
+                                            }
                                         });
                                     crate::ui_probe::record(
                                         ui.ctx(),
