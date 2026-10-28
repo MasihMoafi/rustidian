@@ -4893,6 +4893,9 @@ def main():
                     second.terminate(); second.wait(timeout=10)
                 finally:
                     app.send_signal(signal.SIGCONT)
+                # The second window wrote its own control bounds; wait for the first window's.
+                (base / "ui-probe.json").unlink(missing_ok=True)
+                xdo("mousemove", "--sync", "700", "500")
                 results.append("Beside an instance that could not draw, a launch opened its own window")
                 # click_control would assert the app still runs after the click.
                 left, top, right, bottom = control_bounds("window:Close window")
