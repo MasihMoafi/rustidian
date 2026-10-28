@@ -4883,7 +4883,7 @@ def main():
                                                  capture_output=True, text=True).stdout.split()
                 app.send_signal(signal.SIGSTOP)
                 try:
-                    second = subprocess.Popen([str(ROOT / args.binary)], env=environment, cwd=base,
+                    second = subprocess.Popen([str(ROOT / args.binary), str(fixture)], env=environment, cwd=base,
                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     deadline = time.monotonic() + 15
                     while len(visible()) < 2:
