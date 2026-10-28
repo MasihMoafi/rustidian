@@ -4878,7 +4878,9 @@ def main():
                 title_contains(note.stem)
                 results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there")
                 # 28 Oct: a window that had vanished kept the instance socket, so every launch handed over to it and nothing appeared.
-                visible = lambda: xdo("search", "--onlyvisible", "--name", "Rustidian").split()
+                # xdotool exits 1 when nothing matches.
+                visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,
+                                                 capture_output=True, text=True).stdout.split()
                 xdo("windowunmap", "--sync", window)
                 assert not visible()
                 assert launch() == 0 and len(visible()) == 1, "A launch must bring back a window that is not shown"
