@@ -141,6 +141,29 @@ fn registered_vaults_keep_nested_files_and_do_not_match_neighbouring_names() {
 }
 
 #[test]
+fn a_registered_vault_enclosing_the_default_vault_never_claims_outside_files() {
+    // Masih's list holds ~/Desktop (92,095 folders) beside the default ~/Desktop/o; a
+    // document under Desktop but outside o opens with its own folder, not all of Desktop.
+    let base = tempfile::tempdir().unwrap();
+    let desktop = base.path().join("Desktop");
+    let default = desktop.join("o");
+    let legal = desktop.join("tmp/legal");
+    fs::create_dir_all(&default).unwrap();
+    fs::create_dir_all(&legal).unwrap();
+    let file = legal.join("brief.md");
+    fs::write(&file, "# Brief\n").unwrap();
+    let roots = [desktop.clone(), default.clone()];
+    let (root, document) = resolve_input(&file, Some(&default), &roots).unwrap();
+    assert_eq!(root, legal.canonicalize().unwrap());
+    assert_eq!(document.as_deref(), Some(Path::new("brief.md")));
+    let inside = default.join("Note.md");
+    fs::write(&inside, "# Note\n").unwrap();
+    let (root, document) = resolve_input(&inside, Some(&default), &roots).unwrap();
+    assert_eq!(root, default.canonicalize().unwrap());
+    assert_eq!(document.as_deref(), Some(Path::new("Note.md")));
+}
+
+#[test]
 fn system_open_commands_are_available_without_a_vault_and_preserve_quick_switcher() {
     for name in [commands::OPEN_FILE, commands::OPEN_FOLDER] {
         assert_eq!(commands::ranked(name, Scope::Global)[0].name, name);
