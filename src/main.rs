@@ -78,18 +78,28 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    // Set once the window exists; launches handed over before then wait in
+    // the queue for its first pass.
     #[cfg(unix)]
-    let instance = {
+    let ui_context = std::sync::Arc::<std::sync::OnceLock<eframe::egui::Context>>::default();
+    #[cfg(unix)]
+    let launches = {
         let requested = first
             .as_ref()
             .map(|input| std::path::absolute(input).unwrap_or_else(|_| PathBuf::from(input)));
-        if instance::hand_off(requested.as_deref()) {
-            return Ok(());
+        match instance::launch(requested.as_deref()) {
+            instance::Launch::HandedOff => return Ok(()),
+            instance::Launch::Serve(instance) => {
+                let ui_context = ui_context.clone();
+                Some(instance.serve(move || {
+                    if let Some(ctx) = ui_context.get() {
+                        ctx.request_repaint();
+                    }
+                }))
+            }
+            instance::Launch::Alone => None,
         }
-        instance::Instance::claim()
     };
-    #[cfg(unix)]
-    let socket = instance.as_ref().map(|instance| instance.path.clone());
     let default_vault = rustidian::vaults::default_vault();
     let input = first
         .map(PathBuf::from)
@@ -128,18 +138,19 @@ fn main() -> eframe::Result {
         rustidian::APP_NAME,
         options,
         Box::new(move |cc| {
+            window::close_on_signals(cc.egui_ctx.clone());
+            #[cfg(unix)]
+            let _ = ui_context.set(cc.egui_ctx.clone());
             let mut app = app::NotesApp::new(cc, &root, started, startup_document);
             #[cfg(unix)]
             {
-                app.launches = instance.map(|instance| instance.serve(cc.egui_ctx.clone()));
+                app.launches = launches;
             }
             Ok(Box::new(app))
         }),
     );
-    #[cfg(unix)]
-    if let Some(socket) = socket {
-        let _ = std::fs::remove_file(socket);
-    }
+    // The socket file stays: the next launch finds nobody listening on it and
+    // replaces it. Removing it here could remove a newer window's socket.
     // The window is gone; an agent that ignores SIGTERM still gets its SIGKILL.
     rustidian::terminal::wait_for_closing();
     result

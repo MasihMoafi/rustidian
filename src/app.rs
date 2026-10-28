@@ -130,6 +130,12 @@ pub struct NotesApp {
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
     watch_overflow: Arc<AtomicBool>,
     refresh_due: Option<Instant>,
+    /// Files the watcher reported since the last refresh. Rustidian's own
+    /// saves are among them; the refresh re-indexes only if one holds
+    /// something the vault does not already have.
+    refresh_paths: std::collections::HashSet<PathBuf>,
+    /// Events were lost or folders gained watches: the refresh must re-index.
+    refresh_required: bool,
     loading_root: Option<PathBuf>,
     startup_document: Option<PathBuf>,
     find: crate::editor_ui::Find,
@@ -183,6 +189,7 @@ impl NotesApp {
         startup_document: Option<PathBuf>,
     ) -> Self {
         theme::apply_appearance(&cc.egui_ctx, theme::Appearance::System);
+        crate::window::disable_builtin_quit(&cc.egui_ctx);
         theme::install_fonts(&cc.egui_ctx);
         theme::install_icons(&cc.egui_ctx);
         crate::syntax::prepare();
@@ -230,6 +237,8 @@ impl NotesApp {
             watch_events: None,
             watch_overflow: Arc::default(),
             refresh_due: None,
+            refresh_paths: Default::default(),
+            refresh_required: false,
             loading_root: None,
             startup_document,
             find: Default::default(),
@@ -452,6 +461,7 @@ impl NotesApp {
         let finished = self.autosave.finished();
         self.commit_saves(finished);
         if self.watch_overflow.swap(false, Ordering::Relaxed) {
+            self.refresh_required = true;
             self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
         }
         if let Some(events) = &self.watch_events {
@@ -500,6 +510,7 @@ impl NotesApp {
                         {
                             ctx.forget_image(&format!("file://{}", path.display()));
                         }
+                        self.refresh_paths.extend(event.paths);
                         self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
                     }
                     Err(error) => self.error = Some(rustidian::watcher::describe(&error)),
@@ -509,8 +520,12 @@ impl NotesApp {
         }
         if self.loading.is_none() && self.refresh_due.is_some_and(|due| Instant::now() >= due) {
             self.refresh_due = None;
-            if let Some(vault) = &self.vault {
-                self.queue_index(vault.root.clone());
+            let paths = std::mem::take(&mut self.refresh_paths);
+            let required = std::mem::take(&mut self.refresh_required);
+            if let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone())
+                && (required || !paths.iter().all(|path| self.holds_known_text(path)))
+            {
+                self.queue_index(root);
             }
         }
         let result = self
@@ -629,6 +644,8 @@ impl NotesApp {
                         self.active = 0;
                         self.search.clear();
                         self.refresh_due = None;
+                        self.refresh_paths.clear();
+                        self.refresh_required = false;
                         self.tree = tree;
                         self.files = files;
                         self.search_cache.invalidate();
@@ -690,6 +707,7 @@ impl NotesApp {
                     if watched {
                         // Catch changes between the scan and completed registration once;
                         // the follow-up scan reuses these watches.
+                        self.refresh_required = true;
                         self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
                     }
                     self.cache = CommonMarkCache::default();
@@ -727,10 +745,40 @@ impl NotesApp {
         for index in saves {
             self.autosave(index);
         }
-        if let Some(due) = self.refresh_due {
+        // A running index wakes the window when it ends; repainting until then
+        // would redraw an unchanged window every frame.
+        if let Some(due) = self.refresh_due
+            && self.loading.is_none()
+        {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
         }
         self.capture_recovery(ctx);
+    }
+
+    /// Whether a file the watcher reported holds what Rustidian already has
+    /// for it, as after its own save; anything else needs a re-index.
+    fn holds_known_text(&self, path: &Path) -> bool {
+        let Some(vault) = &self.vault else {
+            return false;
+        };
+        let Ok(relative) = path.strip_prefix(&vault.root) else {
+            return false;
+        };
+        if rustidian::vault::is_ignored_path(relative) {
+            return true;
+        }
+        let known = vault
+            .notes
+            .iter()
+            .find(|note| note.path == relative)
+            .map(|note| note.text.as_str())
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|tab| tab.document.path == relative)
+                    .and_then(|tab| tab.document.saved_text())
+            });
+        known.is_some_and(|text| std::fs::read(path).is_ok_and(|bytes| bytes == text.as_bytes()))
     }
 
     fn capture_recovery(&mut self, ctx: &egui::Context) {
@@ -1444,11 +1492,7 @@ impl NotesApp {
         match pending {
             Pending::CloseTab(index) => self.close_tab(index),
             Pending::CloseOtherTabs(keep) => self.close_other_tabs(keep),
-            Pending::Quit => {
-                self.persist_session();
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+            Pending::Quit => self.quit(ctx, "unsaved-changes dialog"),
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
             Pending::OpenVault(root, document) => {
                 self.startup_document = document;
@@ -1459,17 +1503,33 @@ impl NotesApp {
         }
     }
 
-    fn shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.input(|input| input.viewport().close_requested()) {
-            self.open_picker.cancel();
-        }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.dirty() {
+    /// Close now, unsaved edits included: the user chose that in the
+    /// unsaved-changes dialog, or a signal asked.
+    fn quit(&mut self, ctx: &egui::Context, source: &'static str) {
+        self.persist_session();
+        self.allow_close = true;
+        crate::window::close(ctx, source);
+    }
+
+    /// A close request from any source: Ctrl+Q, the title bar, the window
+    /// manager or a signal. Unsaved edits first ask; a close that goes ahead
+    /// prints `close: <source>`.
+    fn on_close_request(&mut self, ctx: &egui::Context) {
+        let source = crate::window::take_close_source(ctx);
+        self.open_picker.cancel();
+        let dirty = self.dirty();
+        if !dirty {
             self.persist_session();
         }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.dirty() {
+        if dirty && !self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
+        } else {
+            eprintln!("close: {source}");
         }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
         if self.pending.is_some() {
             return;
         }
@@ -1547,8 +1607,8 @@ impl NotesApp {
                 self.step_tab(false);
             }
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Q)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        if crate::window::quit_key(ctx) {
+            crate::window::close(ctx, "ctrl+q");
         }
         if ctx
             .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::T))
@@ -4873,9 +4933,9 @@ impl eframe::App for NotesApp {
         self.editor.raw_input(ctx, raw, live_tab);
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let frame_started = Instant::now();
-        let ctx = ui.ctx().clone();
+    /// Runs before every `ui` pass and alone while the window is hidden, so
+    /// hand-offs, signals and close requests never wait for a drawn frame.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(unix)]
         let launches: Vec<_> = self
             .launches
@@ -4883,11 +4943,10 @@ impl eframe::App for NotesApp {
             .map(|launches| launches.try_iter().collect())
             .unwrap_or_default();
         #[cfg(unix)]
-        for crate::instance::Request { path, shown } in launches {
+        for crate::instance::Request { path } in launches {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             self.attention_check = Some(Instant::now() + ATTENTION_DELAY);
-            let _ = shown.send(());
             if let Some(path) = path {
                 let kind = if path.is_dir() {
                     rustidian::native_picker::Kind::Folder
@@ -4897,6 +4956,17 @@ impl eframe::App for NotesApp {
                 self.open_system_selection(kind, path);
             }
         }
+        if let Some(signal) = crate::window::take_signal() {
+            self.quit(ctx, signal);
+        }
+        if ctx.input(|input| input.viewport().close_requested()) {
+            self.on_close_request(ctx);
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let frame_started = Instant::now();
+        let ctx = ui.ctx().clone();
         if let Some(due) = self.attention_check {
             let now = Instant::now();
             if now < due {

@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -206,9 +206,18 @@ def main():
             (base / "ui-probe.json").unlink(missing_ok=True)
             return subprocess.Popen(command, cwd=base, env=environment, stdout=log, stderr=log)
 
-        if args.section == "agent-terminal":
+        if args.section in ("agent-terminal", "lifecycle"):
             import agent_terminal_checks
             agent_terminal_checks.prepare(base, environment)
+        if args.section == "idle-cpu":
+            environment["RUSTIDIAN_FRAME_LOG"] = str(base / "frames.log")
+            # Enough text that re-reading the whole vault is measurable.
+            bulk = fixture / "Idle bulk"
+            bulk.mkdir()
+            body = "Notes wait on disk while the window is idle; a re-index reads every one again.\n" * 200
+            for number in range(1500):
+                (bulk / f"Bulk {number:04d}.md").write_text(f"# Bulk {number:04d}\n\n{body}")
+            (fixture / "Idle image.md").write_text("# Idle image\n\n![[Assets/Attachment.png|180]]\n\nText after the image.\n")
         app = launch_app(launch_command)
         results = []
         (reports / "gui-results.json").write_text(json.dumps({"status": "running", "checks": []}, indent=2)+"\n")
@@ -4863,8 +4872,24 @@ def main():
                 assert opening[-1] < 150 and typing[len(typing) // 2] < 30 and typing[-1] < 100, measured
                 results.append(f"On an 86 KB note with 375 code blocks, {measured}")
 
+            def sandbox_apps():
+                """Rustidian processes this run started: its binary, running in the sandbox."""
+                binary, found = os.path.realpath(ROOT / args.binary), []
+                for entry in Path("/proc").iterdir():
+                    if entry.name.isdigit():
+                        try:
+                            if os.readlink(entry / "exe") == binary and os.readlink(entry / "cwd") == str(base):
+                                found.append(int(entry.name))
+                        except OSError:
+                            pass
+                return found
+
             def instance_checks():
                 # 27 Oct: five windows from separate launches stayed alive for hours.
+                # 28 Oct: a launch beside a slow window deleted its live socket and kept a second process.
+                socket_file = base / "data/rustidian/instance.sock"
+                identity = lambda: (socket_file.stat().st_ino, socket_file.stat().st_ctime_ns)
+                original = identity()
                 def launch(*arguments):
                     try:
                         return subprocess.run([str(ROOT / args.binary), *map(str, arguments)], env=environment,
@@ -4873,35 +4898,210 @@ def main():
                         raise AssertionError("A second launch kept running instead of handing over to the open window")
                 assert launch() == 0 and app.poll() is None, "A plain second launch must leave the first window running"
                 assert len(xdo("search", "--onlyvisible", "--name", "Rustidian").split()) == 1, "A second launch opened another window"
+                assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
                 note = fixture / "Notes/First steps.md"
                 assert launch(note.relative_to(base)) == 0, "Opening a file from a second launch failed"
                 title_contains(note.stem)
-                results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there")
+                assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                assert identity() == original, "A hand-off replaced the window's socket"
+                results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there, "
+                               "one Rustidian process remained and the socket stayed the original")
                 # 28 Oct: a window Masih could not see kept the instance socket, so his launches showed nothing.
                 # xdotool exits 1 when nothing matches.
                 visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,
                                                  capture_output=True, text=True).stdout.split()
+                second_errors = base / "second-launch.log"
                 app.send_signal(signal.SIGSTOP)
                 try:
-                    second = subprocess.Popen([str(ROOT / args.binary), str(fixture)], env=environment, cwd=base,
-                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    with second_errors.open("w") as errors:
+                        second = subprocess.Popen([str(ROOT / args.binary), str(fixture)], env=environment, cwd=base,
+                                                  stdout=subprocess.DEVNULL, stderr=errors)
                     deadline = time.monotonic() + 15
                     while len(visible()) < 2:
                         assert second.poll() is None, "A launch must not hand over to an instance that cannot draw"
                         assert time.monotonic() < deadline, "A launch beside a stalled instance must open its own window"
                         time.sleep(.1)
+                    assert identity() == original, "A launch beside a stalled window replaced its live socket"
                     second.terminate(); second.wait(timeout=10)
                 finally:
                     app.send_signal(signal.SIGCONT)
+                assert "did not answer" in second_errors.read_text(), second_errors.read_text()
+                assert identity() == original, "The separate window removed the stalled window's socket"
                 # The second window wrote its own control bounds; wait for the first window's.
                 (base / "ui-probe.json").unlink(missing_ok=True)
                 xdo("mousemove", "--sync", "700", "500")
-                results.append("Beside an instance that could not draw, a launch opened its own window")
+                control_bounds("window:Close window")
+                assert launch() == 0, "The resumed window must take the next launch"
+                assert sandbox_apps() == [app.pid], f"A launch after the stall left another process: {sandbox_apps()}"
+                results.append("Beside an instance that could not answer, a launch opened its own window, said so on stderr and left the "
+                               "socket; the resumed window took the next launch")
                 # click_control would assert the app still runs after the click.
                 left, top, right, bottom = control_bounds("window:Close window")
                 xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
                 assert app.wait(timeout=5) == 0, "Closing the window must end its process"
                 results.append("Closing the window ended its process")
+
+            def lifecycle_checks():
+                # 28 Oct: Rustidian processes Masih could not see kept running, and windows
+                # closed without saying why. Every way of closing must end the window's
+                # agent with it and name its source in app.log.
+                nonlocal app, window
+                agents = base / "agent-terminal" / "bin"
+
+                def stand_ins():
+                    """The stand-in agent and the children it keeps in its process group."""
+                    found = []
+                    for entry in Path("/proc").iterdir():
+                        if entry.name.isdigit():
+                            try:
+                                if str(agents).encode() in (entry / "cmdline").read_bytes():
+                                    found.append(int(entry.name))
+                            except OSError:
+                                pass
+                    return found
+
+                def wait(predicate, reason, timeout=8):
+                    deadline = time.monotonic() + timeout
+                    while not predicate():
+                        assert time.monotonic() < deadline, reason
+                        time.sleep(.05)
+
+                def title_bar():
+                    # click_control would assert the app still runs after the click.
+                    left, top, right, bottom = control_bounds("window:Close window")
+                    xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+
+                app_log = reports / "gui-smoke.log"
+                closes = [("title bar", title_bar),
+                          ("SIGTERM", lambda: app.send_signal(signal.SIGTERM)),
+                          ("SIGHUP", lambda: app.send_signal(signal.SIGHUP))]
+                for run, (source, close) in enumerate(closes):
+                    if run:
+                        app = launch_app(launch_command)
+                        window = ready_window()
+                    title_contains("Home")
+                    xdo("key", "--clearmodifiers", "ctrl+shift+a")
+                    wait(lambda: stand_ins() and control_bounds("terminal-pid", required=False), "The Agent tab did not start its agent")
+                    wait(lambda: control_bounds("terminal-focused")[0] == 1, "The Agent tab did not focus its terminal")
+                    # A background job in the agent's process group, which ignores SIGHUP as the agent does.
+                    xdo("type", "--clearmodifiers", "--delay", "1", "--", "ticks")
+                    xdo("key", "--clearmodifiers", "Return")
+                    wait(lambda: len(stand_ins()) >= 2, "The agent did not start its background job")
+                    started = app_log.stat().st_size
+                    closed = time.monotonic()
+                    close()
+                    deadline = closed + 3
+                    while (app.poll() is None or stand_ins() or sandbox_apps()) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    ended = time.monotonic() - closed
+                    assert app.poll() is not None, f"{source}: Rustidian still ran 3 s after the close"
+                    assert not stand_ins(), f"{source}: agent processes outlived the window: {stand_ins()}"
+                    assert not sandbox_apps(), f"{source}: Rustidian processes outlived the window: {sandbox_apps()}"
+                    with app_log.open() as lines:
+                        lines.seek(started)
+                        logged = [line.strip() for line in lines if line.startswith("close:")]
+                    assert logged == [f"close: {source}"], f"{source}: app.log said {logged}"
+                    results.append(f"Closing by {source} with the Agent tab running ended Rustidian (exit {app.returncode}), the agent "
+                                   f"and its background job within {ended:.1f} s; app.log said 'close: {source}'")
+
+            def idle_cpu_checks():
+                # 28 Oct: windows Masih could not see kept using CPU: a re-index redrew the
+                # window every frame, Rustidian's own saves re-indexed the vault, and a caret
+                # on an image line redrew a background window ten times a second.
+                frames = base / "frames.log"
+                ticks_per_second = os.sysconf("SC_CLK_TCK")
+                bulk_bytes = sum(path.stat().st_size for path in (fixture / "Idle bulk").iterdir())
+
+                def ticks(thread=None):
+                    stat = Path(f"/proc/{app.pid}" + (f"/task/{thread}" if thread else "") + "/stat").read_text()
+                    return sum(map(int, stat.rsplit(")", 1)[1].split()[11:13]))
+
+                def read_bytes():
+                    return int(next(line.split()[1] for line in Path(f"/proc/{app.pid}/io").read_text().splitlines()
+                                    if line.startswith("rchar:")))
+
+                def frame_count():
+                    return len(frames.read_text().splitlines()) if frames.exists() else 0
+
+                def settle(quiet=2.0, limit=60):
+                    """Wait until the window has drawn nothing for `quiet` seconds."""
+                    deadline, last, since = time.monotonic() + limit, frame_count(), time.monotonic()
+                    while time.monotonic() - since < quiet:
+                        assert time.monotonic() < deadline, f"The window still drew after {limit} s"
+                        time.sleep(.1)
+                        if frame_count() != last:
+                            last, since = frame_count(), time.monotonic()
+
+                def measure(seconds):
+                    """CPU over the interval in percent, as ps and top print it, and frames drawn."""
+                    before, drawn, started = ticks(), frame_count(), time.monotonic()
+                    time.sleep(seconds)
+                    used = (ticks() - before) / ticks_per_second
+                    return round(100 * used / (time.monotonic() - started), 1), frame_count() - drawn
+
+                numbers = {"bulk_bytes": bulk_bytes}
+                title_contains("Home")
+                settle()
+                # 1. Rustidian's own save does not re-index the vault.
+                before = read_bytes()
+                editor_end()
+                type_text("\nIdle own save")
+                home = fixture / "Home.md"
+                deadline = time.monotonic() + 5
+                while "Idle own save" not in home.read_text():
+                    assert time.monotonic() < deadline, "Autosave did not write the note"
+                    time.sleep(.1)
+                settle()
+                numbers["own_save_read_bytes"] = read_bytes() - before
+                assert numbers["own_save_read_bytes"] < bulk_bytes / 10, (
+                    f"An autosave read {numbers['own_save_read_bytes']} bytes: the vault ({bulk_bytes} bytes) was re-indexed")
+                results.append(f"An autosave read {numbers['own_save_read_bytes']:,} bytes, not the {bulk_bytes:,}-byte vault: no re-index")
+                # 2. A focused window with a blinking caret, for comparison only.
+                numbers["focused_cpu"], numbers["focused_frames"] = measure(20)
+                # 3. A caret on an image line does not redraw a background window.
+                open_note("Idle image")
+                click_control("embed:0")
+                assert control_bounds("embed-source:0"), "The caret did not reach the image line"
+                xdo("windowfocus", "0")
+                deadline = time.monotonic() + 3
+                while control_bounds("window-focused")[0] != 0:
+                    assert time.monotonic() < deadline, "The window kept focus"
+                    time.sleep(.05)
+                time.sleep(1)
+                numbers["image_caret_cpu"], numbers["image_caret_frames"] = measure(5)
+                assert numbers["image_caret_frames"] <= 1, (
+                    f"A background window with the caret on an image line drew {numbers['image_caret_frames']} frames in 5 s")
+                # 4. No input for 60 s.
+                settle()
+                numbers["idle_cpu"], numbers["idle_frames"] = measure(60)
+                assert numbers["idle_cpu"] == 0.0 and numbers["idle_frames"] == 0, numbers
+                results.append(f"A background window with no input for 60 s used {numbers['idle_cpu']:.1f}% CPU and drew "
+                               f"{numbers['idle_frames']} frames; with the caret on an image line it drew {numbers['image_caret_frames']} "
+                               f"in 5 s (focused with a blinking caret: {numbers['focused_cpu']:.1f}%, {numbers['focused_frames']} frames in 20 s)")
+                # 5. A write from outside: one refresh, then idle again.
+                before = ticks()
+                (fixture / "Idle outside.md").write_text("# Idle outside\n\nWritten by another program.\n")
+                settle()
+                numbers["outside_write_cpu_seconds"] = (ticks() - before) / ticks_per_second
+                numbers["after_write_cpu"], numbers["after_write_frames"] = measure(30)
+                assert numbers["after_write_cpu"] == 0.0 and numbers["after_write_frames"] == 0, numbers
+                results.append(f"A note written from outside cost one refresh ({numbers['outside_write_cpu_seconds']:.2f} s of CPU); "
+                               f"over the next 30 s the window used {numbers['after_write_cpu']:.1f}% CPU and drew {numbers['after_write_frames']} frames")
+                # 6. A change during a re-index does not redraw the window until the re-index ends.
+                before_main, before_all, drawn = ticks(app.pid), ticks(), frame_count()
+                (fixture / "Idle during A.md").write_text("# During A\n")
+                time.sleep(.25)
+                (fixture / "Idle during B.md").write_text("# During B\n")
+                settle()
+                numbers["reindex_main_thread_seconds"] = (ticks(app.pid) - before_main) / ticks_per_second
+                numbers["reindex_all_threads_seconds"] = (ticks() - before_all) / ticks_per_second
+                numbers["reindex_frames"] = frame_count() - drawn
+                assert numbers["reindex_frames"] <= 20, (
+                    f"Two changes during a re-index drew {numbers['reindex_frames']} frames", numbers)
+                results.append(f"Two changes 0.25 s apart re-indexed the {bulk_bytes:,}-byte vault in "
+                               f"{numbers['reindex_all_threads_seconds']:.2f} s of CPU and drew {numbers['reindex_frames']} frames "
+                               f"({numbers['reindex_main_thread_seconds']:.2f} s on the UI thread)")
+                (reports / "idle-cpu.json").write_text(json.dumps(numbers, indent=2) + "\n")
 
             def folder_checks():
                 click_control("button:File explorer")
@@ -8364,10 +8564,10 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "speed"}))
                 return
-            if args.section == "instance":
-                instance_checks()
+            if args.section in ("instance", "lifecycle", "idle-cpu"):
+                {"instance": instance_checks, "lifecycle": lifecycle_checks, "idle-cpu": idle_cpu_checks}[args.section]()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
-                print(json.dumps({"status": "passed", "checks": len(results), "section": "instance"}))
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
             if args.section == "watch-limit":
                 watch_limit_checks()

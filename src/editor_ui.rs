@@ -24,6 +24,8 @@ pub struct Find {
     replacing: bool,
     selected: usize,
     restore: Option<Range<usize>>,
+    /// When the closed bar began waiting for the editor to take focus.
+    restore_since: Option<f64>,
 }
 
 #[derive(Default)]
@@ -493,6 +495,7 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
         let matches = find_matches(&tab.document.text, &find.query);
         if let Some(range) = matches.get(find.selected.min(matches.len().saturating_sub(1))) {
             find.restore = Some(range.clone());
+            find.restore_since = None;
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             state.cursor.set_char_range(Some(CCursorRange::two(
                 CCursor::new(range.start),
@@ -897,6 +900,7 @@ impl Editor {
         if !find.open && find.restore.is_some() {
             if ui.memory(|m| m.owns_ime_events(id)) {
                 let range = find.restore.take().unwrap();
+                find.restore_since = None;
                 let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
                 state.cursor.set_char_range(Some(CCursorRange::two(
                     CCursor::new(range.start),
@@ -904,8 +908,17 @@ impl Editor {
                 )));
                 state.store(ui.ctx(), id);
             } else {
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(16));
+                // Focus went elsewhere as the bar closed. Wait briefly for the
+                // editor to take it, then drop the selection instead of
+                // redrawing an idle window forever.
+                let now = ui.input(|input| input.time);
+                if now - *find.restore_since.get_or_insert(now) < 0.5 {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(16));
+                } else {
+                    find.restore = None;
+                    find.restore_since = None;
+                }
             }
         }
         if ui.memory(|m| m.has_focus(id)) {
@@ -1572,7 +1585,10 @@ impl Editor {
                 selection_shape,
                 selection,
             );
-            if let Some(range) = output.cursor_range {
+            // As egui's own caret: none, and no blinking, in a window without focus.
+            if let Some(range) = output.cursor_range
+                && ui.input(|input| input.focused)
+            {
                 let key = (range.primary.index.0, range.secondary.index.0);
                 let now = ui.input(|input| input.time);
                 if self.image_cursor != Some(key) || output.response.changed() {
