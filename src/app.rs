@@ -61,6 +61,8 @@ struct PreparedVault {
     watch_warning: Option<String>,
 }
 
+const ATTENTION_DELAY: Duration = Duration::from_millis(1500);
+
 type SharedWatch = Arc<Mutex<rustidian::watcher::Watch>>;
 
 struct Monitoring {
@@ -120,6 +122,10 @@ pub struct NotesApp {
     /// Files and folders from later launches; see `instance`.
     #[cfg(unix)]
     pub(crate) launches: Option<Receiver<crate::instance::Request>>,
+    /// When to check that a window just opened or handed a launch has focus.
+    /// GNOME may leave it behind the window being typed in; it then asks for
+    /// attention, so "Rustidian is ready" appears instead of nothing.
+    attention_check: Option<Instant>,
     watcher: Option<SharedWatch>,
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
     watch_overflow: Arc<AtomicBool>,
@@ -219,6 +225,7 @@ impl NotesApp {
             loading: None,
             #[cfg(unix)]
             launches: None,
+            attention_check: Some(Instant::now() + ATTENTION_DELAY),
             watcher: None,
             watch_events: None,
             watch_overflow: Arc::default(),
@@ -4880,6 +4887,7 @@ impl eframe::App for NotesApp {
         for crate::instance::Request { path, shown } in launches {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            self.attention_check = Some(Instant::now() + ATTENTION_DELAY);
             let _ = shown.send(());
             if let Some(path) = path {
                 let kind = if path.is_dir() {
@@ -4888,6 +4896,19 @@ impl eframe::App for NotesApp {
                     rustidian::native_picker::Kind::File
                 };
                 self.open_system_selection(kind, path);
+            }
+        }
+        if let Some(due) = self.attention_check {
+            let now = Instant::now();
+            if now < due {
+                ctx.request_repaint_after(due - now);
+            } else {
+                self.attention_check = None;
+                if ctx.input(|input| input.viewport().focused) != Some(true) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ));
+                }
             }
         }
         self.dark = ctx.theme() == egui::Theme::Dark;
