@@ -1,7 +1,7 @@
 //! A coding agent's own terminal interface, run in a pseudo-terminal inside the
 //! vault: which agents are installed, the environment they get, and one running
 //! session with its screen.
-use portable_pty::{CommandBuilder, MasterPty, PtySize};
+use portable_pty::{CommandBuilder, ExitStatus, MasterPty, PtySize};
 use std::{
     ffi::{OsStr, OsString},
     fs::File,
@@ -17,7 +17,11 @@ use std::{
 pub const SCROLLBACK: usize = 1000;
 
 /// How long a closing agent gets between SIGTERM and SIGKILL.
-const GRACE: Duration = Duration::from_secs(2);
+const GRACE: Duration = if cfg!(test) {
+    Duration::from_millis(300)
+} else {
+    Duration::from_secs(2)
+};
 
 /// The agents the Agent tab runs, in menu order; the first installed one is the default.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -50,30 +54,49 @@ impl Backend {
     }
 }
 
-/// The agents installed in `path` (a `PATH` value), in menu order, each with the
-/// executable that runs it. Relative folders are skipped.
-pub fn discover(path: &OsStr) -> Vec<(Backend, PathBuf)> {
+/// The first executable file called `name` in `path` (a `PATH` value);
+/// relative folders are skipped.
+fn find(name: &str, path: &OsStr) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
-    let executable = |file: &Path| {
-        std::fs::metadata(file)
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-    };
+    std::env::split_paths(path)
+        .filter(|folder| folder.is_absolute())
+        .map(|folder| folder.join(name))
+        .find(|file| {
+            std::fs::metadata(file).is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        })
+}
+
+/// The agents installed in `path` (a `PATH` value), in menu order, each with the
+/// executable that runs it.
+pub fn discover(path: &OsStr) -> Vec<(Backend, PathBuf)> {
     Backend::ALL
         .into_iter()
-        .filter_map(|backend| {
-            std::env::split_paths(path)
-                .filter(|folder| folder.is_absolute())
-                .map(|folder| folder.join(backend.program()))
-                .find(|file| executable(file))
-                .map(|file| (backend, file))
-        })
+        .filter_map(|backend| find(backend.program(), path).map(|file| (backend, file)))
         .collect()
 }
 
+/// Variables that name the terminal Rustidian itself runs in. Agents pick key
+/// and history modes from them, which would not match this terminal.
+const TERMINAL_IDENTITY: [&str; 10] = [
+    "TERM",
+    "COLORTERM",
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "VTE_VERSION",
+    "TMUX",
+    "TMUX_PANE",
+    "KITTY_WINDOW_ID",
+    "WT_SESSION",
+    "ZELLIJ",
+];
+
 /// The environment an agent starts with: this process's, without the variables
 /// of an agent session Rustidian may have been started from (an Elpis that
-/// inherits them joins and locks that session's shared bridge), as a terminal
-/// with 256 and true colours.
+/// inherits them joins and locks that session's shared bridge) except the
+/// user's `CODEX_HOME`, and without the outer terminal's identity, as a
+/// terminal with 256 and true colours.
 pub fn child_env(
     parent: impl IntoIterator<Item = (OsString, OsString)>,
 ) -> Vec<(OsString, OsString)> {
@@ -81,10 +104,14 @@ pub fn child_env(
         .into_iter()
         .filter(|(name, _)| {
             let name = name.as_encoded_bytes();
-            !matches!(name, b"TERM" | b"COLORTERM")
-                && !["CLAUDE", "AI_AGENT", "CODEX"]
+            let agent_session = ["CLAUDE", "AI_AGENT", "CODEX"]
+                .iter()
+                .any(|prefix| name.starts_with(prefix.as_bytes()))
+                && name != b"CODEX_HOME";
+            !agent_session
+                && !TERMINAL_IDENTITY
                     .iter()
-                    .any(|prefix| name.starts_with(prefix.as_bytes()))
+                    .any(|identity| name == identity.as_bytes())
         })
         .collect();
     environment.extend([
@@ -94,13 +121,16 @@ pub fn child_env(
     environment
 }
 
-/// Answers to the queries terminal programs send at startup: where the cursor
-/// is, what kind of terminal this is and its colours. Some wait seconds for them.
+/// Answers to the queries terminal programs send at startup (where the cursor
+/// is, what kind of terminal this is, its colours; some wait seconds for them)
+/// and the modes vt100 does not track itself.
 #[derive(Default)]
 pub struct Replies {
     answer: Vec<u8>,
     /// The default foreground and background, reported to colour queries.
     pub colors: [[u8; 3]; 2],
+    /// DECSET 1007: in the alternate screen the wheel sends arrow keys.
+    pub alternate_scroll: bool,
 }
 
 impl vt100::Callbacks for Replies {
@@ -118,6 +148,11 @@ impl vt100::Callbacks for Replies {
             .copied()
             .unwrap_or(0);
         match (intermediate, command, first) {
+            (Some(b'?'), 'h' | 'l', _)
+                if params.iter().any(|param| param.first() == Some(&1007)) =>
+            {
+                self.alternate_scroll = command == 'h';
+            }
             (None, 'n', 5) => self.answer.extend_from_slice(b"\x1b[0n"),
             (None, 'n', 6) => {
                 let (row, col) = screen.cursor_position();
@@ -149,19 +184,31 @@ impl vt100::Callbacks for Replies {
 
 pub type Parser = vt100::Parser<Replies>;
 
-/// One agent process on a pseudo-terminal. Dropping the session ends it: the
-/// terminal closes, then SIGTERM, then SIGKILL two seconds later.
+/// Agents still being ended after their sessions were dropped.
+static CLOSING: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
+
+/// Wait until every dropped session's agent has ended; call before the process
+/// exits, so the SIGKILL that follows the grace period is not lost with it.
+pub fn wait_for_closing() {
+    let closing = std::mem::take(&mut *CLOSING.lock().unwrap_or_else(PoisonError::into_inner));
+    for handle in closing {
+        let _ = handle.join();
+    }
+}
+
+/// One agent process on a pseudo-terminal. Dropping the session closes the
+/// terminal at once; SIGTERM and, two seconds later, SIGKILL follow on a
+/// thread. The agent also dies with Rustidian (parent-death signal).
 pub struct Session {
     pid: u32,
-    size: (u16, u16),
     parser: Arc<Mutex<Parser>>,
     master: Option<Box<dyn MasterPty + Send>>,
     input: Option<mpsc::Sender<Vec<u8>>>,
     wake: Option<PipeWriter>,
     reader: Option<JoinHandle<()>>,
     writer: Option<JoinHandle<()>>,
-    exited: mpsc::Receiver<u32>,
-    code: Option<u32>,
+    exited: mpsc::Receiver<ExitStatus>,
+    status: Option<ExitStatus>,
 }
 
 impl Session {
@@ -196,7 +243,21 @@ impl Session {
         };
         let (output, keys) = (duplicate()?, duplicate()?);
         let (wake_reader, wake) = std::io::pipe().map_err(|error| error.to_string())?;
-        let mut command = CommandBuilder::new(program);
+        // setpriv gives the agent a parent-death signal before it executes it,
+        // so the agent also ends when Rustidian is killed outright.
+        let mut command = match find("setpriv", &std::env::var_os("PATH").unwrap_or_default()) {
+            Some(setpriv) => {
+                let mut command = CommandBuilder::new(setpriv);
+                command.args([
+                    OsStr::new("--pdeathsig"),
+                    OsStr::new("KILL"),
+                    OsStr::new("--"),
+                    program.as_os_str(),
+                ]);
+                command
+            }
+            None => CommandBuilder::new(program),
+        };
         command.cwd(folder);
         command.env_clear();
         for (name, value) in child_env(std::env::vars_os()) {
@@ -232,13 +293,14 @@ impl Session {
         };
         let (done, exited) = mpsc::channel();
         std::thread::spawn(move || {
-            let code = child.wait().map_or(1, |status| status.exit_code());
-            let _ = done.send(code);
+            let status = child
+                .wait()
+                .unwrap_or_else(|_| ExitStatus::with_exit_code(1));
+            let _ = done.send(status);
             repaint();
         });
         Ok(Self {
             pid,
-            size,
             parser,
             master: Some(pair.master),
             input: Some(input),
@@ -246,7 +308,7 @@ impl Session {
             reader: Some(reader),
             writer: Some(writer),
             exited,
-            code: None,
+            status: None,
         })
     }
 
@@ -269,44 +331,46 @@ impl Session {
     }
 
     /// Follow the panel's size; the agent gets SIGWINCH and redraws.
-    pub fn resize(&mut self, size: (u16, u16)) {
-        if size == self.size {
-            return;
+    pub fn resize(&self, (rows, cols): (u16, u16)) {
+        {
+            let mut parser = self.lock();
+            if parser.screen().size() == (rows, cols) {
+                return;
+            }
+            parser.screen_mut().set_size(rows, cols);
         }
-        self.size = size;
-        self.lock().screen_mut().set_size(size.0, size.1);
         if let Some(master) = &self.master {
             let _ = master.resize(PtySize {
-                rows: size.0,
-                cols: size.1,
+                rows,
+                cols,
                 ..Default::default()
             });
         }
     }
 
-    /// The exit code once the agent has ended.
-    pub fn exit_code(&mut self) -> Option<u32> {
-        if self.code.is_none() {
-            self.code = self.exited.try_recv().ok();
+    /// How the agent ended, once it has.
+    pub fn exit(&mut self) -> Option<&ExitStatus> {
+        if self.status.is_none() {
+            self.status = self.exited.try_recv().ok();
         }
-        self.code
+        self.status.as_ref()
     }
+}
 
-    /// Signal the agent's process group: the agent and the children it kept in it.
-    fn signal(&self, signal: rustix::process::Signal) {
-        if let Some(group) = i32::try_from(self.pid)
-            .ok()
-            .and_then(rustix::process::Pid::from_raw)
-        {
-            let _ = rustix::process::kill_process_group(group, signal);
-        }
+/// Signal an agent's process group: the agent and the children it kept in it.
+fn signal(pid: u32, signal: rustix::process::Signal) {
+    if let Some(group) = i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, signal);
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // Close the terminal: wake the reader so it lets go of its handle, end
-        // the writer and drop the master. With every handle gone the kernel
+        // Close the terminal now: wake the reader so it lets go of its handle,
+        // end the writer and drop the master. With every handle gone the kernel
         // hangs up the agent's terminal.
         drop(self.wake.take());
         if let Some(reader) = self.reader.take() {
@@ -314,25 +378,37 @@ impl Drop for Session {
         }
         drop(self.input.take());
         drop(self.master.take());
-        if let Some(writer) = self.writer.take() {
-            // A writer blocked on an agent that stopped reading ends with it.
-            let deadline = Instant::now() + Duration::from_millis(100);
-            while !writer.is_finished() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        }
-        if self.exit_code().is_some() {
+        if self.exit().is_some() {
             return;
         }
-        self.signal(rustix::process::Signal::TERM);
-        if self.exited.recv_timeout(GRACE).is_err() {
-            self.signal(rustix::process::Signal::KILL);
-        }
+        let (pid, writer) = (self.pid, self.writer.take());
+        let exited = std::mem::replace(&mut self.exited, mpsc::channel().1);
+        // The rest waits on the agent, so it runs off the UI thread.
+        let closing = std::thread::spawn(move || {
+            if let Some(writer) = writer {
+                // A writer blocked on an agent that stopped reading ends with it.
+                let deadline = Instant::now() + Duration::from_millis(100);
+                while !writer.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+            if exited.try_recv().is_ok() {
+                return;
+            }
+            signal(pid, rustix::process::Signal::TERM);
+            if exited.recv_timeout(GRACE).is_err() {
+                signal(pid, rustix::process::Signal::KILL);
+            }
+        });
+        let mut pending = CLOSING.lock().unwrap_or_else(PoisonError::into_inner);
+        pending.retain(|handle| !handle.is_finished());
+        pending.push(closing);
     }
 }
 
 /// Feed the agent's output to the screen until it ends or the session closes,
-/// answering its terminal queries.
+/// answering its terminal queries. The view stays where the user scrolled it;
+/// typing brings it back to the bottom.
 fn read(
     mut output: &File,
     wake: &PipeReader,
@@ -365,8 +441,6 @@ fn read(
         let answer = {
             let mut parser = parser.lock().unwrap_or_else(PoisonError::into_inner);
             parser.process(&buffer[..count]);
-            // New output brings the view back to the bottom.
-            parser.screen_mut().set_scrollback(0);
             std::mem::take(&mut parser.callbacks_mut().answer)
         };
         if !answer.is_empty() {
@@ -388,10 +462,13 @@ mod tests {
             ("CLAUDE_CONFIG_DIR", "/home/someone/.claude-agent"),
             ("CLAUDECODE", "1"),
             ("AI_AGENT_SESSION", "fable"),
-            ("CODEX_HOME", "/tmp/codex"),
             ("CODEX_SANDBOX", "seatbelt"),
+            ("CODEX_HOME", "/home/someone/.codex"),
             ("TERM", "dumb"),
             ("TERM_PROGRAM", "vscode"),
+            ("TMUX", "/tmp/tmux-1000/default,1,0"),
+            ("WT_SESSION", "outer"),
+            ("TERMINFO", "/usr/share/terminfo"),
             ("MY_CLAUDE_NOTES", "kept"),
         ]
         .map(|(name, value)| (OsString::from(name), OsString::from(value)));
@@ -405,7 +482,8 @@ mod tests {
             [
                 "PATH",
                 "HOME",
-                "TERM_PROGRAM",
+                "CODEX_HOME",
+                "TERMINFO",
                 "MY_CLAUDE_NOTES",
                 "TERM",
                 "COLORTERM"
@@ -418,6 +496,7 @@ mod tests {
                 .map(|(_, value)| value.to_str().unwrap())
         };
         assert_eq!(value("PATH"), Some("/usr/bin:/bin"));
+        assert_eq!(value("CODEX_HOME"), Some("/home/someone/.codex"));
         assert_eq!(value("TERM"), Some("xterm-256color"));
         assert_eq!(value("COLORTERM"), Some("truecolor"));
     }
@@ -471,6 +550,11 @@ mod tests {
             parser.callbacks().answer,
             b"\x1b[1;4R\x1b[?62;22c\x1b]11;rgb:1111/1515/1717\x1b\\\x1b[0n"
         );
+        // Codex-style TUIs ask for wheel-as-arrows in their alternate screen.
+        parser.process(b"\x1b[?1049h\x1b[?1007h");
+        assert!(parser.callbacks().alternate_scroll && parser.screen().alternate_screen());
+        parser.process(b"\x1b[?1007l");
+        assert!(!parser.callbacks().alternate_scroll);
     }
 
     /// A stand-in agent: a shell script in a private folder.
@@ -503,12 +587,13 @@ mod tests {
         wait_until("the greeting", || contents(&session).contains(&greeting));
         session.write(b"hello\r".to_vec());
         wait_until("the reply", || contents(&session).contains("got hello"));
-        wait_until("the exit", || session.exit_code().is_some());
-        assert_eq!(session.exit_code(), Some(3));
+        wait_until("the exit", || session.exit().is_some());
+        let status = session.exit().unwrap();
+        assert_eq!((status.exit_code(), status.signal()), (3, None));
     }
 
     #[test]
-    fn closing_a_session_ends_an_agent_that_ignores_hangup_and_terminate() {
+    fn closing_a_session_never_waits_and_still_ends_a_stubborn_agent() {
         let folder = tempfile::tempdir().unwrap();
         let program = script(
             folder.path(),
@@ -522,13 +607,17 @@ mod tests {
             .ok()
             .and_then(rustix::process::Pid::from_raw)
             .unwrap();
-        let started = Instant::now();
+        let dropped = Instant::now();
         drop(session);
-        let waited = started.elapsed();
         assert!(
-            waited >= Duration::from_millis(1900),
-            "SIGKILL came before the grace period: {waited:?}"
+            dropped.elapsed() < Duration::from_millis(200),
+            "closing blocked the caller for {:?}",
+            dropped.elapsed()
         );
+        // The agent ignores the hang-up and SIGTERM; SIGKILL ends it after the grace.
+        assert!(rustix::process::test_kill_process_group(group).is_ok());
+        wait_for_closing();
+        assert!(dropped.elapsed() >= GRACE);
         wait_until("the process group to end", || {
             rustix::process::test_kill_process_group(group).is_err()
         });

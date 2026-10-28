@@ -140,5 +140,7 @@ fn main() -> eframe::Result {
     if let Some(socket) = socket {
         let _ = std::fs::remove_file(socket);
     }
+    // The window is gone; an agent that ignores SIGTERM still gets its SIGKILL.
+    rustidian::terminal::wait_for_closing();
     result
 }

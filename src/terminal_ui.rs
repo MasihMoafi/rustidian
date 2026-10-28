@@ -1,16 +1,21 @@
 //! The Agent tab: a coding agent's own terminal interface, live, in the vault.
 use crate::{theme, ui_probe};
 use eframe::egui::{
-    self, Align, Align2, Color32, Event, FontId, Key, Layout, Modifiers, MouseWheelUnit, Rect,
-    RichText, Sense, Stroke, StrokeKind, Vec2,
+    self, Align, Align2, Color32, Event, FontId, Key, Layout, Modifiers, MouseWheelUnit, Pos2,
+    Rect, RichText, Sense, Stroke, StrokeKind, Vec2,
     emath::GuiRounding as _,
     text::{LayoutJob, TextFormat},
 };
+use portable_pty::ExitStatus;
 use rustidian::terminal::{self, Backend, Session};
 use serde::{Deserialize, Serialize};
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 /// The terminal's keyboard focus; while it has focus, keys go to the agent.
@@ -25,14 +30,34 @@ struct Saved {
     backend: Option<Backend>,
 }
 
-#[derive(Default, PartialEq)]
-enum Paste {
-    #[default]
-    None,
-    /// Ctrl+Shift+V: ask the window for the clipboard.
-    Wanted,
-    /// The clipboard arrives with the next frame's input.
-    Requested,
+/// Cells chosen with the mouse, as screen (row, column), from where the drag
+/// began to where it is now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Selection {
+    anchor: (u16, u16),
+    end: (u16, u16),
+}
+
+impl Selection {
+    /// The first and last cell in reading order.
+    fn ordered(self) -> ((u16, u16), (u16, u16)) {
+        if self.anchor <= self.end {
+            (self.anchor, self.end)
+        } else {
+            (self.end, self.anchor)
+        }
+    }
+
+    fn contains(self, row: u16, col: u16) -> bool {
+        let (first, last) = self.ordered();
+        first <= (row, col) && (row, col) <= last
+    }
+
+    /// The selected text, lines joined as the screen wrapped them.
+    fn text(self, screen: &vt100::Screen) -> String {
+        let (first, last) = self.ordered();
+        screen.contents_between(first.0, first.1, last.0, last.1 + 1)
+    }
 }
 
 #[derive(Default)]
@@ -46,8 +71,14 @@ pub struct Panel {
     start: bool,
     focus: bool,
     keys: Keys,
-    paste: Paste,
+    /// Ctrl+Shift+V: ask the window for the clipboard at the next show.
+    paste: bool,
+    /// Text to put on the clipboard at the next show.
+    copy: Option<String>,
     wheel: f32,
+    selection: Option<Selection>,
+    /// Re-armed by every draw: output asks for one frame, none while the tab is hidden.
+    awake: Arc<AtomicBool>,
 }
 
 impl Panel {
@@ -79,19 +110,21 @@ impl Panel {
     }
 
     /// Send the window's keyboard input to the agent while the terminal has
-    /// focus; Ctrl+Shift+A and Ctrl+Q stay with the app. This runs before egui
-    /// reads the input, so Tab, arrows and Escape do not move focus.
+    /// focus; Ctrl+Shift+A stays with the app. This runs before egui reads the
+    /// input, so Tab, arrows and Escape do not move focus.
     pub fn raw_input(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
         let Self {
             session,
             keys,
             paste,
+            copy,
+            selection,
             ..
         } = self;
         let Some(session) = session.as_mut() else {
             return;
         };
-        if session.exit_code().is_some() || !ctx.memory(|memory| memory.has_focus(focus_id())) {
+        if session.exit().is_some() || !ctx.memory(|memory| memory.has_focus(focus_id())) {
             return;
         }
         let (application_cursor, bracketed) = {
@@ -101,42 +134,37 @@ impl Panel {
         };
         let mut bytes = Vec::new();
         raw.events.retain(|event| {
-            if reserved(event) || !keyboard(event) {
-                return true;
-            }
-            match event {
-                Event::Key {
-                    key: Key::V,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } if modifiers.command && modifiers.shift => *paste = Paste::Wanted,
-                // The clipboard may arrive a pass later: eframe's logic-only
-                // passes run this hook too. The request lasts until it arrives.
-                Event::Paste(text) if *paste == Paste::Requested => {
-                    bytes.extend(pasted(text, bracketed));
-                    *paste = Paste::None;
-                }
-                // Ctrl+V reaches egui as a paste; the agent reads images itself.
-                Event::Paste(_) | Event::PasteImage(_) => bytes.push(0x16),
-                event => {
-                    // A key pressed meanwhile ends a request that got no text.
-                    if *paste == Paste::Requested
-                        && matches!(event, Event::Key { pressed: true, .. } | Event::Text(_))
-                    {
-                        *paste = Paste::None;
-                    }
-                    bytes.extend(keys.encode(event, application_cursor));
+            match route(
+                event,
+                keys,
+                application_cursor,
+                bracketed,
+                selection.is_some(),
+            ) {
+                Routed::Keep => return true,
+                Routed::Send(sent) => bytes.extend(sent),
+                Routed::RequestPaste => *paste = true,
+                Routed::CopySelection => {
+                    *copy = selection
+                        .take()
+                        .map(|chosen| chosen.text(session.lock().screen()));
                 }
             }
             false
         });
-        session.write(bytes);
+        if !bytes.is_empty() {
+            // Typing brings the view back to the bottom and ends a selection.
+            session.lock().screen_mut().set_scrollback(0);
+            *selection = None;
+            session.write(bytes);
+        }
     }
 
     /// The tab's content. `font` is the editor's code font.
     pub fn show(&mut self, ui: &mut egui::Ui, root: &Path, font: &FontId) {
         self.open(root);
+        // Output asks for at most one frame per draw, and none while the tab is hidden.
+        self.awake.store(true, Ordering::Release);
         theme::interface_style(ui);
         let starting = std::mem::take(&mut self.start);
         if starting {
@@ -144,17 +172,16 @@ impl Panel {
             self.error = None;
         }
         let current = self.backend().map(|(backend, _)| *backend);
-        let mut code = self.session.as_mut().and_then(Session::exit_code);
         let status = if self.installed.is_empty() {
-            "No agent"
+            "No agent".to_owned()
         } else if self.error.is_some() {
-            "Failed"
-        } else if code.is_some() {
-            "Exited"
+            "Failed".to_owned()
+        } else if let Some(exit) = self.session.as_mut().and_then(Session::exit) {
+            describe(exit)
         } else if self.session.is_some() {
-            "Running"
+            "Running".to_owned()
         } else {
-            "Starting"
+            "Starting".to_owned()
         };
         let mut picked = current;
         let mut restart = false;
@@ -182,7 +209,8 @@ impl Panel {
             ui_probe::record(ui.ctx(), "agent-restart", button.rect);
             restart = button.clicked();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let label = ui.label(RichText::new(status).small().weak());
+                let label =
+                    ui.add(egui::Label::new(RichText::new(&status).small().weak()).truncate());
                 ui_probe::record(ui.ctx(), format!("agent-status:{status}"), label.rect);
             });
         });
@@ -197,52 +225,53 @@ impl Panel {
             restart = true;
         }
         if restart {
-            // The old agent ends now; the new one starts with the next frame.
+            // The old agent ends off this thread; the new one starts with the next frame.
             self.session = None;
+            self.selection = None;
             self.start = true;
             self.focus = true;
-            code = None;
             ui.ctx().request_repaint();
         }
         ui.add_space(4.0);
         let cell =
             ui.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(font, 'M'), fonts.row_height(font)));
-        let line = if code.is_some() {
-            ui.text_style_height(&egui::TextStyle::Small) + 8.0
-        } else {
-            0.0
-        };
-        let available = ui.available_rect_before_wrap();
-        let area = Rect::from_min_max(available.min, available.max - egui::vec2(0.0, line));
+        let area = ui.available_rect_before_wrap();
         let size = (
             (area.height() / cell.y).floor().clamp(1.0, 500.0) as u16,
             (area.width() / cell.x).floor().clamp(2.0, 1000.0) as u16,
         );
         if starting && let Some((backend, program)) = self.backend().cloned() {
-            let ctx = ui.ctx().clone();
-            match Session::start(&program, root, size, move || ctx.request_repaint()) {
+            let (ctx, awake) = (ui.ctx().clone(), self.awake.clone());
+            let repaint = move || {
+                if awake.swap(false, Ordering::AcqRel) {
+                    ctx.request_repaint();
+                }
+            };
+            match Session::start(&program, root, size, repaint) {
                 Ok(session) => self.session = Some(session),
                 Err(error) => {
                     self.error = Some(format!("Couldn’t start {}: {error}", backend.label()));
                 }
             }
         }
-        if code.is_none()
-            && let Some(session) = &mut self.session
+        if let Some(session) = &mut self.session
+            && session.exit().is_none()
         {
             session.resize(size);
         }
         ui.allocate_rect(area, Sense::hover());
-        let response = ui.interact(area, focus_id(), Sense::click());
-        if response.clicked() || std::mem::take(&mut self.focus) {
+        let response = ui.interact(area, focus_id(), Sense::click_and_drag());
+        if response.clicked() || response.drag_started() || std::mem::take(&mut self.focus) {
             response.request_focus();
         }
         ui_probe::record(ui.ctx(), "agent-terminal", area);
-        if self.paste == Paste::Wanted {
+        if std::mem::take(&mut self.paste) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
-            self.paste = Paste::Requested;
             ui.ctx().request_repaint();
+        }
+        if let Some(text) = self.copy.take() {
+            ui.ctx().copy_text(text);
         }
         let painter = ui.painter_at(area);
         let colors = Colors::new(ui.visuals());
@@ -250,8 +279,35 @@ impl Panel {
             Some(session) => {
                 let mut parser = session.lock();
                 parser.callbacks_mut().colors = [colors.foreground, colors.background].map(rgb);
-                if response.hovered() {
-                    scroll(ui, &mut self.wheel, &mut parser, area, cell, session);
+                let screen_size = parser.screen().size();
+                // A drag selects text, unless the agent asked for mouse reports;
+                // Shift selects anyway.
+                let reporting =
+                    parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None;
+                if let Some(pointer) = response.interact_pointer_pos() {
+                    let at = |point| cell_at(point, area, cell, screen_size);
+                    if response.drag_started()
+                        && (!reporting || ui.input(|input| input.modifiers.shift))
+                    {
+                        // egui starts a drag once the pointer has moved: anchor where it was pressed.
+                        let origin = ui.input(|input| input.pointer.press_origin());
+                        self.selection = Some(Selection {
+                            anchor: at(origin.unwrap_or(pointer)),
+                            end: at(pointer),
+                        });
+                    } else if (response.dragged() || response.drag_stopped())
+                        && let Some(selection) = &mut self.selection
+                    {
+                        selection.end = at(pointer);
+                    }
+                }
+                if response.clicked() {
+                    self.selection = None;
+                }
+                if response.hovered()
+                    && scroll(ui, &mut self.wheel, &mut parser, area, cell, session)
+                {
+                    self.selection = None;
                 }
                 let screen = parser.screen();
                 paint(
@@ -263,8 +319,25 @@ impl Panel {
                     &colors,
                     response.has_focus(),
                 );
+                if let Some(selection) = self.selection {
+                    let (first, last) = selection.ordered();
+                    for row in first.0..=last.0 {
+                        let start = if row == first.0 { first.1 } else { 0 };
+                        let end = if row == last.0 {
+                            last.1
+                        } else {
+                            screen_size.1.saturating_sub(1)
+                        };
+                        let rect = Rect::from_min_size(
+                            area.min
+                                + egui::vec2(f32::from(start) * cell.x, f32::from(row) * cell.y),
+                            egui::vec2(f32::from(end.saturating_sub(start) + 1) * cell.x, cell.y),
+                        );
+                        painter.rect_filled(rect, 0, ui.visuals().selection.bg_fill);
+                    }
+                }
                 if ui_probe::enabled() {
-                    for (row, text) in screen.rows(0, screen.size().1).enumerate() {
+                    for (row, text) in screen.rows(0, screen_size.1).enumerate() {
                         let text = text.trim_end();
                         if !text.is_empty() {
                             let top = area.top() + row as f32 * cell.y;
@@ -280,6 +353,11 @@ impl Panel {
                     }
                     ui_probe::metric(ui.ctx(), "terminal-scrollback", screen.scrollback() as f32);
                     ui_probe::metric(ui.ctx(), "terminal-pid", session.pid() as f32);
+                    ui_probe::metric(
+                        ui.ctx(),
+                        "terminal-selected",
+                        f32::from(u8::from(self.selection.is_some())),
+                    );
                 }
             }
             None => {
@@ -300,15 +378,6 @@ impl Panel {
                 painter.galley(area.left_top(), galley, color);
             }
         }
-        if let Some(code) = code {
-            ui.add_space(4.0);
-            let exit = ui.label(
-                RichText::new(format!("Exited (code {code})"))
-                    .small()
-                    .weak(),
-            );
-            ui_probe::record(ui.ctx(), format!("agent-exit:{code}"), exit.rect);
-        }
         ui_probe::metric(ui.ctx(), "terminal-rows", f32::from(size.0));
         ui_probe::metric(ui.ctx(), "terminal-cols", f32::from(size.1));
         ui_probe::metric(
@@ -319,8 +388,29 @@ impl Panel {
     }
 }
 
+/// "Exited (code N)", or the signal that ended the agent.
+fn describe(status: &ExitStatus) -> String {
+    match status.signal() {
+        Some(signal) => format!("Exited ({signal})"),
+        None => format!("Exited (code {})", status.exit_code()),
+    }
+}
+
+/// The screen cell under a point of the terminal, clamped to the screen.
+fn cell_at(point: Pos2, area: Rect, cell: Vec2, (rows, cols): (u16, u16)) -> (u16, u16) {
+    let offset = point - area.min;
+    let clamp = |value: f32, count: u16| {
+        value.floor().clamp(0.0, f32::from(count.saturating_sub(1))) as u16
+    };
+    (
+        clamp(offset.y / cell.y, rows),
+        clamp(offset.x / cell.x, cols),
+    )
+}
+
 /// The mouse wheel scrolls back through the output, or goes to an agent that
-/// asked for mouse reports. `wheel` keeps the part of a line not yet scrolled.
+/// asked for mouse reports or, in its alternate screen, for arrow keys.
+/// `wheel` keeps the part of a line not yet scrolled. True when it scrolled.
 fn scroll(
     ui: &egui::Ui,
     wheel: &mut f32,
@@ -328,8 +418,8 @@ fn scroll(
     area: Rect,
     cell: Vec2,
     session: &Session,
-) {
-    let rows = f32::from(parser.screen().size().0);
+) -> bool {
+    let size = parser.screen().size();
     *wheel += ui.input(|input| {
         input
             .events
@@ -338,7 +428,7 @@ fn scroll(
                 Event::MouseWheel { unit, delta, .. } => match unit {
                     MouseWheelUnit::Point => delta.y / cell.y,
                     MouseWheelUnit::Line => delta.y * 3.0,
-                    MouseWheelUnit::Page => delta.y * rows,
+                    MouseWheelUnit::Page => delta.y * f32::from(size.0),
                 },
                 _ => 0.0,
             })
@@ -347,59 +437,89 @@ fn scroll(
     let steps = wheel.trunc();
     *wheel -= steps;
     if steps == 0.0 {
-        return;
+        return false;
     }
+    let alternate_scroll = parser.callbacks().alternate_scroll;
     let screen = parser.screen_mut();
-    if screen.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
+    let count = steps.abs() as usize;
+    if screen.mouse_protocol_mode() != vt100::MouseProtocolMode::None {
+        let pointer = ui
+            .input(|input| input.pointer.hover_pos())
+            .unwrap_or(area.min);
+        let (row, column) = cell_at(pointer, area, cell, size);
+        let (row, column) = (row + 1, column + 1);
+        let button = if steps > 0.0 { 64 } else { 65 };
+        let report = if screen.mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr {
+            format!("\x1b[<{button};{column};{row}M").into_bytes()
+        } else {
+            let [column, row] = [column, row].map(|value| (32 + value.min(223)) as u8);
+            vec![0x1b, b'[', b'M', 32 + button, column, row]
+        };
+        session.write(report.repeat(count));
+    } else if screen.alternate_screen() && alternate_scroll {
+        let key = if steps > 0.0 {
+            Key::ArrowUp
+        } else {
+            Key::ArrowDown
+        };
+        let arrow =
+            key_bytes(key, Modifiers::NONE, screen.application_cursor()).unwrap_or_default();
+        session.write(arrow.repeat(count));
+    } else {
         let offset = screen.scrollback().saturating_add_signed(steps as isize);
         screen.set_scrollback(offset);
-        return;
     }
-    let pointer = ui
-        .input(|input| input.pointer.hover_pos())
-        .unwrap_or(area.min)
-        - area.min;
-    let column = (pointer.x / cell.x).max(0.0) as u16 + 1;
-    let row = (pointer.y / cell.y).max(0.0) as u16 + 1;
-    let button = if steps > 0.0 { 64 } else { 65 };
-    let report = if screen.mouse_protocol_encoding() == vt100::MouseProtocolEncoding::Sgr {
-        format!("\x1b[<{button};{column};{row}M").into_bytes()
-    } else {
-        let [column, row] = [column, row].map(|value| (32 + value.min(223)) as u8);
-        vec![0x1b, b'[', b'M', 32 + button, column, row]
-    };
-    session.write(report.repeat(steps.abs() as usize));
+    true
 }
 
-/// Keys that stay with the app while the terminal has focus: Ctrl+Shift+A
-/// hides the tab and Ctrl+Q quits.
-fn reserved(event: &Event) -> bool {
+/// What a keyboard event does while the terminal has focus.
+#[derive(Debug, PartialEq)]
+enum Routed {
+    /// The app keeps it.
+    Keep,
+    Send(Vec<u8>),
+    RequestPaste,
+    CopySelection,
+}
+
+fn route(
+    event: &Event,
+    keys: &mut Keys,
+    application_cursor: bool,
+    bracketed: bool,
+    selecting: bool,
+) -> Routed {
+    let shortcut = |key: Key, modifiers: &Modifiers| {
+        matches!(event, Event::Key { key: which, pressed: true, .. } if *which == key)
+            && modifiers.command
+            && modifiers.shift
+    };
     match event {
+        // Ctrl+Shift+A hides the tab. Releases stay too: egui tracks held keys.
         Event::Key {
             key: Key::A,
             modifiers,
             ..
-        } => modifiers.command && modifiers.shift,
-        Event::Key {
-            key: Key::Q,
-            modifiers,
-            ..
-        } => modifiers.command && !modifiers.shift && !modifiers.alt,
-        _ => false,
+        } if modifiers.command && modifiers.shift => Routed::Keep,
+        Event::Key { pressed: false, .. } => Routed::Keep,
+        Event::Key { modifiers, .. } if shortcut(Key::V, modifiers) => Routed::RequestPaste,
+        Event::Key { modifiers, .. } if shortcut(Key::C, modifiers) => {
+            if selecting {
+                Routed::CopySelection
+            } else {
+                Routed::Send(Vec::new())
+            }
+        }
+        // egui turns Ctrl+C into a copy: it copies a selection, else interrupts.
+        Event::Copy if selecting => Routed::CopySelection,
+        // Ctrl+V with text pastes it; with an image the agent reads the clipboard itself.
+        Event::Paste(text) => Routed::Send(pasted(text, bracketed)),
+        Event::PasteImage(_) => Routed::Send(vec![0x16]),
+        Event::Key { .. } | Event::Text(_) | Event::Copy | Event::Cut | Event::Ime(_) => {
+            Routed::Send(keys.encode(event, application_cursor))
+        }
+        _ => Routed::Keep,
     }
-}
-
-fn keyboard(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::Key { .. }
-            | Event::Text(_)
-            | Event::Paste(_)
-            | Event::PasteImage(_)
-            | Event::Copy
-            | Event::Cut
-            | Event::Ime(_)
-    )
 }
 
 /// Pasted text as a terminal sends it: lines end in CR, escape bytes are
@@ -677,8 +797,67 @@ impl Style {
     }
 }
 
-/// Draw the visible rows: one text run per stretch of plain cells in one style,
-/// each other character at its own cell so the grid stays aligned.
+/// Strong right-to-left letters: Hebrew and Arabic, Persian included.
+fn right_to_left(text: &str) -> bool {
+    text.chars().next().is_some_and(|letter| {
+        matches!(letter, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+    })
+}
+
+/// The cells from `col` drawn as one text, in `style`: right-to-left words
+/// (shaped and ordered together), a stretch of plain ASCII cells, or one other
+/// character on its own cell so the grid stays aligned. Returns the column
+/// after the run, its text and whether it runs right to left.
+fn run(
+    screen: &vt100::Screen,
+    row: u16,
+    col: u16,
+    style: &Style,
+    colors: &Colors,
+) -> (u16, String, bool) {
+    let contents = |cell: &vt100::Cell| {
+        if cell.has_contents() {
+            cell.contents().to_owned()
+        } else {
+            " ".to_owned()
+        }
+    };
+    let alike = |cell: &vt100::Cell| !cell.is_wide() && Style::of(cell, colors) == *style;
+    let Some(first) = screen.cell(row, col) else {
+        return (col + 1, String::new(), false);
+    };
+    if right_to_left(first.contents()) {
+        // Spaces between right-to-left words stay in the run; trailing ones do not.
+        let (mut end, mut last) = (col + 1, col);
+        while let Some(next) = screen.cell(row, end).filter(|next| alike(next)) {
+            if right_to_left(next.contents()) {
+                last = end;
+            } else if next.has_contents() && next.contents() != " " {
+                break;
+            }
+            end += 1;
+        }
+        let text = (col..=last)
+            .filter_map(|at| screen.cell(row, at).map(contents))
+            .collect();
+        return (last + 1, text, true);
+    }
+    if first.is_wide() || !first.contents().is_ascii() {
+        return (col + 1 + u16::from(first.is_wide()), contents(first), false);
+    }
+    let mut end = col;
+    let mut text = String::new();
+    while let Some(next) = screen
+        .cell(row, end)
+        .filter(|next| alike(next) && next.contents().is_ascii())
+    {
+        text.push_str(&contents(next));
+        end += 1;
+    }
+    (end.max(col + 1), text, false)
+}
+
+/// Draw the visible rows and the cursor.
 fn paint(
     painter: &egui::Painter,
     origin: egui::Pos2,
@@ -707,27 +886,7 @@ fn paint(
                 continue;
             }
             let style = Style::of(first, colors);
-            let mut text = String::new();
-            let mut end = col;
-            if first.is_wide() || !first.contents().is_ascii() {
-                text.push_str(first.contents());
-                end += if first.is_wide() { 2 } else { 1 };
-            } else {
-                while let Some(next) = screen.cell(row, end) {
-                    if next.is_wide()
-                        || !next.contents().is_ascii()
-                        || Style::of(next, colors) != style
-                    {
-                        break;
-                    }
-                    text.push_str(if next.has_contents() {
-                        next.contents()
-                    } else {
-                        " "
-                    });
-                    end += 1;
-                }
-            }
+            let (end, text, right_to_left) = run(screen, row, col, &style, colors);
             let rect = at(row, col, end - col);
             if style.background != colors.background {
                 painter.rect_filled(rect.round_to_pixels(pixels), 0, style.background);
@@ -747,15 +906,24 @@ fn paint(
                         ..Default::default()
                     },
                 ));
+                // Right-to-left words keep to their cells, from the right.
+                let (target, position) = if right_to_left {
+                    (
+                        painter.with_clip_rect(rect),
+                        egui::pos2(rect.right() - galley.size().x, rect.top()),
+                    )
+                } else {
+                    (painter.clone(), rect.min)
+                };
                 if style.bold {
                     // No bold monospace face ships with the app: overstrike by a pixel.
-                    painter.galley(
-                        rect.min + egui::vec2(1.0 / pixels, 0.0),
+                    target.galley(
+                        position + egui::vec2(1.0 / pixels, 0.0),
                         galley.clone(),
                         style.foreground,
                     );
                 }
-                painter.galley(rect.min, galley, style.foreground);
+                target.galley(position, galley, style.foreground);
             }
             col = end;
         }
@@ -869,24 +1037,99 @@ mod tests {
     }
 
     #[test]
+    fn the_terminal_takes_every_key_but_the_tab_toggle() {
+        let mut keys = Keys::default();
+        let mut routed = |event: Event, selecting| route(&event, &mut keys, false, true, selecting);
+        // On Linux egui sets both for the Ctrl key.
+        let command = Modifiers::CTRL | Modifiers::COMMAND;
+        assert_eq!(
+            routed(key(Key::A, command | Modifiers::SHIFT), false),
+            Routed::Keep
+        );
+        // Ctrl+Q reaches the agent; it does not quit the app.
+        assert_eq!(
+            routed(key(Key::Q, command), false),
+            Routed::Send(vec![0x11])
+        );
+        assert_eq!(
+            routed(key(Key::W, command), false),
+            Routed::Send(vec![0x17])
+        );
+        let release = Event::Key {
+            key: Key::W,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: command,
+        };
+        assert_eq!(routed(release, false), Routed::Keep);
+        assert_eq!(routed(Event::PointerMoved(Pos2::ZERO), false), Routed::Keep);
+        assert_eq!(
+            routed(key(Key::V, command | Modifiers::SHIFT), false),
+            Routed::RequestPaste
+        );
+        // Text on the clipboard is pasted, bracketed when the agent asks; an image is Ctrl+V.
+        assert_eq!(
+            routed(Event::Paste("a\nb".into()), false),
+            Routed::Send(b"\x1b[200~a\rb\x1b[201~".to_vec())
+        );
+        let image = Arc::new(egui::ColorImage::filled([1, 1], Color32::BLACK));
+        assert_eq!(
+            routed(Event::PasteImage(image), false),
+            Routed::Send(vec![0x16])
+        );
+        // Ctrl+C copies a selection, else interrupts; Ctrl+Shift+C only copies.
+        assert_eq!(routed(Event::Copy, false), Routed::Send(vec![0x03]));
+        assert_eq!(routed(Event::Copy, true), Routed::CopySelection);
+        assert_eq!(
+            routed(key(Key::C, command | Modifiers::SHIFT), true),
+            Routed::CopySelection
+        );
+        assert_eq!(
+            routed(key(Key::C, command | Modifiers::SHIFT), false),
+            Routed::Send(Vec::new())
+        );
+    }
+
+    #[test]
     fn pastes_end_lines_in_cr_and_cannot_close_bracketed_mode() {
         assert_eq!(pasted("one\ntwo\r\n", false), b"one\rtwo\r");
         assert_eq!(pasted("a\x1b[201~b", true), b"\x1b[200~a[201~b\x1b[201~");
     }
 
     #[test]
-    fn the_app_keeps_hide_and_quit_while_the_terminal_has_focus() {
-        let command = Modifiers::COMMAND;
-        assert!(reserved(&key(Key::A, command | Modifiers::SHIFT)));
-        assert!(reserved(&key(Key::Q, command)));
-        for other in [
-            key(Key::A, command),
-            key(Key::P, command),
-            key(Key::Q, command | Modifiers::SHIFT),
-            key(Key::Tab, Modifiers::NONE),
-        ] {
-            assert!(!reserved(&other));
-        }
+    fn a_selection_copies_its_cells_in_reading_order() {
+        let mut parser = vt100::Parser::new(3, 10, 0);
+        parser.process(b"first\r\nsecond\r\nthird");
+        // Dragged backwards, from "ird" up into "cond".
+        let selection = Selection {
+            anchor: (2, 2),
+            end: (1, 2),
+        };
+        assert_eq!(selection.text(parser.screen()), "cond\nthi");
+        assert!(selection.contains(1, 5) && selection.contains(2, 2));
+        assert!(!selection.contains(2, 3) && !selection.contains(1, 1));
+    }
+
+    #[test]
+    fn right_to_left_words_are_drawn_as_one_text() {
+        let mut parser = vt100::Parser::new(1, 20, 0);
+        parser.process("ab سلام دنیا cd".as_bytes());
+        let colors = Colors::new(&egui::Visuals::dark());
+        let screen = parser.screen();
+        let at = |col| {
+            run(
+                screen,
+                0,
+                col,
+                &Style::of(screen.cell(0, col).unwrap(), &colors),
+                &colors,
+            )
+        };
+        assert_eq!(at(0), (3, "ab ".to_owned(), false));
+        assert_eq!(at(3), (12, "سلام دنیا".to_owned(), true));
+        let (end, text, right_to_left) = at(12);
+        assert_eq!((end, text.trim_end(), right_to_left), (20, " cd", false));
     }
 
     #[test]
@@ -949,6 +1192,15 @@ mod tests {
         assert_eq!(
             colors.resolve(vt100::Color::Default, Color32::BLUE),
             Color32::BLUE
+        );
+    }
+
+    #[test]
+    fn an_exit_names_its_code_or_signal() {
+        assert_eq!(describe(&ExitStatus::with_exit_code(0)), "Exited (code 0)");
+        assert_eq!(
+            describe(&ExitStatus::with_signal("Killed")),
+            "Exited (Killed)"
         );
     }
 
