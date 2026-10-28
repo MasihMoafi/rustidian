@@ -40,7 +40,7 @@ while :; do
     alt) printf '\033[?1049h\033[?1007h\033[HALT SCREEN\n' ;;
     main) printf '\033[?1007l\033[?1049lMAIN SCREEN\n' ;;
     colors) printf '\033[1mbold\033[0m \033[3mitalic\033[0m \033[4munderline\033[0m \033[7minverse\033[0m \033[31mred\033[0m \033[32mgreen\033[0m \033[34mblue\033[0m \033[38;5;208morange\033[0m \033[38;2;0;160;255mtruecolor\033[0m \033[30;47mblack-on-white\033[0m\n' ;;
-    glyphs) printf '┌──┐ ⠋⠙⠹ 中文 سلام دنیا\n└──┘ │done│\n' ;;
+    glyphs) printf '┌──┐ ⠋⠙⠹⠸⠼⠴ 中文 سلام دنیا\n└──┘ ⎿ ✻ ⏺ │done│\n' ;;
     *) printf 'you said: %s\n' "$line" ;;
   esac
 done
@@ -251,9 +251,14 @@ def run(scope):
     terminal = h.control_bounds("agent-terminal")
     cell = (terminal[2] - terminal[0]) / metric("terminal-cols")
     y = str(round((first[1] + first[3]) / 2))
+    # One step per frame, or egui reads press, moves and release as a click.
     h.xdo("mousemove", "--sync", str(round(terminal[0] + cell / 2)), y, "mousedown", "1")
+    h.pause()
     h.xdo("mousemove", "--sync", str(round(terminal[0] + cell * 2)), y)
-    h.xdo("mousemove", "--sync", str(round(terminal[0] + cell * 3.5)), y, "mouseup", "1")
+    h.pause()
+    h.xdo("mousemove", "--sync", str(round(terminal[0] + cell * 3.5)), y)
+    h.pause()
+    h.xdo("mouseup", "1")
     h.pause()
     wait(lambda: metric("terminal-selected") == 1, "A drag over the terminal did not select")
     h.key("ctrl+shift+c")

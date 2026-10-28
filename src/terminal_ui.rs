@@ -843,7 +843,9 @@ fn run(
         return (last + 1, text, true);
     }
     if first.is_wide() || !first.contents().is_ascii() {
-        return (col + 1 + u16::from(first.is_wide()), contents(first), false);
+        // Claude's tool-output corner is missing from the fonts; └ looks the same.
+        let text = contents(first).replace('\u{23BF}', "\u{2514}");
+        return (col + 1 + u16::from(first.is_wide()), text, false);
     }
     let mut end = col;
     let mut text = String::new();
@@ -855,6 +857,36 @@ fn run(
         end += 1;
     }
     (end.max(col + 1), text, false)
+}
+
+/// The dots, as (column, row) of a 2×4 grid, of a braille pattern: most
+/// agents' spinners, and no bundled font has them.
+fn braille(text: &str) -> Option<Vec<(f32, f32)>> {
+    let mut letters = text.chars();
+    let (Some(letter), None) = (letters.next(), letters.next()) else {
+        return None;
+    };
+    let bits = u32::from(letter)
+        .checked_sub(0x2800)
+        .filter(|bits| *bits < 0x100)?;
+    // Dots 1-3 and 7 run down the left column, 4-6 and 8 down the right.
+    const DOTS: [(f32, f32); 8] = [
+        (0.0, 0.0),
+        (0.0, 1.0),
+        (0.0, 2.0),
+        (1.0, 0.0),
+        (1.0, 1.0),
+        (1.0, 2.0),
+        (0.0, 3.0),
+        (1.0, 3.0),
+    ];
+    Some(
+        DOTS.into_iter()
+            .enumerate()
+            .filter(|(bit, _)| bits & (1 << bit) != 0)
+            .map(|(_, dot)| dot)
+            .collect(),
+    )
 }
 
 /// Draw the visible rows and the cursor.
@@ -891,7 +923,16 @@ fn paint(
             if style.background != colors.background {
                 painter.rect_filled(rect.round_to_pixels(pixels), 0, style.background);
             }
-            if !text.trim().is_empty() || style.underline {
+            if let Some(dots) = braille(&text) {
+                for (column, row) in dots {
+                    let center = rect.min
+                        + egui::vec2(
+                            rect.width() * (0.3 + 0.4 * column),
+                            rect.height() * (0.2 + 0.2 * row),
+                        );
+                    painter.circle_filled(center, (rect.width() * 0.13).max(0.8), style.foreground);
+                }
+            } else if !text.trim().is_empty() || style.underline {
                 let galley = painter.layout_job(LayoutJob::single_section(
                     text,
                     TextFormat {
@@ -1130,6 +1171,15 @@ mod tests {
         assert_eq!(at(3), (12, "سلام دنیا".to_owned(), true));
         let (end, text, right_to_left) = at(12);
         assert_eq!((end, text.trim_end(), right_to_left), (20, " cd", false));
+    }
+
+    #[test]
+    fn braille_spinners_draw_as_dots() {
+        // ⠋ is dots 1, 2 and 4.
+        assert_eq!(braille("⠋"), Some(vec![(0.0, 0.0), (0.0, 1.0), (1.0, 0.0)]));
+        assert_eq!(braille("⠀"), Some(Vec::new()));
+        assert_eq!(braille("a"), None);
+        assert_eq!(braille("⠋⠙"), None);
     }
 
     #[test]
