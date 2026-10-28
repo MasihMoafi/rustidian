@@ -124,8 +124,17 @@ def run(scope):
                     found.append(int(entry.name))
         return found
 
+    def click(name):
+        # A notice the machine raises (a full inotify limit on a busy desktop)
+        # can cover the top-right controls; it is not this feature's.
+        for _ in range(3):
+            if "error-dismiss" not in controls():
+                break
+            h.click_control("error-dismiss")
+        h.click_control(name)
+
     def focus_terminal():
-        h.click_control("agent-terminal")
+        click("agent-terminal")
         wait(lambda: metric("terminal-focused") == 1, "Clicking the terminal must give it keyboard focus")
 
     def clipboard(text):
@@ -153,12 +162,12 @@ def run(scope):
     h.results.append(f"Ctrl+Shift+A showed the Agent tab; the default Elpis stand-in's banner appeared after {elapsed:.2f} s")
 
     # 2. The menu lists only the agents on PATH, in menu order.
-    h.click_control("agent-backend")
+    click("agent-backend")
     wait(lambda: "agent-backend:Elpis" in controls(), "The agent menu did not open")
     listed = sorted((bounds[1], name) for name, bounds in controls().items() if name.startswith("agent-backend:"))
     assert [name for _, name in listed] == ["agent-backend:Elpis", "agent-backend:Claude"], listed
     h.capture("native-agent-terminal-menu.png")
-    h.click_control("agent-backend")
+    click("agent-backend")
     wait(lambda: "agent-backend:Elpis" not in controls(), "The agent menu did not close")
     h.results.append("The agent menu listed only Elpis and Claude, the agents on the test PATH, in that order")
 
@@ -230,8 +239,8 @@ def run(scope):
 
     # 8. Choosing another agent restarts the terminal with it and persists per vault.
     first = pid()
-    h.click_control("agent-backend")
-    h.click_control("agent-backend:Claude")
+    click("agent-backend")
+    click("agent-backend:Claude")
     wait(lambda: banner() and banner()[0] == "claude", "Choosing Claude did not start it")
     wait(lambda: first not in stand_ins(), "The previous agent outlived the switch")
     assert len(stand_ins()) == 1, stand_ins()
@@ -244,7 +253,7 @@ def run(scope):
     focus_terminal()
     enter("before restart")
     shows("you said: before restart")
-    h.click_control("agent-restart")
+    click("agent-restart")
     wait(lambda: banner() and banner()[1] != before_restart, "Restart did not start a fresh agent")
     assert not any("before restart" in row for row in rows()), rows()
     wait(lambda: before_restart not in stand_ins(), "The restarted agent's old process remained")
@@ -258,7 +267,7 @@ def run(scope):
     shows("bye")
     h.capture("native-agent-terminal-exited.png")
     exited = pid()
-    h.click_control("agent-restart")
+    click("agent-restart")
     wait(lambda: banner() and banner()[1] != exited, "Restart after exit did not start a fresh agent")
     assert "agent-exit:0" not in controls()
     h.results.append("After exit the last screen stayed with Exited (code 0); Restart started a fresh agent")
@@ -269,31 +278,16 @@ def run(scope):
     h.key("ctrl+shift+a")
     wait(lambda: "agent-terminal" not in controls(), "Ctrl+Shift+A in the terminal did not hide the tab")
     assert running in stand_ins(), "Hiding the tab must not end the agent"
-    h.click_control("toggle-agent")
+    click("toggle-agent")
     wait(lambda: "agent-terminal" in controls(), "The Agent button did not show the tab")
     assert pid() == running, "Showing the tab again must keep the same agent"
-    h.click_control("toggle-agent")
+    click("toggle-agent")
     wait(lambda: "agent-terminal" not in controls(), "The Agent button did not hide the tab")
     h.key("ctrl+shift+a")
     wait(lambda: "agent-terminal" in controls(), "Ctrl+Shift+A did not show the tab again")
     h.results.append("Ctrl+Shift+A hid the tab from the focused terminal; the Agent button showed and hid it; the agent kept running")
 
-    # 12. Both themes at two sizes: header and terminal inside the sidebar, nothing overlapping.
-    enter("colors")
-    shows("black-on-white")
-    h.click_control("editor")
-    window = h.xdo("search", "--onlyvisible", "--name", "Rustidian$").splitlines()[0]
-    for dark in (False, True):
-        h.set_theme(dark)
-        for width, height in ((900, 640), (1440, 960)):
-            h.xdo("windowsize", window, str(width), str(height))
-            h.pause()
-            wait(lambda: metric("terminal-cols"), "The terminal did not draw after resizing")
-            layout(h, controls, width, height)
-            h.capture(f"native-agent-terminal-{'dark' if dark else 'light'}-{width}x{height}.png", (width, height))
-    h.results.append("Light and dark at 900×640 and 1440×960: tab, header, menu, Restart, status and terminal rows fit the sidebar without overlap")
-
-    # 13. Ctrl+Shift+V pastes the clipboard.
+    # 12. Ctrl+Shift+V pastes the clipboard (before the narrow layouts wrap the reply).
     focus_terminal()
     owner = clipboard("pasted from the clipboard")
     try:
@@ -305,6 +299,21 @@ def run(scope):
         owner.wait(timeout=5)
     h.results.append("Ctrl+Shift+V pasted the clipboard into the agent")
 
+    # 13. Both themes at two sizes: header and terminal inside the sidebar, nothing overlapping.
+    enter("colors")
+    shows("black-on-white")
+    click("editor")
+    window = h.xdo("search", "--onlyvisible", "--name", "Rustidian$").splitlines()[0]
+    for dark in (False, True):
+        h.set_theme(dark)
+        for width, height in ((900, 640), (1440, 960)):
+            h.xdo("windowsize", window, str(width), str(height))
+            h.pause()
+            wait(lambda: metric("terminal-cols"), "The terminal did not draw after resizing")
+            layout(h, controls, width, height)
+            h.capture(f"native-agent-terminal-{'dark' if dark else 'light'}-{width}x{height}.png", (width, height))
+    h.results.append("Light and dark at 900×640 and 1440×960: tab, header, menu, Restart, status and terminal rows fit the sidebar without overlap")
+
     # 14. Quitting from the terminal ends the agent; the vault's choice survives a restart.
     focus_terminal()
     h.xdo("key", "--clearmodifiers", "ctrl+q")
@@ -312,7 +321,8 @@ def run(scope):
     wait(lambda: not stand_ins(), "An agent process outlived its window", timeout=5)
     app = h.relaunch()
     h.xdo("key", "--clearmodifiers", "ctrl+shift+a")
-    wait(lambda: banner() and banner()[0] == "claude", "The vault's Claude choice did not survive a restart")
+    # The restored sidebar keeps its last, narrow width, so the banner may wrap.
+    shows("FAKE claude ready")
     h.xdo("key", "--clearmodifiers", "ctrl+q")
     app.wait(timeout=10)
     wait(lambda: not stand_ins(), "An agent process outlived its window", timeout=5)
