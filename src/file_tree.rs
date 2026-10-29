@@ -22,20 +22,54 @@ pub fn note_list_id() -> egui::Id {
     egui::Id::unique("sidebar-note-navigation")
 }
 
+/// A request to scroll the note lists to a note: the active note changed, or the
+/// user moved through a list with the keyboard. It lapses after a second and the
+/// user's own scrolling cancels it, so it never pulls the tree back later.
+#[derive(Clone)]
+struct Reveal {
+    path: PathBuf,
+    until: f64,
+}
+
+fn reveal_id() -> egui::Id {
+    note_list_id().with("reveal")
+}
+
+pub fn reveal(ctx: &egui::Context, path: &Path) {
+    let until = ctx.input(|input| input.time) + 1.0;
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            reveal_id(),
+            Reveal {
+                path: path.to_owned(),
+                until,
+            },
+        )
+    });
+}
+
+pub fn cancel_reveal(ctx: &egui::Context) {
+    ctx.data_mut(|data| data.remove::<Reveal>(reveal_id()));
+}
+
+pub fn pending_reveal(ctx: &egui::Context) -> Option<PathBuf> {
+    let reveal = ctx.data(|data| data.get_temp::<Reveal>(reveal_id()))?;
+    if ctx.input(|input| input.time) > reveal.until {
+        cancel_reveal(ctx);
+        return None;
+    }
+    Some(reveal.path)
+}
+
 pub fn reveal_note_row(ui: &egui::Ui, path: &Path, rect: egui::Rect) {
-    let key = note_list_id().with("reveal");
-    if ui
-        .ctx()
-        .data(|data| data.get_temp::<PathBuf>(key))
-        .as_deref()
-        == Some(path)
-    {
-        if rect.top() >= ui.clip_rect().top() && rect.bottom() <= ui.clip_rect().bottom() {
-            ui.ctx().data_mut(|data| data.remove::<PathBuf>(key));
-        } else {
-            ui.scroll_to_rect(rect, Some(egui::Align::Center));
-            ui.ctx().request_repaint();
-        }
+    if pending_reveal(ui.ctx()).as_deref() != Some(path) {
+        return;
+    }
+    if rect.top() >= ui.clip_rect().top() && rect.bottom() <= ui.clip_rect().bottom() {
+        cancel_reveal(ui.ctx());
+    } else {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        ui.ctx().request_repaint();
     }
 }
 
@@ -299,10 +333,7 @@ impl Tree {
                 paths.extend(self.files.iter().cloned());
             }
         }
-        let target = ui
-            .ctx()
-            .data(|data| data.get_temp::<PathBuf>(note_list_id().with("reveal")));
-        if let Some(target) = target
+        if let Some(target) = pending_reveal(ui.ctx())
             && let Some(index) = self.files.iter().position(|path| *path == target)
         {
             let slot = if reverse {

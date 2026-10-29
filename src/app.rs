@@ -149,6 +149,8 @@ pub struct NotesApp {
     pub(crate) sort_descending: bool,
     collapse_epoch: u64,
     reveal_folder: Option<PathBuf>,
+    /// The active note the explorer last scrolled to; a new one is revealed once.
+    revealed_note: Option<PathBuf>,
     reset_tree_scroll: bool,
     pub(crate) bookmarks: rustidian::bookmarks::Bookmarks,
     pub(crate) show_bookmarks: bool,
@@ -252,6 +254,7 @@ impl NotesApp {
             sort_descending: false,
             collapse_epoch: 0,
             reveal_folder: None,
+            revealed_note: None,
             reset_tree_scroll: false,
             bookmarks: Default::default(),
             show_bookmarks: false,
@@ -2107,6 +2110,21 @@ impl NotesApp {
         if !self.show_left {
             return;
         }
+        // The explorer follows the active note when it changes (open, tab switch,
+        // link) and never otherwise, so the user's own scrolling stays put.
+        let active = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.document.path.clone());
+        if active != self.revealed_note {
+            if !self.searching
+                && !self.show_bookmarks
+                && let Some(path) = &active
+            {
+                crate::file_tree::reveal(ui.ctx(), path);
+            }
+            self.revealed_note = active;
+        }
         let mut selected = None;
         let navigation_enabled = ui.is_enabled() && !self.interaction_blocked();
         let collect_paths = navigation_enabled
@@ -2271,11 +2289,7 @@ impl NotesApp {
                                 .small()
                                 .weak(),
                         );
-                        let target = ui.ctx().data(|data| {
-                            data.get_temp::<PathBuf>(
-                                crate::file_tree::note_list_id().with("reveal"),
-                            )
-                        });
+                        let target = crate::file_tree::pending_reveal(ui.ctx());
                         let mut search_scroll = theme::sidebar_scroll().id_salt("search-results");
                         if let Some(index) = target
                             .as_ref()
@@ -2378,6 +2392,23 @@ impl NotesApp {
                         }
                     });
                     crate::ui_probe::record(ui.ctx(), "file-tree-viewport", scroll.inner_rect);
+                    crate::ui_probe::metric(
+                        ui.ctx(),
+                        "file-tree-offset",
+                        scroll.state.clamped_offset().y,
+                    );
+                    // Scrolling the tree by hand drops a reveal still waiting for its row.
+                    if ui.rect_contains_pointer(scroll.inner_rect.expand2(egui::vec2(8.0, 0.0)))
+                        && ui.input(|input| {
+                            input.pointer.any_down()
+                                || input
+                                    .events
+                                    .iter()
+                                    .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+                        })
+                    {
+                        crate::file_tree::cancel_reveal(ui.ctx());
+                    }
                 }
                 ui.allocate_ui_with_layout(
                     ui.available_size(),
@@ -2456,12 +2487,7 @@ impl NotesApp {
                     _ => current.map_or(0, |index| (index + 1).min(last)),
                 };
                 let path = visible_files[index].clone();
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(
-                        crate::file_tree::note_list_id().with("reveal"),
-                        path.clone(),
-                    )
-                });
+                crate::file_tree::reveal(ui.ctx(), &path);
                 selected = Some(FileAction::Open(path));
             }
         }
@@ -5160,6 +5186,14 @@ impl eframe::App for NotesApp {
         self.sidebar(ui);
         self.details(ui);
         self.content(ui);
+        if let Some(query) = self.editor.search_request.take() {
+            self.search = query;
+            self.show_left = true;
+            self.searching = true;
+            self.show_bookmarks = false;
+            self.search_focus = true;
+            self.editor.focus = false;
+        }
         if !ctx.input(|input| input.pointer.any_down())
             && (self.graph.take_changed() || local_graph_open != self.graph.local_open)
             && let Err(error) = self.write_session()

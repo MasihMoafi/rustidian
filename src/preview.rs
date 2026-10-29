@@ -575,6 +575,48 @@ pub fn show(
     });
     if !parsed.fallback {
         let mut task = None;
+        let select_all_id = document_id.with("select-all");
+        let mut select_all = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(select_all_id))
+            .unwrap_or(false);
+        // Select all lasts until Escape or a press on the note; Ctrl+A starts it.
+        if ui.input(|input| input.key_pressed(egui::Key::Escape))
+            || ui.input(|input| input.pointer.any_pressed())
+                && ui
+                    .ctx()
+                    .pointer_interact_pos()
+                    .is_some_and(|pos| ui.ctx().layer_id_at(pos) == Some(ui.layer_id()))
+        {
+            select_all = false;
+        }
+        if !ui.ctx().egui_wants_keyboard_input() && take_select_all_key(ui) {
+            select_all = true;
+            clear_label_selection(ui.ctx());
+        }
+        // Pressing the menu's Copy ends egui's text selection when this pass ends,
+        // and egui gathers selected text only while a copy is pending, so ask for
+        // the copy before this pass draws the text.
+        let menu = document_id.with("reading-menu");
+        if !select_all
+            && egui::Popup::is_id_open(ui.ctx(), menu)
+            && ui
+                .ctx()
+                .data(|data| data.get_temp::<egui::Rect>(menu.with("copy")))
+                .is_some_and(|copy| {
+                    ui.input(|input| {
+                        input.pointer.primary_pressed()
+                            && input
+                                .pointer
+                                .press_origin()
+                                .is_some_and(|pos| copy.contains(pos))
+                    })
+                })
+        {
+            ui.ctx()
+                .input_mut(|input| input.events.push(egui::Event::Copy));
+        }
+        let top = ui.cursor().top();
         let follow = show_blocks(
             ui,
             &parsed.blocks,
@@ -584,6 +626,22 @@ pub fn show(
             from,
             document_id,
         );
+        let area = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
+        reading_menu(ui, area, menu, &parsed.blocks, &mut select_all);
+        if select_all {
+            ui.painter()
+                .rect_filled(area, 0.0, ui.visuals().selection.bg_fill);
+            if ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Copy))
+            }) {
+                ui.ctx().copy_text(plain_text(&parsed.blocks));
+            }
+        }
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(select_all_id, select_all));
         if let Some(ordinal) = task
             && rustidian::editor::toggle_task(&mut tab.document.text, ordinal)
         {
@@ -605,6 +663,109 @@ pub fn show(
             None
         }
     })
+}
+
+/// Obsidian's reading-view menu: Copy and Select all.
+fn reading_menu(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    menu: egui::Id,
+    blocks: &[Block],
+    select_all: &mut bool,
+) {
+    use crate::editor_ui::{MenuArea, menu_target, take_menu_click};
+    menu_target(ui, area, MenuArea::Reading);
+    let opened = take_menu_click(ui.ctx(), MenuArea::Reading).is_some();
+    let selected = *select_all
+        || ui
+            .ctx()
+            .plugin_opt::<egui::text_selection::LabelSelectionState>()
+            .is_some_and(|plugin| plugin.lock().has_selection());
+    let shown = egui::Popup::new(
+        menu,
+        ui.ctx().clone(),
+        egui::PopupAnchor::PointerFixed,
+        ui.layer_id(),
+    )
+    .kind(egui::PopupKind::Menu)
+    .layout(egui::Layout::top_down_justified(egui::Align::Min))
+    .style(egui::menu::menu_style)
+    .open_memory(opened.then_some(egui::SetOpenCommand::Bool(true)))
+    .show(|ui| {
+        crate::theme::menu_style(ui);
+        ui.set_min_width(240.0);
+        let copy = ui.add_enabled(selected, egui::Button::new("Copy").shortcut_text("Ctrl+C"));
+        crate::ui_probe::record(ui.ctx(), "reading-menu:Copy", copy.rect);
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(menu.with("copy"), copy.rect));
+        // Text selected by dragging was copied when the press began (see `show`).
+        if copy.is_pointer_button_down_on() || copy.clicked() {
+            if *select_all {
+                ui.ctx().copy_text(plain_text(blocks));
+            }
+            ui.close();
+        }
+        let all = ui.add(egui::Button::new("Select all").shortcut_text("Ctrl+A"));
+        crate::ui_probe::record(ui.ctx(), "reading-menu:Select all", all.rect);
+        if all.clicked() {
+            *select_all = true;
+            clear_label_selection(ui.ctx());
+            ui.close();
+        }
+    });
+    if let Some(shown) = shown {
+        crate::ui_probe::record(ui.ctx(), "reading-menu", shown.response.rect);
+    }
+}
+
+/// Consume exactly Ctrl+A, leaving Ctrl+Shift+A to the agent shortcut.
+fn take_select_all_key(ui: &egui::Ui) -> bool {
+    ui.input_mut(|input| {
+        let index = input.events.iter().position(|event| {
+            matches!(
+                event,
+                egui::Event::Key { key: egui::Key::A, pressed: true, modifiers, .. }
+                    if modifiers.matches_exact(egui::Modifiers::COMMAND)
+            )
+        });
+        index.map(|index| input.events.remove(index)).is_some()
+    })
+}
+
+fn clear_label_selection(ctx: &egui::Context) {
+    if let Some(plugin) = ctx.plugin_opt::<egui::text_selection::LabelSelectionState>() {
+        plugin.lock().clear_selection();
+    }
+}
+
+/// The note's reading text, one block per line, as Select all copies it.
+fn plain_text(blocks: &[Block]) -> String {
+    fn collect(blocks: &[Block], lines: &mut Vec<String>) {
+        let text =
+            |parts: &[Inline]| -> String { parts.iter().map(|part| part.text.as_str()).collect() };
+        for block in blocks {
+            if let Some(callout) = &block.callout {
+                if !callout.model.title.is_empty() {
+                    lines.push(callout.model.title.clone());
+                }
+                collect(&callout.children, lines);
+            } else if let Some(math) = &block.math {
+                lines.push(math.text.clone());
+            } else if let Some(table) = &block.table {
+                for row in &table.rows {
+                    let cells: Vec<String> = row.iter().map(|cell| text(cell.as_slice())).collect();
+                    lines.push(cells.join("\t"));
+                }
+            } else if let Some(code) = &block.code {
+                lines.push(code.body.trim_end_matches('\n').to_owned());
+            } else if block.image.is_none() && !block.rule {
+                lines.push(text(block.parts.as_slice()));
+            }
+        }
+    }
+    let mut lines = Vec::new();
+    collect(blocks, &mut lines);
+    lines.join("\n")
 }
 
 fn matches_anchor(block: &Block, anchor: &str) -> bool {
@@ -756,7 +917,13 @@ fn show_blocks(
                                 format!("math-display:{index}"),
                                 response.rect,
                             );
+                            crate::editor_ui::menu_target(
+                                ui,
+                                response.rect,
+                                crate::editor_ui::MenuArea::Native,
+                            );
                             response.context_menu(|ui| {
+                                crate::theme::menu_style(ui);
                                 if ui.button("Copy LaTeX").clicked() {
                                     ui.ctx().copy_text(part.text.clone());
                                     ui.close();

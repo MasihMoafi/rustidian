@@ -49,6 +49,65 @@ pub struct Editor {
     image_cursor: Option<(usize, usize)>,
     image_cursor_time: f64,
     pressed_link: Option<(u64, egui::PointerButton, String)>,
+    /// The release of a right-click that opened the note menu, held back from egui.
+    menu_release: bool,
+    /// Text the note menu asked the sidebar search to find.
+    pub search_request: Option<String>,
+}
+
+/// Where a right-click opens the note's own menu before egui sees it: egui's
+/// press would first place the caret and drop the selection the menu acts on.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub enum MenuArea {
+    #[default]
+    Editor,
+    Reading,
+    /// A control inside the note with a menu of its own, such as a formula.
+    Native,
+}
+
+#[derive(Clone)]
+struct MenuTarget {
+    rect: egui::Rect,
+    layer: egui::LayerId,
+    area: MenuArea,
+}
+
+fn menu_targets_id() -> egui::Id {
+    egui::Id::unique("note-menu-targets")
+}
+
+fn menu_click_id() -> egui::Id {
+    egui::Id::unique("note-menu-click")
+}
+
+/// Let a right-click inside `rect` open the menu of `area` in the next frame.
+pub fn menu_target(ui: &egui::Ui, rect: egui::Rect, area: MenuArea) {
+    let rect = rect.intersect(ui.clip_rect());
+    if rect.is_positive() {
+        let target = MenuTarget {
+            rect,
+            layer: ui.layer_id(),
+            area,
+        };
+        ui.ctx().data_mut(|data| {
+            data.get_temp_mut_or_default::<Vec<MenuTarget>>(menu_targets_id())
+                .push(target)
+        });
+    }
+}
+
+/// The right-click held back for `area` in this frame, if any.
+pub fn take_menu_click(ctx: &egui::Context, area: MenuArea) -> Option<egui::Pos2> {
+    let frame = ctx.cumulative_frame_nr();
+    ctx.data_mut(|data| {
+        let (pos, owner, at) = data.get_temp::<(egui::Pos2, MenuArea, u64)>(menu_click_id())?;
+        if at == frame && owner != area {
+            return None;
+        }
+        data.remove::<(egui::Pos2, MenuArea, u64)>(menu_click_id());
+        (at == frame).then_some(pos)
+    })
 }
 
 type Histories = HashMap<std::path::PathBuf, TextEditState>;
@@ -150,7 +209,19 @@ enum Edit {
     Highlight(Color),
     NativeHighlight(rustidian::highlight::NativeColor),
     Insert { text: String, caret_back: usize },
+    Wrap(&'static str, &'static str),
+    Heading(usize),
 }
+
+/// The note menu's formatting, in Obsidian's order: label, shortcut, markers.
+const FORMATS: [(&str, &str, &str, &str); 6] = [
+    ("Bold", "Ctrl+B", "**", "**"),
+    ("Italic", "Ctrl+I", "*", "*"),
+    ("Strikethrough", "", "~~", "~~"),
+    ("Highlight", "Ctrl+Shift+H", "==", "=="),
+    ("Code", "", "`", "`"),
+    ("Link", "", "[[", "]]"),
+];
 
 #[derive(Clone, PartialEq)]
 struct LiveImage {
@@ -516,6 +587,68 @@ fn replace_chars(text: &mut String, range: Range<usize>, replacement: &str) {
     text.replace_range(offsets[range.start]..offsets[range.end], replacement);
 }
 
+/// Make each line the selection touches a heading of `level`, or body text when
+/// every one already is that heading, like Obsidian's heading commands; blank
+/// lines among several stay blank. Takes and returns the selection in characters.
+fn toggle_heading(text: &mut String, characters: Range<usize>, level: usize) -> Range<usize> {
+    let byte = |character: usize| {
+        text.char_indices()
+            .nth(character)
+            .map_or(text.len(), |(index, _)| index)
+    };
+    let (start, end) = (byte(characters.start), byte(characters.end));
+    let first = text[..start].rfind('\n').map_or(0, |index| index + 1);
+    let last = text[end..]
+        .find('\n')
+        .map_or(text.len(), |index| end + index);
+    let lines: Vec<&str> = text[first..last].split('\n').collect();
+    let several = lines.len() > 1;
+    let skipped = |line: &str| several && line.trim().is_empty();
+    let marker = format!("{} ", "#".repeat(level));
+    let prefix = |line: &str| {
+        let hashes = line.bytes().take_while(|byte| *byte == b'#').count();
+        if (1..=6).contains(&hashes) && line[hashes..].starts_with(' ') {
+            hashes + 1
+        } else {
+            0
+        }
+    };
+    let remove = lines
+        .iter()
+        .filter(|line| !skipped(line))
+        .all(|line| line.starts_with(&marker));
+    let mut rebuilt = String::new();
+    let mut ends = [characters.start, characters.end];
+    let mut mapped = [false; 2];
+    let mut old_line = text[..first].chars().count();
+    let mut new_line = old_line;
+    for (index, line) in lines.iter().enumerate() {
+        if index > 0 {
+            rebuilt.push('\n');
+        }
+        let (old_prefix, new_prefix) = if skipped(line) {
+            (0, "")
+        } else if remove {
+            (prefix(line), "")
+        } else {
+            (prefix(line), marker.as_str())
+        };
+        rebuilt.push_str(new_prefix);
+        rebuilt.push_str(&line[old_prefix..]);
+        let length = line.chars().count();
+        for (end, done) in ends.iter_mut().zip(&mut mapped) {
+            if !*done && *end <= old_line + length {
+                *end = new_line + new_prefix.len() + (*end - old_line).saturating_sub(old_prefix);
+                *done = true;
+            }
+        }
+        old_line += length + 1;
+        new_line += new_prefix.len() + length - old_prefix + 1;
+    }
+    text.replace_range(first..last, &rebuilt);
+    ends[0]..ends[1]
+}
+
 // Completion and Markdown Enter run before TextEdit. Apply only the plain text
 // preceding their first key; other editing/navigation stays with TextEdit in order.
 fn text_before_action(events: &mut Vec<egui::Event>) -> Option<String> {
@@ -630,7 +763,47 @@ impl Editor {
         raw: &mut egui::RawInput,
         live_tab: Option<u64>,
     ) {
+        self.hold_menu_click(ctx, raw);
         self.tables.raw_input(ctx, raw, live_tab);
+    }
+
+    /// Keep a right-click on selected or reading text from egui and open the
+    /// note menu for it; elsewhere egui places the caret and opens it itself.
+    fn hold_menu_click(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let targets = ctx
+            .data_mut(|data| data.remove_temp::<Vec<MenuTarget>>(menu_targets_id()))
+            .unwrap_or_default();
+        let frame = ctx.cumulative_frame_nr();
+        raw.events.retain(|event| {
+            let egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                ..
+            } = event
+            else {
+                return true;
+            };
+            if !pressed {
+                return !std::mem::take(&mut self.menu_release);
+            }
+            let layer = ctx.layer_id_at(*pos);
+            let under =
+                |target: &&MenuTarget| Some(target.layer) == layer && target.rect.contains(*pos);
+            if targets
+                .iter()
+                .filter(under)
+                .any(|target| target.area == MenuArea::Native)
+            {
+                return true;
+            }
+            let Some(target) = targets.iter().find(under) else {
+                return true;
+            };
+            ctx.data_mut(|data| data.insert_temp(menu_click_id(), (*pos, target.area, frame)));
+            self.menu_release = true;
+            false
+        });
     }
 
     pub fn highlight(&mut self, tab: &Tab, color: Color) {
@@ -673,6 +846,101 @@ impl Editor {
                 .map(|(_, range)| range),
         });
         self.focus = true;
+    }
+
+    /// Obsidian's editor menu: the clipboard, then formatting for the selection.
+    /// Actions run on the selection the editor held when the menu opened.
+    fn note_menu(&mut self, ui: &mut egui::Ui, tab: &Tab, id: egui::Id, body_start: usize) {
+        crate::theme::menu_style(ui);
+        ui.set_min_width(240.0);
+        let selected = self
+            .selection
+            .filter(|(owner, range)| {
+                *owner == tab.id() && range.primary.index != range.secondary.index
+            })
+            .map(|(_, range)| {
+                let range = range.as_sorted_char_range();
+                tab.document
+                    .text
+                    .chars()
+                    .skip(range.start.0)
+                    .take(range.end.0 - range.start.0)
+                    .collect::<String>()
+            });
+        let item = |ui: &mut egui::Ui, label: &str, shortcut: &str, enabled: bool| {
+            let mut button = egui::Button::new(label);
+            if !shortcut.is_empty() {
+                button = button.shortcut_text(shortcut);
+            }
+            let response = ui.add_enabled(enabled, button);
+            crate::ui_probe::record(ui.ctx(), format!("editor-menu:{label}"), response.rect);
+            response.clicked()
+        };
+        let mut done = false;
+        if item(ui, "Cut", "Ctrl+X", selected.is_some())
+            && let Some(text) = &selected
+        {
+            ui.ctx().copy_text(text.clone());
+            self.edit(
+                tab,
+                Edit::Insert {
+                    text: String::new(),
+                    caret_back: 0,
+                },
+            );
+            done = true;
+        }
+        if item(ui, "Copy", "Ctrl+C", selected.is_some())
+            && let Some(text) = &selected
+        {
+            ui.ctx().copy_text(text.clone());
+            self.focus = true;
+            done = true;
+        }
+        if item(ui, "Paste", "Ctrl+V", true) {
+            // The editor takes focus again in the next frame, then receives the paste.
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+            self.focus = true;
+            done = true;
+        }
+        if item(ui, "Select all", "Ctrl+A", true) {
+            set_cursor_range(
+                ui.ctx(),
+                id,
+                CCursorRange::two(
+                    CCursor::new(body_start),
+                    CCursor::new(tab.document.text.chars().count()),
+                ),
+            );
+            self.focus = true;
+            done = true;
+        }
+        ui.separator();
+        for (label, shortcut, opening, closing) in FORMATS {
+            if item(ui, label, shortcut, true) {
+                self.edit(tab, Edit::Wrap(opening, closing));
+                done = true;
+            }
+        }
+        ui.separator();
+        for level in 1..=3 {
+            if item(ui, format!("Heading {level}").as_str(), "", true) {
+                self.edit(tab, Edit::Heading(level));
+                done = true;
+            }
+        }
+        if let Some(text) = &selected {
+            ui.separator();
+            if item(ui, "Search for selection", "", true) {
+                self.search_request = Some(text.split_whitespace().collect::<Vec<_>>().join(" "));
+                done = true;
+            }
+        }
+        if done {
+            ui.close();
+            ui.ctx().request_repaint();
+        }
     }
 
     pub fn has_focus(&self, ctx: &egui::Context, id: egui::Id) -> bool {
@@ -940,13 +1208,14 @@ impl Editor {
             let operation = pending.as_ref().map(|edit| &edit.operation);
             let markers = match operation {
                 Some(Edit::Highlight(color)) => Some(color.markers()),
-                Some(Edit::Insert { .. } | Edit::NativeHighlight(_)) => None,
+                Some(Edit::Wrap(opening, closing)) => Some((*opening, *closing)),
+                Some(Edit::Insert { .. } | Edit::NativeHighlight(_) | Edit::Heading(_)) => None,
                 None => shortcut,
             };
             if markers.is_some()
                 || matches!(
                     operation,
-                    Some(Edit::Insert { .. } | Edit::NativeHighlight(_))
+                    Some(Edit::Insert { .. } | Edit::NativeHighlight(_) | Edit::Heading(_))
                 )
             {
                 let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
@@ -970,6 +1239,8 @@ impl Editor {
                             characters.start + text.chars().count().saturating_sub(*caret_back);
                         replace_chars(&mut tab.document.text, characters, text);
                         caret..caret
+                    } else if let Some(Edit::Heading(level)) = operation {
+                        toggle_heading(&mut tab.document.text, characters, *level)
                     } else {
                         let (opening, closing) = markers.unwrap();
                         wrap(&mut tab.document.text, characters, opening, closing)
@@ -1350,11 +1621,38 @@ impl Editor {
         }
         if output.response.has_focus() {
             crate::ui_probe::record(ui.ctx(), "editor-focused", output.response.rect);
+            if let Some(range) = output.cursor_range {
+                let caret = output.galley.pos_from_cursor(range.primary);
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    "editor-caret",
+                    caret
+                        .translate(output.galley_pos.to_vec2())
+                        .expand2(egui::vec2(1.0, 0.0)),
+                );
+            }
         }
         if output.response.has_focus()
             && let Some(range) = output.cursor_range
         {
             self.selection = Some((tab.id(), range));
+        }
+        // A right-click on the selection keeps it for the menu (see hold_menu_click).
+        if output.response.has_focus()
+            && let Some(range) = output.cursor_range
+            && range.primary.index != range.secondary.index
+            && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
+        {
+            for rect in selection_rects(&output, range, &images, &tab.document.text) {
+                menu_target(ui, rect, MenuArea::Editor);
+            }
+        }
+        let mut menu = egui::Popup::context_menu(&output.response);
+        if take_menu_click(ui.ctx(), MenuArea::Editor).is_some() {
+            menu = menu.open_memory(Some(egui::SetOpenCommand::Bool(true)));
+        }
+        if let Some(menu) = menu.show(|ui| self.note_menu(ui, tab, id, body_start)) {
+            crate::ui_probe::record(ui.ctx(), "editor-menu", menu.response.rect);
         }
         if header_end > 0 && !tab.document.text.starts_with(&self.source[..header_end]) {
             tab.document.text.clone_from(&self.source);
@@ -2393,9 +2691,23 @@ fn paint_image_selection(
     let Some(range) = output.cursor_range else {
         return;
     };
+    let shapes = selection_rects(output, range, images, source)
+        .into_iter()
+        .map(|rect| egui::Shape::rect_filled(rect, 0.0, color))
+        .collect();
+    ui.painter().set(shape, egui::Shape::Vec(shapes));
+}
+
+/// The painted rectangles of `range`, row by row, in screen coordinates.
+fn selection_rects(
+    output: &egui::text_edit::TextEditOutput,
+    range: CCursorRange,
+    images: &[LiveImage],
+    source: &str,
+) -> Vec<egui::Rect> {
     let [start, end] = range.sorted_cursors();
     let mut character = 0;
-    let mut shapes = Vec::new();
+    let mut selected = Vec::new();
     for row in &output.galley.rows {
         let length = row.char_count_excluding_newline().0;
         let row_end = character + length;
@@ -2416,15 +2728,15 @@ fn paint_image_selection(
             }
             for mut rect in rects {
                 rect.max.y = height;
-                rect = rect
-                    .translate(output.galley_pos.to_vec2() + row.pos.to_vec2())
-                    .intersect(output.text_clip_rect);
-                shapes.push(egui::Shape::rect_filled(rect, 0.0, color));
+                selected.push(
+                    rect.translate(output.galley_pos.to_vec2() + row.pos.to_vec2())
+                        .intersect(output.text_clip_rect),
+                );
             }
         }
         character = row_end + usize::from(row.ends_with_newline);
     }
-    ui.painter().set(shape, egui::Shape::Vec(shapes));
+    selected
 }
 
 /// The line holding the end of the change from `before` to `after`.
@@ -2720,6 +3032,30 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn heading_menu_toggles_the_lines_of_the_selection() {
+        // (text, selection, level) -> (text, selection), selections in characters.
+        for (text, selection, level, expected, expected_selection) in [
+            ("Title", 2..2, 1, "# Title", 4..4),
+            ("# Title", 3..3, 1, "Title", 1..1),
+            ("## Title", 5..5, 1, "# Title", 4..4),
+            ("a\n\nb", 0..4, 2, "## a\n\n## b", 3..10),
+            ("سلام", 4..4, 3, "### سلام", 8..8),
+            ("# a\n# b", 0..7, 1, "a\nb", 0..3),
+            ("# a\nb", 0..5, 1, "# a\n# b", 2..7),
+            ("intro\nTitle\nend", 8..8, 2, "intro\n## Title\nend", 11..11),
+            ("", 0..0, 1, "# ", 2..2),
+        ] {
+            let mut edited = text.to_owned();
+            let selection = super::toggle_heading(&mut edited, selection, level);
+            assert_eq!(
+                (edited.as_str(), selection),
+                (expected, expected_selection),
+                "{text:?}"
+            );
+        }
+    }
+
     #[test]
     fn edited_line_is_the_line_where_the_change_ends() {
         let before = "one\ntwo\nthree";

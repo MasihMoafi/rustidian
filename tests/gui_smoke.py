@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -4247,7 +4247,7 @@ def main():
                 # Reverse-order and list-boundary checks use the actual rendered order.
                 click_control("file-sort"); click_control("sort-descending")
                 open_note("Keyboard nav 01")
-                # The explorer retains its own scroll position after Quick Open.
+                # Quick Open reveals the note once; the wheel then scrolls the explorer by hand.
                 xdo("mousemove", "150", "400", "click", "--repeat", "60", "--delay", "1", "5")
                 pause()
                 click_control("file:Keyboard nav 01.md")
@@ -4318,6 +4318,258 @@ def main():
                 assert all(path.read_text() == source for path, source in sources.items())
                 results.append("At the minimum sidebar width, a long Search title stays on one line and adjacent-note arrows preserve every source byte")
 
+
+            # Dedicated section: its tall tree must not leak into the all-suite vault.
+            def tree_scroll_checks():
+                notes = {}
+                for folder in range(1, 9):
+                    for number in range(1, 13):
+                        path = fixture / f"Tree {folder:02}" / f"Tree {folder} note {number:02}.md"
+                        path.parent.mkdir(exist_ok=True)
+                        notes[path] = f"# Tree {folder} note {number:02}\n\nBody.\n"
+                        path.write_text(notes[path])
+                command("Refresh vault")
+                # Opening a note in each folder expands it, so the tree outgrows its viewport.
+                for folder in range(1, 9):
+                    open_note(f"Tree {folder} note 01")
+
+                def offset():
+                    return control_bounds("file-tree-offset")[0]
+
+                def row_visible(path):
+                    bounds = control_bounds("file:" + path, required=False)
+                    viewport = control_bounds("file-tree-viewport")
+                    return bounds is not None and bounds[1] >= viewport[1] - .5 and bounds[3] <= viewport[3] + .5
+
+                def wait_visible(path):
+                    deadline = time.monotonic() + 3
+                    while not row_visible(path) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    return row_visible(path)
+
+                def scroll_tree_to_top():
+                    viewport = control_bounds("file-tree-viewport")
+                    x, y = round((viewport[0] + viewport[2]) / 2), round((viewport[1] + viewport[3]) / 2)
+                    xdo("mousemove", "--sync", str(x), str(y), "click", "--repeat", "40", "--delay", "1", "4")
+                    pause()
+                    assert offset() == 0, ("The wheel must scroll the explorer to the top", offset())
+                    return x, y
+
+                deep = "Tree 08/Tree 8 note 10.md"
+                open_note("Tree 8 note 10")
+                assert wait_visible(deep), ("Opening a note deep in the tree must scroll the explorer to it once", control_bounds("file-tree-viewport"))
+                assert offset() > 300, ("The fixture must make the explorer scroll", offset())
+                capture("native-tree-scroll-revealed.png")
+                results.append("Opening a note deep in a tall tree scrolled the explorer to its row")
+                x, y = scroll_tree_to_top()
+                active = fixture / deep
+                outside = fixture / "Tree 01/Outside change.md"
+                samples = []
+                started = time.monotonic()
+                click_control("editor")
+                key("ctrl+End")
+                type_text("TREE_AUTOSAVE")
+                written = False
+                while time.monotonic() - started < 5:
+                    if not written and time.monotonic() - started > 1.5:
+                        outside.write_text("# Outside change\n")
+                        written = True
+                    # Hover the tree like a reader does; each move repaints the window.
+                    xdo("mousemove", "--sync", str(x + (len(samples) % 3) * 9), str(y - 120 + (len(samples) % 5) * 31))
+                    time.sleep(.2)
+                    samples.append({"elapsed": round(time.monotonic() - started, 2), "offset": offset()})
+                (reports / "tree-scroll-offsets.json").write_text(json.dumps(samples, indent=2) + "\n")
+                assert "TREE_AUTOSAVE" in active.read_text(), "Autosave must run while the explorer stays put"
+                assert control_bounds("file:Tree 01/Outside change.md"), "The outside change must reach the explorer while it stays put"
+                assert all(sample["offset"] == 0 for sample in samples), ("The explorer moved after the user scrolled it", samples)
+                capture("native-tree-scroll-kept.png")
+                results.append(f"After a hand scroll to the top, autosave and an outside change left the explorer at offset 0 for 5 s ({len(samples)} samples)")
+                other = "Tree 07/Tree 7 note 12.md"
+                open_note("Tree 7 note 12")
+                assert wait_visible(other), ("Opening another note must scroll the explorer to it", offset())
+                revealed = offset()
+                scroll_tree_to_top()
+                outside.write_text("# Outside change\n\nAgain.\n")
+                kept = []
+                for _ in range(10):
+                    time.sleep(.2)
+                    kept.append(offset())
+                assert kept == [0] * len(kept), ("A reveal fired again after the user scrolled", revealed, kept)
+                capture("native-tree-scroll-once.png")
+                results.append(f"Opening another note scrolled the explorer to it once (offset {revealed:.0f}); scrolling away again stayed put through an outside change")
+
+            def context_menu_checks():
+                note = fixture / "Notes/Context menu.md"
+                source = "# Context menu\n\nalpha beta gamma delta\n\n![[Assets/Attachment.png|120]]\n\nsecond line of prose\n"
+                note.write_text(source)
+                time.sleep(.6)
+                open_note("Context menu")
+                command("Live preview")
+                control_bounds("editor-focused")
+
+                def clipboard():
+                    result = subprocess.run(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+                        env=environment, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+                    return result.stdout.decode() if result.returncode == 0 else None
+
+                def wait_clipboard(expected):
+                    deadline = time.monotonic() + 3
+                    while clipboard() != expected and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert clipboard() == expected, (expected, clipboard())
+
+                def menu_item(name):
+                    bounds = control_bounds(name)
+                    xdo("mousemove", "--sync", str(round((bounds[0] + bounds[2]) / 2)), str(round((bounds[1] + bounds[3]) / 2)))
+                    pause()
+                    xdo("click", "1")
+                    pause()
+
+                # A right-click anywhere on the note text opens Obsidian's editor menu.
+                editor = control_bounds("editor")
+                xdo("mousemove", "--sync", str(round(editor[0] + 40)), str(round(editor[1] + 12)), "click", "3")
+                pause()
+                assert control_bounds("editor-menu"), "Right-clicking the editor must open its menu"
+                for label in ("Cut", "Copy", "Paste", "Select all", "Bold", "Italic", "Strikethrough", "Highlight", "Code", "Link", "Heading 1", "Heading 2", "Heading 3"):
+                    assert control_bounds("editor-menu:" + label), label
+                click_control("editor")
+                assert control_bounds("editor-menu", required=False) is None, "A click in the note must close its menu"
+                results.append("Right-clicking the editor opened a menu with Cut, Copy, Paste, Select all, formatting and Heading 1-3")
+
+                def caret_at(line, column):
+                    key("ctrl+Home")
+                    for _ in range(line):
+                        key("Down")
+                    key("Home")
+                    for _ in range(column):
+                        xdo("key", "--clearmodifiers", "Right")
+                    pause()
+                    return control_bounds("editor-caret")
+
+                def background_share(picture, box, background=None):
+                    left, top, right, bottom = box
+                    if background is None:
+                        background = picture.getpixel((round(right + 40), round((top + bottom) / 2)))[:3]
+                    pixels = [picture.getpixel((x, y))[:3] for x in range(round(left), round(right)) for y in range(round(top), round(bottom))]
+                    near = [p for p in pixels if sum(abs(a - b) for a, b in zip(p, background)) < 12]
+                    return len(near) / max(1, len(pixels)), background
+
+                # The prose line is line 2; "beta" starts at column 6 and the line ends at 22.
+                for dark in (False, True):
+                    set_theme(dark)
+                    click_control("editor")
+                    start = caret_at(2, 6)
+                    key("End")
+                    end = control_bounds("editor-caret")
+                    band = (start[0] + 4, start[1] + 4, end[0] - 4, start[3] - 4)
+                    before, background = background_share(ImageGrab.grab(xdisplay=display).convert("RGB"), band)
+                    y = round((start[1] + start[3]) / 2)
+                    xdo("mousemove", "--sync", str(round(start[0] + 1)), str(y), "mousedown", "1")
+                    for x in range(round(start[0] + 1), round(end[0] + 6), 24):
+                        xdo("mousemove", "--sync", str(x), str(y))
+                    xdo("mousemove", "--sync", str(round(end[0] + 6)), str(y), "mouseup", "1")
+                    pause()
+                    theme_name = "dark" if dark else "light"
+                    capture(f"native-selection-{theme_name}.png")
+                    after, _ = background_share(ImageGrab.grab(xdisplay=display).convert("RGB"), band, background)
+                    (reports / f"selection-{theme_name}.json").write_text(json.dumps({"band": band, "background": background, "background_share_before": before, "background_share_after": after}, indent=2) + "\n")
+                    assert before > .4 and after < .05, ("A drag selection must paint its highlight between the two words", theme_name, before, after)
+                    # Right-click on the selection keeps it and opens the menu over it.
+                    middle = round((start[0] + end[0]) / 2)
+                    xdo("mousemove", "--sync", str(middle), str(y), "click", "3")
+                    pause()
+                    assert control_bounds("editor-menu"), "Right-clicking a selection must open the editor menu"
+                    capture(f"native-context-menu-{theme_name}.png")
+                    # The menu opens below and right of the pointer; check the text left of it.
+                    kept, _ = background_share(ImageGrab.grab(xdisplay=display).convert("RGB"), (band[0], band[1], middle - 6, band[3]), background)
+                    assert kept < .05, ("The selection must stay highlighted while its menu is open", theme_name, kept)
+                    menu_item("editor-menu:Copy")
+                    wait_clipboard("beta gamma delta")
+                    assert note.read_text() == source
+                results.append("In both themes a drag from one word to another painted its selection (also with an image on another line), a right-click kept it and opened the menu, and Copy put exactly the selected text on the clipboard")
+
+                # Paste inserts the clipboard where the right-click placed the caret.
+                pasted = "PASTED_π"
+                owner = subprocess.Popen(["xclip", "-selection", "clipboard", "-in", "-quiet"],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
+                try:
+                    owner.stdin.write(pasted.encode())
+                    owner.stdin.close()
+                    pause()
+                    assert clipboard() == pasted
+                    line = caret_at(6, 0)
+                    xdo("mousemove", "--sync", str(round(line[0] + 600)), str(round((line[1] + line[3]) / 2)), "click", "3")
+                    pause()
+                    menu_item("editor-menu:Paste")
+                    key("ctrl+s")
+                    expected = source.replace("second line of prose", "second line of prose" + pasted)
+                    deadline = time.monotonic() + 3
+                    while note.read_text() != expected and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert note.read_text() == expected, repr(note.read_text())
+                finally:
+                    owner.terminate()
+                    owner.wait(timeout=5)
+                results.append("Paste from the editor menu inserted the clipboard at the right-clicked position")
+
+                # Select all, then Copy: the whole note.
+                editor = control_bounds("editor")
+                xdo("mousemove", "--sync", str(round(editor[0] + 40)), str(round(editor[1] + 12)), "click", "3")
+                pause()
+                menu_item("editor-menu:Select all")
+                key("ctrl+c")
+                wait_clipboard(expected)
+                results.append("Select all from the editor menu selected the whole note")
+
+                # Bold wraps the selection: double-click selects "gamma" (columns 11-16).
+                gamma = caret_at(2, 13)
+                y = round((gamma[1] + gamma[3]) / 2)
+                xdo("mousemove", "--sync", str(round(gamma[0])), str(y), "click", "--repeat", "2", "--delay", "80", "1")
+                pause()
+                key("ctrl+c")
+                wait_clipboard("gamma")
+                xdo("mousemove", "--sync", str(round(gamma[0])), str(y), "click", "3")
+                pause()
+                menu_item("editor-menu:Bold")
+                key("ctrl+s")
+                bold = expected.replace("gamma", "**gamma**")
+                deadline = time.monotonic() + 3
+                while note.read_text() != bold and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert note.read_text() == bold, repr(note.read_text())
+                results.append("Double-click selected a word and Bold from the menu wrapped it in **")
+
+                # Reading view: drag selects, right-click offers Copy and Select all.
+                command("Reading view")
+                blocks = sorted((bounds for name, bounds in json.loads((base / "ui-probe.json").read_text()).items() if name.startswith("reading-block:")), key=lambda bounds: bounds[1])
+                paragraph = next(bounds for bounds in blocks if bounds[3] - bounds[1] < 40)
+                y = round((paragraph[1] + paragraph[3]) / 2)
+                xdo("mousemove", "--sync", str(round(paragraph[0] + 1)), str(y), "mousedown", "1")
+                for x in range(round(paragraph[0] + 1), round(paragraph[2] + 4), 24):
+                    xdo("mousemove", "--sync", str(x), str(y))
+                xdo("mousemove", "--sync", str(round(paragraph[2] + 4)), str(y), "mouseup", "1")
+                pause()
+                xdo("mousemove", "--sync", str(round((paragraph[0] + paragraph[2]) / 2)), str(y), "click", "3")
+                pause()
+                assert control_bounds("reading-menu"), "Right-clicking reading text must open its menu"
+                assert control_bounds("reading-menu:Copy") and control_bounds("reading-menu:Select all")
+                capture("native-reading-menu-dark.png")
+                menu_item("reading-menu:Copy")
+                wait_clipboard("alpha beta gamma delta")
+                results.append("Reading view: a drag selected a paragraph, the right-click menu offered Copy and Select all, and Copy put the paragraph on the clipboard")
+                xdo("mousemove", "--sync", str(round((paragraph[0] + paragraph[2]) / 2)), str(y), "click", "3")
+                pause()
+                menu_item("reading-menu:Select all")
+                key("ctrl+c")
+                deadline = time.monotonic() + 3
+                while not (clipboard() or "").count("\n") and time.monotonic() < deadline:
+                    time.sleep(.05)
+                copied = clipboard() or ""
+                assert "alpha beta gamma delta" in copied and "second line of prose" + pasted in copied, repr(copied)
+                capture("native-reading-select-all.png")
+                set_theme(False)
+                assert note.read_text() == bold
+                results.append("Reading view: Select all highlighted the note and Ctrl+C copied all of its text")
 
             def keyboard_focus_checks():
                 key("ctrl+t")
@@ -8686,6 +8938,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "sidebar-keys"}))
                 return
+            if args.section in ("tree-scroll", "context-menu"):
+                {"tree-scroll": tree_scroll_checks, "context-menu": context_menu_checks}[args.section]()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "keyboard-focus":
                 keyboard_focus_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -9125,6 +9382,7 @@ def main():
                 task_clip_checks,
                 essential_checks,
                 undo_checks,
+                context_menu_checks,
                 color_checks,
                 native_highlight_checks,
                 navigation_checks,
