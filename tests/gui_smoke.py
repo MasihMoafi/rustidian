@@ -3011,13 +3011,9 @@ def main():
                 def expect_icons(value):
                     assert system_launcher.read_text() == original_launcher, "System launchers must remain unchanged"
                     asset = ROOT / ("docs/brand/rustidian.png" if value == "teal" else f"docs/brand/themes/{value}.png")
-                    entry = launcher.read_text()
-                    icon_lines = [line[5:] for line in entry.splitlines() if line.startswith("Icon=")]
-                    assert len(icon_lines) == 2 and icon_lines[1] == "keep-action-icon", entry
-                    icon_path = Path(icon_lines[0])
-                    assert icon_path.is_relative_to(base / "data"), ("Use the private XDG data folder", icon_path)
-                    assert icon_path.read_bytes() == asset.read_bytes(), ("Launcher must use the selected palette logo", value, icon_lines)
-                    assert "Exec=/usr/bin/true %f\n" in entry and "Actions=Example;\n" in entry, entry
+                    assert not launcher.exists(), "Launcher files stay untouched; GNOME loses a running window when its entry changes"
+                    icon_path = base / "data/icons/hicolor/256x256/apps/rustidian.png"
+                    assert icon_path.read_bytes() == asset.read_bytes(), ("The themed rustidian icon must be the selected palette logo", value)
                     raw = subprocess.check_output(["xprop", "-id", window, "-notype", "-f", "_NET_WM_ICON", "32c", "_NET_WM_ICON"], env=environment, text=True)
                     pixels = [int(value.strip()) for value in raw.split("=", 1)[1].split(",")]
                     width, height = pixels[:2]
@@ -3088,7 +3084,7 @@ def main():
                 click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
                 expect_icons("teal")
                 assert note.read_text() == source
-                results.append("All four palettes update the real native window and XDG launcher icons; a real restart restores the selection without changing launcher actions or note bytes")
+                results.append("All four palettes update the real native window and the themed rustidian icon without editing any launcher; a real restart restores the selection without changing note bytes")
 
             def table_resize_checks():
                 nonlocal app, window

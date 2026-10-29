@@ -78,10 +78,11 @@ def main():
         atomic_copy(staging, launcher, 0o755)
         icon = data / 'icons/hicolor/256x256/apps/rustidian.png'
         atomic_copy(bundle / 'rustidian.png', icon, 0o644)
+        os.utime(data / 'icons/hicolor')  # icon themes rescan on the folder's time
         entry = ('[Desktop Entry]\nType=Application\nName=Rustidian\n'
                  'Comment=Write and connect local Markdown notes\n'
                  'Exec=' + desktop_exec(launcher) + ' %f\n'
-                 'Icon=' + desktop_string(icon) + '\nTerminal=false\n'
+                 'Icon=rustidian\nTerminal=false\n'
                  'Categories=Office;TextEditor;\nKeywords=Markdown;Notes;Vault;\n'
                  'StartupWMClass=rustidian\nMimeType=' + MIME_TYPES + '\n')
         staging.write_text(entry)

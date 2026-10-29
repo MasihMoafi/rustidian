@@ -967,7 +967,17 @@ fn line_break(
 
                 // Start a new row:
                 row_start_idx = last_kept_index + 1;
-                row_start_x = paragraph.glyphs[row_start_idx].pos.x;
+                // Rustidian: a section's leading space stays with its first
+                // glyph when a row break lands just before it.
+                let first = &paragraph.glyphs[row_start_idx];
+                let starts_section = row_start_idx == 0
+                    || paragraph.glyphs[row_start_idx - 1].section_index != first.section_index;
+                row_start_x = first.pos.x
+                    - if starts_section {
+                        job.sections[first.section_index as usize].leading_space
+                    } else {
+                        0.0
+                    };
                 row_break_candidates.forget_before_idx(row_start_idx);
             } else {
                 // Found no place to break, so we have to overrun wrap_width.

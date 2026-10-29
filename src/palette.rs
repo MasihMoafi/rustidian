@@ -107,14 +107,17 @@ pub fn select(ctx: &egui::Context, palette: Palette) {
             ))));
         }
         #[cfg(target_os = "linux")]
-        if let Err(error) = sync_launcher(palette) {
+        if let Err(error) = sync_launcher_icon(palette) {
             eprintln!("Cannot update Rustidian's launcher icon: {error}");
         }
     }
 }
 
+/// Shows the palette's logo in the dock by replacing the themed `rustidian`
+/// icon. Launcher files are never edited: GNOME reloads a changed entry and
+/// then loses track of the running window (no running mark, no raise).
 #[cfg(target_os = "linux")]
-fn sync_launcher(palette: Palette) -> std::io::Result<()> {
+fn sync_launcher_icon(palette: Palette) -> std::io::Result<()> {
     use std::{io::Write, path::PathBuf};
     let Some(data) = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -123,76 +126,18 @@ fn sync_launcher(palette: Palette) -> std::io::Result<()> {
     else {
         return Ok(());
     };
-    let launcher = data.join("applications/rustidian.desktop");
-    // A per-user override also covers the system-wide Debian installation.
-    let source = if launcher.is_file() {
-        launcher.clone()
-    } else {
-        let directories = std::env::var_os("XDG_DATA_DIRS")
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-        let Some(source) = std::env::split_paths(&directories)
-            .filter(|path| path.is_absolute())
-            .map(|path| path.join("applications/rustidian.desktop"))
-            .find(|path| path.is_file())
-        else {
-            return Ok(());
-        };
-        source
-    };
-    let entry = match std::fs::read_to_string(&source) {
-        Ok(entry) => entry,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    if !entry.lines().any(|line| line == "StartupWMClass=rustidian") {
+    let theme = data.join("icons/hicolor");
+    let icon = theme.join("256x256/apps/rustidian.png");
+    if std::fs::read(&icon).ok().as_deref() == Some(palette.logo().1) {
         return Ok(());
     }
-    let mut in_entry = false;
-    let mut offset = 0;
-    let icon_range = entry.split_inclusive('\n').find_map(|line| {
-        let start = offset;
-        offset += line.len();
-        if line.starts_with('[') {
-            in_entry = line.trim_end() == "[Desktop Entry]";
-        }
-        (in_entry && line.starts_with("Icon=")).then_some(start..offset)
-    });
-    let Some(range) = icon_range else {
-        return Ok(());
-    };
-    let name = match palette {
-        Palette::Teal => "teal",
-        Palette::LoveSpace => "love-space",
-        Palette::ElpisGold => "elpis-gold",
-        Palette::Signature => "signature",
-    };
-    let icon = data.join(format!("icons/hicolor/256x256/apps/rustidian-{name}.png"));
-    let atomic_write = |path: &std::path::Path, bytes: &[u8]| -> std::io::Result<()> {
-        let parent = path.parent().expect("Application data paths have a parent");
-        std::fs::create_dir_all(parent)?;
-        let mut file = tempfile::NamedTempFile::new_in(parent)?;
-        file.write_all(bytes)?;
-        file.persist(path)?;
-        Ok(())
-    };
-    if std::fs::read(&icon).ok().as_deref() != Some(palette.logo().1) {
-        atomic_write(&icon, palette.logo().1)?;
-    }
-    // A distinct filename per palette invalidates GNOME's cached launcher image.
-    let escaped = icon
-        .to_string_lossy()
-        .replace('\\', "\\\\")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-    let replacement = format!("Icon={escaped}\n");
-    if &entry[range.clone()] != replacement {
-        let mut updated = entry;
-        updated.replace_range(range, &replacement);
-        atomic_write(&launcher, updated.as_bytes())?;
-    }
-    Ok(())
+    let parent = icon.parent().expect("The icon path has a parent");
+    std::fs::create_dir_all(parent)?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(palette.logo().1)?;
+    file.persist(&icon)?;
+    // Icon themes rescan only when the theme folder's time changes.
+    std::fs::File::open(&theme)?.set_modified(std::time::SystemTime::now())
 }
 
 pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {

@@ -328,6 +328,27 @@ impl<'a> PositionedText<'a> {
             .row_ends
             .partition_point(|&end| end < character)
             .min(self.row_ends.len().saturating_sub(1));
+        self.at_row(character, row)
+    }
+
+    /// Like `at`, but a soft-wrap boundary belongs to the following row, where
+    /// an inline image that begins there is laid out.
+    fn at_start(&self, character: usize) -> egui::Rect {
+        let rows = &self.output.galley.rows;
+        let mut row = self
+            .row_ends
+            .partition_point(|&end| end < character)
+            .min(self.row_ends.len().saturating_sub(1));
+        if self.row_ends.get(row) == Some(&character)
+            && rows.get(row).is_some_and(|placed| !placed.ends_with_newline)
+            && row + 1 < rows.len()
+        {
+            row += 1;
+        }
+        self.at_row(character, row)
+    }
+
+    fn at_row(&self, character: usize, row: usize) -> egui::Rect {
         let Some(placed) = self.output.galley.rows.get(row) else {
             return egui::Rect::ZERO;
         };
@@ -1788,7 +1809,11 @@ impl Editor {
                 .as_ref()
                 .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start);
             let character = tab.document.text[..image.range.start].chars().count();
-            let caret = positioned.at(character);
+            let caret = if active || image.block.is_some() {
+                positioned.at(character)
+            } else {
+                positioned.at_start(character)
+            };
             let mut origin = output.galley_pos + caret.min.to_vec2();
             if image.block.is_some() && image.math.is_none() {
                 origin.x = output.galley_pos.x;
@@ -3631,6 +3656,38 @@ mod tests {
             }
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn an_inline_image_keeps_its_reserved_width_when_the_row_wraps_before_it() {
+        // Live preview reserves an inline formula's width as the leading space
+        // of its hidden source. A soft wrap just before it must keep that space.
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let format = egui::TextFormat::simple(FontId::proportional(18.0), Color32::WHITE);
+            let mut wrapped = 0;
+            for width in (120..400).map(|width| width as f32) {
+                let mut job = egui::text::LayoutJob::default();
+                job.wrap.max_width = width;
+                job.append("and the weights sum to ", 0.0, format.clone());
+                job.append("$1$", 24.0, format.clone());
+                job.append(":", 0.0, format.clone());
+                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                let mut start = 0;
+                for row in &galley.rows {
+                    let count = row.char_count_excluding_newline().0;
+                    if start == 23 && count > 0 {
+                        wrapped += 1;
+                        assert!((row.pos.x + row.glyphs[0].pos.x - 24.0).abs() < 0.5,
+                            "width={width}: the formula's space must open its row, row={:?}", row.rect());
+                    }
+                    start += count;
+                }
+            }
+            assert!(wrapped > 0, "Some width must wrap just before the formula");
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]

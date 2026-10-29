@@ -27,6 +27,9 @@ Local corrections after reproducing failures:
   rather than highlighting intervening unselected RTL characters.
 - Resolve runs in an LTR paragraph, matching the reference editor's default
   CSS direction and keeping Markdown markers/punctuation in that context.
+- Keep a section's leading space when a row break lands just before it,
+  so a Live preview inline formula keeps its reserved width after a wrap
+  (`patches/wrap-keeps-leading-space.patch`).
 
 Application tests exercise glyph counts, original Unicode, mark ownership,
 mixed-row end carets, real selection painting and the paragraph base direction.
