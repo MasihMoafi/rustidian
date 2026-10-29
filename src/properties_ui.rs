@@ -294,7 +294,32 @@ impl Properties {
                         }
                         Kind::List => {
                             let tags = field.name.eq_ignore_ascii_case("tags");
-                            ui.horizontal_wrapped(|ui| {
+                            // A row that fits takes the same fixed, centred 33.5 px cell as the name and icon;
+                            // the wrapped layout alone sits its chips below that centre line.
+                            let fits = {
+                                let font =
+                                    FontId::proportional(crate::theme::document_size(ui, 18.0));
+                                let chips: f32 = ui.fonts_mut(|fonts| {
+                                    field
+                                        .items
+                                        .iter()
+                                        .map(|value| {
+                                            fonts
+                                                .layout_no_wrap(
+                                                    value.clone(),
+                                                    font.clone(),
+                                                    egui::Color32::WHITE,
+                                                )
+                                                .size()
+                                                .x
+                                                .max(20.0)
+                                                + 42.0
+                                        })
+                                        .sum()
+                                });
+                                chips + 148.0 <= value_width
+                            };
+                            let mut row = |ui: &mut egui::Ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
                                 let mut remove = None;
                                 for (index, value) in field.items.iter_mut().enumerate() {
@@ -391,7 +416,16 @@ impl Properties {
                                     edited = true;
                                     entry.request_focus();
                                 }
-                            });
+                            };
+                            if fits {
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(value_width, 33.5),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| row(ui),
+                                );
+                            } else {
+                                ui.horizontal_wrapped(|ui| row(ui));
+                            }
                         }
                         Kind::Other => {
                             ui.label(
