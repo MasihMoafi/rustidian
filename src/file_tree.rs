@@ -15,6 +15,11 @@ pub enum FileAction {
     Rename(PathBuf),
     Trash(PathBuf),
     Bookmark(PathBuf),
+    /// A dragged note, attachment or folder let go over a folder ("" is the vault root).
+    MoveInto {
+        source: PathBuf,
+        folder: PathBuf,
+    },
 }
 
 // One focus owner survives virtualization and note replacement in every sidebar list.
@@ -99,6 +104,168 @@ pub fn note_list_key(ui: &egui::Ui) -> Option<egui::Key> {
     .find(|key| ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, *key)))
 }
 
+/// The explorer row being dragged, carried by egui's drag-and-drop payload.
+struct Dragged {
+    path: PathBuf,
+    title: String,
+}
+
+/// The folder a drag rests on and since when; a collapsed one opens after a pause.
+#[derive(Clone)]
+struct DropHover {
+    folder: PathBuf,
+    since: f64,
+}
+
+/// How long a drag rests on a collapsed folder before it opens (Obsidian: 750 ms).
+const EXPAND_AFTER: f64 = 0.75;
+
+fn drop_hover_id() -> egui::Id {
+    note_list_id().with("drop-hover")
+}
+
+/// A row starts dragging once the pressed pointer moves a few pixels.
+fn start_drag(response: &egui::Response, path: &Path, title: &str) {
+    if response
+        .interact(egui::Sense::drag())
+        .drag_started_by(egui::PointerButton::Primary)
+    {
+        egui::DragAndDrop::set_payload(
+            &response.ctx,
+            Dragged {
+                path: path.to_owned(),
+                title: title.to_owned(),
+            },
+        );
+    }
+}
+
+/// The drop target's highlight: the row frame in the selection colour, behind its rows.
+fn paint_drop_target(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Rect, folder: &Path) {
+    let mut frame = rect.shrink2(egui::vec2(0.0, 1.0));
+    frame.max.x -= 6.0;
+    ui.painter().set(
+        slot,
+        egui::Shape::rect_filled(frame, 7, theme::interactive(ui).gamma_multiply(0.16)),
+    );
+    let name = if folder.as_os_str().is_empty() {
+        "/".to_owned()
+    } else {
+        folder.display().to_string()
+    };
+    crate::ui_probe::record(ui.ctx(), format!("drop-target:{name}"), frame);
+}
+
+/// The dragged row follows the pointer in its selected look, framed like a popup.
+fn paint_ghost(ui: &egui::Ui, dragged: &Dragged, pointer: egui::Pos2) {
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        drop_hover_id().with("ghost"),
+    ));
+    let width = painter
+        .layout_no_wrap(
+            dragged.title.clone(),
+            FontId::new(13.0, egui::FontFamily::Name("semibold".into())),
+            ui.visuals().text_color(),
+        )
+        .size()
+        .x;
+    let rect = egui::Rect::from_min_size(
+        pointer + egui::vec2(12.0, 12.0),
+        egui::vec2((width + 20.0).min(300.0), 29.0),
+    );
+    let visuals = ui.visuals();
+    painter.add(visuals.popup_shadow.as_shape(rect, 7));
+    painter.rect_filled(rect, 7, visuals.window_fill());
+    paint_row(ui, &painter, rect, &dragged.title, true, false);
+    painter.rect_stroke(rect, 7, visuals.window_stroke(), egui::StrokeKind::Inside);
+    crate::ui_probe::record(ui.ctx(), format!("drag:{}", dragged.path.display()), rect);
+}
+
+/// While a row is dragged, a pointer near the tree's top or bottom edge scrolls it.
+pub fn drag_scroll(ui: &egui::Ui) {
+    if !egui::DragAndDrop::has_payload_of_type::<Dragged>(ui.ctx()) {
+        return;
+    }
+    let clip = ui.clip_rect();
+    let Some(pointer) = ui
+        .input(|input| input.pointer.latest_pos())
+        .filter(|pointer| (clip.left()..=clip.right()).contains(&pointer.x))
+    else {
+        return;
+    };
+    let direction = if (clip.top()..clip.top() + 20.0).contains(&pointer.y) {
+        1.0
+    } else if (clip.bottom() - 20.0..=clip.bottom()).contains(&pointer.y) {
+        -1.0
+    } else {
+        return;
+    };
+    ui.scroll_with_delta(egui::vec2(0.0, direction * 8.0));
+    ui.ctx().request_repaint();
+}
+
+/// Ends each frame of an explorer drag. The deepest folder under the pointer takes the
+/// drop, else the vault root anywhere over `list`; a folder never takes itself or its
+/// own subfolders. The root's highlight goes into `root_slot`, the dragged row follows
+/// the pointer, and a release returns the move. Escape (egui's drag and drop) or a
+/// release anywhere else cancels, as does a release over the item's own folder.
+pub fn finish_drag(
+    ui: &egui::Ui,
+    folder: Option<PathBuf>,
+    list: egui::Rect,
+    root_slot: egui::layers::ShapeIdx,
+) -> Option<FileAction> {
+    let ctx = ui.ctx();
+    let Some(dragged) = egui::DragAndDrop::payload::<Dragged>(ctx) else {
+        ctx.data_mut(|data| data.remove::<DropHover>(drop_hover_id()));
+        return None;
+    };
+    let target = folder
+        .or_else(|| ui.rect_contains_pointer(list).then(PathBuf::new))
+        .filter(|folder| !folder.starts_with(&dragged.path));
+    let now = ctx.input(|input| input.time);
+    match &target {
+        Some(folder) => {
+            let since = ctx.data_mut(|data| {
+                let hover = data.get_temp_mut_or_insert_with(drop_hover_id(), || DropHover {
+                    folder: folder.clone(),
+                    since: now,
+                });
+                if hover.folder != *folder {
+                    *hover = DropHover {
+                        folder: folder.clone(),
+                        since: now,
+                    };
+                }
+                hover.since
+            });
+            if folder.as_os_str().is_empty() {
+                paint_drop_target(ui, root_slot, list, folder);
+            } else if now - since < EXPAND_AFTER {
+                ctx.request_repaint_after_secs((EXPAND_AFTER - (now - since)) as f32);
+            }
+        }
+        None => ctx.data_mut(|data| data.remove::<DropHover>(drop_hover_id())),
+    }
+    if let Some(pointer) = ctx.input(|input| input.pointer.latest_pos()) {
+        paint_ghost(ui, &dragged, pointer);
+    }
+    if !ctx.input(|input| input.pointer.any_released()) {
+        return None;
+    }
+    egui::DragAndDrop::clear_payload(ctx);
+    ctx.data_mut(|data| data.remove::<DropHover>(drop_hover_id()));
+    let folder = target?;
+    if dragged.path.parent() == Some(folder.as_path()) {
+        return None;
+    }
+    Some(FileAction::MoveInto {
+        source: dragged.path.clone(),
+        folder,
+    })
+}
+
 #[derive(Default)]
 pub struct Tree {
     folders: BTreeMap<String, Tree>,
@@ -110,17 +277,31 @@ pub fn file_row(ui: &mut egui::Ui, path: &Path, title: &str, selected: bool) -> 
     let mut rect = outer.shrink2(egui::vec2(0.0, 1.0));
     rect.max.x -= 6.0;
     let response = ui.interact(rect, ui.make_persistent_id(path), egui::Sense::click());
-    if selected || response.hovered() {
-        let fill = if response.hovered() {
+    paint_row(ui, ui.painter(), rect, title, selected, response.hovered());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), title));
+    response
+}
+
+/// An explorer row's frame and title; the dragged row's ghost reuses it.
+fn paint_row(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    title: &str,
+    selected: bool,
+    hovered: bool,
+) {
+    if selected || hovered {
+        let fill = if hovered {
             theme::hover_fill(ui)
         } else if selected {
             theme::interactive(ui).gamma_multiply(0.16)
         } else {
             theme::hover_fill(ui)
         };
-        ui.painter().rect_filled(rect, 7, fill);
+        painter.rect_filled(rect, 7, fill);
     }
-    let color = if selected || response.hovered() {
+    let color = if selected || hovered {
         ui.visuals().text_color()
     } else {
         ui.visuals().weak_text_color()
@@ -138,18 +319,16 @@ pub fn file_row(ui: &mut egui::Ui, path: &Path, title: &str, selected: bool) -> 
         FontId::proportional(13.0),
     );
     let position = egui::pos2(rect.left() + 9.0, rect.center().y - galley.size().y * 0.5);
-    ui.painter().galley(position, galley, color);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), title));
+    painter.galley(position, galley, color);
     if selected {
-        ui.painter().line_segment(
+        painter.line_segment(
             [
-                response.rect.left_top() + egui::vec2(1.5, 3.0),
-                response.rect.left_bottom() + egui::vec2(1.5, -3.0),
+                rect.left_top() + egui::vec2(1.5, 3.0),
+                rect.left_bottom() + egui::vec2(1.5, -3.0),
             ],
             Stroke::new(3.0, theme::interactive(ui)),
         );
     }
-    response
 }
 
 impl Tree {
@@ -194,9 +373,18 @@ impl Tree {
         collapse_epoch: u64,
         reveal_folder: Option<&Path>,
         visible_files: &mut Option<Vec<PathBuf>>,
+        drop_folder: &mut Option<PathBuf>,
     ) -> (Option<FileAction>, bool) {
         let mut open = None;
         let mut revealed = false;
+        // During a drag the deepest folder under the pointer is the drop target, and the
+        // one the drag rested on last frame keeps its name lit and opens after a pause.
+        let dragging = egui::DragAndDrop::payload::<Dragged>(ui.ctx());
+        let resting = dragging.as_ref().and_then(|_| {
+            ui.ctx()
+                .data(|data| data.get_temp::<DropHover>(drop_hover_id()))
+        });
+        let now = ui.input(|input| input.time);
         let folders: Box<dyn Iterator<Item = (&String, &Tree)>> = if reverse {
             Box::new(self.folders.iter().rev())
         } else {
@@ -204,6 +392,7 @@ impl Tree {
         };
         for (name, folder) in folders {
             let id = format!("{prefix}/{name}");
+            let entry = Path::new(id.trim_start_matches('/'));
             let persistent = ui.make_persistent_id(&id);
             let (selection_changed, collapse) = ui.ctx().data_mut(|data| {
                 let key = persistent.with("collapse");
@@ -217,11 +406,17 @@ impl Tree {
                 *previous = active.map(Path::to_owned);
                 (changed, collapse)
             });
+            let resting_since = resting
+                .as_ref()
+                .filter(|resting| resting.folder.as_path() == entry)
+                .map(|resting| resting.since);
             let reveal =
                 if reveal_folder.is_some_and(|path| path.starts_with(id.trim_start_matches('/'))) {
                     Some(true)
                 } else if collapse {
                     Some(false)
+                } else if resting_since.is_some_and(|since| now - since >= EXPAND_AFTER) {
+                    Some(true)
                 } else {
                     (selection_changed
                         && active.is_some_and(|path| path.starts_with(id.trim_start_matches('/'))))
@@ -230,15 +425,24 @@ impl Tree {
             let framed = ui.visuals().collapsing_header_frame;
             let idle_fill = ui.visuals().widgets.inactive.bg_fill;
             let idle_stroke = ui.visuals().widgets.inactive.bg_stroke;
+            let pressed_stroke = ui.visuals().widgets.active.bg_stroke;
             ui.visuals_mut().collapsing_header_frame = true;
             ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
             ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            if dragging.is_some() {
+                // The dragged folder looks pressed, without the keyboard-focus outline.
+                ui.visuals_mut().widgets.active.bg_stroke = Stroke::NONE;
+            }
             let hovered = ui.is_enabled()
-                && ui.rect_contains_pointer(egui::Rect::from_min_size(
-                    ui.cursor().min,
-                    egui::vec2(ui.available_width(), 31.0),
-                ));
+                && (resting_since.is_some()
+                    || ui.rect_contains_pointer(egui::Rect::from_min_size(
+                        ui.cursor().min,
+                        egui::vec2(ui.available_width(), 31.0),
+                    )));
             let first_child = visible_files.as_ref().map_or(0, Vec::len);
+            let highlight = dragging
+                .is_some()
+                .then(|| ui.painter().add(egui::Shape::Noop));
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
                     .size(13.0)
@@ -262,12 +466,28 @@ impl Tree {
                     collapse_epoch,
                     reveal_folder,
                     visible_files,
+                    drop_folder,
                 );
                 if action.is_some() {
                     open = action;
                 }
                 revealed |= visible;
             });
+            start_drag(&header.header_response, entry, name);
+            if let (Some(source), Some(slot)) = (&dragging, highlight) {
+                let block = header
+                    .body_response
+                    .as_ref()
+                    .map_or(header.header_response.rect, |body| {
+                        header.header_response.rect.union(body.rect)
+                    });
+                if drop_folder.is_none() && ui.rect_contains_pointer(block) {
+                    *drop_folder = Some(entry.to_owned());
+                    if !entry.starts_with(&source.path) {
+                        paint_drop_target(ui, slot, block, entry);
+                    }
+                }
+            }
             if egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
                 .is_some_and(|state| !state.is_open())
                 && let Some(paths) = visible_files.as_mut()
@@ -277,6 +497,7 @@ impl Tree {
             ui.visuals_mut().collapsing_header_frame = framed;
             ui.visuals_mut().widgets.inactive.bg_fill = idle_fill;
             ui.visuals_mut().widgets.inactive.bg_stroke = idle_stroke;
+            ui.visuals_mut().widgets.active.bg_stroke = pressed_stroke;
             header.header_response.context_menu(|ui| {
                 theme::menu_style(ui);
                 let path = PathBuf::from(id.trim_start_matches('/'));
@@ -361,6 +582,7 @@ impl Tree {
             let title = rustidian::vault::file_title(path);
             let selected = active == Some(path.as_path());
             let response = file_row(ui, path, &title, selected);
+            start_drag(&response, path, &title);
             crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);
             let response = response.on_hover_text(path.display().to_string());
             response.context_menu(|ui| {

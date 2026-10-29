@@ -2355,7 +2355,10 @@ impl NotesApp {
                         crate::ui_probe::record(ui.ctx(), "search-viewport", scroll.inner_rect);
                     }
                 } else {
-                    ui.label(
+                    // The vault name and the tree outside every folder take a drop into
+                    // the vault root; its highlight is painted behind both.
+                    let root_drop = ui.painter().add(egui::Shape::Noop);
+                    let root = ui.label(
                         RichText::new(
                             self.vault
                                 .as_ref()
@@ -2366,6 +2369,7 @@ impl NotesApp {
                         .strong()
                         .weak(),
                     );
+                    crate::ui_probe::record(ui.ctx(), "file-tree-root", root.rect);
                     ui.add_space(8.0);
                     let mut tree_scroll = theme::sidebar_scroll()
                         .id_salt("file-tree")
@@ -2374,6 +2378,7 @@ impl NotesApp {
                         tree_scroll = tree_scroll.vertical_scroll_offset(0.0);
                         self.reset_tree_scroll = false;
                     }
+                    let mut drop_folder = None;
                     let scroll = tree_scroll.show(ui, |ui| {
                         let (action, revealed) = self.tree.show(
                             ui,
@@ -2385,12 +2390,22 @@ impl NotesApp {
                             self.collapse_epoch,
                             self.reveal_folder.as_deref(),
                             &mut visible_files,
+                            &mut drop_folder,
                         );
                         selected = action;
                         if revealed {
                             self.reveal_folder = None;
                         }
+                        crate::file_tree::drag_scroll(ui);
                     });
+                    if let Some(action) = crate::file_tree::finish_drag(
+                        ui,
+                        drop_folder,
+                        root.rect.union(scroll.inner_rect),
+                        root_drop,
+                    ) {
+                        selected = Some(action);
+                    }
                     crate::ui_probe::record(ui.ctx(), "file-tree-viewport", scroll.inner_rect);
                     crate::ui_probe::metric(
                         ui.ctx(),
@@ -2511,6 +2526,7 @@ impl NotesApp {
                 FileAction::Rename(path) => self.ask_file(Dialog::RenameNote, path),
                 FileAction::Trash(path) => self.ask_file(Dialog::TrashNote, path),
                 FileAction::Bookmark(path) => self.add_bookmark(&path),
+                FileAction::MoveInto { source, folder } => self.drop_into(&source, &folder),
             }
         }
     }
@@ -4354,11 +4370,11 @@ impl NotesApp {
 
     fn move_file(&mut self, source: &Path, folder: &Path, create: bool) {
         if !self.save_all() {
-            self.file_move.error(
-                self.error
-                    .clone()
-                    .unwrap_or_else(|| "Save your changes before moving the file.".into()),
-            );
+            let error = self
+                .error
+                .clone()
+                .unwrap_or_else(|| "Save your changes before moving the file.".into());
+            self.move_failed(error);
             return;
         }
         let result = self
@@ -4382,11 +4398,51 @@ impl NotesApp {
                 self.refresh_file_views();
             }
             Ok(None) => self.file_move.moved(None),
-            Err(error) => self.file_move.error(error),
+            Err(error) => self.move_failed(error),
         }
         if let Err(error) = self.write_session() {
             self.error = Some(error);
         }
+    }
+
+    /// The Move picker shows a failed move; a drag in the explorer has no picker.
+    fn move_failed(&mut self, error: String) {
+        if self.file_move.active() {
+            self.file_move.error(error);
+        } else {
+            self.error = Some(error);
+        }
+    }
+
+    /// A drag in the explorer let go of `source` over `folder` ("" is the vault root).
+    /// A file takes the Move dialog's operation, a folder the folder rename, with a
+    /// number after a taken folder name as Obsidian does. The tree stays where it is.
+    fn drop_into(&mut self, source: &Path, folder: &Path) {
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        if vault.folders.iter().any(|path| path == source) {
+            let name = source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let mut target = folder.join(&name);
+            let mut counter = 0;
+            while std::fs::symlink_metadata(vault.root.join(&target)).is_ok() {
+                counter += 1;
+                target = folder.join(format!("{name} {counter}"));
+            }
+            let previous = self.dialog_path.replace(source.to_owned());
+            let previous_input =
+                std::mem::replace(&mut self.dialog_input, target.display().to_string());
+            self.submit_dialog(Dialog::RenameNote);
+            self.dialog_path = previous;
+            self.dialog_input = previous_input;
+        } else {
+            self.move_file(source, folder, false);
+        }
+        self.reveal_folder = None;
     }
 
     fn submit_dialog(&mut self, dialog: Dialog) -> bool {
