@@ -156,7 +156,7 @@ fn paint_drop_target(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Re
     crate::ui_probe::record(ui.ctx(), format!("drop-target:{name}"), frame);
 }
 
-/// The dragged row follows the pointer in its selected look.
+/// The dragged row follows the pointer in its selected look, framed like a popup.
 fn paint_ghost(ui: &egui::Ui, dragged: &Dragged, pointer: egui::Pos2) {
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Tooltip,
@@ -174,8 +174,11 @@ fn paint_ghost(ui: &egui::Ui, dragged: &Dragged, pointer: egui::Pos2) {
         pointer + egui::vec2(12.0, 12.0),
         egui::vec2((width + 20.0).min(300.0), 29.0),
     );
-    painter.rect_filled(rect, 7, ui.visuals().panel_fill);
+    let visuals = ui.visuals();
+    painter.add(visuals.popup_shadow.as_shape(rect, 7));
+    painter.rect_filled(rect, 7, visuals.window_fill());
     paint_row(ui, &painter, rect, &dragged.title, true, false);
+    painter.rect_stroke(rect, 7, visuals.window_stroke(), egui::StrokeKind::Inside);
     crate::ui_probe::record(ui.ctx(), format!("drag:{}", dragged.path.display()), rect);
 }
 
@@ -422,9 +425,14 @@ impl Tree {
             let framed = ui.visuals().collapsing_header_frame;
             let idle_fill = ui.visuals().widgets.inactive.bg_fill;
             let idle_stroke = ui.visuals().widgets.inactive.bg_stroke;
+            let pressed_stroke = ui.visuals().widgets.active.bg_stroke;
             ui.visuals_mut().collapsing_header_frame = true;
             ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
             ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
+            if dragging.is_some() {
+                // The dragged folder looks pressed, without the keyboard-focus outline.
+                ui.visuals_mut().widgets.active.bg_stroke = Stroke::NONE;
+            }
             let hovered = ui.is_enabled()
                 && (resting_since.is_some()
                     || ui.rect_contains_pointer(egui::Rect::from_min_size(
@@ -489,6 +497,7 @@ impl Tree {
             ui.visuals_mut().collapsing_header_frame = framed;
             ui.visuals_mut().widgets.inactive.bg_fill = idle_fill;
             ui.visuals_mut().widgets.inactive.bg_stroke = idle_stroke;
+            ui.visuals_mut().widgets.active.bg_stroke = pressed_stroke;
             header.header_response.context_menu(|ui| {
                 theme::menu_style(ui);
                 let path = PathBuf::from(id.trim_start_matches('/'));

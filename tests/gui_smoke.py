@@ -6135,6 +6135,8 @@ def main():
                     left, top, right, bottom = control_bounds(name)
                     return round(left + dx), round((top + bottom) / 2)
 
+                moments = {}
+
                 def drag(start, end, *, hold=.3, during=None, cancel=False):
                     # Press, pass egui's 6 px drag threshold, glide to the target, rest, let go.
                     xdo("mousemove", "--sync", str(start[0]), str(start[1]), "mousedown", "1")
@@ -6147,6 +6149,7 @@ def main():
                             y = round(start[1] + (end[1] - start[1]) * step / 12)
                             xdo("mousemove", "--sync", str(x), str(y))
                             time.sleep(.03)
+                        moments["arrived"] = time.monotonic()
                         time.sleep(hold)
                         if during:
                             during()
@@ -6207,29 +6210,41 @@ def main():
                     started = time.monotonic()
                     while control_bounds("file:Drag closed/Kept.md", required=False) is None and time.monotonic() - started < 3:
                         time.sleep(.05)
-                    opened["after"] = round(time.monotonic() - started + .3, 2)
+                    opened["after"] = round(time.monotonic() - moments["arrived"], 2)
                     assert control_bounds("file:Drag closed/Kept.md", required=False), "Resting a drag on a collapsed folder must open it"
+                    assert .5 <= opened["after"] <= 1.5, ("The folder opens after Obsidian's 750 ms pause, without more input", opened)
                     inspect_drag("dark", "Notes/Drag source.md", "Drag closed")
-                    xdo("click", "--repeat", "4", "--delay", "30", "5")
-                    pause()
-                    opened["wheel"] = control_bounds("file-tree-offset")[0]
-                    assert opened["wheel"] > 0, ("The wheel must scroll the tree during a drag", opened)
                     viewport = control_bounds("file-tree-viewport")
                     x = round((viewport[0] + viewport[2]) / 2)
+
+                    def offset():
+                        return control_bounds("file-tree-offset")[0]
+
+                    xdo("click", "--repeat", "2", "--delay", "30", "5")
+                    pause()
+                    opened["wheel"] = offset()
+                    assert opened["wheel"] > 0, ("The wheel must scroll the tree during a drag", opened)
+                    xdo("click", "--repeat", "40", "--delay", "5", "4")
+                    pause()
+                    assert offset() == 0, ("The wheel must scroll the tree back during a drag", opened)
                     xdo("mousemove", "--sync", str(x), str(round(viewport[3]) - 8))
                     time.sleep(.6)
-                    opened["edge"] = control_bounds("file-tree-offset")[0]
-                    assert opened["edge"] > opened["wheel"], ("Holding a drag at the bottom edge must scroll the tree", opened)
+                    opened["edge"] = offset()
+                    assert opened["edge"] > 0, ("Holding a drag at the bottom edge must scroll the tree down", opened)
+                    xdo("mousemove", "--sync", str(x), str(round(viewport[1]) + 8))
+                    time.sleep(.6)
+                    opened["top"] = offset()
+                    assert opened["top"] < opened["edge"], ("Holding a drag at the top edge must scroll the tree up", opened)
                     xdo("mousemove", "--sync", str(x), str(round((viewport[1] + viewport[3]) / 2)))
                     xdo("click", "--repeat", "40", "--delay", "5", "4")
                     pause()
-                    assert control_bounds("file-tree-offset")[0] == 0, opened
+                    assert offset() == 0, opened
 
                 drag(point(dragged), point("folder:Drag closed"), hold=.2, during=rest_scroll_and_look, cancel=True)
                 unchanged(before, "Drag source")
                 click_control("folder:Zz drag filler")
                 assert control_bounds("file:Zz drag filler/Filler 01.md", required=False) is None
-                results.append(f"Resting a drag on a collapsed folder opened it after {opened['after']} s; the wheel ({opened['wheel']:.0f} px) and the bottom edge ({opened['edge']:.0f} px) scrolled the tree mid-drag; Escape ended it and no file changed")
+                results.append(f"Resting a drag on a collapsed folder opened it after {opened['after']} s; mid-drag the wheel scrolled the tree ({opened['wheel']:.0f} px) and back, the bottom edge down ({opened['edge']:.0f} px) and the top edge up ({opened['top']:.0f} px); Escape ended it and no file changed")
 
                 drag(point(dragged), point("folder:Notes"))
                 unchanged(before, "Drag source")
