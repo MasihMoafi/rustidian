@@ -124,9 +124,13 @@ pub struct NotesApp {
     /// Files and folders from later launches; see `instance`.
     #[cfg(unix)]
     pub(crate) launches: Option<Receiver<crate::instance::Request>>,
-    /// When to check that a window just opened or handed a launch has focus.
-    /// GNOME may leave it behind the window being typed in; it then asks for
-    /// attention, so "Rustidian is ready" appears instead of nothing.
+    /// Launches that wait to hear this window has the focus; see
+    /// `instance::Instance::serve`.
+    #[cfg(unix)]
+    showing: Vec<mpsc::Sender<()>>,
+    /// When to check that a window just opened has focus. GNOME may leave it
+    /// behind the window being typed in; it then asks for attention, so
+    /// "Rustidian is ready" appears instead of nothing.
     attention_check: Option<Instant>,
     watcher: Option<SharedWatch>,
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
@@ -236,6 +240,8 @@ impl NotesApp {
             loading: None,
             #[cfg(unix)]
             launches: None,
+            #[cfg(unix)]
+            showing: Vec::new(),
             attention_check: Some(Instant::now() + ATTENTION_DELAY),
             watcher: None,
             watch_events: None,
@@ -5039,9 +5045,9 @@ impl eframe::App for NotesApp {
             .map(|launches| launches.try_iter().collect())
             .unwrap_or_default();
         #[cfg(unix)]
-        for crate::instance::Request { path, token } in launches {
+        for crate::instance::Request { path, token, shown } in launches {
             crate::window::bring_forward(ctx, frame, token.as_deref());
-            self.attention_check = Some(Instant::now() + ATTENTION_DELAY);
+            self.showing.push(shown);
             if let Some(path) = path {
                 let kind = if path.is_dir() {
                     rustidian::native_picker::Kind::Folder
@@ -5049,6 +5055,14 @@ impl eframe::App for NotesApp {
                     rustidian::native_picker::Kind::File
                 };
                 self.open_system_selection(kind, path);
+            }
+        }
+        // A launch exits once this window has the focus. One that waits in
+        // vain opens a window of its own instead; see `instance`.
+        #[cfg(unix)]
+        if !self.showing.is_empty() && ctx.input(|input| input.viewport().focused) == Some(true) {
+            for shown in self.showing.drain(..) {
+                let _ = shown.send(());
             }
         }
         if let Some(signal) = crate::window::take_signal() {

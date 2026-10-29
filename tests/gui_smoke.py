@@ -5158,113 +5158,182 @@ def main():
             def instance_checks():
                 # 27 Oct: five windows from separate launches stayed alive for hours.
                 # 28 Oct: a launch beside a slow window deleted its live socket and kept a second process.
+                # 29 Oct: on Masih's GNOME Wayland a dock click beside a window on another workspace showed nothing, even with
+                # the launch's activation token. A launch now exits only once the window has the focus; otherwise it opens its
+                # own window and takes the socket.
                 socket_file = base / "data/rustidian/instance.sock"
                 identity = lambda: (socket_file.stat().st_ino, socket_file.stat().st_ctime_ns)
                 original = identity()
                 tokens = ("XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID")
+                started = []
                 def launch(*arguments, **variables):
-                    # A launch carries an activation token only when a check gives it one.
+                    # A later launch, in the background, since it waits for the window's answer. It carries an activation
+                    # token only when a check gives it one, a launch that opens a window writes its own UI probe, and its
+                    # stderr stays in the report folder.
+                    number = len(started) + 1
+                    stderr = reports / f"instance-launch-{number}.log"
                     launch_environment = {name: value for name, value in environment.items() if name not in tokens}
+                    launch_environment.update(variables, RUSTIDIAN_UI_PROBE=str(base / f"ui-probe-launch-{number}.json"))
+                    with stderr.open("w") as errors:
+                        started.append(subprocess.Popen([str(ROOT / args.binary), *map(str, arguments)], env=launch_environment,
+                                                        cwd=base, stdout=subprocess.DEVNULL, stderr=errors))
+                    return started[-1], stderr
+                said = lambda stderr: [line for line in stderr.read_text(errors="replace").splitlines() if line.startswith("hand-off: ")]
+                def handed_off(launched, message):
+                    # The window took the launch: the launch says it was shown and exits 0.
+                    process, stderr = launched
                     try:
-                        return subprocess.run([str(ROOT / args.binary), *map(str, arguments)], env=launch_environment | variables,
-                                              cwd=base, capture_output=True, timeout=10).returncode
+                        code = process.wait(timeout=10)
                     except subprocess.TimeoutExpired:
-                        raise AssertionError("A second launch kept running instead of handing over to the open window")
+                        raise AssertionError(f"{message}: the launch kept running; it said {said(stderr)}") from None
+                    assert code == 0 and said(stderr) == ["hand-off: shown"], (message, code, stderr.read_text(errors="replace"))
                 hand_offs = lambda: [line for line in (reports / "gui-smoke.log").read_text(errors="replace").splitlines()
                                      if line.startswith("hand-off: ")]
-                assert launch() == 0 and app.poll() is None, "A plain second launch must leave the first window running"
-                assert len(xdo("search", "--onlyvisible", "--name", "Rustidian").split()) == 1, "A second launch opened another window"
-                assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
-                note = fixture / "Notes/First steps.md"
-                assert launch(note.relative_to(base)) == 0, "Opening a file from a second launch failed"
-                title_contains(note.stem)
-                assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
-                assert identity() == original, "A hand-off replaced the window's socket"
-                assert hand_offs() == ["hand-off: no token"] * 2, hand_offs()
-                results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there, "
-                               "one Rustidian process remained and the socket stayed the original")
-                # 29 Oct: on Masih's GNOME Wayland a dock click beside an open window showed nothing: Wayland
-                # ignores a focus request without the launch's activation token. The token now travels with the
-                # hand-off. On X11 the window asks the window manager for the focus (_NET_ACTIVE_WINDOW); this
-                # connection grants it in a window manager's place.
-                from Xlib import X, display as xlib_display
-                manager = xlib_display.Display(display)
-                manager.screen().root.change_attributes(event_mask=X.SubstructureNotifyMask)
-                manager.sync()
-                active_window = manager.intern_atom("_NET_ACTIVE_WINDOW")
-                def activation_requests():
-                    requests = []
-                    while manager.pending_events():
-                        event = manager.next_event()
-                        if event.type == X.ClientMessage and event.client_type == active_window:
-                            requests.append(event.window)
-                    return requests
-                def wait_for(predicate, message):
-                    deadline = time.monotonic() + 5
+                def wait_for(predicate, message, limit=5):
+                    deadline = time.monotonic() + limit
                     while not predicate():
-                        assert time.monotonic() < deadline, message
+                        assert time.monotonic() < deadline, message() if callable(message) else message
                         time.sleep(.05)
-                try:
-                    for variables, expected in (({}, "hand-off: no token"),
-                                                ({"XDG_ACTIVATION_TOKEN": "rustidian-test-token"}, "hand-off: token, focus request"),
-                                                ({"DESKTOP_STARTUP_ID": "rustidian-test_TIME0"}, "hand-off: token, focus request")):
-                        xdo("windowfocus", "0")
-                        wait_for(lambda: control_bounds("window-focused")[0] == 0, "The window kept the focus")
-                        activation_requests()
-                        before = len(hand_offs())
-                        assert launch(**variables) == 0, f"A hand-off with {variables} failed"
-                        requests, deadline = [], time.monotonic() + 5
-                        while not requests:
-                            assert time.monotonic() < deadline, f"After a hand-off with {variables} the window did not ask for the focus"
-                            requests = activation_requests()
-                            time.sleep(.05)
-                        assert {request.id for request in requests} == {int(window)}, (requests, window)
-                        requests[0].set_input_focus(X.RevertToParent, X.CurrentTime)
-                        manager.sync()
-                        wait_for(lambda: control_bounds("window-focused")[0] == 1,
-                                 f"The window did not take the focus after a hand-off with {variables}")
-                        wait_for(lambda: hand_offs()[before:] == [expected], (variables, hand_offs()[before:]))
-                finally:
-                    manager.close()
-                assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
-                results.append("Hand-offs without a token, with XDG_ACTIVATION_TOKEN and with DESKTOP_STARTUP_ID each asked the window manager "
-                               "for the focus (_NET_ACTIVE_WINDOW) and the window took it; the window logged `hand-off: no token` or "
-                               "`hand-off: token, focus request`")
-                # 28 Oct: a window Masih could not see kept the instance socket, so his launches showed nothing.
                 # xdotool exits 1 when nothing matches.
                 visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,
                                                  capture_output=True, text=True).stdout.split()
-                second_errors, second = base / "second-launch.log", None
-                app.send_signal(signal.SIGSTOP)
-                try:
-                    with second_errors.open("w") as errors:
-                        second = subprocess.Popen([str(ROOT / args.binary), str(fixture)], env=environment, cwd=base,
-                                                  stdout=subprocess.DEVNULL, stderr=errors)
-                    deadline = time.monotonic() + 15
-                    while len(visible()) < 2:
-                        assert second.poll() is None, "A launch must not hand over to an instance that cannot draw"
-                        assert time.monotonic() < deadline, "A launch beside a stalled instance must open its own window"
+                def opened_window(launched, known, message):
+                    # The window that a launch which could not hand over opened beside the `known` ones.
+                    process, stderr = launched
+                    deadline = time.monotonic() + 30
+                    while not (opened := [found for found in visible() if found not in known]):
+                        assert process.poll() is None, f"{message}: the launch ended with {process.returncode}; it said {said(stderr)}"
+                        assert time.monotonic() < deadline, f"{message}: no window appeared; the launch said {said(stderr)}"
                         time.sleep(.1)
-                    assert identity() == original, "A launch beside a stalled window replaced its live socket"
+                    assert len(opened) == 1, (message, opened)
+                    return opened[0]
+                # On X11 the window asks the window manager for the focus (_NET_ACTIVE_WINDOW). This connection answers in a
+                # window manager's place: it grants the focus, or refuses it as GNOME did for a window on another workspace.
+                from Xlib import X, display as xlib_display
+                manager = xlib_display.Display(display)
+                try:
+                    manager.screen().root.change_attributes(event_mask=X.SubstructureNotifyMask)
+                    manager.sync()
+                    active_window = manager.intern_atom("_NET_ACTIVE_WINDOW")
+                    def focus_requests():
+                        requests = []
+                        while manager.pending_events():
+                            event = manager.next_event()
+                            if event.type == X.ClientMessage and event.client_type == active_window:
+                                requests.append(event.window)
+                        return requests
+                    def asked(target, *, grant=True):
+                        # Wait until `target` asks for the focus, then grant it or leave it unanswered.
+                        deadline = time.monotonic() + 5
+                        while not (asking := [request for request in focus_requests() if request.id == int(target)]):
+                            assert time.monotonic() < deadline, f"Window {target} did not ask the window manager for the focus"
+                            time.sleep(.02)
+                        if grant:
+                            asking[0].set_input_focus(X.RevertToParent, X.CurrentTime)
+                            manager.sync()
+                    def unfocus():
+                        xdo("windowfocus", "0")
+                        wait_for(lambda: control_bounds("window-focused")[0] == 0, "The window kept the focus")
+                        focus_requests()
+
+                    wait_for(lambda: control_bounds("window-focused")[0] == 1, "The window must have the focus after it opened")
+                    handed_off(launch(), "A plain second launch must hand over to the focused window")
+                    assert app.poll() is None, "A plain second launch must leave the first window running"
+                    assert len(visible()) == 1, f"A second launch opened another window: {visible()}"
+                    assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                    note = fixture / "Notes/First steps.md"
+                    handed_off(launch(note.relative_to(base)), "Opening a file from a second launch failed")
+                    title_contains(note.stem)
+                    assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                    assert identity() == original, "A hand-off replaced the window's socket"
+                    assert hand_offs() == ["hand-off: no token"] * 2, hand_offs()
+                    results.append("Second launches, plain and with a relative file path, handed over to the focused window and exited "
+                                   "with `hand-off: shown`; the file opened there, one Rustidian process remained and the socket stayed the original")
+
+                    for variables, expected in (({}, "hand-off: no token"),
+                                                ({"XDG_ACTIVATION_TOKEN": "rustidian-test-token"}, "hand-off: token, focus request"),
+                                                ({"DESKTOP_STARTUP_ID": "rustidian-test_TIME0"}, "hand-off: token, focus request")):
+                        unfocus()
+                        before = len(hand_offs())
+                        launched = launch(**variables)
+                        asked(window)
+                        wait_for(lambda: control_bounds("window-focused")[0] == 1,
+                                 f"The window did not take the focus after a hand-off with {variables}")
+                        handed_off(launched, f"A hand-off with {variables} failed")
+                        wait_for(lambda: hand_offs()[before:] == [expected], lambda: (variables, hand_offs()[before:]))
+                    assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                    results.append("Hand-offs without a token, with XDG_ACTIVATION_TOKEN and with DESKTOP_STARTUP_ID each asked the window "
+                                   "manager for the focus (_NET_ACTIVE_WINDOW); once it was granted the launch exited with `hand-off: shown`, "
+                                   "and the window logged `hand-off: no token` or `hand-off: token, focus request`")
+
+                    # 29 Oct, fifth report: GNOME did not raise a window on another workspace although the token reached it.
+                    unfocus()
+                    before = len(hand_offs())
+                    requested = fixture / "Notes/Connected thinking.md"
+                    second = launch(requested.relative_to(base))
+                    asked(window, grant=False)
+                    second_window = opened_window(second, [window], "A launch whose window got no focus must open its own window")
+                    assert said(second[1])[:1] == ["hand-off: hidden, opening a window"], said(second[1])
+                    second_title = lambda: xdo("getwindowname", second_window)
+                    wait_for(lambda: requested.stem in second_title() and "Test Vault" in second_title(),
+                             lambda: f"The new window must show the requested note in the same vault: {second_title()!r}", limit=15)
+                    assert app.poll() is None and control_bounds("window-focused")[0] == 0, "The window nobody saw must stay open"
+                    assert hand_offs()[before:] == ["hand-off: no token"], hand_offs()[before:]
+                    assert sorted(sandbox_apps()) == sorted([app.pid, second[0].pid]), sandbox_apps()
+                    taken = identity()
+                    assert taken != original, "The new window did not take the socket"
+                    later = launch(XDG_ACTIVATION_TOKEN="rustidian-later-token")
+                    asked(second_window)
+                    handed_off(later, "A launch after the takeover must hand over to the new window")
+                    wait_for(lambda: said(second[1])[1:] == ["hand-off: token, focus request"],
+                             lambda: f"The new window did not take the later launch: {said(second[1])}")
+                    assert hand_offs()[before:] == ["hand-off: no token"], f"A later launch reached the window nobody saw: {hand_offs()[before:]}"
+                    assert identity() == taken, "A hand-off to the new window replaced its socket"
+                    results.append("A hand-off whose window got no focus (the window manager refused it) ended with two windows: the launch "
+                                   "logged `hand-off: hidden, opening a window`, opened its own window on the vault with the requested note and "
+                                   "took the socket; the first window stayed open; a later launch handed over to the new window")
+
+                    # 28 Oct: a window Masih could not see kept the socket, so his launches showed nothing. One that cannot
+                    # answer at all (stopped here) gets the same treatment after two seconds.
+                    second[0].send_signal(signal.SIGSTOP)
+                    try:
+                        third = launch(fixture)
+                        third_window = opened_window(third, [window, second_window], "A launch beside a stopped window must open its own window")
+                    finally:
+                        second[0].send_signal(signal.SIGCONT)
+                    assert said(third[1])[:1] == ["hand-off: no answer, opening a window"], said(third[1])
+                    assert identity() != taken, "A launch beside a stopped window left it the socket"
+                    taken = identity()
+                    last = launch()
+                    asked(third_window)
+                    handed_off(last, "After a stall a launch must hand over to the newest window")
+                    wait_for(lambda: said(third[1])[1:] == ["hand-off: no token"],
+                             lambda: f"The newest window did not take the launch: {said(third[1])}")
+                    assert identity() == taken, "A hand-off to the newest window replaced its socket"
+                    assert app.poll() is None and second[0].poll() is None, "The earlier windows must stay open"
+                    results.append("Beside a stopped window a launch got no answer within 2 s, logged `hand-off: no answer, opening a window`, "
+                                   "opened its own window and took the socket; the next launch handed over to that window")
+                    for process, _ in (second, third):
+                        process.terminate()
+                        process.wait(timeout=10)
                 finally:
-                    if second is not None:
-                        second.terminate(); second.wait(timeout=10)
-                    app.send_signal(signal.SIGCONT)
-                assert "did not answer" in second_errors.read_text(), second_errors.read_text()
-                assert identity() == original, "The separate window removed the stalled window's socket"
-                # The second window wrote its own control bounds; wait for the first window's.
-                (base / "ui-probe.json").unlink(missing_ok=True)
-                xdo("mousemove", "--sync", "700", "500")
-                control_bounds("window:Close window")
-                assert launch() == 0, "The resumed window must take the next launch"
-                assert sandbox_apps() == [app.pid], f"A launch after the stall left another process: {sandbox_apps()}"
-                results.append("Beside an instance that could not answer, a launch opened its own window, said so on stderr and left the "
-                               "socket; the resumed window took the next launch")
+                    for process in started:
+                        if process.poll() is None:
+                            process.send_signal(signal.SIGCONT)
+                            process.terminate()
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait()
+                    manager.close()
+                wait_for(lambda: visible() == [window], lambda: f"Windows other than the first stayed: {visible()}")
+                assert sandbox_apps() == [app.pid], f"A launch's window outlived SIGTERM: {sandbox_apps()}"
                 # click_control would assert the app still runs after the click.
                 left, top, right, bottom = control_bounds("window:Close window")
                 xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
                 assert app.wait(timeout=5) == 0, "Closing the window must end its process"
-                results.append("Closing the window ended its process")
+                results.append("SIGTERM closed both new windows and the title-bar X ended the first window's process")
 
             def lifecycle_checks():
                 # 28 Oct: Rustidian processes Masih could not see kept running, and windows

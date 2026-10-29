@@ -92,9 +92,11 @@ fn main() -> eframe::Result {
             instance::Launch::Serve(instance) => {
                 let ui_context = ui_context.clone();
                 Some(instance.serve(move || {
-                    if let Some(ctx) = ui_context.get() {
+                    let opened = ui_context.get();
+                    if let Some(ctx) = opened {
                         ctx.request_repaint();
                     }
+                    opened.is_some()
                 }))
             }
             instance::Launch::Alone => None,
