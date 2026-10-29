@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6091,6 +6091,209 @@ def main():
                 xdo("windowsize",window,"1440","960");pause()
                 results.append("The real Move picker fit the minimum window and dismissed without changing its file or active tab")
 
+            def drag_move_checks():
+                # Obsidian's explorer: drag a note or a folder onto a folder or the vault root (29 Oct).
+                click_control("button:File explorer")
+                close_tabs()
+                set_theme(True)
+                untouched = {name: (fixture / name).read_bytes() for name in ("Home.md", "Notes/First steps.md", "Notes/Connected thinking.md", "Projects/Native notebook.md")}
+                source = fixture / "Notes/Drag source.md"
+                source_bytes = b"# Drag source\r\n\r\nKeep these exact bytes.\r\n"
+                source.write_bytes(source_bytes)
+                reference = fixture / "Drag reference.md"
+                reference.write_bytes(b"[[Notes/Drag source|Alias]]\r\n[Label](Notes/Drag%20source.md)\r\n")
+                package = fixture / "Drag folder"
+                (package / "Sub").mkdir(parents=True)
+                inner_bytes, deep_bytes = b"# Inner\n\nInside the dragged folder.\n", b"# Deep\n"
+                (package / "Inner.md").write_bytes(inner_bytes)
+                (package / "Sub/Deep.md").write_bytes(deep_bytes)
+                package_reference = fixture / "Folder reference.md"
+                package_reference.write_bytes(b"[[Drag folder/Inner]]\n")
+                (fixture / "Drag closed").mkdir()
+                (fixture / "Drag closed/Kept.md").write_bytes(b"# Kept\n")
+                # Sorted after Projects, so it makes the tree tall without moving the targets.
+                filler = fixture / "Zz drag filler"
+                filler.mkdir()
+                for number in range(1, 25):
+                    (filler / f"Filler {number:02}.md").write_bytes(f"# Filler {number:02}\n".encode())
+                command("Refresh vault")
+                pause()
+                click_control("file-collapse")
+                open_note("Drag source")
+                dragged = "file:Notes/Drag source.md"
+                control_bounds(dragged)
+                observations = []
+
+                def files():
+                    return {path.relative_to(fixture).as_posix(): path.read_bytes() for path in fixture.rglob("*")
+                            if path.is_file() and not any(part.startswith(".") for part in path.relative_to(fixture).parts)}
+
+                def drags():
+                    return [name for name in json.loads((base / "ui-probe.json").read_text()) if name.startswith(("drag:", "drop-target:"))]
+
+                def point(name, dx=40):
+                    left, top, right, bottom = control_bounds(name)
+                    return round(left + dx), round((top + bottom) / 2)
+
+                def drag(start, end, *, hold=.3, during=None, cancel=False):
+                    # Press, pass egui's 6 px drag threshold, glide to the target, rest, let go.
+                    xdo("mousemove", "--sync", str(start[0]), str(start[1]), "mousedown", "1")
+                    try:
+                        time.sleep(.1)
+                        xdo("mousemove", "--sync", str(start[0] + 3), str(start[1]))
+                        time.sleep(.05)
+                        for step in range(1, 13):
+                            x = round(start[0] + 3 + (end[0] - start[0] - 3) * step / 12)
+                            y = round(start[1] + (end[1] - start[1]) * step / 12)
+                            xdo("mousemove", "--sync", str(x), str(y))
+                            time.sleep(.03)
+                        time.sleep(hold)
+                        if during:
+                            during()
+                        if cancel:
+                            # Not key(): --clearmodifiers would let go of the held button first.
+                            xdo("key", "Escape")
+                            deadline = time.monotonic() + 2
+                            while drags() and time.monotonic() < deadline:
+                                time.sleep(.05)
+                            assert not drags(), ("Escape must end the drag at once", drags())
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+
+                def unchanged(before, title):
+                    assert files() == before, "Nothing may move"
+                    assert control_bounds("move-links-dialog", required=False) is None
+                    assert control_bounds("error-notice", required=False) is None
+                    assert not drags(), drags()
+                    title_contains(title)
+
+                def inspect_drag(theme_name, path, target):
+                    ghost = control_bounds("drag:" + path)
+                    area = control_bounds("drop-target:" + target)
+                    header = control_bounds("folder:" + target)
+                    viewport = control_bounds("file-tree-viewport")
+                    pointer = dict(line.split("=") for line in xdo("getmouselocation", "--shell").splitlines())
+                    capture(f"native-drag-move-{theme_name}.png")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    middle = round((header[1] + header[3]) / 2)
+                    fill = picture.getpixel((round(area[2]) - 3, middle))
+                    panel = picture.getpixel((round(viewport[0]) - 6, middle))
+                    title = max(pixel_contrast(picture.getpixel((x, y)), fill)
+                                for x in range(round(header[0]) + 18, round(header[0]) + 120) for y in range(round(header[1]) + 6, round(header[3]) - 6))
+                    ghost_fill = picture.getpixel((round(ghost[2]) - 4, round((ghost[1] + ghost[3]) / 2)))
+                    text = max(pixel_contrast(picture.getpixel((x, y)), ghost_fill)
+                               for x in range(round(ghost[0]) + 9, round(ghost[2]) - 9) for y in range(round(ghost[1]) + 6, round(ghost[3]) - 6))
+                    observations.append({"theme": theme_name, "dragged": path, "target": target, "pointer": [int(pointer["X"]), int(pointer["Y"])],
+                                         "ghost": ghost, "highlight": area, "highlight_rgb": fill, "panel_rgb": panel,
+                                         "title_contrast": round(title, 2), "ghost_rgb": ghost_fill, "ghost_text_contrast": round(text, 2)})
+                    (reports / "drag-move-pixels.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    assert max(abs(a - b) for a, b in zip(fill, panel)) >= 6, ("The drop target needs a visible highlight", observations[-1])
+                    assert title >= 3, ("The highlighted folder name must stay legible", observations[-1])
+                    assert text >= 4.5, ("The dragged row must stay legible", observations[-1])
+                    assert 0 <= ghost[0] - int(pointer["X"]) <= 30 and 0 <= ghost[1] - int(pointer["Y"]) <= 30, ("The dragged row follows the pointer", observations[-1])
+                    assert area[1] <= header[1] + 2 and area[3] >= header[3] - 2, ("The highlight covers the folder row", observations[-1])
+
+                # Resting on a collapsed folder opens it; the tree keeps scrolling; Escape cancels.
+                assert control_bounds("file:Drag closed/Kept.md", required=False) is None, "Drag closed must start collapsed"
+                click_control("folder:Zz drag filler")
+                control_bounds("file:Zz drag filler/Filler 01.md")
+                before = files()
+                opened = {}
+
+                def rest_scroll_and_look():
+                    assert control_bounds("file:Drag closed/Kept.md", required=False) is None, "A folder must not open the moment a drag reaches it"
+                    control_bounds("drop-target:Drag closed")
+                    started = time.monotonic()
+                    while control_bounds("file:Drag closed/Kept.md", required=False) is None and time.monotonic() - started < 3:
+                        time.sleep(.05)
+                    opened["after"] = round(time.monotonic() - started + .3, 2)
+                    assert control_bounds("file:Drag closed/Kept.md", required=False), "Resting a drag on a collapsed folder must open it"
+                    inspect_drag("dark", "Notes/Drag source.md", "Drag closed")
+                    xdo("click", "--repeat", "4", "--delay", "30", "5")
+                    pause()
+                    opened["wheel"] = control_bounds("file-tree-offset")[0]
+                    assert opened["wheel"] > 0, ("The wheel must scroll the tree during a drag", opened)
+                    viewport = control_bounds("file-tree-viewport")
+                    x = round((viewport[0] + viewport[2]) / 2)
+                    xdo("mousemove", "--sync", str(x), str(round(viewport[3]) - 8))
+                    time.sleep(.6)
+                    opened["edge"] = control_bounds("file-tree-offset")[0]
+                    assert opened["edge"] > opened["wheel"], ("Holding a drag at the bottom edge must scroll the tree", opened)
+                    xdo("mousemove", "--sync", str(x), str(round((viewport[1] + viewport[3]) / 2)))
+                    xdo("click", "--repeat", "40", "--delay", "5", "4")
+                    pause()
+                    assert control_bounds("file-tree-offset")[0] == 0, opened
+
+                drag(point(dragged), point("folder:Drag closed"), hold=.2, during=rest_scroll_and_look, cancel=True)
+                unchanged(before, "Drag source")
+                click_control("folder:Zz drag filler")
+                assert control_bounds("file:Zz drag filler/Filler 01.md", required=False) is None
+                results.append(f"Resting a drag on a collapsed folder opened it after {opened['after']} s; the wheel ({opened['wheel']:.0f} px) and the bottom edge ({opened['edge']:.0f} px) scrolled the tree mid-drag; Escape ended it and no file changed")
+
+                drag(point(dragged), point("folder:Notes"))
+                unchanged(before, "Drag source")
+                drag(point(dragged), (800, 450))
+                unchanged(before, "Drag source")
+                results.append("Dropping a note on its own folder, or outside the explorer, changed nothing")
+
+                drag(point(dragged), point("folder:Projects"))
+                moved = fixture / "Projects/Drag source.md"
+                control_bounds("move-links-dialog")
+                assert not source.exists() and moved.read_bytes() == source_bytes
+                click_control("move-links-once", hold=.15)
+                assert reference.read_bytes() == b"[[Projects/Drag source|Alias]]\r\n[Label](Projects/Drag%20source.md)\r\n", reference.read_bytes()
+                title_contains("Drag source")
+                control_bounds("tab-full:Projects/Drag source.md")
+                assert control_bounds("tab-full:Notes/Drag source.md", required=False) is None
+                row, viewport = control_bounds("file:Projects/Drag source.md"), control_bounds("file-tree-viewport")
+                assert viewport[1] - .5 <= row[1] and row[3] <= viewport[3] + .5, ("The tree must show the moved note", row, viewport)
+                capture("native-drag-move-dropped.png")
+                results.append("Dropping the open note on Projects moved its exact CRLF bytes, Just once retargeted both link forms as the Move dialog does, and the tab and the tree followed it")
+
+                set_theme(False)
+                drag(point("folder:Drag folder"), point("folder:Projects"), during=lambda: inspect_drag("light", "Drag folder", "Projects"))
+                assert not package.exists()
+                assert (fixture / "Projects/Drag folder/Inner.md").read_bytes() == inner_bytes
+                assert (fixture / "Projects/Drag folder/Sub/Deep.md").read_bytes() == deep_bytes
+                assert package_reference.read_bytes() == b"[[Projects/Drag folder/Inner]]\n", package_reference.read_bytes()
+                assert control_bounds("move-links-dialog", required=False) is None
+                control_bounds("folder:Projects/Drag folder")
+                set_theme(True)
+                results.append("Dropping a folder on Projects moved it with its nested contents and updated a link into it; both themes kept the highlight and the dragged row legible")
+
+                before = files()
+                start = point("folder:Projects/Drag folder")
+                drag(start, (start[0] + 80, start[1]))
+                unchanged(before, "Drag source")
+                results.append("Dropping a folder on itself changed nothing")
+
+                drag(point("file:Projects/Drag source.md"), point("file-tree-root", 10))
+                root_note = fixture / "Drag source.md"
+                control_bounds("move-links-dialog")
+                assert root_note.read_bytes() == source_bytes and not moved.exists()
+                click_control("move-links-once", hold=.15)
+                assert reference.read_bytes() == b"[[Drag source|Alias]]\r\n[Label](Drag%20source.md)\r\n", reference.read_bytes()
+                control_bounds("tab-full:Drag source.md")
+                title_contains("Drag source")
+                results.append("Dropping the note on the vault name moved it to the vault root with the same link update and tab")
+
+                reference.write_bytes(b"No links here.\n")
+                occupied = fixture / "Notes/Drag source.md"
+                occupied.write_bytes(b"KEEP_OCCUPIED\n")
+                (fixture / "Drag folder").mkdir()
+                (fixture / "Drag folder/Again.md").write_bytes(b"# Again\n")
+                command("Refresh vault")
+                pause()
+                drag(point("file:Drag source.md"), point("folder:Notes"))
+                assert (fixture / "Notes/Drag source 1.md").read_bytes() == source_bytes and not root_note.exists()
+                assert occupied.read_bytes() == b"KEEP_OCCUPIED\n"
+                drag(point("folder:Drag folder"), point("folder:Projects"))
+                assert (fixture / "Projects/Drag folder 1/Again.md").read_bytes() == b"# Again\n"
+                assert (fixture / "Projects/Drag folder/Inner.md").read_bytes() == inner_bytes
+                assert all((fixture / name).read_bytes() == data for name, data in untouched.items())
+                results.append("Taken names got a number, as the Move dialog and Obsidian do: Notes/Drag source 1.md and Projects/Drag folder 1; the occupied note and the demo notes kept their bytes")
+
             def file_copy_checks():
                 close_tabs()
                 originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
@@ -8824,6 +9027,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "file-move"}))
                 return
+            if args.section == "drag-move":
+                drag_move_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "drag-move"}))
+                return
             if args.section == "file-copy":
                 file_copy_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -9384,6 +9592,7 @@ def main():
                 attachment_tab_checks,
                 file_copy_checks,
                 file_move_checks,
+                drag_move_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,
