@@ -53,6 +53,15 @@ fastrand = "=2.5.0"
 portable-pty = "0.9"
 vt100 = "0.16"
 
+# A launch's activation token raises the running window (src/window.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+raw-window-handle = { version = "0.6", features = ["std"] }
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+egui-winit = { version = "0.37", default-features = false }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

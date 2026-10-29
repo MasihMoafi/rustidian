@@ -5161,12 +5161,17 @@ def main():
                 socket_file = base / "data/rustidian/instance.sock"
                 identity = lambda: (socket_file.stat().st_ino, socket_file.stat().st_ctime_ns)
                 original = identity()
-                def launch(*arguments):
+                tokens = ("XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID")
+                def launch(*arguments, **variables):
+                    # A launch carries an activation token only when a check gives it one.
+                    launch_environment = {name: value for name, value in environment.items() if name not in tokens}
                     try:
-                        return subprocess.run([str(ROOT / args.binary), *map(str, arguments)], env=environment,
+                        return subprocess.run([str(ROOT / args.binary), *map(str, arguments)], env=launch_environment | variables,
                                               cwd=base, capture_output=True, timeout=10).returncode
                     except subprocess.TimeoutExpired:
                         raise AssertionError("A second launch kept running instead of handing over to the open window")
+                hand_offs = lambda: [line for line in (reports / "gui-smoke.log").read_text(errors="replace").splitlines()
+                                     if line.startswith("hand-off: ")]
                 assert launch() == 0 and app.poll() is None, "A plain second launch must leave the first window running"
                 assert len(xdo("search", "--onlyvisible", "--name", "Rustidian").split()) == 1, "A second launch opened another window"
                 assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
@@ -5175,8 +5180,56 @@ def main():
                 title_contains(note.stem)
                 assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
                 assert identity() == original, "A hand-off replaced the window's socket"
+                assert hand_offs() == ["hand-off: no token"] * 2, hand_offs()
                 results.append("Second launches, plain and with a relative file path, handed over to the open window and exited; the file opened there, "
                                "one Rustidian process remained and the socket stayed the original")
+                # 29 Oct: on Masih's GNOME Wayland a dock click beside an open window showed nothing: Wayland
+                # ignores a focus request without the launch's activation token. The token now travels with the
+                # hand-off. On X11 the window asks the window manager for the focus (_NET_ACTIVE_WINDOW); this
+                # connection grants it in a window manager's place.
+                from Xlib import X, display as xlib_display
+                manager = xlib_display.Display(display)
+                manager.screen().root.change_attributes(event_mask=X.SubstructureNotifyMask)
+                manager.sync()
+                active_window = manager.intern_atom("_NET_ACTIVE_WINDOW")
+                def activation_requests():
+                    requests = []
+                    while manager.pending_events():
+                        event = manager.next_event()
+                        if event.type == X.ClientMessage and event.client_type == active_window:
+                            requests.append(event.window)
+                    return requests
+                def wait_for(predicate, message):
+                    deadline = time.monotonic() + 5
+                    while not predicate():
+                        assert time.monotonic() < deadline, message
+                        time.sleep(.05)
+                try:
+                    for variables, expected in (({}, "hand-off: no token"),
+                                                ({"XDG_ACTIVATION_TOKEN": "rustidian-test-token"}, "hand-off: token, focus request"),
+                                                ({"DESKTOP_STARTUP_ID": "rustidian-test_TIME0"}, "hand-off: token, focus request")):
+                        xdo("windowfocus", "0")
+                        wait_for(lambda: control_bounds("window-focused")[0] == 0, "The window kept the focus")
+                        activation_requests()
+                        before = len(hand_offs())
+                        assert launch(**variables) == 0, f"A hand-off with {variables} failed"
+                        requests, deadline = [], time.monotonic() + 5
+                        while not requests:
+                            assert time.monotonic() < deadline, f"After a hand-off with {variables} the window did not ask for the focus"
+                            requests = activation_requests()
+                            time.sleep(.05)
+                        assert {request.id for request in requests} == {int(window)}, (requests, window)
+                        requests[0].set_input_focus(X.RevertToParent, X.CurrentTime)
+                        manager.sync()
+                        wait_for(lambda: control_bounds("window-focused")[0] == 1,
+                                 f"The window did not take the focus after a hand-off with {variables}")
+                        wait_for(lambda: hand_offs()[before:] == [expected], (variables, hand_offs()[before:]))
+                finally:
+                    manager.close()
+                assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                results.append("Hand-offs without a token, with XDG_ACTIVATION_TOKEN and with DESKTOP_STARTUP_ID each asked the window manager "
+                               "for the focus (_NET_ACTIVE_WINDOW) and the window took it; the window logged `hand-off: no token` or "
+                               "`hand-off: token, focus request`")
                 # 28 Oct: a window Masih could not see kept the instance socket, so his launches showed nothing.
                 # xdotool exits 1 when nothing matches.
                 visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,

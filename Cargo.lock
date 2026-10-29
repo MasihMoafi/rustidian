@@ -3051,6 +3051,7 @@ version = "0.1.2"
 dependencies = [
  "chrono",
  "eframe",
+ "egui-winit",
  "egui_commonmark",
  "egui_extras",
  "epaint",
@@ -3067,6 +3068,7 @@ dependencies = [
  "ratex-parser",
  "ratex-svg",
  "ratex-types",
+ "raw-window-handle",
  "redb",
  "regex",
  "rustix 1.1.5",
@@ -3081,6 +3083,8 @@ dependencies = [
  "usvg",
  "vt100",
  "walkdir",
+ "wayland-client",
+ "wayland-protocols",
 ]
 
 [[package]]

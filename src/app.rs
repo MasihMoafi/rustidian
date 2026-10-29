@@ -4975,7 +4975,7 @@ impl eframe::App for NotesApp {
 
     /// Runs before every `ui` pass and alone while the window is hidden, so
     /// hand-offs, signals and close requests never wait for a drawn frame.
-    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         #[cfg(unix)]
         let launches: Vec<_> = self
             .launches
@@ -4983,9 +4983,8 @@ impl eframe::App for NotesApp {
             .map(|launches| launches.try_iter().collect())
             .unwrap_or_default();
         #[cfg(unix)]
-        for crate::instance::Request { path } in launches {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        for crate::instance::Request { path, token } in launches {
+            crate::window::bring_forward(ctx, frame, token.as_deref());
             self.attention_check = Some(Instant::now() + ATTENTION_DELAY);
             if let Some(path) = path {
                 let kind = if path.is_dir() {

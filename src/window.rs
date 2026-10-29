@@ -121,6 +121,97 @@ pub fn take_close_source(ctx: &egui::Context) -> &'static str {
         .unwrap_or("window manager")
 }
 
+/// Bring the window forward for a launch that handed over to it, with the
+/// activation token its launcher gave it.
+///
+/// The focus request raises the window on X11. On Wayland winit sends none,
+/// and GNOME would ignore one from a window that is not active; there the
+/// window activates its own surface with the launch's token, as GTK
+/// applications do. Without a token only the attention request that follows
+/// (`NotesApp::ui`) remains.
+pub fn bring_forward(ctx: &egui::Context, frame: &eframe::Frame, token: Option<&str>) {
+    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(ViewportCommand::Focus);
+    let Some(token) = token else {
+        eprintln!("hand-off: no token");
+        return;
+    };
+    #[cfg(target_os = "linux")]
+    match wayland::activate(frame, token) {
+        Ok(true) => eprintln!("hand-off: token, xdg_activation_v1.activate sent"),
+        Ok(false) => eprintln!("hand-off: token, focus request"),
+        Err(error) => eprintln!("hand-off: token, xdg_activation_v1 failed: {error}"),
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (frame, token);
+        eprintln!("hand-off: token, focus request");
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod wayland {
+    use raw_window_handle::{
+        HasDisplayHandle as _, HasWindowHandle as _, RawDisplayHandle, RawWindowHandle,
+    };
+    use wayland_client::{
+        Connection, Dispatch, Proxy as _, QueueHandle,
+        backend::{Backend, ObjectId},
+        delegate_noop,
+        globals::{GlobalListContents, registry_queue_init},
+        protocol::{wl_registry, wl_surface::WlSurface},
+    };
+    use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
+
+    /// `xdg_activation_v1.activate(token, wl_surface)` on this window's
+    /// surface, sent through winit's own connection on a queue of its own.
+    /// `Ok(false)` off Wayland.
+    pub fn activate(
+        frame: &eframe::Frame,
+        token: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(window)) = (
+            frame.display_handle()?.as_raw(),
+            frame.window_handle()?.as_raw(),
+        ) else {
+            return Ok(false);
+        };
+        // SAFETY: eframe's handles are the window's live `wl_display` and
+        // `wl_surface`; both outlive `connection`, which ends with this call.
+        let connection = Connection::from_backend(unsafe {
+            Backend::from_foreign_display(display.display.as_ptr().cast())
+        });
+        // SAFETY: as above.
+        let surface =
+            unsafe { ObjectId::from_ptr(WlSurface::interface(), window.surface.as_ptr().cast()) }?;
+        let surface = WlSurface::from_id(&connection, surface)?;
+        let (globals, queue) = registry_queue_init::<Activation>(&connection)?;
+        let activation: XdgActivationV1 = globals.bind(&queue.handle(), 1..=1, ())?;
+        activation.activate(token.to_owned(), &surface);
+        activation.destroy();
+        globals.destroy();
+        connection.flush()?;
+        Ok(true)
+    }
+
+    /// The state of `activate`'s queue, which only binds `xdg_activation_v1`.
+    struct Activation;
+
+    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Activation {
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    delegate_noop!(Activation: XdgActivationV1);
+}
+
 /// The write end of the pipe that wakes the signal thread.
 static SIGNAL_PIPE: AtomicI32 = AtomicI32::new(-1);
 /// The process that installed the handler. A child forked to start a helper
