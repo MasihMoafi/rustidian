@@ -340,7 +340,9 @@ impl<'a> PositionedText<'a> {
             .partition_point(|&end| end < character)
             .min(self.row_ends.len().saturating_sub(1));
         if self.row_ends.get(row) == Some(&character)
-            && rows.get(row).is_some_and(|placed| !placed.ends_with_newline)
+            && rows
+                .get(row)
+                .is_some_and(|placed| !placed.ends_with_newline)
             && row + 1 < rows.len()
         {
             row += 1;
@@ -3679,8 +3681,11 @@ mod tests {
                     let count = row.char_count_excluding_newline().0;
                     if start == 23 && count > 0 {
                         wrapped += 1;
-                        assert!((row.pos.x + row.glyphs[0].pos.x - 24.0).abs() < 0.5,
-                            "width={width}: the formula's space must open its row, row={:?}", row.rect());
+                        assert!(
+                            (row.pos.x + row.glyphs[0].pos.x - 24.0).abs() < 0.5,
+                            "width={width}: the formula's space must open its row, row={:?}",
+                            row.rect()
+                        );
                     }
                     start += count;
                 }
