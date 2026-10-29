@@ -410,3 +410,34 @@ impl Tree {
         (open, revealed)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui;
+    use std::path::Path;
+
+    #[test]
+    fn a_reveal_lapses_after_a_second_and_cancelling_drops_it() {
+        let ctx = egui::Context::default();
+        let at = |time: f64| {
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |_| {},
+            )
+            .drop_without_applying_deltas();
+        };
+        let note = Path::new("Folder/Note.md");
+        at(1.0);
+        super::reveal(&ctx, note);
+        at(1.9);
+        assert_eq!(super::pending_reveal(&ctx).as_deref(), Some(note));
+        at(2.1);
+        assert_eq!(super::pending_reveal(&ctx), None);
+        super::reveal(&ctx, note);
+        super::cancel_reveal(&ctx);
+        assert_eq!(super::pending_reveal(&ctx), None);
+    }
+}

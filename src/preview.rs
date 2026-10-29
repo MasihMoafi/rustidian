@@ -604,11 +604,12 @@ pub fn show(
                 .ctx()
                 .data(|data| data.get_temp::<egui::Rect>(menu.with("copy")))
                 .is_some_and(|copy| {
+                    // A click within one frame leaves no press origin; use its position.
                     ui.input(|input| {
                         input.pointer.primary_pressed()
                             && input
                                 .pointer
-                                .press_origin()
+                                .interact_pos()
                                 .is_some_and(|pos| copy.contains(pos))
                     })
                 })

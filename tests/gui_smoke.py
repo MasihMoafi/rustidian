@@ -4467,7 +4467,11 @@ def main():
                     xdo("mousemove", "--sync", str(round(start[0] + 1)), str(y), "mousedown", "1")
                     for x in range(round(start[0] + 1), round(end[0] + 6), 24):
                         xdo("mousemove", "--sync", str(x), str(y))
-                    xdo("mousemove", "--sync", str(round(end[0] + 6)), str(y), "mouseup", "1")
+                    # Release in a later frame than the last move, as a hand does;
+                    # egui extends a drag only while the button is still down.
+                    xdo("mousemove", "--sync", str(round(end[0] + 6)), str(y))
+                    pause()
+                    xdo("mouseup", "1")
                     pause()
                     theme_name = "dark" if dark else "light"
                     capture(f"native-selection-{theme_name}.png")
@@ -4541,13 +4545,15 @@ def main():
 
                 # Reading view: drag selects, right-click offers Copy and Select all.
                 command("Reading view")
-                blocks = sorted((bounds for name, bounds in json.loads((base / "ui-probe.json").read_text()).items() if name.startswith("reading-block:")), key=lambda bounds: bounds[1])
-                paragraph = next(bounds for bounds in blocks if bounds[3] - bounds[1] < 40)
+                # Blocks: 0 the heading, 1 the prose line, 2 the image, 3 the second line.
+                paragraph = control_bounds("reading-block:1")
                 y = round((paragraph[1] + paragraph[3]) / 2)
                 xdo("mousemove", "--sync", str(round(paragraph[0] + 1)), str(y), "mousedown", "1")
                 for x in range(round(paragraph[0] + 1), round(paragraph[2] + 4), 24):
                     xdo("mousemove", "--sync", str(x), str(y))
-                xdo("mousemove", "--sync", str(round(paragraph[2] + 4)), str(y), "mouseup", "1")
+                xdo("mousemove", "--sync", str(round(paragraph[2] + 4)), str(y))
+                pause()
+                xdo("mouseup", "1")
                 pause()
                 xdo("mousemove", "--sync", str(round((paragraph[0] + paragraph[2]) / 2)), str(y), "click", "3")
                 pause()
