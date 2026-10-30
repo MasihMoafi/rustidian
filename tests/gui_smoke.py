@@ -6928,13 +6928,19 @@ def main():
                         if path.read_text() == expected: return
                         time.sleep(.05)
                     raise AssertionError((path.name, expected, path.read_text()))
-                def paste_image():
+                def paste_image(*, expect_import=True):
+                    before = pngs()
                     owner = subprocess.Popen(["xclip", "-selection", "clipboard", "-in", "-quiet", "-target", "image/png"],
                         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
                     try:
                         owner.stdin.write(clipboard.read_bytes()); owner.stdin.close(); pause()
                         assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "image/png"], env=environment, timeout=5) == clipboard.read_bytes()
                         modified_shortcut(xdo, "v"); pause()
+                        deadline = time.monotonic() + 4
+                        if expect_import:
+                            while pngs() == before and time.monotonic() < deadline: time.sleep(.05)
+                            assert pngs() != before, "The app did not import the clipboard image"
+                        else: time.sleep(.5)
                     finally:
                         if owner.poll() is None: owner.terminate()
                         owner.wait(timeout=5)
@@ -6997,7 +7003,7 @@ def main():
                         assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 200, "The saved image must render in Live Preview"
                     key("ctrl+z"); saved(path, "replace me")
                     key("ctrl+y"); saved(path, link); assert pngs() == before | new
-                    key("ctrl+o"); count = pngs(); paste_image(); assert pngs() == count
+                    key("ctrl+o"); count = pngs(); paste_image(expect_import=False); assert pngs() == count
                     key("Escape"); saved(path, link)
                     results.append(mode + ": actual PNG clipboard paste saved matching pixels in the vault root, replaced the selection, rendered in Live Preview, survived Undo/Redo and did not import into Quick Open")
                 open_note(dropped.name, title=dropped.stem); command("Source editing"); editor_end()
@@ -7030,13 +7036,13 @@ def main():
                 while expected_cell not in table.read_text() and time.monotonic() < deadline: time.sleep(.05)
                 assert expected_cell in table.read_text(), table.read_text()
                 key("Escape")
-                open_note(literal.name, title=literal.stem); editor_end(); before = pngs(); paste_image()
+                open_note(literal.name, title=literal.stem); editor_end(); before = pngs(); paste_image(expect_import=False)
                 saved(literal, "literal"); assert pngs() == before
                 results.append("Image paste also reached the focused Live Preview table cell; plain-text files retained literal contents without creating attachments")
                 open_note(failure.name, title=failure.stem); command("Source editing"); editor_end(); before = pngs()
                 mode = fixture.stat().st_mode
                 try:
-                    fixture.chmod(0o555); paste_image(); capture("native-image-import-error.png")
+                    fixture.chmod(0o555); paste_image(expect_import=False); capture("native-image-import-error.png")
                 finally: fixture.chmod(mode)
                 assert pngs() == before
                 key("Escape"); saved(failure, "keep this draft")
