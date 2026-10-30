@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6393,6 +6393,159 @@ def main():
                 xdo("windowsize",window,"1440","960");pause()
                 results.append("The real Move picker fit the minimum window and dismissed without changing its file or active tab")
 
+            def folder_copy_checks():
+                import stat
+                click_control("button:File explorer")
+                close_tabs()
+                command("Open settings")
+                click_control("settings-autosave"); wait_autosave(base / "state", False)
+                key("Escape")
+                source = fixture / "Recipe.v1 Ω"
+                nested = source / "Nested"
+                nested.mkdir(parents=True)
+                (source / "Empty").mkdir()
+                (source / ".hidden").mkdir()
+                (source / ".hidden/secret.bin").write_bytes(b"\x00PRIVATE\xff\x00")
+                (source / "A.md").write_text("# A\n\n![[Image.png]]\n")
+                (source / "Raw.md").write_bytes(b"\xef\xbb\xbf# Raw\r\n\r\nRAW_CRLF_EXACT\r\n")
+                child = nested / "Child.md"
+                child.write_text("# Child\n\n[[../A|A]]\n")
+                (nested / "data.bin").write_bytes(bytes(range(256))*4)
+                Image.new("RGB", (4, 4), (20, 130, 170)).save(source / "Image.png")
+                source.chmod(0o750); nested.chmod(0o700); (source / ".hidden").chmod(0o700)
+                empty = fixture / "Empty copy"
+                empty.mkdir(); empty.chmod(0o700)
+                (fixture / "Empty copy 1").write_text("KEEP_OCCUPIED_FILE\n")
+                denied = fixture / "Read denied.v1"
+                denied.mkdir()
+                (denied / "A.md").write_text("READ_FIRST\n")
+                unreadable = denied / "Z.md"
+                unreadable.write_text("UNREADABLE_ORIGINAL\n")
+                unsafe = fixture / "Unsafe copy"
+                unsafe.mkdir()
+                outside = base / "outside-copy.md"
+                outside.write_text("OUTSIDE_EXACT\n")
+                (unsafe / "Linked.md").symlink_to(outside)
+                command("Refresh vault")
+                pause()
+
+                def snapshot(folder):
+                    result = {}
+                    for path in [folder, *sorted(folder.rglob("*"))]:
+                        relative = str(path.relative_to(folder))
+                        result[relative] = {"directory":path.is_dir(), "mode":stat.S_IMODE(path.stat().st_mode)}
+                        if path.is_file(): result[relative]["bytes"] = path.read_bytes().hex()
+                    return result
+
+                def copy_folder(folder):
+                    click_control("file-collapse")
+                    relative = str(folder.relative_to(fixture))
+                    click_control("folder:" + relative, button="3")
+                    control_bounds("copy:" + relative)
+                    click_control("copy:" + relative)
+
+                def wait_copy(folder, expected):
+                    deadline = time.monotonic()+5
+                    while time.monotonic() < deadline:
+                        if folder.is_dir() and snapshot(folder) == expected: return
+                        time.sleep(.05)
+                    raise AssertionError(("Incomplete or different folder copy", str(folder), snapshot(folder) if folder.is_dir() else "MISSING"))
+
+                def no_staging():
+                    assert not [path.name for path in fixture.iterdir() if path.name.startswith(".rustidian-copy-")]
+
+                def open_path(path, title):
+                    key("ctrl+o"); paste_text(str(path.relative_to(fixture))); key("ctrl+Return")
+                    title_contains(title)
+
+                open_path(child, "Child")
+                command("Source editing"); editor_end(); type_text("SOURCE_DRAFT")
+                original_child = child.read_bytes()
+                key("ctrl+t")
+                open_note("Home", title="Home")
+                command("Source editing")
+                original_home = (fixture / "Home.md").read_bytes()
+                editor_end(); type_text("UNRELATED_DRAFT")
+                assert child.read_bytes() == original_child and (fixture / "Home.md").read_bytes() == original_home
+                first = fixture / "Recipe.v1 Ω 1"
+                copy_folder(source)
+                assert child.read_bytes().endswith(b"SOURCE_DRAFT")
+                expected = snapshot(source)
+                wait_copy(first, expected)
+                assert (fixture / "Home.md").read_bytes() == original_home
+                title_contains("Home")
+                control_bounds("explorer-selected-path:" + str(first.relative_to(fixture)))
+                no_staging()
+                capture("native-folder-copy-created.png")
+                results.append("The actual folder menu copied a dotted/Unicode folder with all nested notes, PNG/binary/hidden files, empty directories and directory permissions; it saved only the source's draft and retained the unrelated dirty tab/navigation")
+
+                copied_child = first / "Nested/Child.md"
+                open_path(copied_child, "Child")
+                command("Source editing")
+                editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
+                title_contains("A")
+                control_bounds("tab-full:" + str((first / "A.md").relative_to(fixture)))
+                key("alt+Left"); title_contains("Child")
+                editor_end(); type_text("COPY_ONLY_SAVED"); key("ctrl+s")
+                assert copied_child.read_bytes().endswith(b"COPY_ONLY_SAVED")
+                assert snapshot(source) == expected
+                copied_saved = copied_child.read_bytes()
+                type_text("SECOND_UNSAVED_COPY_DRAFT")
+                second = fixture / "Recipe.v1 Ω 2"
+                copy_folder(source)
+                wait_copy(second, expected)
+                assert copied_child.read_bytes() == copied_saved
+                assert (fixture / "Home.md").read_bytes() == original_home and snapshot(source) == expected
+                title_contains("Child")
+                capture("native-folder-copy-collision.png")
+                results.append("The copied note opened immediately from the updated index, its relative wiki link opened the copied sibling, and editing/saving the copy did not affect originals; repeating Make a copy kept the full dotted name, numbered the collision and left the active copy's new draft unsaved")
+
+                copy_folder(empty)
+                wait_copy(fixture / "Empty copy 2", snapshot(empty))
+                assert (fixture / "Empty copy 1").read_text() == "KEEP_OCCUPIED_FILE\n"
+                no_staging()
+                results.append("An empty source produced a real empty folder with matching permissions and no phantom note; a file occupying the first numbered name was preserved and safely skipped")
+
+                vault_mode = stat.S_IMODE(fixture.stat().st_mode)
+                fixture.chmod(0o555)
+                try:
+                    copy_folder(source)
+                    control_bounds("error-notice")
+                    assert not (fixture / "Recipe.v1 Ω 3").exists()
+                    assert snapshot(source) == expected and copied_child.read_bytes() == copied_saved
+                    no_staging()
+                    capture("native-folder-copy-write-error.png")
+                finally: fixture.chmod(vault_mode)
+                copy_folder(source)
+                wait_copy(fixture / "Recipe.v1 Ω 3", expected)
+                no_staging()
+                results.append("A read-only destination produced a visible error with no partial folder, overwrite or staging leak; restoring access and retrying copied every byte safely")
+
+                unreadable_mode = stat.S_IMODE(unreadable.stat().st_mode)
+                unreadable.chmod(0o000)
+                try:
+                    copy_folder(denied)
+                    control_bounds("error-notice")
+                    assert not (fixture / "Read denied.v1 1").exists()
+                    no_staging()
+                    capture("native-folder-copy-read-error.png")
+                finally: unreadable.chmod(unreadable_mode)
+                assert unreadable.read_text() == "UNREADABLE_ORIGINAL\n" and (denied / "A.md").read_text() == "READ_FIRST\n"
+                copy_folder(unsafe)
+                control_bounds("error-notice")
+                assert not (fixture / "Unsafe copy 1").exists() and outside.read_text() == "OUTSIDE_EXACT\n"
+                no_staging()
+                assert snapshot(source) == expected and (fixture / "Home.md").read_bytes() == original_home
+                capture("native-folder-copy-linked-error.png")
+                results.append("Unreadable contents failed after earlier files could be staged, yet left no published or temporary partial copy; a linked outside file was rejected without touching it or any original")
+                # The active dirty copy is outside the original source prefix and must survive all copies/errors.
+                editor_end(); key("ctrl+a"); key("ctrl+c")
+                text = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, text=True)
+                assert text.endswith("SECOND_UNSAVED_COPY_DRAFT"), repr(text)
+                assert copied_child.read_bytes() == copied_saved
+                (reports / "native-folder-copy-tree.json").write_text(json.dumps({"source":expected,"first_copy":snapshot(first),"second_copy":snapshot(second),"third_copy":snapshot(fixture / "Recipe.v1 Ω 3")}, ensure_ascii=False, indent=2)+"\n")
+                results.append("Repeated copy successes and failures preserved the separate active unsaved draft, all originals and all occupied copied destinations")
+
             def reveal_checks():
                 nonlocal file_manager_bus
                 from urllib.parse import unquote, urlsplit
@@ -10513,6 +10666,11 @@ def main():
                 drag_move_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "drag-move"}))
+                return
+            if args.section == "folder-copy":
+                folder_copy_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "folder-copy", "checks": len(results), "status": "passed"}))
                 return
             if args.section == "file-copy":
                 file_copy_checks()

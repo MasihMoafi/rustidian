@@ -65,6 +65,160 @@ pub struct RenameOutcome {
 }
 
 impl Vault {
+    #[cfg(target_os = "linux")]
+    pub fn duplicate_folder(&mut self, from: &Path) -> Result<PathBuf> {
+        if from.as_os_str().is_empty() || !self.folders.iter().any(|path| path == from) {
+            return Err("Choose an existing folder inside this vault.".into());
+        }
+        let original = self.folder_path(from)?;
+        let metadata = std::fs::symlink_metadata(&original).map_err(|error| error.to_string())?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("Choose an existing folder inside this vault.".into());
+        }
+        let entries = folder_entries(&original)?;
+        if !entries
+            .first()
+            .is_some_and(|(relative, directory)| relative.as_os_str().is_empty() && *directory)
+        {
+            return Err(
+                "The source is no longer a folder. Refresh the vault and try again.".into(),
+            );
+        }
+        let snapshot = entries
+            .iter()
+            .map(|(relative, directory)| {
+                let metadata = std::fs::symlink_metadata(original.join(relative))
+                    .map_err(|error| format!("Cannot inspect folder: {error}"))?;
+                Ok((relative.clone(), *directory, metadata))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let parent = from.parent().unwrap_or_else(|| Path::new(""));
+        let parent_absolute = if parent.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.folder_path(parent)?
+        };
+        let filename = from.file_name().ok_or("Choose a folder.")?;
+        let staging = tempfile::Builder::new()
+            .prefix(".rustidian-copy-")
+            .tempdir_in(&parent_absolute)
+            .map_err(|error| format!("Cannot copy folder: {error}"))?;
+        let copied = (|| -> Result<(PathBuf, Vault)> {
+            for (relative, directory, expected) in &snapshot {
+                if relative.as_os_str().is_empty() {
+                    continue;
+                }
+                let source = original.join(relative);
+                let target = staging.path().join(relative);
+                if *directory {
+                    std::fs::create_dir(&target)
+                        .map_err(|error| format!("Cannot copy folder: {error}"))?;
+                } else {
+                    let current =
+                        std::fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+                    if !same_move_source(expected, &current) {
+                        return Err("The source folder changed while copying. Try again.".into());
+                    }
+                    std::fs::copy(&source, &target)
+                        .map_err(|error| format!("Cannot copy folder: {error}"))?;
+                }
+            }
+            if folder_entries(&original)? != entries {
+                return Err("The source folder changed while copying. Try again.".into());
+            }
+            for (relative, directory, expected) in &snapshot {
+                let current = std::fs::symlink_metadata(original.join(relative))
+                    .map_err(|error| error.to_string())?;
+                if current.permissions() != expected.permissions()
+                    || (*directory && (!current.is_dir() || current.file_type().is_symlink()))
+                    || (!*directory && !same_move_source(expected, &current))
+                {
+                    return Err("The source folder changed while copying. Try again.".into());
+                }
+            }
+            // Index only the new tree, while it is still private and unpublished.
+            let index = Vault::open(staging.path())?;
+            for (relative, directory, metadata) in snapshot.iter().rev() {
+                if *directory {
+                    std::fs::set_permissions(staging.path().join(relative), metadata.permissions())
+                        .map_err(|error| format!("Cannot copy folder permissions: {error}"))?;
+                }
+            }
+            for counter in 1..u64::MAX {
+                // A directory's dots are part of its name, not a file extension.
+                let mut name = filename.to_os_string();
+                name.push(format!(" {counter}"));
+                let destination = parent.join(name);
+                let absolute = self.folder_path(&destination)?;
+                match std::fs::symlink_metadata(&absolute) {
+                    Ok(_) => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(format!("Cannot check copy destination: {error}")),
+                }
+                match rename_noreplace(staging.path(), &absolute) {
+                    Ok(()) => return Ok((destination, index)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(format!("Cannot copy folder: {error}")),
+                }
+            }
+            Err("No available folder name was found.".into())
+        })();
+        let (destination, index) = match copied {
+            Ok(result) => result,
+            Err(error) => {
+                // Restore owner access in our staging tree so its guard can clean
+                // up even after copying read-only directory permissions.
+                use std::os::unix::fs::PermissionsExt;
+                for (relative, directory, _) in &snapshot {
+                    if *directory {
+                        let _ = std::fs::set_permissions(
+                            staging.path().join(relative),
+                            std::fs::Permissions::from_mode(0o700),
+                        );
+                    }
+                }
+                return Err(error);
+            }
+        };
+        let _ = staging.keep();
+        self.notes
+            .retain(|note| !note.path.starts_with(&destination));
+        self.attachments
+            .retain(|path| !path.starts_with(&destination));
+        self.folders.retain(|path| !path.starts_with(&destination));
+        self.notes.extend(index.notes.into_iter().map(|mut note| {
+            note.path = destination.join(note.path);
+            note
+        }));
+        self.attachments.extend(
+            index
+                .attachments
+                .into_iter()
+                .map(|path| destination.join(path)),
+        );
+        self.folders.push(destination.clone());
+        self.folders
+            .extend(index.folders.into_iter().map(|path| destination.join(path)));
+        self.warnings.extend(
+            index
+                .warnings
+                .into_iter()
+                .map(|warning| format!("{}: {warning}", destination.display())),
+        );
+        self.notes.sort_by(|a, b| a.path.cmp(&b.path));
+        self.attachments.sort();
+        self.attachments.dedup();
+        self.folders.sort();
+        self.folders.dedup();
+        self.rebuild_lookup();
+        Ok(destination)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn duplicate_folder(&mut self, _from: &Path) -> Result<PathBuf> {
+        Err("Guarded folder copying is currently available on Linux.".into())
+    }
+
     /// Validate the complete selection before a batch changes anything. A selected
     /// folder owns its descendants, so they are never moved or trashed twice.
     pub fn selected_entries(&self, sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
@@ -634,14 +788,8 @@ impl Vault {
             } else {
                 self.safe_path(&plan.to, true)?
             };
-            rustix::fs::renameat_with(
-                rustix::fs::CWD,
-                &original,
-                rustix::fs::CWD,
-                &destination,
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(|error| format!("Cannot rename file or folder: {error}"))?;
+            rename_noreplace(&original, &destination)
+                .map_err(|error| format!("Cannot rename file or folder: {error}"))?;
         }
         #[cfg(not(target_os = "linux"))]
         return Err("Guarded renaming is currently available on Linux.".into());
@@ -742,6 +890,18 @@ impl Vault {
 
 // Find the label boundary before looking for a destination. Titles can contain
 // the same delimiters, and inline code can contain brackets inside the label.
+#[cfg(target_os = "linux")]
+fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        from,
+        rustix::fs::CWD,
+        to,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)
+}
+
 fn same_move_source(expected: &std::fs::Metadata, current: &std::fs::Metadata) -> bool {
     let same = current.is_file()
         && !current.file_type().is_symlink()
@@ -764,7 +924,7 @@ fn folder_entries(root: &Path) -> Result<Vec<(PathBuf, bool)>> {
         let entry = entry.map_err(|error| format!("Cannot inspect folder: {error}"))?;
         let kind = entry.file_type();
         if !kind.is_dir() && !kind.is_file() {
-            return Err("Folders containing linked or special files cannot be moved.".into());
+            return Err("Choose a folder without linked or special files.".into());
         }
         let relative = entry
             .path()

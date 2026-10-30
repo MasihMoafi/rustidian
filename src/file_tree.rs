@@ -32,6 +32,15 @@ pub enum FileAction {
     },
 }
 
+pub(crate) fn copy_menu(ui: &mut egui::Ui, path: &Path, action: &mut Option<FileAction>) {
+    let copy = theme::menu_item(ui, theme::Icon::Copy, "Make a copy");
+    crate::ui_probe::record(ui.ctx(), format!("copy:{}", path.display()), copy.rect);
+    if copy.clicked() {
+        *action = Some(FileAction::Copy(path.to_owned()));
+        ui.close();
+    }
+}
+
 pub(crate) fn reveal_menu(ui: &mut egui::Ui, path: &Path, action: &mut Option<FileAction>) {
     let reveal = theme::menu_item(ui, theme::Icon::Files, "Reveal in system file manager");
     crate::ui_probe::record(ui.ctx(), format!("reveal:{}", path.display()), reveal.rect);
@@ -593,6 +602,7 @@ impl Tree {
                 }
                 let path = PathBuf::from(id.trim_start_matches('/'));
                 creation_menu(ui, &path, &mut open);
+                copy_menu(ui, &path, &mut open);
                 reveal_menu(ui, &path, &mut open);
                 ui.separator();
                 let response = ui.button("Rename or move…");
@@ -695,10 +705,7 @@ impl Tree {
                     ui.close();
                 }
                 ui.separator();
-                if theme::menu_item(ui, theme::Icon::Copy, "Make a copy").clicked() {
-                    open = Some(FileAction::Copy(path.clone()));
-                    ui.close();
-                }
+                copy_menu(ui, path, &mut open);
                 if theme::menu_item(ui, theme::Icon::Files, "Move file to...").clicked() {
                     open = Some(FileAction::Move(path.clone()));
                     ui.close();

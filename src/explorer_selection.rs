@@ -187,6 +187,17 @@ pub fn finish(ui: &egui::Ui) -> Option<crate::file_tree::FileAction> {
     (trash && count > 0).then(|| crate::file_tree::FileAction::TrashMany(roots(ui.ctx())))
 }
 
+pub fn select(ctx: &egui::Context, path: &Path) {
+    update(ctx, |state| {
+        state.paths.clear();
+        state.paths.insert(path.to_owned());
+        state.anchor = Some(path.to_owned());
+        state.focus = None;
+        state.order.clear();
+        state.seen.clear();
+    });
+}
+
 pub fn reset(ctx: &egui::Context) {
     update(ctx, |state| *state = Selection::default());
 }

@@ -5396,22 +5396,48 @@ impl NotesApp {
     }
 
     fn duplicate_file(&mut self, path: &Path) {
-        if let Some(index) = self
+        let folder = self
+            .vault
+            .as_ref()
+            .is_some_and(|vault| vault.folders.iter().any(|entry| entry == path));
+        let drafts: Vec<_> = self
             .tabs
             .iter()
-            .position(|tab| tab.document.path == path && tab.document.dirty())
-            && !self.save(index)
-        {
-            return;
+            .enumerate()
+            .filter(|(_, tab)| {
+                tab.document.dirty()
+                    && if folder {
+                        tab.document.path.starts_with(path)
+                    } else {
+                        tab.document.path == path
+                    }
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in drafts {
+            if !self.save(index) {
+                return;
+            }
         }
-        let Some(vault) = &mut self.vault else { return };
-        match vault.duplicate_file(path) {
+        let Some(vault) = &mut self.vault else {
+            return;
+        };
+        let copied = if folder {
+            vault.duplicate_folder(path)
+        } else {
+            vault.duplicate_file(path)
+        };
+        match copied {
             Ok(copy) => {
-                self.tree = Tree::from_vault(vault);
-                self.files = rustidian::search::FileMatcher::from_vault(vault);
-                self.search_cache.invalidate();
+                self.refresh_file_views();
                 self.error = None;
-                self.open_note_at(&copy, true);
+                if folder {
+                    self.status = format!("Copied folder to {}", copy.display());
+                    self.reveal_folder = Some(copy.clone());
+                    crate::explorer_selection::select(&self.ctx, &copy);
+                } else {
+                    self.open_note_at(&copy, true);
+                }
             }
             Err(error) => self.error = Some(error),
         }
