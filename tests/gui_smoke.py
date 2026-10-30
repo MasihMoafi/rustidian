@@ -5665,6 +5665,10 @@ def main():
                 for path, text in protected.items(): path.write_text(text)
                 command("Refresh vault")
                 open_note("Elsewhere/Active.md", title="Active")
+                def fill_dialog(value):
+                    click_control("dialog-input-focused")
+                    modified_shortcut(xdo, "a"); key("BackSpace")
+                    type_text(value)
                 def wait_file(path, expected):
                     deadline = time.monotonic() + 4
                     while time.monotonic() < deadline:
