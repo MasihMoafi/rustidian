@@ -475,6 +475,7 @@ impl NotesApp {
             self.refresh_required = true;
             self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
         }
+        let mut renamed = Vec::new();
         if let Some(events) = &self.watch_events {
             for _ in 0..256 {
                 let Ok(event) = events.try_recv() else {
@@ -505,6 +506,24 @@ impl NotesApp {
                             })) =>
                     {
                         if let Some(vault) = &self.vault {
+                            if matches!(
+                                event.kind,
+                                notify::EventKind::Modify(notify::event::ModifyKind::Name(
+                                    notify::event::RenameMode::Both
+                                ))
+                            ) && let [from, to] = event.paths.as_slice()
+                                && let (Ok(from), Ok(to)) =
+                                    (from.strip_prefix(&vault.root), to.strip_prefix(&vault.root))
+                                && from != to
+                                && !rustidian::vault::is_ignored_path(from)
+                                && !rustidian::vault::is_ignored_path(to)
+                                && from
+                                    .components()
+                                    .chain(to.components())
+                                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+                            {
+                                renamed.push((from.to_owned(), to.to_owned()));
+                            }
                             for path in &event.paths {
                                 if let Ok(relative) = path.strip_prefix(&vault.root)
                                     && rustidian::vault::is_markdown(relative)
@@ -528,6 +547,12 @@ impl NotesApp {
                     _ => {}
                 }
             }
+        }
+        if !renamed.is_empty() {
+            for (source, destination) in renamed {
+                self.relocate_tabs(&source, &destination);
+            }
+            self.persist_session();
         }
         if self.loading.is_none() && self.refresh_due.is_some_and(|due| Instant::now() >= due) {
             self.refresh_due = None;
@@ -4258,6 +4283,7 @@ impl NotesApp {
                 rustidian::paths::moved_path(&tab.document.path, source, destination, true);
             if let Some(vault) = &self.vault
                 && !tab.document.is_blank()
+                && !tab.document.dirty()
                 && let Ok(document) = vault.open_document(&tab.document.path)
             {
                 tab.replace(document);

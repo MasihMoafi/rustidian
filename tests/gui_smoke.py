@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6900,6 +6900,79 @@ def main():
                 assert note.read_text()==original
                 results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
 
+            def external_rename_checks():
+                nonlocal app, window
+                folder = fixture / "Outside moves/Inner"
+                folder.mkdir(parents=True)
+                source = folder / "External original.md"
+                original = "# External original\n\nEXTERNAL_RENAME_BODY\n"
+                source.write_text(original)
+                sibling = folder / "External sibling.md"
+                sibling.write_text("# Sibling\n\nKEEP_SIBLING\n")
+                command("Refresh vault")
+                open_note("Outside moves/Inner/External original.md", title="External original")
+                command("Source editing")
+                editor_end()
+                renamed = folder / "External renamed.md"
+                source.rename(renamed)
+                control_bounds("tab-full:Outside moves/Inner/External renamed.md")
+                title_contains("External renamed")
+                assert not control_bounds("tab-full:Outside moves/Inner/External original.md", required=False)
+                assert renamed.read_text() == original and not source.exists()
+                capture("native-external-file-rename.png")
+                results.append("Renaming an open file outside the app retargeted its tab and kept its saved bytes")
+                (fixture / "Outside moves").rename(fixture / "Moved outside")
+                moved = fixture / "Moved outside/Inner/External renamed.md"
+                control_bounds("tab-full:Moved outside/Inner/External renamed.md")
+                assert moved.read_text() == original
+                assert (fixture / "Moved outside/Inner/External sibling.md").read_text() == "# Sibling\n\nKEEP_SIBLING\n"
+                updated = original + "EXTERNAL_UPDATE\n"
+                moved.write_text(updated)
+                def copied():
+                    editor_end(); modified_shortcut(xdo, "a"); pause()
+                    modified_shortcut(xdo, "c"); pause()
+                    return subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, text=True, timeout=5)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if copied() == updated:
+                        break
+                    time.sleep(.1)
+                else:
+                    raise AssertionError("External edits stopped refreshing after the folder move")
+                capture("native-external-folder-move.png")
+                results.append("An external folder move retargeted the open child; sibling bytes and later external content refresh survived")
+                command("Open settings"); type_text("autosave")
+                click_control("settings-autosave", hold=.15)
+                wait_autosave(base / "state", False)
+                key("Escape")
+                editor_end(); type_text("LOCAL_DIRTY")
+                assert moved.read_text() == updated, "Autosave was not disabled for the dirty-note case"
+                dirty = moved.with_name("External dirty renamed.md")
+                moved.rename(dirty)
+                target = "Moved outside/Inner/External dirty renamed.md"
+                control_bounds("tab-full:" + target)
+                assert copied() == updated + "LOCAL_DIRTY", "External rename discarded unsaved edits"
+                key("ctrl+s")
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and dirty.read_text() != updated + "LOCAL_DIRTY":
+                    time.sleep(.05)
+                assert dirty.read_text() == updated + "LOCAL_DIRTY" and not moved.exists()
+                editor_end(); key("ctrl+z"); key("ctrl+s")
+                assert dirty.read_text() == updated, "Undo history did not follow the renamed dirty note"
+                capture("native-external-dirty-rename.png")
+                results.append("External renaming preserved a dirty draft, saved only to its new path and retained Undo")
+                open_note("Moved outside/Inner/External sibling.md", title="External sibling")
+                key("alt+Left")
+                control_bounds("tab-full:" + target)
+                key("ctrl+w"); key("ctrl+shift+t")
+                control_bounds("tab-full:" + target)
+                confirm_quit(); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                control_bounds("tab-full:" + target)
+                assert dirty.read_text() == updated
+                capture("native-external-rename-restart.png")
+                results.append("History, reopen-closed-tab and restart used the new file path; no old path was recreated")
+
             def list_indent_checks():
                 # Real keystrokes and saved bytes own this contract, in both editors.
                 source = b"- Alpha\n- Beta\n"
@@ -9279,6 +9352,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
                 return
+            if args.section == "external-rename":
+                external_rename_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "list-indent":
                 list_indent_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -9852,6 +9930,7 @@ def main():
                 tab_restore_checks,
                 tab_drag_checks,
                 list_indent_checks,
+                external_rename_checks,
                 settings_checks,
                 font_controls_checks,
                 font_family_checks,
