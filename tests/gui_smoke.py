@@ -7632,7 +7632,7 @@ def main():
                     path = begin(mode, 'missing', '[[Fragment Target#missing')
                     assert not candidates(), candidates(); key('Escape'); saved(path, '[[Fragment Target#missing')
                     path = begin(mode, 'file', '[[Fragment Tar')
-                    control_bounds('link-completion:Fragment Target'); key('Tab'); saved(path, '[[Fragment Target]]')
+                    control_bounds('link-completion:Fragment Target'); click_control('link-completion:Fragment Target'); saved(path, '[[Fragment Target]]')
                     results.append(mode + ': heading and block candidates, case-insensitive filters, Enter/Tab/mouse insertion, actual fragment navigation, same-note current text, aliases/Unicode, no-match cancellation and ordinary file completion passed; code/properties/mid-line markers were excluded')
                 assert target.read_text() == original, 'Following fragments must preserve the target note'
 
