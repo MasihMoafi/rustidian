@@ -7,6 +7,8 @@ use std::{
 };
 
 pub enum FileAction {
+    NewNote(PathBuf),
+    NewFolder(PathBuf),
     Open(PathBuf),
     OpenInNewTab(PathBuf),
     Copy(PathBuf),
@@ -20,6 +22,29 @@ pub enum FileAction {
         source: PathBuf,
         folder: PathBuf,
     },
+}
+
+pub(crate) fn creation_menu(ui: &mut Ui, folder: &Path, action: &mut Option<FileAction>) {
+    let note = ui.button("New note");
+    crate::ui_probe::record(
+        ui.ctx(),
+        format!("folder-new-note:{}", folder.display()),
+        note.rect,
+    );
+    if note.clicked() {
+        *action = Some(FileAction::NewNote(folder.to_path_buf()));
+        ui.close();
+    }
+    let child = ui.button("New folder");
+    crate::ui_probe::record(
+        ui.ctx(),
+        format!("folder-new-folder:{}", folder.display()),
+        child.rect,
+    );
+    if child.clicked() {
+        *action = Some(FileAction::NewFolder(folder.to_path_buf()));
+        ui.close();
+    }
 }
 
 // One focus owner survives virtualization and note replacement in every sidebar list.
@@ -501,6 +526,8 @@ impl Tree {
             header.header_response.context_menu(|ui| {
                 theme::menu_style(ui);
                 let path = PathBuf::from(id.trim_start_matches('/'));
+                creation_menu(ui, &path, &mut open);
+                ui.separator();
                 let response = ui.button("Rename or move…");
                 crate::ui_probe::record(
                     ui.ctx(),

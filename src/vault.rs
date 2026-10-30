@@ -328,22 +328,38 @@ impl Vault {
 
     /// Create an empty note without asking for a name or replacing an existing file.
     pub fn create_untitled(&mut self) -> Result<Document> {
+        self.create_untitled_in(Path::new(""))
+    }
+
+    pub fn create_untitled_in(&mut self, folder: &Path) -> Result<Document> {
+        let absolute = if folder.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.folder_path(folder)?
+        };
+        let metadata = fs::symlink_metadata(&absolute)
+            .map_err(|error| format!("Cannot create a note in this folder: {error}"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("Choose an existing folder inside this vault.".into());
+        }
         for number in 0..u64::MAX {
             let name = if number == 0 {
                 "Untitled.md".to_owned()
             } else {
                 format!("Untitled {number}.md")
             };
-            let path = PathBuf::from(name);
+            let path = folder.join(name);
             let absolute = self.root.join(&path);
-            if absolute.try_exists().map_err(|error| error.to_string())? {
-                continue;
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
             }
             let mut document = Document::new(path);
             match self.save(&mut document) {
                 Ok(()) => return Ok(document),
                 // Another window may have created this name. save uses noclobber.
-                Err(_) if absolute.try_exists().unwrap_or(false) => continue,
+                Err(_) if fs::symlink_metadata(&absolute).is_ok() => continue,
                 Err(error) => return Err(error),
             }
         }

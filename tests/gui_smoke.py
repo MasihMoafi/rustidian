@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -5656,6 +5656,103 @@ def main():
                 results.append(f"A change during a {numbers['reindex_seconds']} s re-index drew {numbers['reindex_frames']} frames until it ended "
                                f"({numbers['reindex_main_thread_seconds']:.2f} s of CPU on the UI thread)")
 
+            def folder_creation_checks():
+                parent = fixture / "Create here"; nested = parent / "Nested"
+                nested.mkdir(parents=True)
+                elsewhere = fixture / "Elsewhere"; elsewhere.mkdir()
+                active = elsewhere / "Active.md"; active.write_text("ACTIVE_ELSEWHERE\n")
+                protected = {fixture / "Untitled.md": "KEEP_ROOT\n", parent / "Untitled.md": "KEEP_PARENT\n", nested / "Untitled.md": "KEEP_NESTED\n"}
+                for path, text in protected.items(): path.write_text(text)
+                command("Refresh vault")
+                open_note("Elsewhere/Active.md", title="Active")
+                def wait_file(path, expected):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.exists() and path.read_text() == expected: return
+                        time.sleep(.05)
+                    raise AssertionError((str(path.relative_to(fixture)), expected, path.read_text() if path.exists() else "MISSING"))
+                def context(folder):
+                    relative = folder.relative_to(fixture)
+                    name = "file-tree-root" if folder == fixture else "folder:" + relative.as_posix()
+                    click_control(name, "3")
+                    suffix = "" if folder == fixture else relative.as_posix()
+                    control_bounds("folder-new-note:" + suffix)
+                    control_bounds("folder-new-folder:" + suffix)
+                    return suffix
+                def new_folder(folder, name):
+                    suffix = context(folder)
+                    click_control("folder-new-folder:" + suffix)
+                    control_bounds("folder-create-location:" + suffix)
+                    fill_dialog(name)
+                def new_note(folder, name):
+                    suffix = context(folder); click_control("folder-new-note:" + suffix)
+                    path = folder / name; wait_file(path, "")
+                    control_bounds("tab-full:" + path.relative_to(fixture).as_posix())
+                    control_bounds("note-title-input")
+                    return path
+                suffix = context(parent)
+                capture("native-folder-creation-menu.png")
+                click_control("folder-new-note:" + suffix)
+                created = parent / "Untitled 1.md"; wait_file(created, "")
+                control_bounds("tab-full:Create here/Untitled 1.md")
+                control_bounds("file:Create here/Untitled 1.md")
+                control_bounds("note-title-input")
+                type_text("Created child"); key("Return")
+                renamed = parent / "Created child.md"; wait_file(renamed, "")
+                assert not created.exists() and not (fixture / "Created child.md").exists()
+                editor_end(); type_text("CHILD_BODY"); key("ctrl+s"); wait_file(renamed, "CHILD_BODY")
+                capture("native-folder-created-note.png")
+                assert active.read_text() == "ACTIVE_ELSEWHERE\n"
+                results.append("New note on a collapsed folder created and revealed a unique child, opened inline naming, renamed within that folder, and saved body text while a different folder's note had been active")
+                open_note("Elsewhere/Active.md", title="Active")
+                new_folder(parent, "Child folder")
+                capture("native-folder-create-location.png")
+                key("Return"); control_bounds("folder:Create here/Child folder")
+                assert (parent / "Child folder").is_dir()
+                assert not (fixture / "Child folder").exists() and not (elsewhere / "Child folder").exists()
+                child = new_note(nested, "Untitled 1.md"); key("Escape")
+                second = new_note(nested, "Untitled 2.md"); key("Escape")
+                assert child.read_text() == "" and second.read_text() == ""
+                new_folder(nested, "Nested child"); key("Return")
+                control_bounds("folder:Create here/Nested/Nested child")
+                assert (nested / "Nested child").is_dir() and not (fixture / "Nested child").exists()
+                capture("native-folder-created-nested.png")
+                results.append("Name-only folder input stayed bound to the clicked folder, nested folders accepted both commands, and repeated note creation preserved existing Untitled files")
+                new_folder(nested, "Nested child"); key("Return")
+                control_bounds("dialog-error"); assert (nested / "Nested child").is_dir()
+                fill_dialog("../Must not escape"); key("Return"); control_bounds("dialog-error")
+                assert not (parent / "Must not escape").exists() and not (fixture / "Must not escape").exists()
+                fill_dialog(""); key("Return"); control_bounds("dialog-error")
+                capture("native-folder-create-error.png"); key("Escape")
+                before = {p.relative_to(fixture) for p in fixture.rglob("*")}
+                new_folder(parent, "Cancelled child"); key("Escape")
+                assert {p.relative_to(fixture) for p in fixture.rglob("*")} == before
+                new_folder(parent, "placeholder"); modified_shortcut(xdo, "a"); pause()
+                paste_text("Child café"); key("Return")
+                if not (parent / "Child café").is_dir():
+                    raise AssertionError("Unicode folder creation must use the entered name only")
+                results.append("Duplicate, escaping and empty folder names failed visibly without creating paths; Escape cancelled without changes and a Unicode child name succeeded")
+                suffix = context(fixture); capture("native-folder-root-menu.png")
+                click_control("folder-new-folder:" + suffix)
+                control_bounds("folder-create-location:"); fill_dialog("Root child"); key("Return")
+                assert (fixture / "Root child").is_dir() and not (nested / "Root child").exists()
+                root_note = new_note(fixture, "Untitled 1.md"); key("Escape")
+                assert root_note.parent == fixture
+                capture("native-folder-root-created.png")
+                results.append("The vault-root context menu shared both creation commands and created root items independently of the active nested note")
+                before = {p.relative_to(fixture) for p in fixture.rglob("*")}; mode = parent.stat().st_mode
+                try:
+                    parent.chmod(0o555)
+                    suffix = context(parent); click_control("folder-new-note:" + suffix)
+                    capture("native-folder-create-readonly.png")
+                    assert {p.relative_to(fixture) for p in fixture.rglob("*")} == before
+                finally: parent.chmod(mode)
+                retry = new_note(parent, "Untitled 1.md"); key("Escape")
+                assert retry.read_text() == ""
+                for path, text in protected.items(): assert path.read_text() == text, path
+                assert active.read_text() == "ACTIVE_ELSEWHERE\n" and renamed.read_text() == "CHILD_BODY"
+                results.append("An unwritable clicked folder failed without a fallback or partial note; retry after restoring access succeeded and all existing notes retained their exact bytes")
+
             def folder_checks():
                 click_control("button:File explorer")
                 pause()
@@ -9785,6 +9882,10 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "watch-limit"}))
                 return
+            if args.section == "folder-create":
+                folder_creation_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "folder-create", "checks": len(results), "status": "passed"})); return
             if args.section == "folders":
                 folder_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -10172,7 +10273,7 @@ def main():
                 diagram_checks,
                 math_checks,
                 large_search_checks,
-                folder_checks,
+                folder_creation_checks, folder_checks,
                 explorer_checks,
                 vault_checks,
                 vault_switch_checks,

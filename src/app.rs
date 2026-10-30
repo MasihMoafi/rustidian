@@ -2401,6 +2401,7 @@ impl NotesApp {
                         .weak(),
                     );
                     crate::ui_probe::record(ui.ctx(), "file-tree-root", root.rect);
+                    let root = root.interact(egui::Sense::click());
                     ui.add_space(8.0);
                     let mut tree_scroll = theme::sidebar_scroll()
                         .id_salt("file-tree")
@@ -2429,6 +2430,12 @@ impl NotesApp {
                         }
                         crate::file_tree::drag_scroll(ui);
                     });
+                    if self.vault.is_some() {
+                        root.context_menu(|ui| {
+                            theme::menu_style(ui);
+                            crate::file_tree::creation_menu(ui, Path::new(""), &mut selected);
+                        });
+                    }
                     if let Some(action) = crate::file_tree::finish_drag(
                         ui,
                         drop_folder,
@@ -2543,6 +2550,12 @@ impl NotesApp {
                     &path,
                     self.new_tab_gesture || ui.ctx().input(|i| i.modifiers.command),
                 ),
+                FileAction::NewNote(folder) => self.create_note_in(&folder),
+                FileAction::NewFolder(folder) => {
+                    self.ask(Dialog::NewFolder);
+                    self.dialog_path = Some(folder);
+                    self.dialog_input = "Untitled".into();
+                }
                 FileAction::OpenInNewTab(path) => self.open_note_at(&path, true),
                 FileAction::Copy(path) => {
                     self.duplicate_file(&path);
@@ -3887,9 +3900,19 @@ impl NotesApp {
                 close |= theme::dialog_header(ui, title, "Close dialog").clicked();
                 ui.add_space(8.0);
             }
+            if dialog == Dialog::NewFolder && let Some(parent) = &self.dialog_path {
+                let location = if parent.as_os_str().is_empty() {
+                    "Vault root".to_owned()
+                } else {
+                    parent.display().to_string()
+                };
+                let label = ui.label(RichText::new(format!("Location: {location}")).weak());
+                crate::ui_probe::record(ui.ctx(), format!("folder-create-location:{}", parent.display()), label.rect);
+            }
             let hint = match dialog {
                 Dialog::QuickOpen => "Find a file…",
                 Dialog::SaveCopy => "Folder/Note.md",
+                Dialog::NewFolder if self.dialog_path.is_some() => "New folder",
                 Dialog::NewFolder => "Folder/New folder",
                 Dialog::OpenVault => "/path/to/your/vault",
                 Dialog::Commands => "Select a command…",
@@ -4488,18 +4511,26 @@ impl NotesApp {
             return self.save_bookmarks(before);
         }
         if dialog == Dialog::NewFolder {
+            if input.is_empty() {
+                self.error = Some("Enter a folder name.".into());
+                return false;
+            }
+            let path = self
+                .dialog_path
+                .as_ref()
+                .map_or_else(|| PathBuf::from(&input), |parent| parent.join(&input));
             let result = self
                 .vault
                 .as_mut()
                 .ok_or("Open a vault first.".to_owned())
-                .and_then(|vault| vault.create_folder(Path::new(&input)));
+                .and_then(|vault| vault.create_folder(&path));
             return match result {
                 Ok(()) => {
                     self.tree = Tree::from_vault(self.vault.as_ref().unwrap());
-                    self.reveal_folder = Some(PathBuf::from(&input));
+                    self.reveal_folder = Some(path.clone());
                     self.searching = false;
                     self.show_bookmarks = false;
-                    self.status = format!("Created folder {input}");
+                    self.status = format!("Created folder {}", path.display());
                     self.error = None;
                     true
                 }
@@ -4942,11 +4973,15 @@ impl NotesApp {
     }
 
     fn create_note(&mut self) {
+        self.create_note_in(Path::new(""));
+    }
+
+    fn create_note_in(&mut self, folder: &Path) {
         let Some(vault) = &mut self.vault else {
             self.error = Some("Open a vault before creating a note.".into());
             return;
         };
-        match vault.create_untitled() {
+        match vault.create_untitled_in(folder) {
             Ok(document) => {
                 let path = document.path.clone();
                 let title = document.title();
