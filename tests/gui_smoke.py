@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7988,6 +7988,52 @@ def main():
                 results.append("A list-looking line in a plain text file keeps a literal Tab at the caret")
                 (reports / "list-indent-observations.json").write_text(json.dumps(observed, ensure_ascii=False, indent=2) + "\n")
 
+            def list_enter_checks():
+                """Exercise list continuation through real editor input and saved bytes."""
+                cases = [
+                    ("bullet", "- Alpha", "- Alpha\n- ", "Beta", []),
+                    ("number", "9. Alpha", "9. Alpha\n10. ", "Beta", []),
+                    ("task", "- [x] Alpha", "- [x] Alpha\n- [ ] ", "Beta", []),
+                    ("nested", "\t- Alpha", "\t- Alpha\n\t- ", "Beta", []),
+                    ("quote", "> - Alpha", "> - Alpha\n> - ", "Beta", []),
+                    ("unicode", "- فارسی", "- فارسی\n- ", "café 👋", []),
+                    ("empty", "- Alpha\n- ", "- Alpha\n", "", []),
+                    ("split", "- AlphaBeta", "- Alpha\n- Beta", "", ["Left"] * 4),
+                ]
+                fixtures = []
+                for prefix, mode in [("Source", "Source editing"), ("Live", "Live preview")]:
+                    for name, source, entered, suffix, position in cases:
+                        path = fixture / "Notes" / f"Continue {prefix} {name}.md"
+                        path.write_bytes(source.encode("utf-8"))
+                        fixtures.append((path, mode, source, entered, suffix, position))
+                plain = fixture / "Notes" / "Continue literal.txt"
+                plain.write_bytes(b"- Alpha")
+                fixtures.append((plain, "Source editing", "- Alpha", "- Alpha\n", "Beta", []))
+                command("Refresh vault")
+
+                def saved(path, expected):
+                    key("ctrl+s")
+                    limit = time.monotonic() + 3
+                    while time.monotonic() < limit and path.read_bytes() != expected.encode("utf-8"):
+                        time.sleep(.05)
+                    actual = path.read_bytes()
+                    assert actual == expected.encode("utf-8"), (path.name, expected, actual)
+
+                for path, mode, source, entered, suffix, position in fixtures:
+                    open_note(path.name, title=path.stem); command(mode); editor_end()
+                    key("ctrl+End")
+                    for stroke in position:
+                        key(stroke)
+                    key("Return"); saved(path, entered)
+                    key("ctrl+z"); saved(path, source)
+                    key("ctrl+y"); saved(path, entered)
+                    if suffix:
+                        paste_text(suffix); saved(path, entered + suffix)
+                    if "unicode" in path.stem:
+                        capture(f"native-list-enter-{mode.split()[0].lower()}.png")
+                results.append("Source and Live Enter continued bullets, numbered items, unchecked task markers, nested/quoted and Unicode lists; empty items exited, mid-item splits retained text, and exact saved bytes survived Undo/Redo")
+                results.append("Plain text Enter inserted an ordinary newline without continuing a Markdown-looking list")
+
             def tab_drag_checks():
                 nonlocal app, window
                 close_tabs()
@@ -10728,6 +10774,11 @@ def main():
                 return
             if args.section == "external-rename":
                 external_rename_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "list-enter":
+                list_enter_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
