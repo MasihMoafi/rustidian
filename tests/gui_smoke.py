@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7569,6 +7569,73 @@ def main():
                 click_control("tab-full:Drag Beta.md"); command("Toggle pin")
                 results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
 
+            def link_fragment_checks():
+                close_tabs()
+                target = fixture / "Fragment Target.md"
+                original = ('---\naliases: [FragmentAlias]\nfake: hidden ^properties\n---\n'
+                    '# Fragment Target\n\n' + 'Top padding paragraph.\n\n' * 55
+                    + '## Alpha **section**\n\nAlpha content.\n\n'
+                    + '## Beta café\n\nParagraph chosen ^block-one\n\n'
+                    + '- A list block ^list-two\n\n'
+                    + '`literal ^inline-fake`\n\nMiddle ^middle-fake tail\n\n'
+                    + '```md\n# Fake code heading\nCode ^code-fake\n```\n')
+                target.write_text(original)
+                for mode in ('Source editing', 'Live preview'):
+                    for case in ('heading', 'block', 'mouse', 'self', 'alias', 'missing', 'file'):
+                        (fixture / f'Fragment {mode} {case}.md').write_text('')
+                command('Refresh vault')
+                def begin(mode, case, query):
+                    name = f'Fragment {mode} {case}'
+                    open_note(name + '.md', title=name); command(mode); editor_end()
+                    paste_text(query)
+                    return fixture / (name + '.md')
+                def saved(path, expected):
+                    key('ctrl+s'); deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and path.read_text() != expected: time.sleep(.05)
+                    assert path.read_text() == expected, (path.name, expected, path.read_text())
+                def candidates():
+                    controls = json.loads((base / 'ui-probe.json').read_text())
+                    return {name[len('link-completion:'):] for name in controls if name.startswith('link-completion:')}
+                def follow(expected):
+                    editor_end(); key('ctrl+Return'); title_contains('Fragment Target')
+                    command('Source editing'); control_bounds('editor-focused'); key('shift+End'); key('ctrl+c')
+                    copied = subprocess.check_output(['xclip', '-selection', 'clipboard', '-out', '-target', 'UTF8_STRING'], env=environment, timeout=3).decode()
+                    assert expected in copied, ('Fragment navigation must reach the actual line', expected, copied)
+                    capture('native-fragment-navigation.png')
+                    key('ctrl+w')
+                for mode in ('Source editing', 'Live preview'):
+                    path = begin(mode, 'heading', '[[Fragment Target#')
+                    control_bounds('link-completion:Fragment Target#Alpha section')
+                    assert candidates() == {'Fragment Target#Fragment Target', 'Fragment Target#Alpha section', 'Fragment Target#Beta café'}, candidates()
+                    capture('native-fragment-heading-' + mode.split()[0].lower() + '.png')
+                    key('Down'); key('Return'); saved(path, '[[Fragment Target#Alpha section]]')
+                    follow('## Alpha **section**')
+                    path = begin(mode, 'block', '[[Fragment Target#^bLo')
+                    control_bounds('link-completion:Fragment Target#^block-one')
+                    assert candidates() == {'Fragment Target#^block-one'}, candidates()
+                    key('Tab'); saved(path, '[[Fragment Target#^block-one]]'); follow('Paragraph chosen ^block-one')
+                    path = begin(mode, 'mouse', '[[Fragment Target#^')
+                    control_bounds('link-completion:Fragment Target#^list-two')
+                    assert candidates() == {'Fragment Target#^block-one', 'Fragment Target#^list-two'}, candidates()
+                    capture('native-fragment-block-' + mode.split()[0].lower() + '.png')
+                    click_control('link-completion:Fragment Target#^list-two')
+                    saved(path, '[[Fragment Target#^list-two]]'); follow('A list block ^list-two')
+                    prefix = '# Self note\n\n## Local **draft**\n\nDraft block ^draft-one\n\n'
+                    path = begin(mode, 'self', prefix + '[[#Local')
+                    control_bounds('link-completion:#Local draft'); key('Return')
+                    saved(path, prefix + '[[#Local draft]]')
+                    editor_end(); paste_text('\n[[#^draft'); control_bounds('link-completion:#^draft-one'); key('Tab')
+                    saved(path, prefix + '[[#Local draft]]\n[[#^draft-one]]')
+                    path = begin(mode, 'alias', '[[FragmentAlias#BEt')
+                    control_bounds('link-completion:Fragment Target#Beta café'); key('Return')
+                    saved(path, '[[Fragment Target#Beta café]]')
+                    path = begin(mode, 'missing', '[[Fragment Target#missing')
+                    assert not candidates(), candidates(); key('Escape'); saved(path, '[[Fragment Target#missing')
+                    path = begin(mode, 'file', '[[Fragment Tar')
+                    control_bounds('link-completion:Fragment Target'); key('Tab'); saved(path, '[[Fragment Target]]')
+                    results.append(mode + ': heading and block candidates, case-insensitive filters, Enter/Tab/mouse insertion, actual fragment navigation, same-note current text, aliases/Unicode, no-match cancellation and ordinary file completion passed; code/properties/mid-line markers were excluded')
+                assert target.read_text() == original, 'Following fragments must preserve the target note'
+
             def tab_close_menu_checks():
                 close_tabs()
                 notes = {name: fixture / f"Menu {name}.md" for name in "ABCD"}
@@ -10103,6 +10170,10 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
+            if args.section == "link-fragments":
+                link_fragment_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "link-fragments", "checks": len(results), "status": "passed"})); return
             if args.section == "tab-close-menu":
                 tab_close_menu_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
@@ -10471,7 +10542,7 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
-                tab_close_menu_checks, tab_restore_checks,
+                tab_close_menu_checks, tab_restore_checks, link_fragment_checks,
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,

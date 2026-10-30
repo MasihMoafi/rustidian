@@ -29,6 +29,90 @@ pub struct Find {
 }
 
 #[derive(Default)]
+struct LinkCandidate {
+    label: String,
+    target: String,
+}
+
+fn link_candidates(
+    vault: Option<&rustidian::vault::Vault>,
+    document: &rustidian::vault::Document,
+    query: &str,
+    files: &mut FileMatcher,
+) -> Vec<LinkCandidate> {
+    let Some((note, fragment)) = query.split_once('#') else {
+        return files
+            .rank_links(query, 8)
+            .into_iter()
+            .map(|path| LinkCandidate {
+                label: rustidian::paths::display_path(&path),
+                target: rustidian::paths::wiki_destination(&path),
+            })
+            .collect();
+    };
+    let Some(vault) = vault else {
+        return Vec::new();
+    };
+    let path = vault.resolve(&document.path, note).or_else(|| {
+        let query = note.trim().to_lowercase();
+        let mut matches = vault.notes.iter().filter(|note| {
+            note.aliases
+                .iter()
+                .any(|alias| alias.to_lowercase() == query)
+        });
+        let path = matches.next()?.path.clone();
+        matches.next().is_none().then_some(path)
+    });
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    let text = if path == document.path {
+        document.text.as_str()
+    } else if let Some(note) = vault.notes.iter().find(|note| note.path == path) {
+        note.text.as_str()
+    } else {
+        return Vec::new();
+    };
+    let prefix = if note.trim().is_empty() {
+        String::new()
+    } else {
+        rustidian::paths::wiki_destination(&path)
+    };
+    let (query, anchors) = if let Some(block) = fragment.strip_prefix('^') {
+        (
+            block,
+            rustidian::structure::block_anchors(text)
+                .into_iter()
+                .map(|(id, _)| format!("^{id}"))
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        (
+            fragment,
+            rustidian::structure::outline(text)
+                .into_iter()
+                .map(|heading| heading.title)
+                .collect(),
+        )
+    };
+    let query = query.trim().to_lowercase();
+    let mut seen = std::collections::HashSet::new();
+    anchors
+        .into_iter()
+        .filter(|anchor| {
+            anchor.to_lowercase().contains(&query)
+                && !anchor.contains("]]")
+                && !anchor.contains('|')
+                && seen.insert(anchor.clone())
+        })
+        .take(8)
+        .map(|label| LinkCandidate {
+            target: format!("{prefix}#{label}"),
+            label,
+        })
+        .collect()
+}
+
 pub struct Editor {
     pub jump: Option<usize>,
     pub focus: bool,
@@ -1290,7 +1374,8 @@ impl Editor {
                 } else if let Some(completion) = completion
                     && !self.completion_dismissed
                 {
-                    let candidates = files.rank_links(&completion.query, 8);
+                    let candidates =
+                        link_candidates(vault, &tab.document, &completion.query, files);
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
                         self.completion_dismissed = true;
                     }
@@ -1301,14 +1386,11 @@ impl Editor {
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp)) {
                         self.completion_selected = self.completion_selected.saturating_sub(1);
                     }
-                    if let Some(path) = candidates.get(self.completion_selected)
+                    if let Some(candidate) = candidates.get(self.completion_selected)
                         && consume_action(ui, egui::Modifiers::NONE, &[Key::Tab, Key::Enter])
                     {
-                        let caret = complete_link(
-                            &mut tab.document.text,
-                            &completion,
-                            &rustidian::paths::wiki_destination(path),
-                        );
+                        let caret =
+                            complete_link(&mut tab.document.text, &completion, &candidate.target);
                         set_cursor(ui.ctx(), id, caret);
                         tab.edited();
                         action_handled = true;
@@ -2232,7 +2314,7 @@ impl Editor {
             && let Some(cursor) = output.cursor_range
             && let Some(completion) = link_completion(&tab.document.text, cursor.primary.index.0)
         {
-            let candidates = files.rank_links(&completion.query, 8);
+            let candidates = link_candidates(vault, &tab.document, &completion.query, files);
             let caret = output
                 .galley
                 .pos_from_cursor(cursor.primary)
@@ -2254,36 +2336,37 @@ impl Editor {
                 .show(ui.ctx(), |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_width(330.0);
-                        for (index, path) in candidates.iter().enumerate() {
+                        for (index, candidate) in candidates.iter().enumerate() {
                             let response = ui.add(
-                                egui::Button::new(
-                                    RichText::new(rustidian::paths::display_path(path)).size(14.0),
-                                )
-                                .selected(index == self.completion_selected)
-                                .frame_when_inactive(false)
-                                .min_size(egui::vec2(330.0, 30.0)),
+                                egui::Button::new(RichText::new(&candidate.label).size(14.0))
+                                    .selected(index == self.completion_selected)
+                                    .frame_when_inactive(false)
+                                    .min_size(egui::vec2(330.0, 30.0)),
+                            );
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("link-completion:{}", candidate.target),
+                                response.rect,
                             );
                             if response.clicked() {
-                                chosen = Some(path.clone());
+                                chosen = Some(candidate.target.clone());
                             }
                         }
                         if candidates.is_empty() {
                             ui.label(
-                                RichText::new(
-                                    "No matching files. Finish the link to create a note.",
-                                )
+                                RichText::new(if completion.query.contains('#') {
+                                    "No matching headings or blocks."
+                                } else {
+                                    "No matching files. Finish the link to create a note."
+                                })
                                 .size(13.0)
                                 .weak(),
                             );
                         }
                     });
                 });
-            if let Some(path) = chosen {
-                let caret = complete_link(
-                    &mut tab.document.text,
-                    &completion,
-                    &rustidian::paths::wiki_destination(&path),
-                );
+            if let Some(target) = chosen {
+                let caret = complete_link(&mut tab.document.text, &completion, &target);
                 set_cursor(ui.ctx(), id, caret);
                 ui.memory_mut(|m| m.request_focus(id));
                 tab.edited();

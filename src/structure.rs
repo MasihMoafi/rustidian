@@ -47,30 +47,51 @@ pub fn outline(text: &str) -> Vec<Heading> {
     headings
 }
 
+/// Named paragraph/list anchors, excluding properties, code and non-final markers.
+pub fn block_anchors(text: &str) -> Vec<(String, usize)> {
+    let base = crate::metadata::frontmatter(text)
+        .ok()
+        .flatten()
+        .map_or(0, |properties| properties.range.end);
+    let mut start = base;
+    let mut in_code = false;
+    let mut anchors = Vec::new();
+    for (event, range) in Parser::new(&text[base..]).into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(_)) => in_code = true,
+            Event::End(TagEnd::CodeBlock) => in_code = false,
+            Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::Item) => {
+                start = base + range.start;
+            }
+            Event::Text(value) if !in_code => {
+                if let Some(id) = value
+                    .split_whitespace()
+                    .last()
+                    .and_then(|word| word.strip_prefix('^'))
+                    && !id.is_empty()
+                    && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                    && text[base + range.end..]
+                        .split('\n')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                {
+                    anchors.push((id.to_owned(), text[..start].chars().count()));
+                }
+            }
+            _ => {}
+        }
+    }
+    anchors
+}
+
 pub fn find_anchor(text: &str, fragment: &str) -> Option<usize> {
     if let Some(block) = fragment.strip_prefix('^') {
-        let mut start = 0;
-        let mut in_code = false;
-        for (event, range) in Parser::new(text).into_offset_iter() {
-            match event {
-                Event::Start(Tag::CodeBlock(_)) => in_code = true,
-                Event::End(TagEnd::CodeBlock) => in_code = false,
-                Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::Item) => {
-                    start = range.start
-                }
-                Event::Text(value)
-                    if !in_code
-                        && value
-                            .split_whitespace()
-                            .last()
-                            .is_some_and(|word| word == format!("^{block}")) =>
-                {
-                    return Some(text[..start].chars().count());
-                }
-                _ => {}
-            }
-        }
-        None
+        block_anchors(text)
+            .into_iter()
+            .find(|(id, _)| id == block)
+            .map(|(_, character)| character)
     } else {
         let target = fragment.trim().to_lowercase();
         outline(text)
