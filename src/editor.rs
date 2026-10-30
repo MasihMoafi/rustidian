@@ -773,7 +773,8 @@ pub fn markdown_indent(
         return None;
     }
     let first = text[..start].rfind('\n').map_or(0, |index| index + 1);
-    if selection.is_empty() && !outdent && !Markdown::parse(text).item_starts.contains(&first) {
+    let markdown = Markdown::parse(text);
+    if selection.is_empty() && !outdent && !markdown.item_starts.contains(&first) {
         return None;
     }
     // A selection ending at the next line's start does not include that line.
@@ -787,21 +788,19 @@ pub fn markdown_indent(
         .map_or(text.len(), |index| end + index);
     let mut edits = Vec::new();
     let mut line_start = first;
+    let mut quotes = markdown.quotes.iter().peekable();
     for line in text[first..last].split_inclusive('\n') {
-        // Indent inside the quote prefix, so quoted lists remain blockquotes.
-        let mut prefix = 0;
-        let mut probe = 0;
-        loop {
-            probe += line[probe..].len() - line[probe..].trim_start_matches([' ', '\t']).len();
-            if line.as_bytes().get(probe) != Some(&b'>') {
-                break;
-            }
-            probe += 1;
-            if line.as_bytes().get(probe) == Some(&b' ') {
-                probe += 1;
-            }
-            prefix = probe;
+        // Real quote prefixes stay outside the indent; > inside code is ordinary text.
+        while quotes
+            .peek()
+            .is_some_and(|quote| quote.range.start < line_start)
+        {
+            quotes.next();
         }
+        let prefix = quotes
+            .peek()
+            .filter(|quote| quote.range.start < line_start + line.len())
+            .map_or(0, |quote| quote.range.end - line_start);
         let remove = if !outdent {
             0
         } else if line.as_bytes().get(prefix) == Some(&b'\t') {

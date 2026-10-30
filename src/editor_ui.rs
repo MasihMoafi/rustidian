@@ -785,15 +785,17 @@ impl Editor {
         &mut self,
         ctx: &egui::Context,
         raw: &mut egui::RawInput,
-        live_tab: Option<u64>,
+        editing_tab: Option<u64>,
+        live: bool,
     ) {
         if let Some((owner, events)) = self.deferred_input.take()
-            && Some(owner) == live_tab
+            && Some(owner) == editing_tab
         {
             raw.events.splice(0..0, events);
         }
         self.hold_menu_click(ctx, raw);
-        self.tables.raw_input(ctx, raw, live_tab);
+        self.tables
+            .raw_input(ctx, raw, editing_tab.filter(|_| live));
     }
 
     /// Keep a right-click on selected or reading text from egui and open the
@@ -1193,11 +1195,13 @@ impl Editor {
             {
                 let selected = selection.as_sorted_char_range();
                 let before = tab.document.text.clone();
-                if let Some(range) = rustidian::editor::markdown_indent(
-                    &mut tab.document.text,
-                    selected.start.0..selected.end.0,
-                    modifiers.shift,
-                ) {
+                if (!tab.document.is_plain_text() || !selection.is_empty() || modifiers.shift)
+                    && let Some(range) = rustidian::editor::markdown_indent(
+                        &mut tab.document.text,
+                        selected.start.0..selected.end.0,
+                        modifiers.shift,
+                    )
+                {
                     // Preserve event order, including another Tab queued in this frame.
                     let events = ui.input_mut(|input| {
                         let index = action_matches(input, modifiers, &[Key::Tab]).unwrap();

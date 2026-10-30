@@ -5027,12 +5027,16 @@ impl eframe::App for NotesApp {
             raw,
             !self.interaction_blocked() && self.view() != View::Graph,
         );
-        let live_tab = self
+        let editing_tab = self
             .tabs
             .get(self.active)
-            .filter(|tab| tab.view == View::Live && !tab.document.is_image())
+            .filter(|tab| {
+                matches!(tab.view, View::Live | View::Source | View::Split)
+                    && !tab.document.is_image()
+            })
             .map(Tab::id);
-        self.editor.raw_input(ctx, raw, live_tab);
+        self.editor
+            .raw_input(ctx, raw, editing_tab, self.view() == View::Live);
     }
 
     /// Runs before every `ui` pass and alone while the window is hidden, so

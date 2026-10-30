@@ -6911,6 +6911,7 @@ def main():
                     ("root-outdent", source, ["ctrl+a"], "shift+Tab", source),
                     ("quoted", b"> - Alpha\n> - Beta\n", ["ctrl+a"], "Tab", b"> \t- Alpha\n> \t- Beta\n"),
                     ("tasks", b"1. [ ] Alpha\n2. [x] Beta\n", ["ctrl+a"], "Tab", b"\t1. [ ] Alpha\n\t2. [x] Beta\n"),
+                    ("quoted-code", b"```\n> Alpha\n> Beta\n```\n", ["ctrl+a"], "Tab", b"\t```\n\t> Alpha\n\t> Beta\n\t```\n"),
                     ("unicode", "- فارسی\r\n- café 👋\r\n".encode(), ["ctrl+a"], "Tab", "\t- فارسی\r\n\t- café 👋\r\n".encode()),
                     ("queued", source, ["ctrl+a"], "queued-tabs", b"\t\t- Alpha\n\t\t- Beta\n"),
                     ("queued-selection", source, [], "queued-selection", b"\t- Alpha\n\t- Beta\n"),
@@ -6918,6 +6919,8 @@ def main():
                     ("plain", b"plain", ["ctrl+End"], "Tab", b"plain\t"),
                 ]
                 modes = ("Source editing", "Live preview")
+                literal = fixture / "List literal.txt"
+                literal.write_bytes(b"- Alpha\n")
                 for mode in modes:
                     for label, original, _, _, _ in cases:
                         (fixture / f"List {mode} {label}.md").write_bytes(original)
@@ -6959,6 +6962,10 @@ def main():
                             saved(path, b"\t- Alpha!\n- Beta\n")
                         observed.append({"mode": mode, "case": label, "saved": path.read_bytes().decode()})
                     results.append(mode + ": Tab/Shift+Tab preserve selected lists, root outdent is harmless, boundary selections exclude the next line, caret and Undo/Redo survive, quotes/tasks/Unicode/CRLF and queued Tabs work; prose keeps literal Tab")
+                open_note("List literal.txt", title="List literal")
+                editor_end(); key("ctrl+Home"); key("End"); key("Tab")
+                saved(literal, b"- Alpha\t\n")
+                results.append("A list-looking line in a plain text file keeps a literal Tab at the caret")
                 (reports / "list-indent-observations.json").write_text(json.dumps(observed, ensure_ascii=False, indent=2) + "\n")
 
             def tab_drag_checks():
