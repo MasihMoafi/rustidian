@@ -15,13 +15,11 @@ pub enum Kind {
 /// Select an item in its parent using the desktop file-manager interface.
 /// https://wiki.freedesktop.org/www/Specifications/file-manager-interface/
 pub fn reveal(path: &Path) -> Result<(), String> {
+    const URI_PATH: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'/');
     // A comma is an array separator in dbus-send; encode it with the other URI bytes.
     let uri = format!(
         "file://{}",
-        percent_encoding::percent_encode(
-            path.as_os_str().as_encoded_bytes(),
-            &percent_encoding::NON_ALPHANUMERIC.remove(b'/')
-        )
+        percent_encoding::percent_encode(path.as_os_str().as_encoded_bytes(), URI_PATH,)
     );
     let output = Command::new("dbus-send")
         .args([
