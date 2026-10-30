@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7569,6 +7569,77 @@ def main():
                 click_control("tab-full:Drag Beta.md"); command("Toggle pin")
                 results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
 
+            def tab_close_menu_checks():
+                close_tabs()
+                notes = {name: fixture / f"Menu {name}.md" for name in "ABCD"}
+                original = {name: f"MENU_{name}_ORIGINAL\n" for name in notes}
+                for name, path in notes.items(): path.write_text(original[name])
+                command("Refresh vault")
+                def tabs():
+                    data = json.loads((base / "ui-probe.json").read_text())
+                    return [name.removeprefix("tab-full:Menu ").removesuffix(".md") for name, rect in sorted(data.items(), key=lambda item: item[1][0]) if name.startswith("tab-full:Menu ")]
+                def expect(*names):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if tabs() == list(names): return
+                        time.sleep(.05)
+                    raise AssertionError((names, tabs()))
+                def select(name):
+                    click_control(f"tab-full:Menu {name}.md"); title_contains("Menu " + name)
+                def menu(name, action):
+                    click_control(f"tab-full:Menu {name}.md", "3")
+                    control_bounds("tab-menu-close-others"); control_bounds("tab-menu-close-right")
+                    click_control("tab-menu-close-" + action)
+                open_note("Menu A.md", title="Menu A"); command("Toggle pin")
+                for name in "BCD":
+                    key("ctrl+t"); open_note(f"Menu {name}.md", title="Menu " + name)
+                command("Toggle pin"); expect("A", "B", "C", "D")
+                select("C"); click_control("tab-full:Menu B.md", "3")
+                capture("native-tab-close-menu.png"); click_control("tab-menu-close-right")
+                expect("A", "B", "D"); title_contains("Menu B")
+                control_bounds("unpin-tab:Menu A.md"); control_bounds("unpin-tab:Menu D.md")
+                key("ctrl+shift+t"); expect("A", "B", "D", "C")
+                select("C"); menu("C", "right"); expect("A", "B", "D", "C"); key("Escape")
+                capture("native-tab-close-right.png")
+                results.append("Close tabs to the right used the background clicked tab, kept both left and right pinned tabs, focused the kept tab and reopened the closed view; the rightmost action did nothing")
+                select("A"); command("Toggle pin"); select("C")
+                menu("B", "others"); expect("B", "D"); title_contains("Menu B")
+                control_bounds("unpin-tab:Menu D.md")
+                menu("B", "others"); expect("B", "D"); key("Escape")
+                key("ctrl+shift+t"); expect("B", "D", "C")
+                key("ctrl+shift+t"); expect("B", "D", "C", "A")
+                capture("native-tab-close-others-restored.png")
+                results.append("Close others removed unpinned tabs on both sides of the clicked tab, preserved pinned D, disabled when nothing could close and restored the actual visual removal order C then A")
+                select("C"); command("Source editing"); editor_end(); type_text("SAVE_DRAFT")
+                mode = fixture.stat().st_mode
+                try:
+                    fixture.chmod(0o555); menu("B", "others"); control_bounds("pending-cancel")
+                    capture("native-tab-close-pending.png"); expect("B", "D", "C", "A")
+                finally: fixture.chmod(mode)
+                click_control("pending-cancel"); expect("B", "D", "C", "A"); title_contains("Menu C")
+                assert notes["C"].read_text() == original["C"]
+                try:
+                    fixture.chmod(0o555); menu("B", "others"); control_bounds("pending-save")
+                finally: fixture.chmod(mode)
+                click_control("pending-save"); expect("B", "D"); title_contains("Menu B")
+                assert notes["C"].read_text() == original["C"] + "SAVE_DRAFT"
+                key("ctrl+shift+t"); expect("B", "D", "C")
+                key("ctrl+shift+t"); expect("B", "D", "C", "A")
+                results.append("A real failed save closed no tabs; Cancel kept the active draft and every view, while Save & continue after restoring access saved the draft before closing the requested group")
+                select("A"); command("Source editing"); editor_end(); type_text("DISCARD_DRAFT")
+                try:
+                    fixture.chmod(0o555); menu("B", "right"); control_bounds("pending-discard")
+                    expect("B", "D", "C", "A")
+                finally: fixture.chmod(mode)
+                click_control("pending-discard"); expect("B", "D"); title_contains("Menu B")
+                assert notes["A"].read_text() == original["A"]
+                key("ctrl+shift+t"); expect("B", "D", "A"); title_contains("Menu A")
+                assert notes["A"].read_text() == original["A"]
+                capture("native-tab-close-discard-restored.png")
+                for name in "ABD": assert notes[name].read_text() == original[name]
+                assert notes["C"].read_text() == original["C"] + "SAVE_DRAFT"
+                results.append("Close right required explicit Discard for an unsavable draft, kept the pinned view, reopened the original saved contents and preserved every protected file")
+
             def tab_restore_checks():
                 close_tabs()
                 originals={name:f"# Restore {name}\n\n{name.upper()}_ORIGINAL\n" for name in ("Alpha","Beta","Gamma")}
@@ -10030,6 +10101,10 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
+            if args.section == "tab-close-menu":
+                tab_close_menu_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "tab-close-menu", "checks": len(results), "status": "passed"})); return
             if args.section == "tab-restore":
                 tab_restore_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -10394,7 +10469,7 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
-                tab_restore_checks,
+                tab_close_menu_checks, tab_restore_checks,
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,

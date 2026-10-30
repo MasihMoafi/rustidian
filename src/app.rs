@@ -41,6 +41,7 @@ enum Dialog {
 enum Pending {
     CloseTab(usize),
     CloseOtherTabs(u64),
+    CloseTabsToRight(u64),
     Quit,
     /// Ctrl+Q's "Quit Rustidian?" question, asked when nothing is unsaved.
     ConfirmQuit,
@@ -1424,6 +1425,10 @@ impl NotesApp {
         let Some(keep) = self.tabs.get(self.active).map(Tab::id) else {
             return;
         };
+        self.request_close_other_tabs_for(keep);
+    }
+
+    fn request_close_other_tabs_for(&mut self, keep: u64) {
         let indices = rustidian::tab::other_tab_indices(&self.tabs, keep);
         if indices
             .into_iter()
@@ -1438,9 +1443,34 @@ impl NotesApp {
     fn close_other_tabs(&mut self, keep: u64) {
         // Reference closes in visual order, so Undo restores the rightmost first.
         let indices = rustidian::tab::other_tab_indices(&self.tabs, keep);
+        self.close_tab_group(indices, keep);
+    }
+
+    fn request_close_tabs_to_right(&mut self, keep: u64) {
+        let indices = rustidian::tab::right_tab_indices(&self.tabs, keep);
+        if indices
+            .into_iter()
+            .all(|index| !self.tabs[index].document.dirty() || self.save(index))
+        {
+            self.close_tabs_to_right(keep);
+        } else {
+            self.pending = Some(Pending::CloseTabsToRight(keep));
+        }
+    }
+
+    fn close_tabs_to_right(&mut self, keep: u64) {
+        let indices = rustidian::tab::right_tab_indices(&self.tabs, keep);
+        self.close_tab_group(indices, keep);
+    }
+
+    fn close_tab_group(&mut self, indices: Vec<usize>, keep: u64) {
         for (removed, index) in indices.into_iter().enumerate() {
             self.close_tab(index - removed);
         }
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id() == keep) {
+            self.active = index;
+        }
+        self.focus_editor();
     }
 
     fn undo_close_tab(&mut self) {
@@ -1528,6 +1558,7 @@ impl NotesApp {
         match pending {
             Pending::CloseTab(index) => self.close_tab(index),
             Pending::CloseOtherTabs(keep) => self.close_other_tabs(keep),
+            Pending::CloseTabsToRight(keep) => self.close_tabs_to_right(keep),
             Pending::Quit | Pending::ConfirmQuit => self.quit(ctx, "unsaved-changes dialog"),
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
             Pending::OpenVault(root, document) => {
@@ -3272,6 +3303,8 @@ impl NotesApp {
     fn tab_strip(&mut self, ui: &mut egui::Ui) {
         crate::ui_probe::metric(ui.ctx(), "tab-count", self.tabs.len() as f32);
         let mut close = None;
+        let mut close_others = None;
+        let mut close_right = None;
         let mut pin = None;
         let mut moved = None;
         let strip = egui::Frame::NONE
@@ -3538,6 +3571,56 @@ impl NotesApp {
                                                     close = Some(index);
                                                     ui.close();
                                                 }
+                                                let action = ui
+                                                    .add_enabled_ui(
+                                                        !rustidian::tab::other_tab_indices(
+                                                            &self.tabs,
+                                                            tab.id(),
+                                                        )
+                                                        .is_empty(),
+                                                        |ui| {
+                                                            theme::menu_item(
+                                                                ui,
+                                                                Icon::Close,
+                                                                "Close others",
+                                                            )
+                                                        },
+                                                    )
+                                                    .inner;
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-close-others",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    close_others = Some(tab.id());
+                                                    ui.close();
+                                                }
+                                                let action = ui
+                                                    .add_enabled_ui(
+                                                        !rustidian::tab::right_tab_indices(
+                                                            &self.tabs,
+                                                            tab.id(),
+                                                        )
+                                                        .is_empty(),
+                                                        |ui| {
+                                                            theme::menu_item(
+                                                                ui,
+                                                                Icon::Close,
+                                                                "Close tabs to the right",
+                                                            )
+                                                        },
+                                                    )
+                                                    .inner;
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-close-right",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    close_right = Some(tab.id());
+                                                    ui.close();
+                                                }
                                                 ui.separator();
                                                 let action = theme::menu_item(
                                                     ui,
@@ -3658,6 +3741,12 @@ impl NotesApp {
         if let Some(index) = close {
             self.request_close_tab(index);
         }
+        if let Some(keep) = close_others {
+            self.request_close_other_tabs_for(keep);
+        }
+        if let Some(keep) = close_right {
+            self.request_close_tabs_to_right(keep);
+        }
         if let Some(index) = pin {
             self.toggle_pin(index);
         }
@@ -3727,6 +3816,8 @@ impl NotesApp {
                         let indices: Vec<usize> = match &pending {
                             Pending::CloseTab(index) => vec![*index],
                             Pending::CloseOtherTabs(keep) => rustidian::tab::other_tab_indices(&self.tabs, *keep)
+                                .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
+                            Pending::CloseTabsToRight(keep) => rustidian::tab::right_tab_indices(&self.tabs, *keep)
                                 .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
                             _ => self.tabs.iter().enumerate().filter(|(_, tab)| tab.document.dirty()).map(|(i, _)| i).collect(),
                         };

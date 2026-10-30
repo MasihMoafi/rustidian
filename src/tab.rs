@@ -102,6 +102,18 @@ pub fn other_tab_indices(tabs: &[Tab], keep: u64) -> Vec<usize> {
         .collect()
 }
 
+pub fn right_tab_indices(tabs: &[Tab], keep: u64) -> Vec<usize> {
+    let Some(index) = tabs.iter().position(|tab| tab.id() == keep) else {
+        return Vec::new();
+    };
+    tabs.iter()
+        .enumerate()
+        .skip(index + 1)
+        .filter(|(_, tab)| !tab.pinned)
+        .map(|(index, _)| index)
+        .collect()
+}
+
 impl Tab {
     pub fn new(document: Document) -> Self {
         let editor_path = document.path.clone();
