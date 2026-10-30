@@ -158,7 +158,7 @@ def main():
             xvfb_log.close()
             raise
         environment.pop("RUSTIDIAN_DEFAULT_VAULT",None)
-        if args.section == "chrome" and shutil.which("openbox"):
+        if args.section in ("chrome", "reveal") and shutil.which("openbox"):
             window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
                 stdout=log, stderr=log)
             time.sleep(.4)
