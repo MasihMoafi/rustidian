@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6390,6 +6390,161 @@ def main():
                 xdo("windowsize",window,"1440","960");pause()
                 results.append("The real Move picker fit the minimum window and dismissed without changing its file or active tab")
 
+            def explorer_multi_checks():
+                click_control("button:File explorer")
+                close_tabs()
+                command("Open settings")
+                click_control("settings-autosave")
+                wait_autosave(base / "state", False)
+                key("Escape")
+                origin = fixture / "Batch"
+                destination = fixture / "Batch destination"
+                blocked = fixture / "Batch blocked"
+                for folder in [origin, destination, blocked, origin / "Group"]:
+                    folder.mkdir(parents=True, exist_ok=True)
+                content = {
+                    "A.md": "# A\n\n[[B|Bee]]\n[B](B.md)\n",
+                    "B.md": "# B\n\n[[A|Aye]]\n[A](A.md)\n[[Home]]\n",
+                    "C.md": "# C\n\nC_EXACT\n",
+                    "D.md": "# D\n\nD_EXACT\n",
+                    "E.md": "# E\n\nE_EXACT\n",
+                    "F.md": "# F\n\nF_EXACT\n",
+                    "Group/Child.md": "# Child\n\nCHILD_EXACT\n",
+                }
+                for name, text in content.items():
+                    (origin / name).write_text(text)
+                (destination / "A.md").write_text("KEEP_COLLISION\n")
+                command("Refresh vault")
+                pause()
+                open_note("Batch/A.md", title="A")
+                command("Source editing")
+                editor_end(); type_text("A_DRAFT")
+                key("ctrl+t")
+                open_note("Batch/B.md", title="B")
+                command("Source editing")
+                editor_end(); type_text("B_DRAFT")
+                assert (origin / "A.md").read_text() == content["A.md"]
+                assert (origin / "B.md").read_text() == content["B.md"]
+
+                def select(name, modifier=None, button="1"):
+                    if modifier: xdo("keydown", modifier)
+                    try: click_control(name, button=button)
+                    finally:
+                        if modifier: xdo("keyup", modifier)
+                    pause()
+
+                def selected(count):
+                    control_bounds(f"explorer-selected:{count}")
+
+                def move_to(folder):
+                    click_control("move-input")
+                    key("ctrl+a"); type_text(folder); key("Return")
+
+                def wait_file(path, expected=None):
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if path.is_file() and (expected is None or path.read_text() == expected): return
+                        time.sleep(.05)
+                    raise AssertionError((str(path.relative_to(fixture)), expected, path.read_text() if path.is_file() else "MISSING"))
+
+                select("file:Batch/A.md", "Control_L")
+                selected(2)
+                title_contains("B")
+                assert control_bounds("tab-full:Batch/A.md") and control_bounds("tab-full:Batch/B.md")
+                capture("native-explorer-multi-selection.png")
+                select("file:Batch/A.md", button="3")
+                click_control("explorer-move-selected")
+                move_to("Batch destination")
+                control_bounds("move-links-once")
+                capture("native-explorer-multi-link-confirmation.png")
+                click_control("move-links-once")
+                moved_a = destination / "A 1.md"
+                moved_b = destination / "B.md"
+                wait_file(moved_a)
+                wait_file(moved_b)
+                assert not (origin / "A.md").exists() and not (origin / "B.md").exists()
+                assert (destination / "A.md").read_text() == "KEEP_COLLISION\n"
+                assert moved_a.read_text() == content["A.md"] + "A_DRAFT"
+                assert moved_b.read_text() == content["B.md"].replace("[[A|Aye]]", "[[A 1|Aye]]").replace("[A](A.md)", "[A](A%201.md)").replace("[[Home]]", "[[../Home]]") + "B_DRAFT"
+                control_bounds("tab-full:Batch destination/A 1.md")
+                control_bounds("tab-full:Batch destination/B.md")
+                # Follow both moved references in the actual editor, including the collision name.
+                click_control("tab-full:Batch destination/A 1.md")
+                editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
+                title_contains("B")
+                editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
+                title_contains("A 1")
+                results.append("Ctrl-click selected two entries without opening/replacing a tab; one bulk move saved drafts, retained tabs, preserved collision bytes, and updated cross-selected wiki/Markdown links to navigable final paths")
+
+                open_note("Batch/C.md", title="C")
+                select("file:Batch/D.md", "Shift_L")
+                selected(2)
+                select("file:Batch/C.md", "Control_L"); selected(1)
+                select("file:Batch/C.md", "Control_L"); selected(2)
+                select("file:Batch/D.md", button="3")
+                click_control("explorer-move-selected")
+                key("Escape")
+                assert (origin / "C.md").read_text() == content["C.md"]
+                assert (origin / "D.md").read_text() == content["D.md"]
+                start = control_bounds("file:Batch/C.md")
+                end = control_bounds("folder:Batch destination")
+                sx, sy = round((start[0]+start[2])/2), round((start[1]+start[3])/2)
+                ex, ey = round((end[0]+end[2])/2), round((end[1]+end[3])/2)
+                xdo("mousemove", "--sync", str(sx), str(sy), "mousedown", "1")
+                try:
+                    time.sleep(.1)
+                    for step in range(1, 15):
+                        xdo("mousemove", "--sync", str(round(sx+(ex-sx)*step/14)), str(round(sy+(ey-sy)*step/14)))
+                        time.sleep(.04)
+                    time.sleep(.3)
+                    capture("native-explorer-multi-drag.png")
+                finally: xdo("mouseup", "1")
+                wait_file(destination / "C.md", content["C.md"])
+                wait_file(destination / "D.md", content["D.md"])
+                assert not (origin / "C.md").exists() and not (origin / "D.md").exists()
+                results.append("Shift-click selected the visible range, Ctrl-click toggled membership, cancelling the folder picker changed nothing, and dragging moved the whole selection with exact bytes")
+
+                open_note("Batch/E.md", title="E")
+                select("file:Batch/F.md", "Control_L"); selected(2)
+                select("file:Batch/F.md", button="3")
+                click_control("explorer-move-selected")
+                blocked.chmod(0o555)
+                try:
+                    move_to("Batch blocked")
+                    control_bounds("move-picker")
+                    assert (origin / "E.md").read_text() == content["E.md"]
+                    assert (origin / "F.md").read_text() == content["F.md"]
+                    assert not (blocked / "E.md").exists() and not (blocked / "F.md").exists()
+                    capture("native-explorer-multi-write-error.png")
+                finally: blocked.chmod(0o755)
+                key("Return")
+                wait_file(blocked / "E.md", content["E.md"])
+                wait_file(blocked / "F.md", content["F.md"])
+                results.append("An unwritable bulk destination left every source intact and exposed an error; retry moved both entries after access was restored")
+
+                # Select a folder and its own child, plus an unrelated file. Trash the folder once.
+                click_control("folder:Batch/Group")
+                select("file:Batch/Group/Child.md", "Control_L")
+                select("file:Batch destination/D.md", "Control_L")
+                selected(3)
+                select("file:Batch destination/D.md", button="3")
+                click_control("explorer-trash-selected")
+                capture("native-explorer-multi-trash-confirmation.png")
+                click_control("explorer-trash-cancel")
+                assert (origin / "Group/Child.md").read_text() == content["Group/Child.md"]
+                assert (destination / "D.md").read_text() == content["D.md"]
+                select("file:Batch destination/D.md", button="3")
+                click_control("explorer-trash-selected")
+                click_control("explorer-trash-confirm")
+                pause()
+                assert not (origin / "Group").exists() and not (destination / "D.md").exists()
+                trash = base / "data/Trash/files"
+                assert any(path.is_file() and path.read_text() == content["D.md"] for path in trash.iterdir())
+                assert any(path.is_dir() and (path / "Child.md").is_file() and (path / "Child.md").read_text() == content["Group/Child.md"] for path in trash.iterdir())
+                assert moved_a.read_text().endswith("A_DRAFT") and moved_b.read_text().endswith("B_DRAFT")
+                capture("native-explorer-multi-trash-result.png")
+                results.append("Right-click kept the multi-selection; Trash confirmation cancel preserved all bytes, and confirmation trashed a selected folder with its child only once plus the unrelated file; both were recoverable and other open drafts survived")
+
             def drag_move_checks():
                 # Obsidian's explorer: drag a note or a folder onto a folder or the vault root (29 Oct).
                 click_control("button:File explorer")
@@ -10379,6 +10534,11 @@ def main():
                 watch_limit_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "watch-limit"}))
+                return
+            if args.section == "explorer-multi":
+                explorer_multi_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "explorer-multi", "checks": len(results), "status": "passed"}))
                 return
             if args.section == "folder-create":
                 folder_creation_checks()

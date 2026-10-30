@@ -1,3 +1,4 @@
+use crate::explorer_selection as selection;
 use crate::theme;
 use eframe::egui::{self, Color32, FontId, RichText, Stroke};
 use rustidian::vault::Vault;
@@ -13,6 +14,12 @@ pub enum FileAction {
     OpenInNewTab(PathBuf),
     Copy(PathBuf),
     Move(PathBuf),
+    MoveMany(Vec<PathBuf>),
+    TrashMany(Vec<PathBuf>),
+    MoveManyInto {
+        sources: Vec<PathBuf>,
+        folder: PathBuf,
+    },
     CopyPath(PathBuf),
     Rename(PathBuf),
     Trash(PathBuf),
@@ -131,6 +138,7 @@ pub fn note_list_key(ui: &egui::Ui) -> Option<egui::Key> {
 
 /// The explorer row being dragged, carried by egui's drag-and-drop payload.
 struct Dragged {
+    paths: Vec<PathBuf>,
     path: PathBuf,
     title: String,
 }
@@ -155,11 +163,22 @@ fn start_drag(response: &egui::Response, path: &Path, title: &str) {
         .interact(egui::Sense::drag())
         .drag_started_by(egui::PointerButton::Primary)
     {
+        let paths = if selection::contains(&response.ctx, path) {
+            selection::roots(&response.ctx)
+        } else {
+            vec![path.to_owned()]
+        };
+        let title = if paths.len() > 1 {
+            format!("{} items", paths.len())
+        } else {
+            title.to_owned()
+        };
         egui::DragAndDrop::set_payload(
             &response.ctx,
             Dragged {
+                paths,
                 path: path.to_owned(),
-                title: title.to_owned(),
+                title,
             },
         );
     }
@@ -248,7 +267,7 @@ pub fn finish_drag(
     };
     let target = folder
         .or_else(|| ui.rect_contains_pointer(list).then(PathBuf::new))
-        .filter(|folder| !folder.starts_with(&dragged.path));
+        .filter(|folder| !dragged.paths.iter().any(|path| folder.starts_with(path)));
     let now = ctx.input(|input| input.time);
     match &target {
         Some(folder) => {
@@ -285,10 +304,17 @@ pub fn finish_drag(
     if dragged.path.parent() == Some(folder.as_path()) {
         return None;
     }
-    Some(FileAction::MoveInto {
-        source: dragged.path.clone(),
-        folder,
-    })
+    if dragged.paths.len() > 1 {
+        Some(FileAction::MoveManyInto {
+            sources: dragged.paths.clone(),
+            folder,
+        })
+    } else {
+        Some(FileAction::MoveInto {
+            source: dragged.path.clone(),
+            folder,
+        })
+    }
 }
 
 #[derive(Default)]
@@ -400,6 +426,10 @@ impl Tree {
         visible_files: &mut Option<Vec<PathBuf>>,
         drop_folder: &mut Option<PathBuf>,
     ) -> (Option<FileAction>, bool) {
+        let root = prefix.is_empty();
+        if root {
+            selection::begin(ui.ctx(), active);
+        }
         let mut open = None;
         let mut revealed = false;
         // During a drag the deepest folder under the pointer is the drop target, and the
@@ -419,6 +449,7 @@ impl Tree {
             let id = format!("{prefix}/{name}");
             let entry = Path::new(id.trim_start_matches('/'));
             let persistent = ui.make_persistent_id(&id);
+            let selection_len = selection::record(ui.ctx(), [entry.to_owned()]);
             let (selection_changed, collapse) = ui.ctx().data_mut(|data| {
                 let key = persistent.with("collapse");
                 let collapse = data
@@ -452,7 +483,11 @@ impl Tree {
             let idle_stroke = ui.visuals().widgets.inactive.bg_stroke;
             let pressed_stroke = ui.visuals().widgets.active.bg_stroke;
             ui.visuals_mut().collapsing_header_frame = true;
-            ui.visuals_mut().widgets.inactive.bg_fill = Color32::TRANSPARENT;
+            ui.visuals_mut().widgets.inactive.bg_fill = if selection::contains(ui.ctx(), entry) {
+                ui.visuals().selection.bg_fill
+            } else {
+                Color32::TRANSPARENT
+            };
             ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::NONE;
             if dragging.is_some() {
                 // The dragged folder looks pressed, without the keyboard-focus outline.
@@ -468,6 +503,10 @@ impl Tree {
             let highlight = dragging
                 .is_some()
                 .then(|| ui.painter().add(egui::Shape::Noop));
+            let was_open = reveal.unwrap_or_else(|| {
+                egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                    .is_some_and(|state| state.is_open())
+            });
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
                     .size(13.0)
@@ -498,6 +537,15 @@ impl Tree {
                 }
                 revealed |= visible;
             });
+            if selection::row(ui, &header.header_response, entry) {
+                if let Some(mut state) =
+                    egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                {
+                    state.set_open(was_open);
+                    state.store(ui.ctx());
+                    ui.ctx().request_repaint();
+                }
+            }
             start_drag(&header.header_response, entry, name);
             if let (Some(source), Some(slot)) = (&dragging, highlight) {
                 let block = header
@@ -519,12 +567,20 @@ impl Tree {
             {
                 paths.truncate(first_child);
             }
+            if egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                .is_some_and(|state| !state.is_open())
+            {
+                selection::truncate(ui.ctx(), selection_len);
+            }
             ui.visuals_mut().collapsing_header_frame = framed;
             ui.visuals_mut().widgets.inactive.bg_fill = idle_fill;
             ui.visuals_mut().widgets.inactive.bg_stroke = idle_stroke;
             ui.visuals_mut().widgets.active.bg_stroke = pressed_stroke;
             header.header_response.context_menu(|ui| {
                 theme::menu_style(ui);
+                if selection::menu(ui, &mut open) {
+                    return;
+                }
                 let path = PathBuf::from(id.trim_start_matches('/'));
                 creation_menu(ui, &path, &mut open);
                 ui.separator();
@@ -563,6 +619,11 @@ impl Tree {
                 format!("folder:{}", id.trim_start_matches('/')),
                 header.header_response.rect,
             );
+        }
+        if reverse {
+            selection::record(ui.ctx(), self.files.iter().rev().cloned());
+        } else {
+            selection::record(ui.ctx(), self.files.iter().cloned());
         }
         let row_height = 31.0 + ui.spacing().item_spacing.y;
         let top = ui.cursor().top();
@@ -607,13 +668,17 @@ impl Tree {
             };
             let path = &self.files[index];
             let title = rustidian::vault::file_title(path);
-            let selected = active == Some(path.as_path());
+            let selected = selection::contains(ui.ctx(), path);
             let response = file_row(ui, path, &title, selected);
+            let selection_click = selection::row(ui, &response, path);
             start_drag(&response, path, &title);
             crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);
             let response = response.on_hover_text(path.display().to_string());
             response.context_menu(|ui| {
                 theme::menu_style(ui);
+                if selection::menu(ui, &mut open) {
+                    return;
+                }
                 if theme::menu_item(ui, theme::Icon::NewTab, "Open in new tab").clicked() {
                     open = Some(FileAction::OpenInNewTab(path.clone()));
                     ui.close();
@@ -651,11 +716,16 @@ impl Tree {
                     ui.close();
                 }
             });
-            if response.clicked() {
+            if response.clicked() && !selection_click {
                 open = Some(FileAction::Open(path.clone()));
             }
         }
         ui.add_space((self.files.len() - last) as f32 * row_height);
+        if root {
+            if let Some(action) = selection::finish(ui) {
+                open = Some(action);
+            }
+        }
         (open, revealed)
     }
 }

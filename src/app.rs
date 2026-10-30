@@ -2592,6 +2592,19 @@ impl NotesApp {
                     self.duplicate_file(&path);
                 }
                 FileAction::Move(path) => self.ask_move_file(path),
+                FileAction::MoveMany(paths) => {
+                    if let Some(vault) = &self.vault {
+                        self.file_move.open_many(vault, paths);
+                        self.editor.focus = false;
+                    }
+                }
+                FileAction::TrashMany(paths) => {
+                    self.file_move.ask_trash(paths);
+                    self.editor.focus = false;
+                }
+                FileAction::MoveManyInto { sources, folder } => {
+                    self.move_entries(ui.ctx(), &sources, &folder, false)
+                }
                 FileAction::CopyPath(path) => {
                     if let Some(vault) = &self.vault {
                         ui.ctx()
@@ -4068,12 +4081,22 @@ impl NotesApp {
             if let Some(action) = self.file_move.show(ctx) {
                 match action {
                     crate::file_move_ui::Action::Move {
-                        source,
+                        sources,
                         folder,
                         create,
                     } => {
-                        self.move_file(&source, &folder, create);
+                        if sources.len() == 1
+                            && self
+                                .vault
+                                .as_ref()
+                                .is_some_and(|vault| !vault.folders.contains(&sources[0]))
+                        {
+                            self.move_file(&sources[0], &folder, create);
+                        } else {
+                            self.move_entries(ctx, &sources, &folder, create);
+                        }
                     }
+                    crate::file_move_ui::Action::Trash(paths) => self.trash_entries(ctx, &paths),
                     crate::file_move_ui::Action::Update { updates, always } => {
                         if always {
                             self.always_update_links = true;
@@ -4700,6 +4723,108 @@ impl NotesApp {
                 }
             }
             None => {}
+        }
+    }
+
+    fn move_entries(
+        &mut self,
+        ctx: &egui::Context,
+        sources: &[PathBuf],
+        folder: &Path,
+        create: bool,
+    ) {
+        if !self.save_all() {
+            self.move_failed(
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "Save your changes before moving files.".into()),
+            );
+            return;
+        }
+        let result = self
+            .vault
+            .as_mut()
+            .ok_or_else(|| "Open a vault first.".to_owned())
+            .and_then(|vault| vault.begin_move_entries(sources, folder, create));
+        match result {
+            Ok(Some(moved)) => {
+                let count = moved.paths.len();
+                for (from, to) in &moved.paths {
+                    self.relocate_tabs(from, to);
+                }
+                self.reveal_folder = Some(folder.to_owned());
+                if self.always_update_links || moved.updates.counts().0 == 0 {
+                    self.file_move.moved(None);
+                    self.apply_move_links(moved.updates);
+                } else {
+                    self.file_move.moved(Some(moved.updates));
+                }
+                self.status = Some(format!(
+                    "Moved {count} items to {}",
+                    if folder.as_os_str().is_empty() {
+                        "/".into()
+                    } else {
+                        folder.display().to_string()
+                    }
+                ));
+                self.refresh_file_views();
+                crate::explorer_selection::reset(ctx);
+            }
+            Ok(None) => self.file_move.moved(None),
+            Err(error) => {
+                self.move_failed(error);
+                self.refresh_file_views();
+            }
+        }
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+    }
+
+    fn trash_entries(&mut self, ctx: &egui::Context, sources: &[PathBuf]) {
+        let paths = match self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "Open a vault first.".to_owned())
+            .and_then(|vault| vault.selected_entries(sources))
+        {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        if !self.save_all() {
+            return;
+        }
+        let active = self.tabs.get(self.active).map(Tab::id);
+        let mut removed = Vec::new();
+        let mut failures = Vec::new();
+        if let Some(vault) = &mut self.vault {
+            for path in paths {
+                match vault.trash_entry(&path) {
+                    Ok(()) => removed.push(path),
+                    Err(error) => failures.push(format!("{}: {error}", path.display())),
+                }
+            }
+        }
+        self.tabs.retain(|tab| {
+            !removed
+                .iter()
+                .any(|path| tab.document.path.starts_with(path))
+        });
+        if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id()) == active) {
+            self.active = index;
+        } else {
+            self.new_tab();
+        }
+        self.status = Some(format!("Moved {} items to system Trash", removed.len()));
+        self.error = (!failures.is_empty())
+            .then(|| format!("Some items were not deleted: {}", failures.join("; ")));
+        self.refresh_file_views();
+        crate::explorer_selection::reset(ctx);
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
         }
     }
 

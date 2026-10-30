@@ -22,6 +22,11 @@ pub struct LinkUpdates {
     rewrites: Vec<Rewrite>,
 }
 
+pub struct MovedEntries {
+    pub paths: Vec<(PathBuf, PathBuf)>,
+    pub updates: LinkUpdates,
+}
+
 impl LinkUpdates {
     pub fn path(&self) -> &Path {
         &self.path
@@ -60,6 +65,160 @@ pub struct RenameOutcome {
 }
 
 impl Vault {
+    /// Validate the complete selection before a batch changes anything. A selected
+    /// folder owns its descendants, so they are never moved or trashed twice.
+    pub fn selected_entries(&self, sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        let mut paths = sources.to_vec();
+        paths.sort();
+        paths.dedup();
+        paths.retain(|path| {
+            !sources
+                .iter()
+                .any(|parent| parent != path && path.starts_with(parent))
+        });
+        for path in &paths {
+            if path.as_os_str().is_empty() || crate::vault::is_ignored_path(path) {
+                return Err("Choose visible files or folders inside this vault.".into());
+            }
+            let absolute = if self.folders.contains(path) {
+                self.folder_path(path)?
+            } else {
+                self.safe_file_path(path, false)?
+            };
+            let metadata =
+                std::fs::symlink_metadata(absolute).map_err(|error| error.to_string())?;
+            if metadata.file_type().is_symlink()
+                || (self.folders.contains(path) && !metadata.is_dir())
+                || (!self.folders.contains(path) && !metadata.is_file())
+            {
+                return Err(format!(
+                    "{} is no longer a file or folder in this vault.",
+                    path.display()
+                ));
+            }
+        }
+        Ok(paths)
+    }
+
+    pub fn begin_move_entries(
+        &mut self,
+        sources: &[PathBuf],
+        folder: &Path,
+        create: bool,
+    ) -> Result<Option<MovedEntries>> {
+        let sources = self.selected_entries(sources)?;
+        if sources.iter().any(|source| folder.starts_with(source)) {
+            return Err("A selection cannot be moved into itself or one of its folders.".into());
+        }
+        if crate::vault::is_ignored_path(folder)
+            || folder
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err("Choose a visible folder inside this vault.".into());
+        }
+        // The existing safe-path routine checks every ancestor and rejects links.
+        let destination = self.safe_file_path(&folder.join("Untitled.md"), create)?;
+        let parent = destination.parent().ok_or("Choose a folder.")?;
+        let metadata = std::fs::symlink_metadata(parent)
+            .map_err(|_| "This folder does not exist. Use Shift+Enter to create it.")?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("Choose a real folder inside this vault.".into());
+        }
+        let mut plans = Vec::new();
+        let mut moves = Vec::new();
+        let mut reserved = std::collections::BTreeSet::new();
+        for source in sources {
+            if source.parent() == Some(folder) {
+                continue;
+            }
+            let filename = source.file_name().ok_or("Choose a file or folder.")?;
+            let is_folder = self.folders.contains(&source);
+            let mut target = folder.join(filename);
+            let mut counter = 0u64;
+            while reserved.contains(&target)
+                || self
+                    .root
+                    .join(&target)
+                    .try_exists()
+                    .map_err(|error| error.to_string())?
+            {
+                counter += 1;
+                let name = if is_folder {
+                    format!("{} {counter}", filename.to_string_lossy())
+                } else if let Some(extension) = source.extension() {
+                    format!(
+                        "{} {counter}.{}",
+                        source.file_stem().unwrap().to_string_lossy(),
+                        extension.to_string_lossy()
+                    )
+                } else {
+                    return Err("A file with this name already exists at the destination.".into());
+                };
+                target = folder.join(name);
+            }
+            let plan = self.plan_entry_move(&source, &target, false)?;
+            moves.push((source, target.clone(), is_folder));
+            reserved.insert(target);
+            plans.push(plan);
+        }
+        if plans.is_empty() {
+            return Ok(None);
+        }
+        let mut rewrites = self.plan_link_moves(&moves, true)?;
+        let mut completed = Vec::<(PathBuf, PathBuf)>::new();
+        for plan in plans {
+            let from = plan.from.clone();
+            let to = plan.to.clone();
+            if let Err(error) = self.begin_rename(plan) {
+                let mut rollback_errors = Vec::new();
+                for (original, moved) in completed.iter().rev() {
+                    let rollback = self
+                        .plan_entry_move(moved, original, false)
+                        .and_then(|plan| self.begin_rename(plan));
+                    if let Err(failure) = rollback {
+                        rollback_errors.push(format!(
+                            "{} remains at {}: {failure}",
+                            original.display(),
+                            moved.display()
+                        ));
+                    }
+                }
+                return Err(if rollback_errors.is_empty() {
+                    format!("No items moved: {error}")
+                } else {
+                    format!("Move interrupted: {error}. {}", rollback_errors.join("; "))
+                });
+            }
+            completed.push((from, to));
+        }
+        for rewrite in &mut rewrites {
+            for (from, to, is_folder) in &moves {
+                let next = moved_path(&rewrite.document.path, from, to, *is_folder);
+                if next != rewrite.document.path {
+                    rewrite.document.path = next;
+                    break;
+                }
+            }
+        }
+        self.folders.extend(
+            folder
+                .ancestors()
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(Path::to_owned),
+        );
+        self.folders.sort();
+        self.folders.dedup();
+        Ok(Some(MovedEntries {
+            paths: completed,
+            updates: LinkUpdates {
+                root: self.root.clone(),
+                path: folder.to_owned(),
+                rewrites,
+            },
+        }))
+    }
+
     pub fn create_folder(&mut self, relative: &Path) -> Result<()> {
         let absolute = self.folder_path(relative)?;
         std::fs::create_dir(&absolute).map_err(|error| format!("Cannot create folder: {error}"))?;
@@ -195,6 +354,10 @@ impl Vault {
     }
 
     pub fn plan_rename(&self, from: &Path, to: &Path) -> Result<RenamePlan> {
+        self.plan_entry_move(from, to, true)
+    }
+
+    fn plan_entry_move(&self, from: &Path, to: &Path, links: bool) -> Result<RenamePlan> {
         if from == to {
             return Err("Choose a different name.".into());
         }
@@ -270,22 +433,63 @@ impl Vault {
         {
             return Err("A file or folder already exists at this destination.".into());
         }
+        let rewrites = if links {
+            self.plan_link_moves(&[(from.to_owned(), to.to_owned(), folder)], false)?
+        } else {
+            Vec::new()
+        };
+        Ok(RenamePlan {
+            from: from.to_owned(),
+            to: to.to_owned(),
+            source,
+            kind,
+            metadata,
+            entries,
+            rewrites,
+        })
+    }
+
+    fn plan_link_moves(
+        &self,
+        moves: &[(PathBuf, PathBuf, bool)],
+        batch: bool,
+    ) -> Result<Vec<Rewrite>> {
+        let relocate = |path: &Path| {
+            moves
+                .iter()
+                .find_map(|(from, to, folder)| {
+                    let next = moved_path(path, from, to, *folder);
+                    (next != path).then_some(next)
+                })
+                .unwrap_or_else(|| path.to_owned())
+        };
         let mut rewrites = Vec::new();
         for note in &self.notes {
-            let note_destination = moved_path(&note.path, from, to, folder);
+            let note_destination = relocate(&note.path);
             let mut changes = Vec::new();
             for (range, target) in wiki_spans(&note.text) {
                 if let Some(resolved) = self.resolve_destination(&note.path, &target)
-                    && (resolved == from
-                        || (folder && resolved.starts_with(from))
+                    && (relocate(&resolved) != resolved
                         || (note_destination != note.path
-                            && self.resolve_destination(&note_destination, &target)
-                                != Some(resolved.clone())))
+                            && (batch
+                                || self.resolve_destination(&note_destination, &target)
+                                    != Some(resolved.clone()))))
                 {
                     let name = target.split('|').next().unwrap();
                     let fragment = name.split_once('#').map(|(_, value)| value);
-                    let destination = moved_path(&resolved, from, to, folder);
-                    let mut link = paths::wiki_destination(&destination);
+                    let destination = relocate(&resolved);
+                    let wiki_path = if batch {
+                        PathBuf::from(
+                            paths::decode(&paths::markdown_destination(
+                                &note_destination,
+                                &destination,
+                            ))
+                            .ok_or("Invalid link destination.")?,
+                        )
+                    } else {
+                        destination.clone()
+                    };
+                    let mut link = paths::wiki_destination(&wiki_path);
                     if !paths::wiki_path_supported(&destination) {
                         return Err("This destination would break wiki links. Choose another name without separators such as # or |.".into());
                     }
@@ -336,11 +540,9 @@ impl Vault {
             }
             for (url, range) in markdown_links {
                 if let Some(resolved) = self.resolve_destination(&note.path, &url)
-                    && (resolved == from
-                        || (folder && resolved.starts_with(from))
-                        || note_destination != note.path)
+                    && (relocate(&resolved) != resolved || note_destination != note.path)
                 {
-                    let relocated = moved_path(&resolved, from, to, folder);
+                    let relocated = relocate(&resolved);
                     let mut destination =
                         paths::markdown_destination(&note_destination, &relocated);
                     if let Some((_, fragment)) = url.split_once('#') {
@@ -377,15 +579,7 @@ impl Vault {
             }
             rewrites.push(Rewrite { document, changes });
         }
-        Ok(RenamePlan {
-            from: from.to_owned(),
-            to: to.to_owned(),
-            source,
-            kind,
-            metadata,
-            entries,
-            rewrites,
-        })
+        Ok(rewrites)
     }
 
     pub fn rename_note(&mut self, plan: RenamePlan) -> Result<RenameOutcome> {

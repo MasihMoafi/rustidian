@@ -3,6 +3,7 @@ mod callout_ui;
 mod code_ui;
 mod diagrams;
 mod editor_ui;
+mod explorer_selection;
 mod file_move_ui;
 mod file_tree;
 mod graph_animation;
