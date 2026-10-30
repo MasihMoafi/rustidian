@@ -3877,6 +3877,7 @@ impl NotesApp {
         ) && ctx
             .input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
         let mut select = None;
+        let mut create_note = false;
         let mut run_command = None;
         let mut recovery_action = None;
         let mut configure_templates = false;
@@ -4034,9 +4035,18 @@ impl NotesApp {
                     });
                     if matches.is_empty() {
                         ui.label("No matching files");
+                        if !self.dialog_input.trim().is_empty() {
+                            let create = ui.button("Create note");
+                            crate::ui_probe::record(ui.ctx(), "quick-create", create.rect);
+                            create_note = create.clicked() || enter;
+                        }
                     }
                     ui.label(
-                        RichText::new("↑ ↓ to navigate · Enter to open · Ctrl+Enter for a new tab")
+                        RichText::new(if matches.is_empty() && !self.dialog_input.trim().is_empty() {
+                            "Enter to create · Ctrl+Enter for a new tab"
+                        } else {
+                            "↑ ↓ to navigate · Enter to open · Ctrl+Enter for a new tab"
+                        })
                             .size(11.0)
                             .weak(),
                     );
@@ -4265,6 +4275,11 @@ impl NotesApp {
             self.dialog = None;
             self.command(command, ctx);
             return;
+        }
+        if create_note {
+            let name = self.dialog_input.clone();
+            close = self
+                .create_quick_note(&name, open_in_new_tab || ctx.input(|i| i.modifiers.command));
         }
         if let Some(path) = select {
             if dialog == Dialog::InsertTemplate {
@@ -4970,6 +4985,47 @@ impl NotesApp {
                 && !tab.document.is_image()
                 && !matches!(tab.view, View::Read | View::Graph)
         })
+    }
+
+    fn create_quick_note(&mut self, name: &str, new_tab: bool) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let path = rustidian::paths::markdown_name(Path::new(name));
+        if path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            || rustidian::vault::is_ignored_path(&path)
+        {
+            self.error = Some("Choose a visible note path inside this vault.".into());
+            return false;
+        }
+        let new_tab = new_tab || self.tabs.get(self.active).is_some_and(|tab| tab.pinned);
+        if !new_tab
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.document.dirty())
+            && !self.save(self.active)
+        {
+            return false;
+        }
+        let Some(vault) = &mut self.vault else {
+            self.error = Some("Open a vault before creating a note.".into());
+            return false;
+        };
+        let mut document = Document::new(path.clone());
+        if let Err(error) = vault.save(&mut document) {
+            self.error = Some(error);
+            return false;
+        }
+        self.refresh_file_views();
+        self.error = None;
+        self.open_note_at(&path, new_tab);
+        self.set_view(View::Live);
+        self.status = format!("Created {}", path.display());
+        true
     }
 
     fn create_note(&mut self) {

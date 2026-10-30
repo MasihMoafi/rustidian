@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -2137,6 +2137,84 @@ def main():
                 assert control_bounds("math-render-count")[0]==previous, "Idle/hover regenerated cached formulas"
                 assert all(path.read_bytes()==data for path,data in originals.items()), "Math views changed a document in the disposable vault"
                 results.append("A settled formula cache survived idle/hover frames without rerendering, and all original vault document bytes remained unchanged")
+
+            def quick_create_checks():
+                origin = fixture / "Quick origin.md"; origin.write_text("ORIGIN\n")
+                existing = fixture / "Existing target.md"; existing.write_text("KEEP_EXISTING\n")
+                (fixture / "Quick nested").mkdir()
+                command("Refresh vault"); open_note(origin.name, title=origin.stem)
+                def query(value):
+                    key("ctrl+o"); click_control("dialog-input"); control_bounds("dialog-input-focused")
+                    modified_shortcut(xdo, "a"); key("BackSpace")
+                    if any(ord(char) > 127 for char in value): paste_text(value)
+                    else: type_text(value)
+                def wait_note(path, text):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.exists() and path.read_text() == text: return
+                        time.sleep(.05)
+                    raise AssertionError((path.name, text, path.read_text() if path.exists() else "MISSING"))
+                def created(name):
+                    path = fixture / name
+                    wait_note(path, ""); control_bounds("tab-full:" + name); control_bounds("editor-focused")
+                    return path
+                command("Source editing"); editor_end(); type_text("DRAFT_TAIL")
+                query("Fresh idea ZQ901"); control_bounds("quick-create")
+                capture("native-quick-create-offer.png"); key("Return")
+                first = created("Fresh idea ZQ901.md")
+                wait_note(origin, "ORIGIN\nDRAFT_TAIL")
+                editor_end(); type_text("CREATED_BODY"); key("ctrl+s"); wait_note(first, "CREATED_BODY")
+                capture("native-quick-create-note.png")
+                key("alt+Left"); control_bounds("tab-full:Quick origin.md")
+                key("alt+Right"); control_bounds("tab-full:Fresh idea ZQ901.md")
+                results.append("Ctrl+O with no matches created the named Markdown file, opened an editable note, saved its body and the old draft, and retained back/forward history")
+                open_note(origin.name, title=origin.stem)
+                query("Separate tab ZQ902"); modified_shortcut(xdo, "Return"); pause()
+                created("Separate tab ZQ902.md"); control_bounds("tab-full:Quick origin.md")
+                capture("native-quick-create-new-tab.png")
+                open_note(origin.name, title=origin.stem)
+                click_control("tab-full:Quick origin.md", "3"); click_control("tab-menu-pin")
+                query("Pinned creation ZQ903"); key("Return")
+                created("Pinned creation ZQ903.md"); control_bounds("tab-full:Quick origin.md")
+                results.append("Ctrl+Enter and a pinned origin each opened a new note tab while preserving the origin")
+                query("Quick nested/New child ZQ904.md"); click_control("quick-create")
+                nested = created("Quick nested/New child ZQ904.md")
+                assert not (fixture / "Quick nested/New child ZQ904.md.md").exists()
+                query("Quick made/New deeper ZQ905"); key("Return")
+                created("Quick made/New deeper ZQ905.md"); assert (fixture / "Quick made").is_dir()
+                query("Fresh café ZQ906"); key("Return"); created("Fresh café ZQ906.md")
+                capture("native-quick-create-unicode.png")
+                results.append("The Create note button, existing nested folders, missing parent folders, explicit .md names and Unicode note names all created the exact requested path")
+                before = {path.relative_to(fixture): path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                query(existing.name); control_bounds("quick-open:Existing target.md")
+                assert not control_bounds("quick-create", required=False)
+                key("Return"); control_bounds("tab-full:Existing target.md")
+                query(first.stem); assert not control_bounds("quick-create", required=False)
+                key("Return"); control_bounds("tab-full:Fresh idea ZQ901.md")
+                assert {path.relative_to(fixture): path.read_bytes() for path in fixture.rglob("*") if path.is_file()} == before
+                results.append("Existing matches and a newly created note reopened through normal quick switching without new files or overwritten contents")
+                outside = base / "Outside ZQ907.md"
+                before_paths = {path.relative_to(fixture) for path in fixture.rglob("*")}
+                for value in ["../Outside ZQ907", str(outside), ".hidden/New ZQ908", "vendor/New ZQ909"]:
+                    query(value); control_bounds("quick-create"); key("Return")
+                    control_bounds("dialog-error"); assert not outside.exists()
+                    assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
+                    key("Escape")
+                query("Cancelled ZQ910"); control_bounds("quick-create"); key("Escape")
+                query(""); assert not control_bounds("quick-create", required=False); key("Escape")
+                query("   "); assert not control_bounds("quick-create", required=False); key("Escape")
+                assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
+                results.append("Absolute, escaping and ignored paths failed visibly; cancelled, empty and whitespace queries created no files or folders")
+                query("Denied ZQ911"); mode = fixture.stat().st_mode
+                try:
+                    fixture.chmod(0o555); key("Return"); control_bounds("dialog-error")
+                    capture("native-quick-create-error.png")
+                    assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
+                finally: fixture.chmod(mode)
+                key("Escape"); query("Denied ZQ911"); key("Return"); created("Denied ZQ911.md")
+                assert existing.read_text() == "KEEP_EXISTING\n" and first.read_text() == "CREATED_BODY"
+                assert origin.read_text() == "ORIGIN\nDRAFT_TAIL" and nested.read_text() == ""
+                results.append("A real unwritable-vault error preserved all notes and paths; retry after restoring access created and opened the requested note")
 
             def quick_ranking_checks():
                 close_tabs()
@@ -9917,6 +9995,10 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
+            if args.section == "quick-create":
+                quick_create_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "quick-create", "checks": len(results), "status": "passed"})); return
             if args.section == "quick-ranking":
                 quick_ranking_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
@@ -10271,7 +10353,7 @@ def main():
                 native_highlight_checks,
                 navigation_checks,
                 page_preview_checks,
-                quick_ranking_checks,
+                quick_create_checks, quick_ranking_checks,
                 hover_checks,
                 title_checks,
                 scrolling_checks,
