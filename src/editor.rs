@@ -720,7 +720,19 @@ pub fn wrap(
         return selection;
     };
     let size = opening.chars().count();
-    if text[..start].ends_with(opening) && text[end..].starts_with(closing) {
+    // A bold delimiter also starts and ends with `*`. Italic needs an odd
+    // number of adjacent stars, so toggling it preserves any bold wrapper.
+    let italic = opening == "*" && closing == "*";
+    let italic_present = !italic
+        || (text[..start]
+            .bytes()
+            .rev()
+            .take_while(|b| *b == b'*')
+            .count()
+            % 2
+            == 1
+            && text[end..].bytes().take_while(|b| *b == b'*').count() % 2 == 1);
+    if text[..start].ends_with(opening) && text[end..].starts_with(closing) && italic_present {
         text.replace_range(end..end + closing.len(), "");
         text.replace_range(start - opening.len()..start, "");
         selection.start - size..selection.end - size
