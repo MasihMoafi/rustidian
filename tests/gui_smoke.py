@@ -5666,7 +5666,8 @@ def main():
                 command("Refresh vault")
                 open_note("Elsewhere/Active.md", title="Active")
                 def fill_dialog(value):
-                    click_control("dialog-input-focused")
+                    click_control("dialog-input")
+                    control_bounds("dialog-input-focused")
                     modified_shortcut(xdo, "a"); key("BackSpace")
                     type_text(value)
                 def wait_file(path, expected):
