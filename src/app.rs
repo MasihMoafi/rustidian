@@ -5622,7 +5622,10 @@ impl eframe::App for NotesApp {
                 Ok(()) => self.status = "Revealed in system file manager".into(),
                 Err(error) => {
                     self.status.clear();
-                    self.error = Some(error);
+                    eprintln!("File-manager request failed: {error}");
+                    self.error = Some(
+                        "Could not reveal this item in the system file manager. Try again.".into(),
+                    );
                 }
             }
         }
