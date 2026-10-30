@@ -6429,11 +6429,33 @@ def main():
                         time.sleep(.1)
                     raise AssertionError("Reveal did not open the actual file manager")
 
+                def focus_selected_item(manager, label):
+                    # Focus the existing selection with one real click. Never search
+                    # for the expected name or change which item Reveal selected.
+                    geometry = dict(line.split("=", 1) for line in xdo("getwindowgeometry", "--shell", manager).splitlines() if "=" in line)
+                    left, top = int(geometry["X"]) + 220, int(geometry["Y"]) + 65
+                    picture = ImageGrab.grab(xdisplay=display).crop((left, top, int(geometry["X"])+int(geometry["WIDTH"])-15, int(geometry["Y"])+int(geometry["HEIGHT"])-15)).convert("RGB")
+                    width = picture.width
+                    best = (0, 0, 0)
+                    run = 0
+                    for index, (red, green, blue) in enumerate(pixel_data(picture)):
+                        x, y = index % width, index // width
+                        if x == 0: run = 0
+                        if red >= 170 and green >= 180 and blue >= 220 and blue > red + 15 and blue > green + 6:
+                            run += 1
+                            if run > best[0]: best = (run, left+x-run//2, top+y+8)
+                        else: run = 0
+                    assert best[0] >= 100, ("No visible selected-item highlight", label, best)
+                    capture(f"native-reveal-initial-{label}.png")
+                    xdo("mousemove", "--sync", str(best[1]), str(best[2]), "click", "1")
+                    pause()
+                    (reports / f"native-reveal-focus-{label}.json").write_text(json.dumps({"manager_window":manager,"focused_window":xdo("getwindowfocus"),"highlight_run":best})+"\n")
+
                 def copied_item(expected):
                     deadline = time.monotonic() + 6
                     last = {}
                     while time.monotonic() < deadline:
-                        key("ctrl+c")
+                        modified_shortcut(xdo, "c"); pause()
                         # Nautilus 46 advertises its own file-copy serialization;
                         # both formats below carry URIs from the real selection.
                         for target in ("text/uri-list", "x-special/gnome-copied-files"):
@@ -6464,7 +6486,7 @@ def main():
                     xdo("windowsize", manager, "1050", "700")
                     xdo("windowmove", manager, "270", "140")
                     pause()
-                    key("ctrl+c")
+                    focus_selected_item(manager, label)
                     mime, uri = copied_item(path)
                     capture(f"native-reveal-{label}.png")
                     requests.append({"case":label, "selected_path":str(path), "copied_mime":mime, "copied_uri":uri})
