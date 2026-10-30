@@ -68,7 +68,7 @@ impl Vault {
         Ok(())
     }
 
-    fn folder_path(&self, relative: &Path) -> Result<PathBuf> {
+    pub(crate) fn folder_path(&self, relative: &Path) -> Result<PathBuf> {
         if relative.as_os_str().is_empty()
             || relative.components().any(|part| match part {
                 std::path::Component::Normal(name) => {
