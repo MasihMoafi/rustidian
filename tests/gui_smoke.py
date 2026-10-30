@@ -6951,7 +6951,7 @@ def main():
                     source = connection.screen().root.create_window(0, 0, 1, 1, 0, X.CopyFromParent, event_mask=X.PropertyChangeMask)
                     target = connection.create_resource_object("window", int(window))
                     atoms = {name: connection.intern_atom(name) for name in ["XdndSelection", "XdndEnter", "XdndPosition", "XdndDrop", "XdndStatus", "XdndFinished", "XdndActionCopy", "text/uri-list", "TARGETS"]}
-                    delivered = False; finished = False; events = []
+                    delivered = False; finished = False; sent_drop = False; events = []
                     def send(name, data):
                         target.send_event(protocol.event.ClientMessage(window=target, client_type=atoms[name], data=(32, data)), event_mask=0)
                         connection.flush()
@@ -6980,7 +6980,8 @@ def main():
                                     values = list(event.data[1])
                                     if event.client_type == atoms["XdndStatus"]:
                                         events.append(["status", values]); assert values[1] & 1, events
-                                        send("XdndDrop", [source.id, 0, X.CurrentTime, 0, 0])
+                                        if not sent_drop:
+                                            send("XdndDrop", [source.id, 0, X.CurrentTime, 0, 0]); sent_drop = True
                                     elif event.client_type == atoms["XdndFinished"]:
                                         events.append(["finished", values]); assert values[1] & 1, events
                                         finished = True
@@ -7031,6 +7032,11 @@ def main():
                 saved(dropped, expected + "![[Dropped picture 1.png]]"); assert pngs() == before
                 key("ctrl+z"); saved(dropped, expected)
                 results.append("Native Xdnd multi-image drop inserted at the pointer instead of the old caret, copied exact bytes, preserved a filename collision, escaped ]]/# names, rendered both images, reused an existing vault attachment and supported Undo")
+                left, top, right, bottom = control_bounds("image-drop-target"); before = pngs()
+                key("ctrl+o"); drop_files([first], ((left + right) / 2, bottom - 30))
+                assert pngs() == before, "A drop behind Quick Open must not create an attachment"
+                key("Escape"); saved(dropped, expected)
+                results.append("A native file drop behind Quick Open left the hidden note and all attachments unchanged")
                 open_note(table.name, title=table.stem); command("Live preview")
                 click_control("edit-table-cell:0:1:0"); modified_shortcut(xdo, "a"); pause()
                 before = pngs(); paste_image(); new = pngs() - before; assert len(new) == 1, new

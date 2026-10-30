@@ -982,7 +982,13 @@ impl Editor {
         vault: Option<&mut rustidian::vault::Vault>,
     ) -> Option<(String, egui::Pos2)> {
         use image::ImageEncoder;
-        if !ui.is_enabled() || ui.is_sizing_pass() || tab.document.is_plain_text() {
+        if !ui.is_enabled()
+            || ui.is_sizing_pass()
+            || !ui
+                .ctx()
+                .memory(|memory| memory.allows_interaction(ui.layer_id()))
+            || tab.document.is_plain_text()
+        {
             return None;
         }
         let vault = vault?;
