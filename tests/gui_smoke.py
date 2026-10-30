@@ -449,7 +449,7 @@ def main():
                 if value in title:
                     return
                 time.sleep(.05)
-            capture("failed-title")
+            capture("failed-title.png")
             raise AssertionError((value, title))
 
         def open_note(value, *, title=None):
@@ -6485,7 +6485,7 @@ def main():
                 editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
                 title_contains("A")
                 control_bounds("tab-full:" + str((first / "A.md").relative_to(fixture)))
-                key("alt+Left"); title_contains("Child")
+                click_control("tab-full:" + str(copied_child.relative_to(fixture))); title_contains("Child")
                 editor_end(); type_text("COPY_ONLY_SAVED"); key("ctrl+s")
                 assert copied_child.read_bytes().endswith(b"COPY_ONLY_SAVED")
                 assert snapshot(source) == expected
