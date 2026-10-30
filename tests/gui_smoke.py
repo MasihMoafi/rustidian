@@ -7009,7 +7009,10 @@ def main():
                 open_note(dropped.name, title=dropped.stem); command("Source editing"); editor_end()
                 left, top, right, bottom = control_bounds("editor-caret")
                 point = (right + 24, (top + bottom) / 2)
-                key("ctrl+Home"); before = pngs(); drop_files([first, special], point)
+                key("ctrl+Home"); before = pngs()
+                left, top, right, bottom = control_bounds("image-drop-target")
+                assert left <= point[0] <= right and top <= point[1] <= bottom
+                drop_files([first, special], point)
                 expected = "START\n\nEND![[Dropped picture 1.png]]\n![[Drop %5D%5D %23.png]]"
                 saved(dropped, expected)
                 assert pngs() - before == {Path("Dropped picture 1.png"), Path(special.name)}
@@ -7022,8 +7025,9 @@ def main():
                 screen = ImageGrab.grab(xdisplay=display).convert("RGB")
                 assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 4000, "Both dropped images must render"
                 command("Source editing"); editor_end()
-                left, top, right, bottom = control_bounds("editor-caret"); before = pngs()
-                drop_files([fixture / "Dropped picture 1.png"], (right + 24, (top + bottom) / 2))
+                left, top, right, bottom = control_bounds("image-drop-target"); before = pngs()
+                key("ctrl+Home")
+                drop_files([fixture / "Dropped picture 1.png"], ((left + right) / 2, bottom - 30))
                 saved(dropped, expected + "![[Dropped picture 1.png]]"); assert pngs() == before
                 key("ctrl+z"); saved(dropped, expected)
                 results.append("Native Xdnd multi-image drop inserted at the pointer instead of the old caret, copied exact bytes, preserved a filename collision, escaped ]]/# names, rendered both images, reused an existing vault attachment and supported Undo")

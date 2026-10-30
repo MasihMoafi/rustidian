@@ -987,8 +987,11 @@ impl Editor {
         }
         let vault = vault?;
         let paste = self.has_focus(ui.ctx(), id);
-        let drop_rect =
-            egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max).intersect(ui.clip_rect());
+        let drop_rect = egui::Rect::from_min_max(
+            ui.cursor().min,
+            egui::pos2(ui.max_rect().right(), ui.clip_rect().bottom()),
+        )
+        .intersect(ui.clip_rect());
         let drop_at = ui
             .input(|input| input.pointer.hover_pos())
             .filter(|pos| drop_rect.contains(*pos));
