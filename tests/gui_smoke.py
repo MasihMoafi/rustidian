@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6900,6 +6900,94 @@ def main():
                 assert note.read_text()==original
                 results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
 
+            def delimiter_pair_checks():
+                pairs = [("round", "(", ")"), ("square", "[", "]"), ("curly", "{", "}"), ("single", "'", "'"), ("double", '"', '"')]
+                modes = ("Source editing", "Live preview")
+                for mode in modes:
+                    for label, _, _ in pairs:
+                        (fixture / f"Pair {mode} {label}.md").write_text("")
+                    (fixture / f"Pair {mode} context.md").write_text("can")
+                    (fixture / f"Pair {mode} unicode.md").write_text("café 👋")
+                    (fixture / f"Pair {mode} link.md").write_text("")
+                    (fixture / f"Pair {mode} queued.md").write_text("")
+                    (fixture / f"Pair {mode} format.md").write_text("word")
+                    (fixture / f"Pair {mode} enter.md").write_text("- Item")
+                    (fixture / f"Pair {mode} follow.md").write_text("")
+                (fixture / "Pair target.md").write_text("# Pair target\n")
+                (fixture / "Pair table.md").write_text("# Pair table\n\n| Value |\n| --- |\n| old |\n")
+                literal = fixture / "Pair literal.txt"; literal.write_text("")
+                command("Refresh vault")
+                def saved(path, expected):
+                    key("ctrl+s")
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and path.read_text() != expected:
+                        time.sleep(.05)
+                    assert path.read_text() == expected, (path.name, expected, path.read_text())
+                def choose(name, mode):
+                    open_note(name + ".md", title=name)
+                    control_bounds("tab-full:" + name + ".md")
+                    command(mode); editor_end(); control_bounds("editor-focused")
+                    return fixture / (name + ".md")
+                def select_all():
+                    modified_shortcut(xdo, "a"); pause()
+                for mode in modes:
+                    for label, opening, closing in pairs:
+                        path = choose(f"Pair {mode} {label}", mode)
+                        type_text(opening); saved(path, opening + closing)
+                        key("BackSpace"); saved(path, "")
+                        type_text(opening); type_text("inside"); type_text(closing); type_text("!")
+                        saved(path, opening + "inside" + closing + "!")
+                        select_all(); type_text("word"); saved(path, "word")
+                        select_all(); type_text(opening); saved(path, opening + "word" + closing)
+                        key("ctrl+z"); saved(path, "word")
+                        key("ctrl+y"); saved(path, opening + "word" + closing)
+                        type_text("new"); saved(path, opening + "new" + closing)
+                    capture("native-pairs-" + mode.replace(" ", "-") + ".png")
+                    results.append(mode + ": round/square/curly brackets and both quotes pair, empty pairs backspace together, closers overtype, selected text wraps and Undo/Redo preserves the inner selection")
+                    path = choose(f"Pair {mode} context", mode)
+                    type_text("'t"); saved(path, "can't")
+                    select_all(); type_text("word"); key("ctrl+Home"); type_text("("); saved(path, "(word")
+                    select_all(); paste_text("("); saved(path, "(")
+                    select_all(); paste_text("\\"); type_text("("); saved(path, "\\(")
+                    select_all(); key("BackSpace"); type_text('"'); type_text("\\"); type_text('"')
+                    saved(path, '"' + "\\" + '""')
+                    type_text('"'); type_text("!"); saved(path, '"' + "\\" + '""!')
+                    path = choose(f"Pair {mode} unicode", mode)
+                    select_all(); type_text("("); saved(path, "(café 👋)")
+                    path = choose(f"Pair {mode} link", mode)
+                    type_text("[[Pair target"); key("Tab"); type_text(" after")
+                    saved(path, "[[Pair target]] after")
+                    path = choose(f"Pair {mode} queued", mode)
+                    queued_steps(("text", "[[Pair target"), ("key", "Tab"), ("text", " queued"))
+                    saved(path, "[[Pair target]] queued")
+                    path = choose(f"Pair {mode} enter", mode)
+                    queued_steps(("text", " ("), ("key", "Return"), ("text", "next"))
+                    saved(path, "- Item (\n- next)")
+                    path = choose(f"Pair {mode} follow", mode)
+                    queued_steps(("text", "[[Pair target"), ("key", "ctrl+Return"))
+                    control_bounds("tab-full:Pair target.md")
+                    control_bounds("tab-full:" + path.name)
+                    click_control("tab-full:" + path.name); saved(path, "[[Pair target]]")
+                    click_control("tab-full:Pair target.md"); key("ctrl+w")
+                    path = choose(f"Pair {mode} format", mode)
+                    select_all(); key("ctrl+b"); saved(path, "**word**")
+                    key("ctrl+i"); saved(path, "***word***")
+                    capture("native-pairs-context-" + mode.replace(" ", "-") + ".png")
+                    results.append(mode + ": apostrophes stay literal inside words, pasted text is unchanged, Unicode wraps, normal/queued wiki completion and bold/italic shortcuts work")
+                open_note("Pair literal.txt", title="Pair literal"); editor_end()
+                type_text("("); saved(literal, "(")
+                results.append("Plain text files keep literal input rather than Markdown bracket pairing")
+                open_note("Pair table.md", title="Pair table"); command("Live preview")
+                click_control("edit-table-cell:0:1:0")
+                select_all(); key("BackSpace"); type_text("("); key("ctrl+s")
+                table = fixture / "Pair table.md"
+                assert "| () |" in table.read_text(), table.read_text()
+                type_text("cell"); type_text(")"); key("ctrl+s")
+                assert "| (cell) |" in table.read_text(), table.read_text()
+                capture("native-pairs-table.png")
+                key("Escape")
+                results.append("The same native pairing works inside an editable Markdown table cell")
+
             def external_rename_checks():
                 nonlocal app, window
                 folder = fixture / "Outside moves/Inner"
@@ -9369,6 +9457,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
                 return
+            if args.section == "delimiter-pairs":
+                delimiter_pair_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "external-rename":
                 external_rename_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -9948,6 +10041,7 @@ def main():
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,
+                delimiter_pair_checks,
                 settings_checks,
                 font_controls_checks,
                 font_family_checks,

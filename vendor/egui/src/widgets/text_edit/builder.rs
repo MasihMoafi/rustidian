@@ -93,6 +93,7 @@ pub struct TextEdit<'t> {
     align: Option<Align2>,
     clip_text: bool,
     char_limit: usize,
+    auto_pair: bool,
     return_key: Option<KeyboardShortcut>,
     background_color: Option<Color32>,
     classes: Classes,
@@ -157,10 +158,19 @@ impl<'t> TextEdit<'t> {
             align: None,
             clip_text: false,
             char_limit: usize::MAX,
+            auto_pair: false,
             return_key: Some(KeyboardShortcut::new(Modifiers::NONE, Key::Enter)),
             background_color: None,
             classes: Classes::default(),
         }
+    }
+
+    /// Pair brackets and quotes during typing, including wrapping selected text.
+    /// Disabled by default so plain text fields and pasted contents stay literal.
+    #[inline]
+    pub fn auto_pair(mut self, enabled: bool) -> Self {
+        self.auto_pair = enabled;
+        self
     }
 
     /// Build a [`TextEdit`] focused on code editing.
@@ -518,6 +528,7 @@ impl<'t> TextEdit<'t> {
             align,
             clip_text,
             char_limit,
+            auto_pair,
             return_key,
             background_color,
             mut classes,
@@ -675,6 +686,7 @@ impl<'t> TextEdit<'t> {
                         default_cursor_range,
                         owns_ime_events,
                         char_limit,
+                        auto_pair,
                         event_filter,
                         return_key,
                     },
@@ -1181,9 +1193,13 @@ struct EventsOptions {
     default_cursor_range: CCursorRange,
     owns_ime_events: bool,
     char_limit: usize,
+    auto_pair: bool,
     event_filter: EventFilter,
     return_key: Option<KeyboardShortcut>,
 }
+
+const AUTO_PAIRS: [(char, char); 5] =
+    [('(', ')'), ('[', ']'), ('{', '}'), ('\'', '\''), ('"', '"')];
 
 /// Check for (keyboard) events to edit the cursor and/or text.
 fn events(
@@ -1202,6 +1218,7 @@ fn events(
         default_cursor_range,
         owns_ime_events,
         char_limit,
+        auto_pair,
         event_filter,
         return_key,
     } = *opts;
@@ -1229,6 +1246,7 @@ fn events(
 
     enum CursorMutation {
         Selection(CCursorRange),
+        CursorOnly(CCursorRange),
         ImeComposition {
             cursor_range: CCursorRange,
             active_range: Option<core::ops::Range<CCursor>>,
@@ -1340,11 +1358,83 @@ fn events(
             Event::Text(text_to_insert) => {
                 // Newlines are handled by `Key::Enter`.
                 if !text_to_insert.is_empty() && text_to_insert != "\n" && text_to_insert != "\r" {
-                    let mut ccursor = text.delete_selected(&cursor_range);
-
-                    text.insert_text_at(&mut ccursor, text_to_insert, char_limit);
-
-                    Some(CursorMutation::Selection(CCursorRange::one(ccursor)))
+                    let typed = text_to_insert
+                        .chars()
+                        .next()
+                        .filter(|_| text_to_insert.chars().count() == 1);
+                    let pair = typed.and_then(|typed| {
+                        AUTO_PAIRS.iter().copied().find(|(open, _)| *open == typed)
+                    });
+                    let closer = typed
+                        .is_some_and(|typed| AUTO_PAIRS.iter().any(|(_, close)| *close == typed));
+                    let index = cursor_range.primary.index.0;
+                    let next = if auto_pair && cursor_range.is_empty() && (pair.is_some() || closer)
+                    {
+                        text.as_str().chars().nth(index)
+                    } else {
+                        None
+                    };
+                    let previous = if auto_pair
+                        && cursor_range.is_empty()
+                        && pair.is_some_and(|(a, b)| a == b)
+                        && index > 0
+                    {
+                        text.as_str().chars().nth(index - 1)
+                    } else {
+                        None
+                    };
+                    let escaped =
+                        auto_pair && cursor_range.is_empty() && (pair.is_some() || closer) && {
+                            let byte = text.byte_index_from_char_index(cursor_range.primary.index);
+                            text.as_str()[..byte]
+                                .bytes()
+                                .rev()
+                                .take_while(|byte| *byte == b'\\')
+                                .count()
+                                % 2
+                                == 1
+                        };
+                    if auto_pair && !escaped && cursor_range.is_empty() && closer && next == typed {
+                        Some(CursorMutation::CursorOnly(CCursorRange::one(CCursor::new(
+                            index + 1,
+                        ))))
+                    } else if auto_pair
+                        && !escaped
+                        && let Some((opening, closing)) = pair
+                        && text.as_str().chars().count().saturating_add(2) <= char_limit
+                        && (!cursor_range.is_empty()
+                            || (next.is_none_or(|character| {
+                                character.is_whitespace()
+                                    || AUTO_PAIRS.iter().any(|(_, close)| *close == character)
+                                    || matches!(character, ',' | '.' | ';' | ':' | '!' | '?' | '>')
+                            }) && (opening != closing
+                                || !previous.is_some_and(|character| {
+                                    character.is_alphanumeric() || character == '_'
+                                }))))
+                    {
+                        let selected = cursor_range.slice_str(text.as_str()).to_owned();
+                        let selected_length = selected.chars().count();
+                        let reversed = cursor_range.primary.index < cursor_range.secondary.index;
+                        let mut cursor = text.delete_selected(&cursor_range);
+                        let start = cursor.index.0 + 1;
+                        text.insert_text_at(
+                            &mut cursor,
+                            &format!("{opening}{selected}{closing}"),
+                            char_limit,
+                        );
+                        let mut selection = CCursorRange::two(
+                            CCursor::new(start),
+                            CCursor::new(start + selected_length),
+                        );
+                        if reversed {
+                            core::mem::swap(&mut selection.primary, &mut selection.secondary);
+                        }
+                        Some(CursorMutation::Selection(selection))
+                    } else {
+                        let mut ccursor = text.delete_selected(&cursor_range);
+                        text.insert_text_at(&mut ccursor, text_to_insert, char_limit);
+                        Some(CursorMutation::Selection(CCursorRange::one(ccursor)))
+                    }
                 } else {
                     None
                 }
@@ -1424,8 +1514,37 @@ fn events(
                 key,
                 pressed: true,
                 ..
-            } => check_for_mutating_key_press(os, &cursor_range, text, galley, modifiers, *key)
-                .map(CursorMutation::Selection),
+            } => {
+                let index = cursor_range.primary.index.0;
+                let empty_pair = auto_pair
+                    && *key == Key::Backspace
+                    && modifiers.is_none()
+                    && cursor_range.is_empty()
+                    && index > 0
+                    && AUTO_PAIRS.iter().any(|(open, close)| {
+                        text.as_str().chars().nth(index - 1) == Some(*open)
+                            && text.as_str().chars().nth(index) == Some(*close)
+                    })
+                    && {
+                        let byte = text.byte_index_from_char_index((index - 1).into());
+                        text.as_str()[..byte]
+                            .bytes()
+                            .rev()
+                            .take_while(|byte| *byte == b'\\')
+                            .count()
+                            % 2
+                            == 0
+                    };
+                if empty_pair {
+                    text.delete_char_range((index - 1).into()..(index + 1).into());
+                    Some(CursorMutation::Selection(CCursorRange::one(CCursor::new(
+                        index - 1,
+                    ))))
+                } else {
+                    check_for_mutating_key_press(os, &cursor_range, text, galley, modifiers, *key)
+                        .map(CursorMutation::Selection)
+                }
+            }
             Event::Ime(ime_event) if owns_ime_events => {
                 /// Both `ImeEvent::Preedit("")` and `ImeEvent::Commit("")`
                 /// might be emitted from different integrations to signify that
@@ -1536,18 +1655,19 @@ fn events(
         };
 
         if let Some(cursor_mutation) = did_mutate_text {
-            any_change = true;
-
-            // Layout again to avoid frame delay, and to keep `text` and `galley` in sync.
-            if matches!(event, Event::Text(_)) {
-                galley_stale = true;
-            } else {
-                *galley = layouter(ui, text, wrap_width);
+            if !matches!(cursor_mutation, CursorMutation::CursorOnly(_)) {
+                any_change = true;
+                if matches!(event, Event::Text(_)) {
+                    galley_stale = true;
+                } else {
+                    *galley = layouter(ui, text, wrap_width);
+                }
             }
 
             // Set cursor_range using new galley:
             match cursor_mutation {
-                CursorMutation::Selection(new_cursor_range) => {
+                CursorMutation::Selection(new_cursor_range)
+                | CursorMutation::CursorOnly(new_cursor_range) => {
                     cursor_range = new_cursor_range;
                     state.cursor_purpose = TextEditCursorPurpose::Selection;
                 }

@@ -1088,7 +1088,32 @@ impl Editor {
         if ui.memory(|m| m.has_focus(id)) {
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             if let Some(mut selection) = state.cursor.char_range() {
-                if let Some(text) = ui.input_mut(|input| text_before_action(&mut input.events)) {
+                if let Some(text) = ui.input_mut(|input| {
+                    // Let the text widget pair punctuation before a queued editor action.
+                    let native_text = !tab.document.is_plain_text()
+                        && input
+                            .events
+                            .iter()
+                            .take_while(|event| {
+                                !matches!(
+                                    event,
+                                    egui::Event::Key {
+                                        key: Key::Tab | Key::Enter,
+                                        pressed: true,
+                                        ..
+                                    }
+                                )
+                            })
+                            .any(|event| {
+                                matches!(event, egui::Event::Text(text)
+                            if text.chars().any(|c| !c.is_alphanumeric() && !c.is_whitespace()))
+                            });
+                    if native_text {
+                        None
+                    } else {
+                        text_before_action(&mut input.events)
+                    }
+                }) {
                     if !text.is_empty() {
                         let mut undoer = state.undoer();
                         if !selection.is_empty() {
@@ -1113,11 +1138,18 @@ impl Editor {
                     }
                 } else {
                     action_ready = false;
-                    // Let preceding navigation, paste or selection run before this Tab.
+                    // Apply preceding native edits before a queued Tab or Enter.
                     let events = ui.input_mut(|input| {
-                        let index = [egui::Modifiers::NONE, egui::Modifiers::SHIFT]
-                            .into_iter()
-                            .find_map(|modifiers| action_matches(input, modifiers, &[Key::Tab]))?;
+                        let index = input.events.iter().position(|event| {
+                            matches!(
+                                event,
+                                egui::Event::Key {
+                                    key: Key::Tab | Key::Enter,
+                                    pressed: true,
+                                    ..
+                                }
+                            )
+                        })?;
                         Some(input.events.split_off(index))
                     });
                     if let Some(events) = events {
@@ -1660,6 +1692,7 @@ impl Editor {
                 }
                 TextEdit::multiline(&mut tab.document.text)
                     .id(id)
+                    .auto_pair(!plain_text)
                     .desired_width(f32::INFINITY)
                     .desired_rows(1)
                     .min_size(egui::vec2(0.0, minimum_height))

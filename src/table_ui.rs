@@ -714,6 +714,7 @@ impl Tables {
                                     inner,
                                     TextEdit::singleline(&mut cell.text)
                                         .id(field_id)
+                                        .auto_pair(true)
                                         .font(egui::FontId::new(
                                             crate::theme::document_size(ui, 18.0),
                                             crate::theme::fonts::text("regular"),
