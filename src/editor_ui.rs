@@ -28,7 +28,6 @@ pub struct Find {
     restore_since: Option<f64>,
 }
 
-#[derive(Default)]
 struct LinkCandidate {
     label: String,
     target: String,
@@ -113,6 +112,7 @@ fn link_candidates(
         .collect()
 }
 
+#[derive(Default)]
 pub struct Editor {
     pub jump: Option<usize>,
     pub focus: bool,
