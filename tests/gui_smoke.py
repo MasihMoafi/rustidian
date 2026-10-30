@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7569,6 +7569,104 @@ def main():
                 click_control("tab-full:Drag Beta.md"); command("Toggle pin")
                 results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
 
+            def block_completion_checks():
+                import re
+                close_tabs()
+                body = ('# Blocks\n\nUnique paragraph café chosen.\n\n'
+                    '- List chosen first\n- List chosen second\n\n'
+                    '> Quote chosen line\n> more quote\n\n'
+                    '> [!note] Callout chosen\n> callout body\n\n'
+                    '| Table chosen | Value |\n| --- | --- |\n| cell | value |\n\n'
+                    '```rust\n// Code chosen ^literal-id\nlet x = 1;\n```\n\n'
+                    'Existing paragraph ^keep-id\n\n'
+                    '- Standalone chosen first\n- Standalone chosen second\n\n^standalone-list\n')
+                for mode in ('Source editing', 'Live preview'):
+                    (fixture / f'Blocks {mode}.md').write_text(body)
+                    (fixture / f'Block refs {mode}.md').write_text('')
+                    (fixture / f'Block self {mode}.md').write_text('# Self\n\nSelf chosen café paragraph.\n\n')
+                    (fixture / f'Block after {mode}.md').write_text('[[#^After chosen\n\nAfter chosen paragraph.\n')
+                failure = fixture / 'Block failure.md'; failure.write_text('# Failure\n\nReadonly chosen paragraph.\n')
+                draft = fixture / 'Block draft.md'; draft_original = '# Draft\n\nDraft base.\n'; draft.write_text(draft_original)
+                (fixture / 'Block draft source.md').write_text('')
+                command('Refresh vault')
+                def save(path):
+                    key('ctrl+s'); pause(); return path.read_text()
+                def unmarked(path, largest=False):
+                    prefix = 'link-completion:unmarked-block:' + path.name + ':'
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        controls = json.loads((base/'ui-probe.json').read_text())
+                        names = [name for name in controls if name.startswith(prefix)]
+                        if names: break
+                        time.sleep(.05)
+                    assert names, ('No unmarked block suggestions', path.name, controls)
+                    return max(names, key=lambda name: int(name.rsplit(':', 1)[1]) - int(name.rsplit(':', 2)[1])) if largest else names[0]
+                def ids(text): return re.findall(r'(?m)(?: |^)\^(r[0-9a-f]+)\s*$', text)
+                def without_ids(text): return re.sub(r'(?: |\n\n)\^r[0-9a-f]+', '', text)
+                def last_id(text):
+                    match = re.search(r'\[\[[^\n]*#\^([A-Za-z0-9-]+)\]\]$', text)
+                    assert match, ('Missing completed block reference', text); return match[1]
+                def follow(expected):
+                    editor_end(); key('ctrl+Return'); command('Source editing'); control_bounds('editor-focused')
+                    key('shift+End'); key('ctrl+c')
+                    copied = subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                    assert expected in copied, ('Block navigation reached the wrong line', expected, copied)
+                    capture('native-block-completion-navigation.png'); key('ctrl+w')
+                cases = [('Unique paragraph', 'Unique paragraph café chosen.', False),
+                    ('List chosen', '- List chosen first', True), ('Quote chosen', '> Quote chosen line', False),
+                    ('Callout chosen', '> [!note] Callout chosen', False), ('Table chosen', '| Table chosen | Value |', False),
+                    ('Code chosen', '```rust', False)]
+                for mode in ('Source editing', 'Live preview'):
+                    target = fixture/f'Blocks {mode}.md'; source = fixture/f'Block refs {mode}.md'
+                    open_note(source.name, title=source.stem); command(mode)
+                    for query, expected, largest in cases:
+                        editor_end(); paste_text('\n[[' + target.stem + '#^' + query)
+                        candidate = unmarked(target, largest); capture('native-block-completion-offer-' + mode.split()[0].lower() + '.png')
+                        click_control(candidate); text = save(source); reference = last_id(text)
+                        assert reference in ids(target.read_text()), ('ID must be on disk before insertion', reference, target.read_text())
+                        assert without_ids(target.read_text()) == body, ('Only a block ID may change in the target', target.read_text())
+                        follow(expected); command(mode)
+                    assert len(ids(target.read_text())) == len(cases), target.read_text()
+                    before = target.read_text(); editor_end(); paste_text('\n[[' + target.stem + '#^Unique paragraph')
+                    known = ids(before)[0]; click_control('link-completion:' + target.stem + '#^' + known)
+                    assert last_id(save(source)) == known; assert target.read_text() == before
+                    editor_end(); paste_text('\n[[' + target.stem + '#^standalone-list')
+                    click_control('link-completion:' + target.stem + '#^standalone-list'); save(source)
+                    follow('- Standalone chosen first')
+                    results.append(mode + ': content-filtered unmarked paragraph/list/quote/callout/table/code choices created one stable ID, changed only that ID, saved before inserting links, navigated to the full block and reused existing IDs; standalone list anchors reached the list rather than the marker')
+                    for place in ('self', 'after'):
+                        path = fixture / f'Block {place} {mode}.md'; original = path.read_text()
+                        open_note(path.name, title=path.stem); command(mode); editor_end()
+                        if place == 'self': paste_text('[[#^Self chosen')
+                        else: key('ctrl+Home'); key('End')
+                        click_control(unmarked(path)); text = save(path); reference = last_id(text) if place == 'self' else re.search(r'\[\[#\^([A-Za-z0-9-]+)\]\]',text)[1]
+                        assert ids(text) == [reference], text
+                        assert ('Self chosen café paragraph.' if place == 'self' else 'After chosen paragraph.') in text
+                    results.append(mode + ': same-note block creation before and after the caret preserved Unicode text and adjusted the source link range correctly')
+                # A real failed target write must not alter the query or either file.
+                source = fixture/'Block refs Source editing.md'; open_note(source.name,title=source.stem); command('Source editing'); editor_end()
+                paste_text('\n[[Block failure#^Readonly chosen'); before_source = save(source); before_target = failure.read_text(); candidate = unmarked(failure)
+                permissions = fixture.stat().st_mode & 0o777
+                try:
+                    fixture.chmod(0o555); click_control(candidate); pause(); capture('native-block-completion-write-error.png')
+                    assert source.read_text() == before_source and failure.read_text() == before_target
+                finally: fixture.chmod(permissions)
+                click_control(unmarked(failure)); assert last_id(save(source)) in ids(failure.read_text())
+                results.append('Unwritable target left the query and both files unchanged; selecting again after restoring write access created the ID and reference without duplicates')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
+                open_note(draft.name,title=draft.stem); command('Source editing'); editor_end(); paste_text('\n\nDRAFT chosen café paragraph.'); pause(1)
+                expected_draft = draft_original + '\n\nDRAFT chosen café paragraph.'; assert draft.read_text() == draft_original
+                key('ctrl+t'); open_note('Block draft source.md',title='Block draft source'); command('Source editing'); editor_end(); paste_text('[[Block draft#^DRAFT chosen')
+                click_control(unmarked(draft)); source = fixture/'Block draft source.md'; reference = last_id(save(source))
+                assert ids(draft.read_text()) == [reference] and without_ids(draft.read_text()) == expected_draft
+                key('ctrl+w'); title_contains('Block draft'); command('Source editing'); editor_end(); key('ctrl+z'); key('ctrl+a'); key('ctrl+c')
+                copied = subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                assert copied == expected_draft, ('Undo must preserve the previously unsaved target draft', expected_draft, copied)
+                key('End'); key('ctrl+shift+z'); assert ids(save(draft)) == [reference]
+                capture('native-block-completion-draft-redo.png')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',True); key('Escape')
+                results.append('Suggestions used an open unsaved foreign draft; committing the ID preserved and saved all draft bytes, Undo restored that draft without the ID, and Redo restored the same reference ID')
+
             def link_fragment_checks():
                 close_tabs()
                 target = fixture / "Fragment Target.md"
@@ -7610,13 +7708,13 @@ def main():
                     capture('native-fragment-heading-' + mode.split()[0].lower() + '.png')
                     key('Down'); key('Return'); saved(path, '[[Fragment Target#Alpha section]]')
                     follow('## Alpha **section**')
-                    path = begin(mode, 'block', '[[Fragment Target#^bLo')
+                    path = begin(mode, 'block', '[[Fragment Target#^BLoCK-oNe')
                     control_bounds('link-completion:Fragment Target#^block-one')
                     assert candidates() == {'Fragment Target#^block-one'}, candidates()
                     key('Tab'); saved(path, '[[Fragment Target#^block-one]]'); follow('Paragraph chosen ^block-one')
-                    path = begin(mode, 'mouse', '[[Fragment Target#^')
+                    path = begin(mode, 'mouse', '[[Fragment Target#^list-tWo')
                     control_bounds('link-completion:Fragment Target#^list-two')
-                    assert candidates() == {'Fragment Target#^block-one', 'Fragment Target#^list-two'}, candidates()
+                    assert 'Fragment Target#^list-two' in candidates(), candidates()
                     capture('native-fragment-block-' + mode.split()[0].lower() + '.png')
                     click_control('link-completion:Fragment Target#^list-two')
                     saved(path, '[[Fragment Target#^list-two]]'); follow('A list block ^list-two')
@@ -10170,6 +10268,10 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
+            if args.section == "block-completion":
+                block_completion_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "block-completion", "checks": len(results), "status": "passed"})); return
             if args.section == "link-fragments":
                 link_fragment_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -10542,7 +10644,7 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
-                tab_close_menu_checks, tab_restore_checks, link_fragment_checks,
+                tab_close_menu_checks, tab_restore_checks, link_fragment_checks, block_completion_checks,
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,

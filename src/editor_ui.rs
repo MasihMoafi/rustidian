@@ -31,14 +31,41 @@ pub struct Find {
 struct LinkCandidate {
     label: String,
     target: String,
+    block: Option<(std::path::PathBuf, rustidian::structure::Block)>,
+}
+
+impl LinkCandidate {
+    fn probe(&self) -> String {
+        self.block.as_ref().map_or_else(
+            || self.target.clone(),
+            |(path, block)| {
+                format!(
+                    "unmarked-block:{}:{}:{}",
+                    path.display(),
+                    block.range.start,
+                    block.range.end
+                )
+            },
+        )
+    }
+}
+
+pub struct BlockCompletion {
+    pub tab: u64,
+    pub path: std::path::PathBuf,
+    pub block: rustidian::structure::Block,
+    pub completion: rustidian::editor::LinkCompletion,
+    pub prefix: String,
 }
 
 fn link_candidates(
     vault: Option<&rustidian::vault::Vault>,
     document: &rustidian::vault::Document,
-    query: &str,
+    completion: &rustidian::editor::LinkCompletion,
     files: &mut FileMatcher,
+    open_notes: &[(&std::path::Path, &str)],
 ) -> Vec<LinkCandidate> {
+    let query = &completion.query;
     let Some((note, fragment)) = query.split_once('#') else {
         return files
             .rank_links(query, 8)
@@ -46,6 +73,7 @@ fn link_candidates(
             .map(|path| LinkCandidate {
                 label: rustidian::paths::display_path(&path),
                 target: rustidian::paths::wiki_destination(&path),
+                block: None,
             })
             .collect();
     };
@@ -67,6 +95,11 @@ fn link_candidates(
     };
     let text = if path == document.path {
         document.text.as_str()
+    } else if let Some(text) = open_notes
+        .iter()
+        .find_map(|(candidate, text)| (*candidate == path.as_path()).then_some(*text))
+    {
+        text
     } else if let Some(note) = vault.notes.iter().find(|note| note.path == path) {
         note.text.as_str()
     } else {
@@ -77,27 +110,50 @@ fn link_candidates(
     } else {
         rustidian::paths::wiki_destination(&path)
     };
-    let (query, anchors) = if let Some(block) = fragment.strip_prefix('^') {
-        (
-            block,
-            rustidian::structure::block_anchors(text)
-                .into_iter()
-                .map(|(id, _)| format!("^{id}"))
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        (
-            fragment,
-            rustidian::structure::outline(text)
-                .into_iter()
-                .map(|heading| heading.title)
-                .collect(),
-        )
-    };
-    let query = query.trim().to_lowercase();
-    let mut seen = std::collections::HashSet::new();
-    anchors
+    if let Some(query) = fragment.strip_prefix('^') {
+        let query = query.trim().to_lowercase();
+        return rustidian::structure::blocks(text)
+            .into_iter()
+            .filter(|block| {
+                !(path == document.path
+                    && block.range.start < completion.range.end
+                    && block.range.end > completion.range.start)
+            })
+            .filter(|block| {
+                block.label.to_lowercase().contains(&query)
+                    || block
+                        .id
+                        .as_ref()
+                        .is_some_and(|id| id.to_lowercase().contains(&query))
+            })
+            .take(8)
+            .map(|block| {
+                let label: String = block.label.chars().take(100).collect();
+                if let Some(id) = &block.id {
+                    LinkCandidate {
+                        label: if label.contains(&format!("^{id}")) {
+                            label
+                        } else {
+                            format!("{label}  ^{id}")
+                        },
+                        target: format!("{prefix}#^{id}"),
+                        block: None,
+                    }
+                } else {
+                    LinkCandidate {
+                        label,
+                        target: format!("{prefix}#^"),
+                        block: Some((path.clone(), block)),
+                    }
+                }
+            })
+            .collect();
+    }
+    let query = fragment.trim().to_lowercase();
+    let mut seen = HashSet::new();
+    rustidian::structure::outline(text)
         .into_iter()
+        .map(|heading| heading.title)
         .filter(|anchor| {
             anchor.to_lowercase().contains(&query)
                 && !anchor.contains("]]")
@@ -108,6 +164,7 @@ fn link_candidates(
         .map(|label| LinkCandidate {
             target: format!("{prefix}#{label}"),
             label,
+            block: None,
         })
         .collect()
 }
@@ -130,6 +187,7 @@ pub struct Editor {
     completion_selected: usize,
     completion_dismissed: bool,
     completion_popup: Option<(egui::Id, egui::Rect)>,
+    pub block_completion: Option<BlockCompletion>,
     focus_range: Option<(egui::Id, CCursorRange)>,
     image_cursor: Option<(usize, usize)>,
     image_cursor_time: f64,
@@ -1162,6 +1220,30 @@ impl Editor {
         ctx.memory(|memory| memory.has_focus(id)) || self.tables.has_focus(ctx, id)
     }
 
+    fn choose_link_candidate(
+        &mut self,
+        ctx: &egui::Context,
+        tab: &mut Tab,
+        id: egui::Id,
+        completion: &rustidian::editor::LinkCompletion,
+        candidate: &LinkCandidate,
+    ) {
+        if let Some((path, block)) = &candidate.block {
+            self.block_completion = Some(BlockCompletion {
+                tab: tab.id(),
+                path: path.clone(),
+                block: block.clone(),
+                completion: completion.clone(),
+                prefix: candidate.target.clone(),
+            });
+        } else {
+            let caret = complete_link(&mut tab.document.text, completion, &candidate.target);
+            set_cursor(ctx, id, caret);
+            tab.edited();
+        }
+        ctx.memory_mut(|memory| memory.request_focus(id));
+    }
+
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -1170,6 +1252,7 @@ impl Editor {
         find: &mut Find,
         files: &mut FileMatcher,
         mut vault: Option<&mut rustidian::vault::Vault>,
+        open_notes: &[(&std::path::Path, &str)],
     ) -> Option<String> {
         let dropped = self.import_images(ui, tab, id, vault.as_deref_mut());
         let vault = vault.as_deref();
@@ -1376,7 +1459,7 @@ impl Editor {
                     && !self.completion_dismissed
                 {
                     let candidates =
-                        link_candidates(vault, &tab.document, &completion.query, files);
+                        link_candidates(vault, &tab.document, &completion, files, open_notes);
                     if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)) {
                         self.completion_dismissed = true;
                     }
@@ -1390,10 +1473,7 @@ impl Editor {
                     if let Some(candidate) = candidates.get(self.completion_selected)
                         && consume_action(ui, egui::Modifiers::NONE, &[Key::Tab, Key::Enter])
                     {
-                        let caret =
-                            complete_link(&mut tab.document.text, &completion, &candidate.target);
-                        set_cursor(ui.ctx(), id, caret);
-                        tab.edited();
+                        self.choose_link_candidate(ui.ctx(), tab, id, &completion, candidate);
                         action_handled = true;
                     }
                 }
@@ -2332,7 +2412,7 @@ impl Editor {
             && let Some(cursor) = completion_cursor
             && let Some(completion) = link_completion(&tab.document.text, cursor.primary.index.0)
         {
-            let candidates = link_candidates(vault, &tab.document, &completion.query, files);
+            let candidates = link_candidates(vault, &tab.document, &completion, files, open_notes);
             let caret = output
                 .galley
                 .pos_from_cursor(cursor.primary)
@@ -2363,11 +2443,11 @@ impl Editor {
                             );
                             crate::ui_probe::record(
                                 ui.ctx(),
-                                format!("link-completion:{}", candidate.target),
+                                format!("link-completion:{}", candidate.probe()),
                                 response.rect,
                             );
                             if response.clicked() {
-                                chosen = Some(candidate.target.clone());
+                                chosen = Some(index);
                             }
                         }
                         if candidates.is_empty() {
@@ -2384,11 +2464,8 @@ impl Editor {
                     });
                 });
             self.completion_popup = Some((id, popup.response.rect));
-            if let Some(target) = chosen {
-                let caret = complete_link(&mut tab.document.text, &completion, &target);
-                set_cursor(ui.ctx(), id, caret);
-                ui.memory_mut(|m| m.request_focus(id));
-                tab.edited();
+            if let Some(candidate) = chosen.and_then(|index| candidates.get(index)) {
+                self.choose_link_candidate(ui.ctx(), tab, id, &completion, candidate);
             }
         }
         // Finish source-indexed overlays before changing a marker's byte length.
@@ -4063,7 +4140,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    editor.show(ui, &mut tab, id, &mut find, &mut files, None);
+                    editor.show(ui, &mut tab, id, &mut find, &mut files, None, &[]);
                 },
             )
             .drop_without_applying_deltas();

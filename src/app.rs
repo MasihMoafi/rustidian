@@ -3127,9 +3127,16 @@ impl NotesApp {
         if view == View::Graph {
             return;
         }
-        let Some(tab) = self.tabs.get_mut(self.active) else {
+        if self.active >= self.tabs.len() {
             return;
-        };
+        }
+        let (before, after) = self.tabs.split_at_mut(self.active);
+        let (tab, after) = after.split_first_mut().expect("active tab was checked");
+        let open_notes: Vec<_> = before
+            .iter()
+            .chain(after.iter())
+            .map(|tab| (tab.document.path.as_path(), tab.document.text.as_str()))
+            .collect();
         if tab.document.is_image() {
             self.pending_anchor = None;
             if let Some(vault) = &self.vault {
@@ -3207,6 +3214,7 @@ impl NotesApp {
                         &mut self.find,
                         &mut self.files,
                         self.vault.as_mut(),
+                        &open_notes,
                     );
                     let preview_link = preview::show(
                         &mut columns[1],
@@ -3256,6 +3264,7 @@ impl NotesApp {
                                     &mut self.find,
                                     &mut self.files,
                                     self.vault.as_mut(),
+                                    &open_notes,
                                 );
                             }
                             ui.add_space(ui.available_height().max(80.0));
@@ -3295,9 +3304,122 @@ impl NotesApp {
         if add_property {
             self.ask(Dialog::AddProperty);
         }
+        if let Some(request) = self.editor.block_completion.take() {
+            if let Err(error) = self.complete_block_link(ui.ctx(), request) {
+                self.error = Some(error);
+                self.focus_editor();
+            }
+        }
         if let Some(target) = follow {
             self.follow_link(&target);
         }
+    }
+
+    fn complete_block_link(
+        &mut self,
+        ctx: &egui::Context,
+        request: crate::editor_ui::BlockCompletion,
+    ) -> Result<(), String> {
+        self.settle_saves();
+        let source_index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id() == request.tab)
+            .ok_or("The source tab is no longer open.")?;
+        let source = self.tabs[source_index].document.clone();
+        let query = format!("[[{}", request.completion.query);
+        let typed = source
+            .text
+            .get(request.completion.range.clone())
+            .ok_or("The link changed. Choose the block again.")?;
+        if typed != query && typed != format!("{query}]]") {
+            return Err("The link changed. Choose the block again.".into());
+        }
+        let target_indices: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| (tab.document.path == request.path).then_some(index))
+            .collect();
+        let target = if let Some(&index) = target_indices.first() {
+            self.tabs[index].document.clone()
+        } else {
+            self.vault
+                .as_ref()
+                .ok_or("No vault is open.")?
+                .read(&request.path)?
+        };
+        if target.text.get(request.block.range.clone()) != Some(request.block.text.as_str())
+            || target_indices
+                .iter()
+                .any(|&index| self.tabs[index].document.text != target.text)
+            || self
+                .tabs
+                .iter()
+                .any(|tab| tab.document.path == source.path && tab.document.text != source.text)
+        {
+            return Err("The block or an open draft changed. Choose the block again; nothing was overwritten.".into());
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let mut id = format!("r{stamp:x}");
+        while rustidian::structure::find_anchor(&target.text, &format!("^{id}")).is_some() {
+            id.push('a');
+        }
+        let (position, insertion) = request.block.id_edit(&id);
+        let mut changed = target.clone();
+        if position > changed.text.len() || !changed.text.is_char_boundary(position) {
+            return Err("The block changed. Choose it again.".into());
+        }
+        changed.text.insert_str(position, &insertion);
+        let mut completion = request.completion;
+        let destination = format!("{}{id}", request.prefix);
+        let mut caret = None;
+        if source.path == target.path {
+            if position <= completion.range.start {
+                completion.range.start += insertion.len();
+                completion.range.end += insertion.len();
+            }
+            caret = Some(rustidian::editor::complete_link(
+                &mut changed.text,
+                &completion,
+                &destination,
+            ));
+        }
+        // A failed target write leaves both drafts and the link untouched.
+        self.vault
+            .as_mut()
+            .ok_or("No vault is open.")?
+            .save(&mut changed)?;
+        let root = self.vault.as_ref().expect("vault was checked").root.clone();
+        crate::editor_ui::record_document_edit(ctx, &root, &target, &changed);
+        for &index in &target_indices {
+            self.tabs[index].replace(changed.clone());
+        }
+        if source.path != target.path {
+            let mut after = source.clone();
+            caret = Some(rustidian::editor::complete_link(
+                &mut after.text,
+                &completion,
+                &destination,
+            ));
+            crate::editor_ui::record_document_edit(ctx, &root, &source, &after);
+            for tab in &mut self.tabs {
+                if tab.document.path == source.path {
+                    tab.document.text.clone_from(&after.text);
+                    tab.edited();
+                }
+            }
+        }
+        self.editor.jump = caret;
+        self.active = source_index;
+        self.focus_editor();
+        self.refresh_file_views();
+        self.error = None;
+        self.status = "Block reference inserted".into();
+        Ok(())
     }
 
     fn tab_strip(&mut self, ui: &mut egui::Ui) {
