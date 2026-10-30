@@ -21,6 +21,7 @@ pub enum FileAction {
         folder: PathBuf,
     },
     CopyPath(PathBuf),
+    Reveal(PathBuf),
     Rename(PathBuf),
     Trash(PathBuf),
     Bookmark(PathBuf),
@@ -29,6 +30,15 @@ pub enum FileAction {
         source: PathBuf,
         folder: PathBuf,
     },
+}
+
+pub(crate) fn reveal_menu(ui: &mut egui::Ui, path: &Path, action: &mut Option<FileAction>) {
+    let reveal = theme::menu_item(ui, theme::Icon::Files, "Reveal in system file manager");
+    crate::ui_probe::record(ui.ctx(), format!("reveal:{}", path.display()), reveal.rect);
+    if reveal.clicked() {
+        *action = Some(FileAction::Reveal(path.to_owned()));
+        ui.close();
+    }
 }
 
 pub(crate) fn creation_menu(ui: &mut egui::Ui, folder: &Path, action: &mut Option<FileAction>) {
@@ -583,6 +593,7 @@ impl Tree {
                 }
                 let path = PathBuf::from(id.trim_start_matches('/'));
                 creation_menu(ui, &path, &mut open);
+                reveal_menu(ui, &path, &mut open);
                 ui.separator();
                 let response = ui.button("Rename or move…");
                 crate::ui_probe::record(
@@ -702,6 +713,7 @@ impl Tree {
                     open = Some(FileAction::Bookmark(path.clone()));
                     ui.close();
                 }
+                reveal_menu(ui, path, &mut open);
                 if theme::menu_item(ui, theme::Icon::Copy, "Copy path").clicked() {
                     open = Some(FileAction::CopyPath(path.clone()));
                     ui.close();

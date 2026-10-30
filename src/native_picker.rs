@@ -1,4 +1,4 @@
-//! One owned native chooser for both the vault manager and system Open actions.
+//! Native file dialogs and system file-manager actions.
 use std::{
     io::Read,
     path::{Path, PathBuf},
@@ -10,6 +10,41 @@ pub enum Kind {
     File,
     #[default]
     Folder,
+}
+
+/// Select an item in its parent using the desktop file-manager interface.
+/// https://wiki.freedesktop.org/www/Specifications/file-manager-interface/
+pub fn reveal(path: &Path) -> Result<(), String> {
+    // A comma is an array separator in dbus-send; encode it with the other URI bytes.
+    let uri = format!(
+        "file://{}",
+        percent_encoding::percent_encode(
+            path.as_os_str().as_encoded_bytes(),
+            &percent_encoding::NON_ALPHANUMERIC.remove(b'/')
+        )
+    );
+    let output = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--type=method_call",
+            "--print-reply",
+            "--reply-timeout=5000",
+            "--dest=org.freedesktop.FileManager1",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItems",
+            &format!("array:string:{uri}"),
+            "string:",
+        ])
+        .output()
+        .map_err(|error| format!("Cannot open the system file manager: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Cannot open the system file manager: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 #[derive(Default)]

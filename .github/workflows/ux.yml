@@ -59,6 +59,9 @@ jobs:
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
           mkdir -p reports
           for tool in Xvfb xdotool xclip xset xprop xwininfo; do command -v "$tool"; done
+      - name: Install file manager for native Reveal verification
+        if: ${{ contains(inputs.sections, 'reveal') }}
+        run: sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends nautilus dbus-x11
       - name: Restore the Rust build cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -102,6 +102,9 @@ def main():
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
+        file_manager_bus = None
+        if args.section == "reveal":
+            environment.update(DBUS_SESSION_BUS_ADDRESS="unix:path=" + str(base / "file-manager-bus"), GSK_RENDERER="cairo")
         if args.section == "system-theme":
             # Keyfile changes are visible to separate processes, without reading
             # or writing the user's dconf database or using their session bus.
@@ -6390,6 +6393,92 @@ def main():
                 xdo("windowsize",window,"1440","960");pause()
                 results.append("The real Move picker fit the minimum window and dismissed without changing its file or active tab")
 
+            def reveal_checks():
+                nonlocal file_manager_bus
+                from urllib.parse import unquote, urlsplit
+                with (reports / "gui-reveal-file-manager.log").open("w") as manager_log:
+                    file_manager_bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--address=" + environment["DBUS_SESSION_BUS_ADDRESS"], "--print-address=1"], env=environment, stdout=subprocess.PIPE, stderr=manager_log, text=True)
+                assert file_manager_bus.stdout.readline().startswith("unix:path="), "Private file-manager bus did not start"
+                click_control("button:File explorer")
+                close_tabs()
+                command("Open settings")
+                click_control("settings-autosave"); wait_autosave(base / "state", False)
+                key("Escape")
+                folder = fixture / "Reveal folder, # Ω"
+                folder.mkdir()
+                note = folder / "Reveal , # Ω.md"
+                note.write_text("# Reveal\n\nREVEAL_EXACT\n")
+                (folder / "Keep.md").write_text("KEEP_EXACT\n")
+                command("Refresh vault")
+                # Expand the inactive folder, then keep an unrelated unsaved document active.
+                click_control("folder:" + str(folder.relative_to(fixture)))
+                open_note("Home", title="Home")
+                command("Source editing")
+                original_home = (fixture / "Home.md").read_bytes()
+                editor_end(); type_text("REVEAL_KEEP_DRAFT")
+                assert (fixture / "Home.md").read_bytes() == original_home
+
+                def file_manager_window():
+                    deadline = time.monotonic() + 12
+                    while time.monotonic() < deadline:
+                        try:
+                            windows = xdo("search", "--onlyvisible", "--class", "[Nn]autilus").splitlines()
+                            if windows: return windows[-1]
+                        except subprocess.CalledProcessError:
+                            pass
+                        time.sleep(.1)
+                    raise AssertionError("Reveal did not open the actual file manager")
+
+                def copied_item(expected):
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        try:
+                            raw = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "text/uri-list"], env=environment, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                            paths = [Path(unquote(urlsplit(line).path)) for line in raw.splitlines() if line.startswith("file:")]
+                            if paths == [expected]: return raw
+                        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                            pass
+                        time.sleep(.1)
+                    raise AssertionError(("The system file manager did not select the requested item", str(expected), locals().get("raw")))
+
+                requests = []
+                cases = [(note, "file:" + str(note.relative_to(fixture)), "file"),
+                         (folder, "folder:" + str(folder.relative_to(fixture)), "folder"),
+                         (fixture, "file-tree-root", "vault")]
+                for path, control, label in cases:
+                    xdo("windowactivate", "--sync", window)
+                    click_control(control, button="3")
+                    click_control("reveal:" + (str(path.relative_to(fixture)) if path != fixture else ""))
+                    manager = file_manager_window()
+                    xdo("windowactivate", "--sync", manager)
+                    xdo("windowsize", manager, "1050", "700")
+                    xdo("windowmove", manager, "270", "140")
+                    pause()
+                    key("ctrl+c")
+                    uri = copied_item(path)
+                    capture(f"native-reveal-{label}.png")
+                    requests.append({"case":label, "selected_path":str(path), "copied_uri":uri})
+                    key("alt+F4")
+                    xdo("windowactivate", "--sync", window)
+                    title_contains("Home")
+                    assert (fixture / "Home.md").read_bytes() == original_home
+                    assert note.read_text() == "# Reveal\n\nREVEAL_EXACT\n" and (folder / "Keep.md").read_text() == "KEEP_EXACT\n"
+                    results.append(f"The real file manager opened and selected the exact clicked {label}; URI clipboard verified spaces, comma, # and Unicode without saving/replacing the unrelated draft or changing any fixture bytes")
+
+                # A failed desktop request must surface an error while the editor remains usable.
+                subprocess.run(["nautilus", "--quit"], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=5)
+                file_manager_bus.terminate(); file_manager_bus.wait(timeout=5); file_manager_bus = None
+                click_control("file:" + str(note.relative_to(fixture)), button="3")
+                click_control("reveal:" + str(note.relative_to(fixture)))
+                control_bounds("error-notice")
+                capture("native-reveal-error.png")
+                editor_end(); key("ctrl+a"); key("ctrl+c")
+                actual = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, text=True)
+                assert actual.endswith("REVEAL_KEEP_DRAFT"), repr(actual)
+                assert (fixture / "Home.md").read_bytes() == original_home
+                results.append("An unavailable desktop file-manager service produced a visible error without freezing or saving the unrelated draft; the editor still selected/copied its exact draft content")
+                (reports / "native-reveal-selected-items.json").write_text(json.dumps(requests, ensure_ascii=False, indent=2)+"\n")
+
             def explorer_multi_checks():
                 click_control("button:File explorer")
                 close_tabs()
@@ -10601,6 +10690,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "watch-limit"}))
                 return
+            if args.section == "reveal":
+                reveal_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "reveal", "checks": len(results), "status": "passed"}))
+                return
             if args.section == "explorer-multi":
                 explorer_multi_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -11088,6 +11182,16 @@ def main():
             except subprocess.TimeoutExpired:
                 app.kill()
                 app.wait()
+            if file_manager_bus is not None:
+                try:
+                    subprocess.run(["nautilus", "--quit"], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                file_manager_bus.terminate()
+                try:
+                    file_manager_bus.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    file_manager_bus.kill(); file_manager_bus.wait()
             if window_manager is not None:
                 window_manager.terminate()
                 window_manager.wait(timeout=5)

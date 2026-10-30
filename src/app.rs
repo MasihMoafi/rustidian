@@ -170,6 +170,7 @@ pub struct NotesApp {
     autosave: rustidian::autosave::Writer,
     vault_manager: crate::vault_manager::Manager,
     open_picker: rustidian::native_picker::Picker,
+    reveal_result: Option<Receiver<Result<(), String>>>,
     pub(crate) note_aids: rustidian::note_aids::Config,
     template_source: Option<(u64, String)>,
     template_choices: Result<rustidian::search::FileMatcher, String>,
@@ -275,6 +276,7 @@ impl NotesApp {
             autosave: Default::default(),
             vault_manager: Default::default(),
             open_picker: Default::default(),
+            reveal_result: None,
             note_aids: Default::default(),
             template_source: None,
             template_choices: Err(String::new()),
@@ -2465,6 +2467,7 @@ impl NotesApp {
                         root.context_menu(|ui| {
                             theme::menu_style(ui);
                             crate::file_tree::creation_menu(ui, Path::new(""), &mut selected);
+                            crate::file_tree::reveal_menu(ui, Path::new(""), &mut selected);
                         });
                     }
                     if let Some(action) = crate::file_tree::finish_drag(
@@ -2605,6 +2608,7 @@ impl NotesApp {
                 FileAction::MoveManyInto { sources, folder } => {
                     self.move_entries(&sources, &folder, false)
                 }
+                FileAction::Reveal(path) => self.reveal_in_file_manager(path),
                 FileAction::CopyPath(path) => {
                     if let Some(vault) = &self.vault {
                         ui.ctx()
@@ -4822,6 +4826,30 @@ impl NotesApp {
         }
     }
 
+    fn reveal_in_file_manager(&mut self, relative: PathBuf) {
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        let path = vault.root.join(&relative);
+        if relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            || !path.exists()
+        {
+            self.error = Some("This file or folder is no longer in the vault.".into());
+            return;
+        }
+        let (sender, result) = mpsc::channel();
+        self.reveal_result = Some(result);
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(rustidian::native_picker::reveal(&path));
+            ctx.request_repaint();
+        });
+        self.error = None;
+        self.status = "Opening system file manager…".into();
+    }
+
     fn ask_move_file(&mut self, source: PathBuf) {
         if let Some(vault) = &self.vault {
             self.file_move.open(vault, source);
@@ -5578,6 +5606,26 @@ impl eframe::App for NotesApp {
     /// Runs before every `ui` pass and alone while the window is hidden, so
     /// hand-offs, signals and close requests never wait for a drawn frame.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let result = self
+            .reveal_result
+            .as_ref()
+            .and_then(|receiver| match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                    "The file-manager request was interrupted. Try again.".into(),
+                )),
+            });
+        if let Some(result) = result {
+            self.reveal_result = None;
+            match result {
+                Ok(()) => self.status = "Revealed in system file manager".into(),
+                Err(error) => {
+                    self.status.clear();
+                    self.error = Some(error);
+                }
+            }
+        }
         #[cfg(unix)]
         let launches: Vec<_> = self
             .launches
