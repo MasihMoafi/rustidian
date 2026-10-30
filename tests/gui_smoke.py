@@ -6490,6 +6490,7 @@ def main():
                     mime, uri = copied_item(path)
                     capture(f"native-reveal-{label}.png")
                     requests.append({"case":label, "selected_path":str(path), "copied_mime":mime, "copied_uri":uri})
+                    (reports / "native-reveal-selected-items.json").write_text(json.dumps(requests, ensure_ascii=False, indent=2)+"\n")
                     key("alt+F4")
                     xdo("windowactivate", "--sync", window)
                     title_contains("Home")
@@ -6498,7 +6499,8 @@ def main():
                     results.append(f"The real file manager opened and selected the exact clicked {label}; URI clipboard verified spaces, comma, # and Unicode without saving/replacing the unrelated draft or changing any fixture bytes")
 
                 # A failed desktop request must surface an error while the editor remains usable.
-                subprocess.run(["nautilus", "--quit"], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=5)
+                # All manager windows were closed above. Stop only our private bus
+                # to exercise a real desktop-service failure, without a CLI quit gate.
                 file_manager_bus.terminate(); file_manager_bus.wait(timeout=5); file_manager_bus = None
                 click_control("file:" + str(note.relative_to(fixture)), button="3")
                 click_control("reveal:" + str(note.relative_to(fixture)))
@@ -6509,7 +6511,6 @@ def main():
                 assert actual.endswith("REVEAL_KEEP_DRAFT"), repr(actual)
                 assert (fixture / "Home.md").read_bytes() == original_home
                 results.append("An unavailable desktop file-manager service produced a visible error without freezing or saving the unrelated draft; the editor still selected/copied its exact draft content")
-                (reports / "native-reveal-selected-items.json").write_text(json.dumps(requests, ensure_ascii=False, indent=2)+"\n")
 
             def explorer_multi_checks():
                 click_control("button:File explorer")
