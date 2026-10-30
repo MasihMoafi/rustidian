@@ -6972,6 +6972,23 @@ def main():
                 assert dirty.read_text() == updated
                 capture("native-external-rename-restart.png")
                 results.append("History, reopen-closed-tab and restart used the new file path; no old path was recreated")
+                command("Open settings"); type_text("autosave")
+                click_control("settings-autosave", hold=.15)
+                wait_autosave(base / "state", True)
+                key("Escape")
+                editor_end(); type_text("AUTOSAVED_MOVE")
+                intermediate = dirty.with_name("External intermediate.md")
+                autosaved = dirty.with_name("External autosaved.md")
+                dirty.rename(intermediate); intermediate.rename(autosaved)
+                control_bounds("tab-full:Moved outside/Inner/External autosaved.md")
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and autosaved.read_text() != updated + "AUTOSAVED_MOVE":
+                    time.sleep(.05)
+                assert autosaved.read_text() == updated + "AUTOSAVED_MOVE"
+                assert not dirty.exists() and not intermediate.exists()
+                pause()  # Let the completed background save reach the visible status.
+                capture("native-external-autosave-chain.png")
+                results.append("With normal autosave enabled, a dirty note followed two immediate external renames and saved its edits only at the final path")
 
             def list_indent_checks():
                 # Real keystrokes and saved bytes own this contract, in both editors.
