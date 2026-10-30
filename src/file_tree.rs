@@ -163,11 +163,7 @@ fn start_drag(response: &egui::Response, path: &Path, title: &str) {
         .interact(egui::Sense::drag())
         .drag_started_by(egui::PointerButton::Primary)
     {
-        let paths = if selection::contains(&response.ctx, path) {
-            selection::roots(&response.ctx)
-        } else {
-            vec![path.to_owned()]
-        };
+        let paths = selection::prepare_drag(&response.ctx, path);
         let title = if paths.len() > 1 {
             format!("{} items", paths.len())
         } else {

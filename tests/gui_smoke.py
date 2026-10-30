@@ -6409,6 +6409,8 @@ def main():
                     "D.md": "# D\n\nD_EXACT\n",
                     "E.md": "# E\n\nE_EXACT\n",
                     "F.md": "# F\n\nF_EXACT\n",
+                    "G.md": "# G\n\nG_EXACT\n",
+                    "H.md": "# H\n\nH_EXACT\n",
                     "Group/Child.md": "# Child\n\nCHILD_EXACT\n",
                 }
                 for name, text in content.items():
@@ -6439,6 +6441,21 @@ def main():
                 def move_to(folder):
                     click_control("move-input")
                     key("ctrl+a"); type_text(folder); key("Return")
+
+                def drag_entries(source, target, screenshot):
+                    start = control_bounds(source)
+                    end = control_bounds(target)
+                    sx, sy = round((start[0]+start[2])/2), round((start[1]+start[3])/2)
+                    ex, ey = round((end[0]+end[2])/2), round((end[1]+end[3])/2)
+                    xdo("mousemove", "--sync", str(sx), str(sy), "mousedown", "1")
+                    try:
+                        time.sleep(.1)
+                        for step in range(1, 15):
+                            xdo("mousemove", "--sync", str(round(sx+(ex-sx)*step/14)), str(round(sy+(ey-sy)*step/14)))
+                            time.sleep(.04)
+                        time.sleep(.3)
+                        capture(screenshot)
+                    finally: xdo("mouseup", "1")
 
                 def wait_file(path, expected=None):
                     deadline = time.monotonic() + 5
@@ -6500,23 +6517,28 @@ def main():
                 key("Escape")
                 assert (origin / "C.md").read_text() == content["C.md"]
                 assert (origin / "D.md").read_text() == content["D.md"]
-                start = control_bounds("file:Batch/C.md")
-                end = control_bounds("folder:Batch destination")
-                sx, sy = round((start[0]+start[2])/2), round((start[1]+start[3])/2)
-                ex, ey = round((end[0]+end[2])/2), round((end[1]+end[3])/2)
-                xdo("mousemove", "--sync", str(sx), str(sy), "mousedown", "1")
-                try:
-                    time.sleep(.1)
-                    for step in range(1, 15):
-                        xdo("mousemove", "--sync", str(round(sx+(ex-sx)*step/14)), str(round(sy+(ey-sy)*step/14)))
-                        time.sleep(.04)
-                    time.sleep(.3)
-                    capture("native-explorer-multi-drag.png")
-                finally: xdo("mouseup", "1")
+                drag_entries("file:Batch/C.md", "folder:Batch destination", "native-explorer-multi-drag.png")
                 wait_file(destination / "C.md", content["C.md"])
                 wait_file(destination / "D.md", content["D.md"])
                 assert not (origin / "C.md").exists() and not (origin / "D.md").exists()
                 results.append("Shift-click selected the visible range, Ctrl-click toggled membership, cancelling the folder picker changed nothing, and dragging moved the whole selection with exact bytes")
+
+                selected(2)
+                select("file:Batch destination/C.md")
+                select("file:Batch/G.md", "Control_L"); selected(2)
+                drag_entries("file:Batch destination/C.md", "folder:Batch destination", "native-explorer-multi-mixed-parent-drag.png")
+                wait_file(destination / "G.md", content["G.md"])
+                assert (destination / "C.md").read_text() == content["C.md"]
+                assert not (origin / "G.md").exists()
+                results.append("Dragging a selected member already in the target still moved the other selected entry; the existing member was unchanged")
+
+                selected(2)
+                drag_entries("file:Batch/H.md", "folder:Batch destination", "native-explorer-single-after-multi-drag.png")
+                wait_file(destination / "H.md", content["H.md"])
+                selected(1)
+                control_bounds("explorer-selected-path:Batch destination/H.md")
+                assert (destination / "C.md").read_text() == content["C.md"] and (destination / "G.md").read_text() == content["G.md"]
+                results.append("Bulk moves retained the selected entries at their final paths; dragging an unselected row selected and moved only that row")
 
                 open_note("Batch/E.md", title="E")
                 select("file:Batch/F.md", "Control_L"); selected(2)
@@ -6558,6 +6580,24 @@ def main():
                 assert moved_a.read_text().endswith("A_DRAFT") and moved_b.read_text().endswith("B_DRAFT")
                 capture("native-explorer-multi-trash-result.png")
                 results.append("Right-click kept the multi-selection; Trash confirmation cancel preserved all bytes, and confirmation trashed a selected folder with its child only once plus the unrelated file; both were recoverable and other open drafts survived")
+
+                many = fixture / "Batch range"
+                many.mkdir()
+                for number in range(1, 101):
+                    (many / f"Item {number:03}.md").write_text(f"# Item {number:03}\n")
+                command("Refresh vault")
+                open_note("Batch range/Item 001.md", title="Item 001")
+                viewport = control_bounds("file-tree-viewport")
+                xdo("mousemove", "--sync", str(round((viewport[0]+viewport[2])/2)), str(round((viewport[1]+viewport[3])/2)))
+                xdo("click", "--repeat", "80", "--delay", "8", "5")
+                pause()
+                select("file:Batch range/Item 100.md", "Shift_L")
+                selected(100)
+                capture("native-explorer-multi-virtual-range.png")
+                key("Delete"); control_bounds("explorer-trash-confirm")
+                click_control("explorer-trash-cancel")
+                assert all((many / f"Item {number:03}.md").read_text() == f"# Item {number:03}\n" for number in range(1, 101))
+                results.append("Shift-selection crossed virtualized offscreen rows from item 001 to 100; Delete counted all 100, and cancellation preserved every file")
 
             def drag_move_checks():
                 # Obsidian's explorer: drag a note or a folder onto a folder or the vault root (29 Oct).

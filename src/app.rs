@@ -2603,7 +2603,7 @@ impl NotesApp {
                     self.editor.focus = false;
                 }
                 FileAction::MoveManyInto { sources, folder } => {
-                    self.move_entries(ui.ctx(), &sources, &folder, false)
+                    self.move_entries(&sources, &folder, false)
                 }
                 FileAction::CopyPath(path) => {
                     if let Some(vault) = &self.vault {
@@ -4093,7 +4093,7 @@ impl NotesApp {
                         {
                             self.move_file(&sources[0], &folder, create);
                         } else {
-                            self.move_entries(ctx, &sources, &folder, create);
+                            self.move_entries(&sources, &folder, create);
                         }
                     }
                     crate::file_move_ui::Action::Trash(paths) => self.trash_entries(ctx, &paths),
@@ -4621,6 +4621,7 @@ impl NotesApp {
     }
 
     fn relocate_tabs(&mut self, source: &Path, destination: &Path) {
+        crate::explorer_selection::moved(&self.ctx, source, destination);
         self.page_preview.close();
         if let Some(vault) = &self.vault {
             crate::editor_ui::relocate_histories(&self.ctx, &vault.root, source, destination);
@@ -4726,13 +4727,7 @@ impl NotesApp {
         }
     }
 
-    fn move_entries(
-        &mut self,
-        ctx: &egui::Context,
-        sources: &[PathBuf],
-        folder: &Path,
-        create: bool,
-    ) {
+    fn move_entries(&mut self, sources: &[PathBuf], folder: &Path, create: bool) {
         if !self.save_all() {
             self.move_failed(
                 self.error
@@ -4768,7 +4763,6 @@ impl NotesApp {
                     }
                 );
                 self.refresh_file_views();
-                crate::explorer_selection::reset(ctx);
             }
             Ok(None) => self.file_move.moved(None),
             Err(error) => {
