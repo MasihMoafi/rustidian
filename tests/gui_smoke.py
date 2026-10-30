@@ -2144,7 +2144,7 @@ def main():
                 (fixture / "Quick nested").mkdir()
                 command("Refresh vault"); open_note(origin.name, title=origin.stem)
                 def query(value):
-                    key("ctrl+o"); click_control("dialog-input"); control_bounds("dialog-input-focused")
+                    key("ctrl+o"); control_bounds("dialog-input-focused")
                     modified_shortcut(xdo, "a"); key("BackSpace")
                     if any(ord(char) > 127 for char in value): paste_text(value)
                     else: type_text(value)
