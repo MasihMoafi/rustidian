@@ -24,7 +24,7 @@ pub enum FileAction {
     },
 }
 
-pub(crate) fn creation_menu(ui: &mut Ui, folder: &Path, action: &mut Option<FileAction>) {
+pub(crate) fn creation_menu(ui: &mut egui::Ui, folder: &Path, action: &mut Option<FileAction>) {
     let note = ui.button("New note");
     crate::ui_probe::record(
         ui.ctx(),
