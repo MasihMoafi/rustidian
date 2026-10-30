@@ -2248,10 +2248,11 @@ def main():
                     query(value,["Quick aliases.md"]);key("Return");title_contains("Quick aliases")
                 results.append("Multiword and Unicode aliases resolved once to their canonical file without duplicate rows")
                 for value in ("Closed Closed","No matching needle qzx"):
-                    query(value,[]);key("Return");control_bounds("dialog-input");key("Escape")
-                results.append("Repeated-word false matches and a missing filename produced no rows, and Enter created no note")
+                    query(value,[]);key("Return");title_contains(value)
+                    assert (fixture/(value+".md")).read_text()==""
+                results.append("Repeated-word false matches and a missing filename produced no rows, and Enter created the requested empty Markdown notes")
                 rows=query("");assert 1<=len(rows)<=100,rows
-                key("Escape");title_contains("Quick aliases")
+                key("Escape");title_contains("No matching needle qzx")
                 assert all(path.read_text()==original for path,original in originals.items())
                 results.append("An empty chooser still listed files; cancelling it kept the current document and every fixture byte unchanged")
 
