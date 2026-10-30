@@ -112,7 +112,7 @@ fn link_candidates(
     };
     if let Some(query) = fragment.strip_prefix('^') {
         let query = query.trim().to_lowercase();
-        return rustidian::structure::blocks(text)
+        let mut matches: Vec<_> = rustidian::structure::blocks(text)
             .into_iter()
             .filter(|block| {
                 !(path == document.path
@@ -126,6 +126,23 @@ fn link_candidates(
                         .as_ref()
                         .is_some_and(|id| id.to_lowercase().contains(&query))
             })
+            .collect();
+        matches.sort_by_key(|block| {
+            let id = block.id.as_deref().unwrap_or_default().to_lowercase();
+            if block.id.is_none() {
+                3
+            } else if id == query {
+                0
+            } else if id.starts_with(&query) {
+                1
+            } else if id.contains(&query) {
+                2
+            } else {
+                3
+            }
+        });
+        return matches
+            .into_iter()
             .take(8)
             .map(|block| {
                 let label: String = block.label.chars().take(100).collect();

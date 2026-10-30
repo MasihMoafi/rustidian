@@ -7654,7 +7654,7 @@ def main():
                 click_control(unmarked(failure)); assert last_id(save(source)) in ids(failure.read_text())
                 results.append('Unwritable target left the query and both files unchanged; selecting again after restoring write access created the ID and reference without duplicates')
                 command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
-                open_note(draft.name,title=draft.stem); command('Source editing'); editor_end(); paste_text('\n\nDRAFT chosen café paragraph.'); pause(1)
+                open_note(draft.name,title=draft.stem); command('Source editing'); editor_end(); paste_text('\n\nDRAFT chosen café paragraph.'); time.sleep(1)
                 expected_draft = draft_original + '\n\nDRAFT chosen café paragraph.'; assert draft.read_text() == draft_original
                 key('ctrl+t'); open_note('Block draft source.md',title='Block draft source'); command('Source editing'); editor_end(); paste_text('[[Block draft#^DRAFT chosen')
                 click_control(unmarked(draft)); source = fixture/'Block draft source.md'; reference = last_id(save(source))
