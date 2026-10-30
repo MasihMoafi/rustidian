@@ -514,7 +514,7 @@ impl Vault {
             let temporary = prepare_file(&absolute, bytes, None)?;
             match temporary.persist_noclobber(&absolute) {
                 Ok(_) => {
-                    self.index_note(&relative, String::new());
+                    self.index_note(relative.clone(), String::new());
                     return Ok(relative);
                 }
                 Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => continue,
