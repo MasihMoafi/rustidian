@@ -7604,11 +7604,16 @@ def main():
                     assert copied==raw, ('Backlink must select its exact source occurrence',raw,copied)
                     caret=control_bounds('editor-caret'); viewport=control_bounds('document-viewport')
                     assert caret[3]>=viewport[1] and caret[1]<=viewport[3], ('Reference caret must be in view',caret,viewport)
+                    return caret
                 for mode in ('Source editing','Live preview'):
+                    duplicate_caret=None
                     for path,offset,raw in expected:
                         open_target(mode); name='backlink-mention:'+path+':'+str(offset); control_bounds(name)
                         if raw==alias and mode=='Live preview': capture('native-backlinks-context-list.png')
-                        click_control(name); title_contains(Path(path).stem); selected(raw)
+                        click_control(name); title_contains(Path(path).stem); caret=selected(raw)
+                        if path=='Backlink Sources/Context.md' and raw==same:
+                            if duplicate_caret is not None: assert abs(caret[0]-duplicate_caret[0])>2, ('Same-line mentions must select different source columns',duplicate_caret,caret)
+                            duplicate_caret=caret
                         if raw==alias: capture('native-backlinks-jump-'+mode.split()[0].lower()+'.png')
                     results.append(mode+': every wiki/alias/heading/block/embed/Markdown-image/reference-style mention selected exact source bytes below the top, including same-line duplicates, Unicode/frontmatter and CRLF offsets; code, escaped and math links did not inflate the visible count')
                 for path,data in snapshots.items(): assert path.read_bytes()==data, path
@@ -7626,8 +7631,10 @@ def main():
                 key('ctrl+t'); open_target(number=9); draft_text=draft_original+'\nNEW BEFORE [[Backlink Target]] NEW AFTER'; draft_offset=len(draft_text[:draft_text.index(same)].encode())
                 xdo('keydown','ctrl'); click_control('backlink-mention:Backlink Sources/Draft.md:'+str(draft_offset)); xdo('keyup','ctrl'); selected(same); assert draft.read_text()==draft_original
                 key('ctrl+z'); click_control('tab-full:Backlink Target.md'); count(8)
-                click_control('tab-full:Backlink Sources/Draft.md'); key('ctrl+shift+z'); click_control('tab-full:Backlink Target.md'); count(9)
-                click_control('tab-full:Backlink Sources/Draft.md'); key('ctrl+s'); assert draft.read_text()==draft_text
+                click_control('tab-full:Backlink Sources/Draft.md'); editor_end(); control_bounds('editor-focused'); key('ctrl+shift+z'); key('ctrl+a'); key('ctrl+c')
+                assert subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()==draft_text
+                key('ctrl+End'); click_control('tab-full:Backlink Target.md'); count(9)
+                click_control('tab-full:Backlink Sources/Draft.md'); editor_end(); key('ctrl+s'); assert draft.read_text()==draft_text
                 key('ctrl+z'); key('ctrl+s'); assert draft.read_text()==draft_original
                 click_control('tab-full:Backlink Target.md'); count(8)
                 capture('native-backlinks-live-draft.png')
