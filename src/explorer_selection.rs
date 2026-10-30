@@ -94,11 +94,12 @@ pub fn roots(ctx: &egui::Context) -> Vec<PathBuf> {
 pub fn row(ui: &egui::Ui, response: &egui::Response, path: &Path) -> bool {
     let modifiers = ui.input(|input| input.modifiers);
     let clicked = response.clicked();
+    let secondary = response.secondary_clicked();
     if clicked {
         response.request_focus();
     }
     let selected = update(ui.ctx(), |state| {
-        if response.secondary_clicked() {
+        if secondary {
             if !state.paths.contains(path) {
                 state.paths.clear();
                 state.paths.insert(path.to_owned());

@@ -138,7 +138,7 @@ impl Manager {
                     if close.clicked() {
                         choice = Some(None);
                     }
-                    ui.label("Do you want to update internal links that link to this file?");
+                    ui.label("Do you want to update internal links affected by this move?");
                     ui.label(format!(
                         "This will affect {links} {} in {files} {}.",
                         if links == 1 { "link" } else { "links" },

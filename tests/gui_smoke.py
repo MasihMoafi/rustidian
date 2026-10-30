@@ -6416,6 +6416,8 @@ def main():
                 for name, text in content.items():
                     (origin / name).write_text(text)
                 (destination / "A.md").write_text("KEEP_COLLISION\n")
+                folder_reference = fixture / "Batch folder reference.md"
+                folder_reference.write_text("[[Batch/Group/Child|Child]]\n")
                 command("Refresh vault")
                 pause()
                 open_note("Batch/A.md", title="A")
@@ -6564,16 +6566,26 @@ def main():
                 select("file:Batch destination/D.md", "Control_L")
                 selected(3)
                 select("file:Batch destination/D.md", button="3")
+                click_control("explorer-move-selected")
+                move_to("Batch blocked")
+                control_bounds("move-links-once"); click_control("move-links-once")
+                wait_file(blocked / "Group/Child.md", content["Group/Child.md"])
+                wait_file(blocked / "D.md", content["D.md"])
+                assert not (origin / "Group").exists() and not (destination / "D.md").exists()
+                assert folder_reference.read_text() == "[[Batch blocked/Group/Child|Child]]\n"
+                selected(3)
+                results.append("A mixed folder/file move deduplicated the selected descendant, retained all three selected rows at their new paths, and rewrote links to the moved child")
+                select("file:Batch blocked/D.md", button="3")
                 click_control("explorer-trash-selected")
                 capture("native-explorer-multi-trash-confirmation.png")
                 click_control("explorer-trash-cancel")
-                assert (origin / "Group/Child.md").read_text() == content["Group/Child.md"]
-                assert (destination / "D.md").read_text() == content["D.md"]
-                select("file:Batch destination/D.md", button="3")
+                assert (blocked / "Group/Child.md").read_text() == content["Group/Child.md"]
+                assert (blocked / "D.md").read_text() == content["D.md"]
+                select("file:Batch blocked/D.md", button="3")
                 click_control("explorer-trash-selected")
                 click_control("explorer-trash-confirm")
                 pause()
-                assert not (origin / "Group").exists() and not (destination / "D.md").exists()
+                assert not (blocked / "Group").exists() and not (blocked / "D.md").exists()
                 trash = base / "data/Trash/files"
                 assert any(path.is_file() and path.read_text() == content["D.md"] for path in trash.iterdir())
                 assert any(path.is_dir() and (path / "Child.md").is_file() and (path / "Child.md").read_text() == content["Group/Child.md"] for path in trash.iterdir())
