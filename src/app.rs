@@ -2640,7 +2640,6 @@ impl NotesApp {
         let root = agent_tab
             .then(|| self.vault.as_ref().map(|vault| vault.root.clone()))
             .flatten();
-        let mut selected = None;
         let mut selected_backlink = None;
         let mut follow = None;
         let mut jump = None;
@@ -2827,9 +2826,6 @@ impl NotesApp {
         self.capture_sidebar(ui, "details", 1);
         if let Some(fragment) = jump {
             self.jump_to_anchor(&fragment);
-        }
-        if let Some(path) = selected {
-            self.open_note(&path);
         }
         if let Some(mention) = selected_backlink {
             self.open_linked_mention(mention);
