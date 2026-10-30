@@ -129,6 +129,7 @@ pub struct Editor {
     completion_key: String,
     completion_selected: usize,
     completion_dismissed: bool,
+    completion_popup: Option<(egui::Id, egui::Rect)>,
     focus_range: Option<(egui::Id, CCursorRange)>,
     image_cursor: Option<(usize, usize)>,
     image_cursor_time: f64,
@@ -2309,9 +2310,26 @@ impl Editor {
                 character += length;
             }
         }
-        if output.response.has_focus()
+        // Keep the popup alive while its button owns the press/release sequence.
+        let pointer_in_completion = self.completion_popup.take().is_some_and(|(target, rect)| {
+            target == id
+                && ui.input(|input| {
+                    input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|pos| rect.contains(pos))
+                })
+        });
+        let completion_cursor = output.cursor_range.or_else(|| {
+            pointer_in_completion
+                .then(|| {
+                    TextEditState::load(ui.ctx(), id).and_then(|state| state.cursor.char_range())
+                })
+                .flatten()
+        });
+        if (output.response.has_focus() || pointer_in_completion)
             && !self.completion_dismissed
-            && let Some(cursor) = output.cursor_range
+            && let Some(cursor) = completion_cursor
             && let Some(completion) = link_completion(&tab.document.text, cursor.primary.index.0)
         {
             let candidates = link_candidates(vault, &tab.document, &completion.query, files);
@@ -2330,7 +2348,7 @@ impl Editor {
                 },
             );
             let mut chosen = None;
-            egui::Area::new(id.with("link-completion"))
+            let popup = egui::Area::new(id.with("link-completion"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(position)
                 .show(ui.ctx(), |ui| {
@@ -2365,6 +2383,7 @@ impl Editor {
                         }
                     });
                 });
+            self.completion_popup = Some((id, popup.response.rect));
             if let Some(target) = chosen {
                 let caret = complete_link(&mut tab.document.text, &completion, &target);
                 set_cursor(ui.ctx(), id, caret);

@@ -7584,10 +7584,10 @@ def main():
                     for case in ('heading', 'block', 'mouse', 'self', 'alias', 'missing', 'file'):
                         (fixture / f'Fragment {mode} {case}.md').write_text('')
                 command('Refresh vault')
-                def begin(mode, case, query):
+                def begin(mode, case, query, typed=False):
                     name = f'Fragment {mode} {case}'
                     open_note(name + '.md', title=name); command(mode); editor_end()
-                    paste_text(query)
+                    type_text(query) if typed else paste_text(query)
                     return fixture / (name + '.md')
                 def saved(path, expected):
                     key('ctrl+s'); deadline = time.monotonic() + 3
@@ -7604,7 +7604,7 @@ def main():
                     capture('native-fragment-navigation.png')
                     key('ctrl+w')
                 for mode in ('Source editing', 'Live preview'):
-                    path = begin(mode, 'heading', '[[Fragment Target#')
+                    path = begin(mode, 'heading', '[[Fragment Target#', typed=True)
                     control_bounds('link-completion:Fragment Target#Alpha section')
                     assert candidates() == {'Fragment Target#Fragment Target', 'Fragment Target#Alpha section', 'Fragment Target#Beta café'}, candidates()
                     capture('native-fragment-heading-' + mode.split()[0].lower() + '.png')
