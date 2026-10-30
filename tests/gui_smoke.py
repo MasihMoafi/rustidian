@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6900,6 +6900,67 @@ def main():
                 assert note.read_text()==original
                 results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
 
+            def list_indent_checks():
+                # Real keystrokes and saved bytes own this contract, in both editors.
+                source = b"- Alpha\n- Beta\n"
+                cases = [
+                    ("selected", source, ["ctrl+a"], "Tab", b"\t- Alpha\n\t- Beta\n"),
+                    ("spaces", b"    - Alpha\n    - Beta\n", ["ctrl+a"], "shift+Tab", source),
+                    ("boundary", source, ["ctrl+Home", "shift+Down"], "Tab", b"\t- Alpha\n- Beta\n"),
+                    ("caret", source, ["ctrl+Home", "End"], "Tab", b"\t- Alpha\n- Beta\n"),
+                    ("root-outdent", source, ["ctrl+a"], "shift+Tab", source),
+                    ("quoted", b"> - Alpha\n> - Beta\n", ["ctrl+a"], "Tab", b"> \t- Alpha\n> \t- Beta\n"),
+                    ("tasks", b"1. [ ] Alpha\n2. [x] Beta\n", ["ctrl+a"], "Tab", b"\t1. [ ] Alpha\n\t2. [x] Beta\n"),
+                    ("unicode", "- فارسی\r\n- café 👋\r\n".encode(), ["ctrl+a"], "Tab", "\t- فارسی\r\n\t- café 👋\r\n".encode()),
+                    ("queued", source, ["ctrl+a"], "queued-tabs", b"\t\t- Alpha\n\t\t- Beta\n"),
+                    ("queued-selection", source, [], "queued-selection", b"\t- Alpha\n\t- Beta\n"),
+                    ("queued-caret", source, [], "queued-caret", b"\t- Alpha\n- Beta\n"),
+                    ("plain", b"plain", ["ctrl+End"], "Tab", b"plain\t"),
+                ]
+                modes = ("Source editing", "Live preview")
+                for mode in modes:
+                    for label, original, _, _, _ in cases:
+                        (fixture / f"List {mode} {label}.md").write_bytes(original)
+                command("Refresh vault")
+                observed = []
+                def saved(path, expected):
+                    key("ctrl+s")
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and path.read_bytes() != expected:
+                        time.sleep(.05)
+                    assert path.read_bytes() == expected, (path.name, expected, path.read_bytes())
+                for mode in modes:
+                    for label, original, selection, action, expected in cases:
+                        name = f"List {mode} {label}"
+                        path = fixture / (name + ".md")
+                        open_note(name)
+                        command(mode)
+                        editor_end()
+                        for chord in selection:
+                            key(chord)
+                        if action == "queued-tabs":
+                            queued_steps(("key", "Tab"), ("key", "Tab"))
+                        elif action == "queued-selection":
+                            queued_steps(("key", "ctrl+a"), ("key", "Tab"))
+                        elif action == "queued-caret":
+                            queued_steps(("key", "ctrl+Home"), ("key", "End"), ("key", "Tab"))
+                        else:
+                            key(action)
+                        saved(path, expected)
+                        if label in ("selected", "unicode", "queued", "quoted"):
+                            capture(f"native-list-{mode.replace(' ', '-')}-{label}.png")
+                        if label == "selected":
+                            key("ctrl+z"); saved(path, original)
+                            key("ctrl+shift+z"); saved(path, expected)
+                            key("shift+Tab"); saved(path, original)
+                            key("ctrl+z"); saved(path, expected)
+                        if label == "caret":
+                            type_text("!")
+                            saved(path, b"\t- Alpha!\n- Beta\n")
+                        observed.append({"mode": mode, "case": label, "saved": path.read_bytes().decode()})
+                    results.append(mode + ": Tab/Shift+Tab preserve selected lists, root outdent is harmless, boundary selections exclude the next line, caret and Undo/Redo survive, quotes/tasks/Unicode/CRLF and queued Tabs work; prose keeps literal Tab")
+                (reports / "list-indent-observations.json").write_text(json.dumps(observed, ensure_ascii=False, indent=2) + "\n")
+
             def tab_drag_checks():
                 nonlocal app, window
                 close_tabs()
@@ -9210,6 +9271,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
                 return
+            if args.section == "list-indent":
+                list_indent_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "tab-drag":
                 tab_drag_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -9777,6 +9843,7 @@ def main():
                 tab_action_checks,
                 tab_restore_checks,
                 tab_drag_checks,
+                list_indent_checks,
                 settings_checks,
                 font_controls_checks,
                 font_family_checks,

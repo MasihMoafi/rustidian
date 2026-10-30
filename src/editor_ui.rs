@@ -53,6 +53,7 @@ pub struct Editor {
     menu_release: bool,
     /// Text the note menu asked the sidebar search to find.
     pub search_request: Option<String>,
+    deferred_input: Option<(u64, Vec<egui::Event>)>,
 }
 
 /// Where a right-click opens the note's own menu before egui sees it: egui's
@@ -786,6 +787,11 @@ impl Editor {
         raw: &mut egui::RawInput,
         live_tab: Option<u64>,
     ) {
+        if let Some((owner, events)) = self.deferred_input.take()
+            && Some(owner) == live_tab
+        {
+            raw.events.splice(0..0, events);
+        }
         self.hold_menu_click(ctx, raw);
         self.tables.raw_input(ctx, raw, live_tab);
     }
@@ -1105,6 +1111,17 @@ impl Editor {
                     }
                 } else {
                     action_ready = false;
+                    // Let preceding navigation, paste or selection run before this Tab.
+                    let events = ui.input_mut(|input| {
+                        let index = [egui::Modifiers::NONE, egui::Modifiers::SHIFT]
+                            .into_iter()
+                            .find_map(|modifiers| action_matches(input, modifiers, &[Key::Tab]))?;
+                        Some(input.events.split_off(index))
+                    });
+                    if let Some(events) = events {
+                        self.deferred_input = Some((tab.id(), events));
+                        ui.ctx().request_repaint();
+                    }
                 }
             } else {
                 action_ready = false;
@@ -1160,6 +1177,52 @@ impl Editor {
                         set_cursor(ui.ctx(), id, caret);
                         tab.edited();
                         action_handled = true;
+                    }
+                }
+            }
+        }
+        if action_ready && !action_handled && ui.memory(|memory| memory.has_focus(id)) {
+            let modifiers = [egui::Modifiers::NONE, egui::Modifiers::SHIFT]
+                .into_iter()
+                .find(|modifiers| {
+                    ui.input(|input| action_matches(input, *modifiers, &[Key::Tab]).is_some())
+                });
+            let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            if let Some(modifiers) = modifiers
+                && let Some(selection) = state.cursor.char_range()
+            {
+                let selected = selection.as_sorted_char_range();
+                let before = tab.document.text.clone();
+                if let Some(range) = rustidian::editor::markdown_indent(
+                    &mut tab.document.text,
+                    selected.start.0..selected.end.0,
+                    modifiers.shift,
+                ) {
+                    // Preserve event order, including another Tab queued in this frame.
+                    let events = ui.input_mut(|input| {
+                        let index = action_matches(input, modifiers, &[Key::Tab]).unwrap();
+                        input.events.split_off(index + 1)
+                    });
+                    consume_action(ui, modifiers, &[Key::Tab]);
+                    self.deferred_input = Some((tab.id(), events));
+                    ui.ctx().request_repaint();
+                    action_handled = true;
+                    if tab.document.text != before {
+                        let mut undoer = state.undoer();
+                        undoer.add_undo(&(selection, before));
+                        let (primary, secondary) =
+                            if selection.primary.index < selection.secondary.index {
+                                (range.start, range.end)
+                            } else {
+                                (range.end, range.start)
+                            };
+                        let cursor =
+                            CCursorRange::two(CCursor::new(secondary), CCursor::new(primary));
+                        state.cursor.set_char_range(Some(cursor));
+                        undoer.add_undo(&(cursor, tab.document.text.clone()));
+                        state.set_undoer(undoer);
+                        state.store(ui.ctx(), id);
+                        tab.edited();
                     }
                 }
             }

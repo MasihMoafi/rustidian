@@ -755,6 +755,83 @@ pub fn toggle_task(text: &mut String, ordinal: usize) -> bool {
     true
 }
 
+/// Indent touched lines without replacing their contents. Selections use characters.
+/// A plain caret keeps TextEdit's literal Tab, except inside a Markdown list.
+pub fn markdown_indent(
+    text: &mut String,
+    selection: Range<usize>,
+    outdent: bool,
+) -> Option<Range<usize>> {
+    let byte = |character| {
+        text.char_indices()
+            .map(|(index, _)| index)
+            .chain([text.len()])
+            .nth(character)
+    };
+    let (start, end) = (byte(selection.start)?, byte(selection.end)?);
+    if start > end {
+        return None;
+    }
+    let first = text[..start].rfind('\n').map_or(0, |index| index + 1);
+    if selection.is_empty() && !outdent && !Markdown::parse(text).item_starts.contains(&first) {
+        return None;
+    }
+    // A selection ending at the next line's start does not include that line.
+    let end = if end > start && text.as_bytes()[end - 1] == b'\n' {
+        end - 1
+    } else {
+        end
+    };
+    let last = text[end..]
+        .find('\n')
+        .map_or(text.len(), |index| end + index);
+    let mut edits = Vec::new();
+    let mut line_start = first;
+    for line in text[first..last].split_inclusive('\n') {
+        // Indent inside the quote prefix, so quoted lists remain blockquotes.
+        let mut prefix = 0;
+        let mut probe = 0;
+        loop {
+            probe += line[probe..].len() - line[probe..].trim_start_matches([' ', '\t']).len();
+            if line.as_bytes().get(probe) != Some(&b'>') {
+                break;
+            }
+            probe += 1;
+            if line.as_bytes().get(probe) == Some(&b' ') {
+                probe += 1;
+            }
+            prefix = probe;
+        }
+        let remove = if !outdent {
+            0
+        } else if line.as_bytes().get(prefix) == Some(&b'\t') {
+            1
+        } else {
+            line[prefix..]
+                .bytes()
+                .take(4)
+                .take_while(|byte| *byte == b' ')
+                .count()
+        };
+        if !outdent || remove > 0 {
+            edits.push((line_start + prefix, remove));
+        }
+        line_start += line.len();
+    }
+    let mut result = selection;
+    for (position, remove) in edits.into_iter().rev() {
+        let character = text[..position].chars().count();
+        for end in [&mut result.start, &mut result.end] {
+            if *end >= character {
+                *end =
+                    character + (*end - character).saturating_sub(remove) + usize::from(!outdent);
+            }
+        }
+        text.replace_range(position..position + remove, if outdent { "" } else { "\t" });
+    }
+    Some(result)
+}
+
 /// Continue Markdown structure on Enter. Character ranges match the native editor.
 pub fn markdown_enter(text: &mut String, selection: Range<usize>) -> Option<Range<usize>> {
     let start = text
