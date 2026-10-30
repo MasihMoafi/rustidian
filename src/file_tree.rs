@@ -301,7 +301,11 @@ pub fn finish_drag(
     egui::DragAndDrop::clear_payload(ctx);
     ctx.data_mut(|data| data.remove::<DropHover>(drop_hover_id()));
     let folder = target?;
-    if dragged.path.parent() == Some(folder.as_path()) {
+    if dragged
+        .paths
+        .iter()
+        .all(|path| path.parent() == Some(folder.as_path()))
+    {
         return None;
     }
     if dragged.paths.len() > 1 {
