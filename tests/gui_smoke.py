@@ -6936,7 +6936,8 @@ def main():
                     for label, original, selection, action, expected in cases:
                         name = f"List {mode} {label}"
                         path = fixture / (name + ".md")
-                        open_note(name)
+                        open_note(name + ".md", title=name)
+                        control_bounds("tab-full:" + name + ".md")
                         command(mode)
                         editor_end()
                         for chord in selection:
