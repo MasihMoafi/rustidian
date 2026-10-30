@@ -3310,6 +3310,9 @@ impl NotesApp {
                 self.focus_editor();
             }
         }
+        for action in std::mem::take(&mut self.editor.embed_actions) {
+            self.apply_preview_action(ui.ctx(), Some(action));
+        }
         if let Some(target) = follow {
             self.follow_link(&target);
         }
@@ -4555,14 +4558,23 @@ impl NotesApp {
 
     fn show_page_preview(&mut self, ctx: &egui::Context) {
         let blocked = self.interaction_blocked() || self.view() == View::Graph;
-        match self.page_preview.show(
+        let action = self.page_preview.show(
             ctx,
             self.vault.as_ref(),
             &self.tabs,
             self.active,
             blocked,
             self.document_font_size,
-        ) {
+        );
+        self.apply_preview_action(ctx, action);
+    }
+
+    fn apply_preview_action(
+        &mut self,
+        ctx: &egui::Context,
+        action: Option<crate::page_preview::Action>,
+    ) {
+        match action {
             Some(crate::page_preview::Action::Open { from, target }) => {
                 self.follow_link_from(&from, &target)
             }

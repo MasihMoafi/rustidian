@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7569,6 +7569,103 @@ def main():
                 click_control("tab-full:Drag Beta.md"); command("Toggle pin")
                 results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
 
+            def note_embed_checks():
+                close_tabs()
+                targets = fixture/'Embed Targets'; targets.mkdir(exist_ok=True)
+                hosts = fixture/'Embed Hosts'; hosts.mkdir(exist_ok=True)
+                note = targets/'Note.md'; original = '# Embedded title\n\nWHOLE NOTE **bold** marker\n\n- [ ] EMBEDDED TASK\n\n[RELATIVE SIBLING](Sibling.md)\n\n![[Nested]]\n'
+                note.write_text(original)
+                (targets/'Nested.md').write_text('# Nested\n\nNESTED BODY\n\n[[Leaf|NESTED LEAF]]\n')
+                for folder, marker in [(targets,'RIGHT'),(hosts,'WRONG')]:
+                    (folder/'Sibling.md').write_text('# Sibling\n\n' + marker + ' SIBLING\n')
+                    (folder/'Leaf.md').write_text('# Leaf\n\n' + marker + ' LEAF\n')
+                sections = targets/'Sections.md'; section_original = ('# First\n\nHEAD EXCLUDED\n\n## Pick café\n\nHEADING CONTENT\n\n### Child\n\nCHILD CONTENT\n\n## Next\n\nNEXT EXCLUDED\n\n'
+                    '- [ ] OUTSIDE TASK\n\n- [ ] BLOCK TASK ^task-block\n\n- LIST FIRST\n- LIST SECOND\n\n^list-block\n\n> QUOTE FIRST\n> QUOTE SECOND\n\n^quote-block\n')
+                sections.write_text(section_original)
+                (targets/'Cycle A.md').write_text('# Cycle A\n\n![[Cycle B]]\n')
+                (targets/'Cycle B.md').write_text('# Cycle B\n\n![[Cycle A]]\n')
+                Image.new('RGB',(96,48),(230,80,120)).save(targets/'inside.png')
+                rich = targets/'Rich.md'; rich.write_text('# Rich\n\n> [!note] CALLOUT TITLE\n> CALLOUT BODY\n\n```rust\nlet value = 42;\n```\n\n| Rich column | Value |\n| --- | --- |\n| cell | 42 |\n\n![[inside.png|80]]\n\n```mermaid\ngraph LR; A[Start] --> B[End]\n```\n')
+                queries={'Whole':'Embed Targets/Note','Heading':'Embed Targets/Sections#Pick café','Task':'Embed Targets/Sections#^task-block','List':'Embed Targets/Sections#^list-block','Quote':'Embed Targets/Sections#^quote-block','Rich':'Embed Targets/Rich','Cycle':'Embed Targets/Cycle A','Missing':'Embed Targets/Absent','Missing heading':'Embed Targets/Sections#Absent','Self cycle':'Embed Hosts/Self cycle'}
+                host_bytes={}
+                for name,query in queries.items():
+                    content='# Host '+name+'\n\n![[ '+query+' ]]\n\nHOST AFTER '+name+'\n'
+                    content=content.replace('![[ ','![[').replace(' ]]',']]')
+                    (hosts/(name+'.md')).write_text(content); host_bytes[name]=content
+                self_note=hosts/'Self section.md'; self_note.write_text('# Self\n\n## Reference Section\n\nSELF CONTENT\n\n## Show\n\n![[#Reference Section]]\n\nSELF AFTER\n')
+                command('Refresh vault')
+                def controls(): return json.loads((base/'ui-probe.json').read_text())
+                def stable(query):
+                    previous=None; repeats=0; deadline=time.monotonic()+6
+                    while time.monotonic()<deadline:
+                        rect=control_bounds('note-embed:'+query)
+                        repeats=repeats+1 if rect==previous else 0; previous=rect
+                        if repeats>=3: return rect
+                        time.sleep(.1)
+                    raise AssertionError(('Embed layout did not settle',query,previous))
+                def open_host(name):
+                    open_note('Embed Hosts/'+name+'.md',title=name); command('Live preview'); control_bounds('view-mode:Live preview'); editor_end()
+                    return stable(queries[name])
+                def present(path,value):
+                    prefix='note-embed-text:'+path+':'; deadline=time.monotonic()+5
+                    while time.monotonic()<deadline:
+                        names=[name for name in controls() if name.startswith(prefix) and value in name[len(prefix):]]
+                        if names: return names[0]
+                        time.sleep(.05)
+                    raise AssertionError(('Rendered embedded text absent',path,value,list(controls())))
+                def copied(): return subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                open_host('Whole'); present('Embed Targets/Note.md','WHOLE NOTE bold marker'); present('Embed Targets/Nested.md','NESTED BODY')
+                time.sleep(.2); capture('native-note-embed-whole.png')
+                click_control('note-embed-task:Embed Targets/Note.md:0')
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline and '- [x] EMBEDDED TASK' not in note.read_text(): time.sleep(.05)
+                assert note.read_text()==original.replace('- [ ] EMBEDDED TASK','- [x] EMBEDDED TASK')
+                assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
+                click_control('note-embed-task:Embed Targets/Note.md:0'); time.sleep(.3); assert note.read_text()==original
+                click_control(present('Embed Targets/Nested.md','NESTED LEAF')); title_contains('Leaf'); control_bounds('tab-full:Embed Targets/Leaf.md')
+                key('alt+Left'); title_contains('Whole'); stable(queries['Whole'])
+                click_control(present('Embed Targets/Note.md','RELATIVE SIBLING')); title_contains('Sibling'); control_bounds('tab-full:Embed Targets/Sibling.md')
+                results.append('Whole note and nested note content rendered; embedded task clicks saved only the referenced note, and nested/ordinary links resolved from their own target folders despite host-folder decoys')
+                open_host('Heading'); present('Embed Targets/Sections.md','HEADING CONTENT'); present('Embed Targets/Sections.md','CHILD CONTENT')
+                rendered=' '.join(name for name in controls() if name.startswith('note-embed-text:Embed Targets/Sections.md:'))
+                assert 'HEAD EXCLUDED' not in rendered and 'NEXT EXCLUDED' not in rendered
+                capture('native-note-embed-heading.png')
+                for name,expected in [('List','LIST FIRST'),('Quote','QUOTE FIRST')]:
+                    open_host(name); present('Embed Targets/Sections.md',expected); capture('native-note-embed-'+name.lower()+'.png')
+                open_host('Task'); present('Embed Targets/Sections.md','BLOCK TASK'); click_control('note-embed-task:Embed Targets/Sections.md:0'); time.sleep(.3)
+                assert sections.read_text()==section_original.replace('- [ ] BLOCK TASK','- [x] BLOCK TASK')
+                assert '- [ ] OUTSIDE TASK' in sections.read_text() and (hosts/'Task.md').read_text()==host_bytes['Task']
+                results.append('Heading embeds included descendants and stopped at the next peer heading; whole list/quote block embeds rendered; a task block edited the right checkbox in the full target while preserving outside tasks and host bytes')
+                open_note('Embed Hosts/Self section.md',title='Self section'); command('Live preview'); editor_end(); stable('#Reference Section'); present('Embed Hosts/Self section.md','SELF CONTENT'); assert not control_bounds('note-embed-cycle',required=False)
+                open_host('Rich'); control_bounds('code-block:0'); control_bounds('table:0'); control_bounds('mermaid-diagram'); assert not control_bounds('mermaid-error',required=False)
+                image_names=[name for name in controls() if name.startswith('note-embed-image:Embed Targets/Rich.md:')]; assert image_names
+                capture('native-note-embed-rich.png'); xdo('mousemove','900','760'); xdo('click','--repeat','4','--delay','60','5'); pause(); capture('native-note-embed-rich-bottom.png')
+                results.append('Same-note nonrecursive heading embeds worked; embedded callout, highlighted Rust code, table, relative image and Mermaid used the reading renderer')
+                for name in ['Missing','Missing heading']:
+                    open_host(name); control_bounds('note-embed-error:'+queries[name]); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png')
+                for name in ['Cycle','Self cycle']:
+                    open_host(name); control_bounds('note-embed-cycle'); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png')
+                open_host('Whole'); updated=original+'\nEXTERNAL UPDATED\n'; note.write_text(updated); present('Embed Targets/Note.md','EXTERNAL UPDATED'); stable(queries['Whole']); capture('native-note-embed-external-update.png')
+                assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
+                results.append('Missing notes/headings and direct/mutual recursive embeds showed visible cards without a hang; external target edits reflected in the unchanged host')
+                command('Source editing'); control_bounds('view-mode:Source mode'); assert not control_bounds('note-embed:'+queries['Whole'],required=False)
+                command('Live preview'); editor_end(); stable(queries['Whole']); click_control('note-embed-edit:'+queries['Whole']); control_bounds('editor-focused'); key('ctrl+c'); assert copied()=='![[Embed Targets/Note]]'
+                paste_text('![[Embed Targets/Sections#Pick café]]'); editor_end(); stable(queries['Heading']); key('ctrl+s')
+                changed=host_bytes['Whole'].replace('![[Embed Targets/Note]]','![[Embed Targets/Sections#Pick café]]'); assert (hosts/'Whole.md').read_text()==changed
+                key('ctrl+z'); key('ctrl+s'); assert (hosts/'Whole.md').read_text()==host_bytes['Whole']; stable(queries['Whole'])
+                key('ctrl+shift+z'); key('ctrl+s'); assert (hosts/'Whole.md').read_text()==changed
+                key('ctrl+z'); key('ctrl+s'); assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
+                results.append('Source mode kept raw Markdown; Edit embed selected the actual source token, Unicode heading replacement changed only that token, and native Undo/Redo restored exact host bytes')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
+                open_note('Embed Targets/Note.md',title='Note'); command('Source editing'); editor_end(); paste_text('\nOPEN TARGET DRAFT'); time.sleep(1); assert note.read_text()==updated
+                key('ctrl+t'); open_host('Whole'); present('Embed Targets/Note.md','OPEN TARGET DRAFT')
+                click_control('note-embed-task:Embed Targets/Note.md:0'); time.sleep(.3); assert note.read_text()==updated
+                key('ctrl+w'); title_contains('Note'); command('Source editing'); editor_end(); key('ctrl+z'); key('ctrl+a'); key('ctrl+c'); assert copied()==updated+'\nOPEN TARGET DRAFT'
+                key('End'); key('ctrl+shift+z'); key('ctrl+s'); assert note.read_text()==(updated+'\nOPEN TARGET DRAFT').replace('- [ ] EMBEDDED TASK','- [x] EMBEDDED TASK')
+                capture('native-note-embed-draft-redo.png')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',True); key('Escape')
+                results.append('Embeds used an open unsaved target draft; with autosave off, checkbox edits stayed in that draft, Undo preserved earlier draft text and Redo/Save persisted the intended target change')
+
             def block_completion_checks():
                 import re
                 close_tabs()
@@ -10268,6 +10365,10 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
+            if args.section == "note-embeds":
+                note_embed_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "note-embeds", "checks": len(results), "status": "passed"})); return
             if args.section == "block-completion":
                 block_completion_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -10644,7 +10745,7 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
-                tab_close_menu_checks, tab_restore_checks, link_fragment_checks, block_completion_checks,
+                tab_close_menu_checks, tab_restore_checks, link_fragment_checks, block_completion_checks, note_embed_checks,
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,

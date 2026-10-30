@@ -12,6 +12,7 @@ mod image_view;
 mod instance;
 mod math_inline;
 mod math_ui;
+mod note_embed_ui;
 mod page_pan;
 mod page_preview;
 mod preview;

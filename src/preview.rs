@@ -543,9 +543,37 @@ pub fn show(
     anchor: Option<&str>,
     vault: Option<&rustidian::vault::Vault>,
 ) -> Option<String> {
-    // Navigation reuses the tab; its editing path identifies the document and
-    // remains stable when that document moves.
-    let document_id = egui::Id::unique((tab.id(), tab.editor_path()));
+    let id = egui::Id::unique((tab.id(), tab.editor_path()));
+    render(ui, cache, tab, anchor, vault, id, None)
+}
+
+pub fn show_embedded(
+    ui: &mut egui::Ui,
+    cache: &mut CommonMarkCache,
+    text: &mut String,
+    from: &std::path::Path,
+    id: egui::Id,
+    context: &mut crate::note_embed_ui::Context<'_>,
+) -> Option<String> {
+    let mut document = rustidian::vault::Document::new(from.to_owned());
+    document.text.clone_from(text);
+    let mut tab = rustidian::tab::Tab::new(document);
+    let vault = context.vault;
+    let follow = render(ui, cache, &mut tab, None, Some(vault), id, Some(context));
+    *text = tab.document.text;
+    follow
+}
+
+fn render(
+    ui: &mut egui::Ui,
+    cache: &mut CommonMarkCache,
+    tab: &mut rustidian::tab::Tab,
+    anchor: Option<&str>,
+    vault: Option<&rustidian::vault::Vault>,
+    document_id: egui::Id,
+    mut embedding: Option<&mut crate::note_embed_ui::Context<'_>>,
+) -> Option<String> {
+    let embedded = embedding.is_some();
     let text = &tab.document.text;
     let from = &tab.document.path;
     let body = rustidian::metadata::frontmatter(text)
@@ -559,7 +587,12 @@ pub fn show(
             .iter()
             .find(|(id, _)| id == destination)
             .map_or(destination, |(_, target)| target);
-        rustidian::assets::image_uri(vault, from, target)
+        rustidian::assets::image_uri(vault, from, target).or_else(|| {
+            (embedded
+                && links.iter().any(|(id, _)| id == destination)
+                && crate::note_embed_ui::is_note(target))
+            .then(|| format!("rust-note-embed:{destination}"))
+        })
     });
     let id = ui.scope_id().with("reading-blocks");
     let parsed = ui.ctx().data_mut(|data| {
@@ -590,7 +623,7 @@ pub fn show(
         {
             select_all = false;
         }
-        if !ui.ctx().egui_wants_keyboard_input() && take_select_all_key(ui) {
+        if !embedded && !ui.ctx().egui_wants_keyboard_input() && take_select_all_key(ui) {
             select_all = true;
             clear_label_selection(ui.ctx());
         }
@@ -626,9 +659,13 @@ pub fn show(
             &mut task,
             from,
             document_id,
+            embedding.as_deref_mut(),
+            cache,
         );
         let area = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
-        reading_menu(ui, area, menu, &parsed.blocks, &mut select_all);
+        if !embedded {
+            reading_menu(ui, area, menu, &parsed.blocks, &mut select_all);
+        }
         if select_all {
             ui.painter()
                 .rect_filled(area, 0.0, ui.visuals().selection.bg_fill);
@@ -789,6 +826,8 @@ fn show_blocks(
     task: &mut Option<usize>,
     from: &std::path::Path,
     document_id: egui::Id,
+    mut embedding: Option<&mut crate::note_embed_ui::Context<'_>>,
+    cache: &mut CommonMarkCache,
 ) -> Option<String> {
     let mut clicked = None;
     ui.style_mut().spacing.item_spacing.y = 0.0;
@@ -878,6 +917,8 @@ fn show_blocks(
                                     task,
                                     from,
                                     document_id,
+                                    embedding.as_deref_mut(),
+                                    cache,
                                 )
                             });
                             crate::ui_probe::record(
@@ -995,6 +1036,20 @@ fn show_blocks(
             continue;
         }
         if let Some(uri) = &block.image {
+            if let Some(destination) = uri.strip_prefix("rust-note-embed:")
+                && let Some(context) = embedding.as_deref_mut()
+                && let Some((_, target)) = native_links.iter().find(|(id, _)| id == destination)
+            {
+                context.nested(
+                    ui,
+                    cache,
+                    from,
+                    target,
+                    document_id.with(("nested-embed", index)),
+                );
+                ui.add_space(16.0);
+                continue;
+            }
             let alt: String = block.parts.iter().map(|part| part.text.as_str()).collect();
             if let Some(target) = uri.strip_prefix("rust-missing-image:") {
                 ui.weak(format!("Image unavailable: {target}"));
@@ -1007,12 +1062,19 @@ fn show_blocks(
                     .filter(|width| *width > 0.0)
                     .unwrap_or(ui.available_width())
                     .min(ui.available_width());
-                ui.add(
+                let image = ui.add(
                     egui::Image::new(uri)
                         .fit_to_original_size(1.0)
                         .max_width(width)
                         .alt_text(&alt),
                 );
+                if embedding.is_some() {
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("note-embed-image:{}:{uri}", from.display()),
+                        image.rect,
+                    );
+                }
             }
             ui.add_space(16.0);
             continue;
@@ -1110,6 +1172,13 @@ fn show_blocks(
                             )
                             .inner;
                         crate::ui_probe::record(ui.ctx(), format!("task:{ordinal}"), checkbox.rect);
+                        if embedding.is_some() {
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("note-embed-task:{}:{ordinal}", from.display()),
+                                checkbox.rect,
+                            );
+                        }
                         if checkbox.clicked() {
                             *task = Some(ordinal);
                         }
@@ -1121,6 +1190,17 @@ fn show_blocks(
                 }
             })
             .inner;
+        if embedding.is_some() {
+            crate::ui_probe::record(
+                ui.ctx(),
+                format!(
+                    "note-embed-text:{}:{}",
+                    from.display(),
+                    galley.job.text.trim()
+                ),
+                response.rect,
+            );
+        }
         for placement in &math {
             let rect = crate::math_inline::paint(ui, &galley, response.rect.min, placement);
             crate::ui_probe::record(

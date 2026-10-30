@@ -205,6 +205,8 @@ pub struct Editor {
     completion_dismissed: bool,
     completion_popup: Option<(egui::Id, egui::Rect)>,
     pub block_completion: Option<BlockCompletion>,
+    pub embed_actions: Vec<crate::page_preview::Action>,
+    embed_cache: egui_commonmark::CommonMarkCache,
     focus_range: Option<(egui::Id, CCursorRange)>,
     image_cursor: Option<(usize, usize)>,
     image_cursor_time: f64,
@@ -391,6 +393,7 @@ struct LiveImage {
     uri: String,
     size: egui::Vec2,
     math: Option<usize>,
+    note: Option<crate::note_embed_ui::Embed>,
 }
 
 // Keep the original allocation alive so its pointer identifies the font
@@ -568,6 +571,7 @@ fn embedded_images(
                 uri,
                 size: egui::vec2(width, height),
                 math: None,
+                note: None,
             })
         })
         .collect()
@@ -580,8 +584,45 @@ fn live_images(
     from: &std::path::Path,
     parsed: &Markdown,
     active_line: Option<&Range<usize>>,
+    open_notes: &[(&std::path::Path, &str)],
 ) -> Vec<LiveImage> {
     let mut images = embedded_images(ui, text, vault, from, &parsed.maths);
+    if let Some(vault) = vault {
+        let mut occurrences = HashMap::new();
+        for image in rustidian::assets::embedded_images(text) {
+            if !text[image.range.clone()].starts_with("![[")
+                || !crate::note_embed_ui::is_note(&image.target)
+                || parsed.maths.iter().any(|math| {
+                    math.range.start < image.range.end && math.range.end > image.range.start
+                })
+            {
+                continue;
+            }
+            let occurrence = occurrences.entry(image.target.clone()).or_insert(0usize);
+            let id = ui.make_persistent_id(("note-embed", from, &image.target, *occurrence));
+            *occurrence += 1;
+            let width = (ui.available_width() - 4.0).max(1.0);
+            images.push(LiveImage {
+                range: image.range,
+                block: None,
+                uri: String::new(),
+                math: None,
+                size: egui::vec2(width, crate::note_embed_ui::height(ui.ctx(), id, width)),
+                note: Some(crate::note_embed_ui::Embed {
+                    id,
+                    source: crate::note_embed_ui::resolve(
+                        vault,
+                        from,
+                        text,
+                        open_notes,
+                        from,
+                        &image.target,
+                    ),
+                    target: image.target,
+                }),
+            });
+        }
+    }
     for block in &parsed.code_blocks {
         if !block.language.eq_ignore_ascii_case("mermaid")
             || active_line
@@ -600,6 +641,7 @@ fn live_images(
                 uri,
                 size,
                 math: None,
+                note: None,
             });
         }
     }
@@ -660,6 +702,7 @@ fn live_images(
                 uri: formula.uri,
                 size: formula.size * scale,
                 math: Some(ordinal),
+                note: None,
             });
         }
     }
@@ -1745,7 +1788,15 @@ impl Editor {
         let from = &tab.document.path;
         let plain_text = tab.document.is_plain_text();
         let mut images = if live {
-            live_images(ui, source, vault, from, parsed, active_line.as_ref())
+            live_images(
+                ui,
+                source,
+                vault,
+                from,
+                parsed,
+                active_line.as_ref(),
+                open_notes,
+            )
         } else {
             Vec::new()
         };
@@ -1760,7 +1811,15 @@ impl Editor {
             |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| -> Arc<egui::Galley> {
                 let text = buffer.as_str();
                 if text == source && updated_parsed.take().is_some() && live {
-                    images = live_images(ui, source, vault, from, parsed, active_line.as_ref());
+                    images = live_images(
+                        ui,
+                        source,
+                        vault,
+                        from,
+                        parsed,
+                        active_line.as_ref(),
+                        open_notes,
+                    );
                     retain_visible_images(&mut images, sections, &collapsed);
                 }
                 // An edit moves the caret to its end; the line there is the active one,
@@ -1782,6 +1841,7 @@ impl Editor {
                             from,
                             updated_parsed.as_ref().unwrap(),
                             active_line.as_ref(),
+                            open_notes,
                         );
                     }
                     updated_parsed.as_ref().unwrap()
@@ -2220,6 +2280,55 @@ impl Editor {
                 image.size,
             );
             ui.expand_to_include_rect(rect);
+            if let Some(note) = &image.note {
+                if let Some(vault) = vault
+                    && ui.is_rect_visible(rect)
+                {
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt((id, "note-embed", note.id))
+                            .max_rect(egui::Rect::from_min_size(
+                                rect.min,
+                                egui::vec2(rect.width(), f32::INFINITY),
+                            )),
+                    );
+                    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+                    let mut context = crate::note_embed_ui::Context::new(
+                        vault,
+                        &tab.document,
+                        open_notes,
+                        &mut self.embed_actions,
+                        &mut self.error,
+                    );
+                    if context.show(
+                        &mut child,
+                        &mut self.embed_cache,
+                        &tab.document.path,
+                        note,
+                        true,
+                    ) {
+                        let start = tab.document.text[..image.range.start].chars().count();
+                        let end = tab.document.text[..image.range.end].chars().count();
+                        self.focus_range = Some((
+                            id,
+                            CCursorRange::two(CCursor::new(end), CCursor::new(start)),
+                        ));
+                        ui.ctx().request_repaint();
+                    }
+                    crate::ui_probe::record(ui.ctx(), format!("embed:{ordinal}"), rect);
+                    if active {
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("embed-source:{ordinal}"),
+                            egui::Rect::from_min_size(
+                                origin,
+                                egui::vec2(ui.available_width(), 29.16),
+                            ),
+                        );
+                    }
+                }
+                continue;
+            }
             let widget = egui::Image::new(&image.uri)
                 .fit_to_exact_size(image.size)
                 .sense(egui::Sense::click());
@@ -3701,6 +3810,7 @@ mod tests {
             uri: "bytes://math-layout-test.svg".into(),
             size: egui::vec2(80.0, 40.0),
             math: Some(0),
+            note: None,
         };
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
