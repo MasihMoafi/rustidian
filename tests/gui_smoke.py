@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -6900,6 +6900,148 @@ def main():
                 assert note.read_text()==original
                 results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
 
+            def image_import_checks():
+                from Xlib import X, Xatom, display as xdisplay, protocol
+                modes = ("Source editing", "Live preview")
+                picture = Image.new("RGBA", (80, 48), (230, 40, 150, 255))
+                picture.paste((30, 190, 220, 255), (30, 10, 70, 40))
+                outside = base / "outside-images"; outside.mkdir()
+                clipboard = outside / "clipboard.png"; picture.save(clipboard)
+                collision = fixture / "Dropped picture.png"
+                Image.new("RGBA", (17, 13), (10, 20, 80, 255)).save(collision)
+                occupied = collision.read_bytes()
+                first = outside / collision.name; picture.save(first)
+                special = outside / "Drop ]] #.png"; picture.save(special)
+                for mode in modes:
+                    (fixture / f"Image {mode}.md").write_text("replace me")
+                dropped = fixture / "Image drop.md"; dropped.write_text("START\n\nEND")
+                failure = fixture / "Image failure.md"; failure.write_text("keep this draft")
+                literal = fixture / "Image literal.txt"; literal.write_text("literal")
+                table = fixture / "Image table.md"
+                table.write_text("# Image table\n\n| Image |\n| --- |\n| old |\n")
+                command("Refresh vault")
+                def pngs():
+                    return {p.relative_to(fixture) for p in fixture.rglob("*.png")}
+                def saved(path, expected):
+                    key("ctrl+s"); deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.read_text() == expected: return
+                        time.sleep(.05)
+                    raise AssertionError((path.name, expected, path.read_text()))
+                def paste_image():
+                    owner = subprocess.Popen(["xclip", "-selection", "clipboard", "-in", "-quiet", "-target", "image/png"],
+                        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
+                    try:
+                        owner.stdin.write(clipboard.read_bytes()); owner.stdin.close(); pause()
+                        assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "image/png"], env=environment, timeout=5) == clipboard.read_bytes()
+                        modified_shortcut(xdo, "v"); pause()
+                    finally:
+                        if owner.poll() is None: owner.terminate()
+                        owner.wait(timeout=5)
+                def drop_files(paths, point):
+                    x, y = map(round, point)
+                    xdo("mousemove", "--sync", str(x), str(y)); pause()
+                    connection = xdisplay.Display(display)
+                    source = connection.screen().root.create_window(0, 0, 1, 1, 0, X.CopyFromParent, event_mask=X.PropertyChangeMask)
+                    target = connection.create_resource_object("window", int(window))
+                    atoms = {name: connection.intern_atom(name) for name in ["XdndSelection", "XdndEnter", "XdndPosition", "XdndDrop", "XdndStatus", "XdndFinished", "XdndActionCopy", "text/uri-list", "TARGETS"]}
+                    delivered = False; finished = False; events = []
+                    def send(name, data):
+                        target.send_event(protocol.event.ClientMessage(window=target, client_type=atoms[name], data=(32, data)), event_mask=0)
+                        connection.flush()
+                    try:
+                        source.set_selection_owner(atoms["XdndSelection"], X.CurrentTime)
+                        connection.sync()
+                        send("XdndEnter", [source.id, 5 << 24, atoms["text/uri-list"], 0, 0])
+                        send("XdndPosition", [source.id, 0, (x << 16) | y, X.CurrentTime, atoms["XdndActionCopy"]])
+                        deadline = time.monotonic() + 8
+                        while time.monotonic() < deadline and not finished:
+                            while connection.pending_events():
+                                event = connection.next_event()
+                                if event.type == X.SelectionRequest:
+                                    requestor = connection.create_resource_object("window", getattr(event.requestor, "id", event.requestor))
+                                    prop = event.property or event.target
+                                    if event.target == atoms["text/uri-list"]:
+                                        payload = ("\r\n".join(path.resolve().as_uri() for path in paths) + "\r\n").encode()
+                                        requestor.change_property(prop, event.target, 8, payload)
+                                        delivered = True; events.append("URI selection delivered")
+                                    elif event.target == atoms["TARGETS"]:
+                                        requestor.change_property(prop, Xatom.ATOM, 32, [atoms["text/uri-list"]])
+                                    else: prop = X.NONE
+                                    requestor.send_event(protocol.event.SelectionNotify(time=event.time, requestor=requestor, selection=event.selection, target=event.target, property=prop), event_mask=0)
+                                    connection.flush()
+                                elif event.type == X.ClientMessage:
+                                    values = list(event.data[1])
+                                    if event.client_type == atoms["XdndStatus"]:
+                                        events.append(["status", values]); assert values[1] & 1, events
+                                        send("XdndDrop", [source.id, 0, X.CurrentTime, 0, 0])
+                                    elif event.client_type == atoms["XdndFinished"]:
+                                        events.append(["finished", values]); assert values[1] & 1, events
+                                        finished = True
+                            time.sleep(.01)
+                        assert delivered and finished, events
+                    finally:
+                        source.destroy(); connection.flush(); connection.close()
+                    pause()
+                for mode in modes:
+                    path = fixture / f"Image {mode}.md"
+                    open_note(path.name, title=path.stem); command(mode); editor_end()
+                    modified_shortcut(xdo, "a"); pause(); before = pngs(); paste_image()
+                    new = pngs() - before; assert len(new) == 1, new
+                    attachment = next(iter(new)); link = f"![[{attachment.as_posix()}]]"
+                    saved(path, link)
+                    assert Image.open(fixture / attachment).convert("RGBA").tobytes() == picture.tobytes()
+                    capture("native-image-paste-" + mode.replace(" ", "-") + ".png")
+                    if mode == "Live preview":
+                        screen = ImageGrab.grab(xdisplay=display).convert("RGB")
+                        assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 200, "The saved image must render in Live Preview"
+                    key("ctrl+z"); saved(path, "replace me")
+                    key("ctrl+y"); saved(path, link); assert pngs() == before | new
+                    key("ctrl+o"); count = pngs(); paste_image(); assert pngs() == count
+                    key("Escape"); saved(path, link)
+                    results.append(mode + ": actual PNG clipboard paste saved matching pixels in the vault root, replaced the selection, rendered in Live Preview, survived Undo/Redo and did not import into Quick Open")
+                open_note(dropped.name, title=dropped.stem); command("Source editing"); editor_end()
+                left, top, right, bottom = control_bounds("editor-caret")
+                point = (right + 24, (top + bottom) / 2)
+                key("ctrl+Home"); before = pngs(); drop_files([first, special], point)
+                expected = "START\n\nEND![[Dropped picture 1.png]]\n![[Drop %5D%5D %23.png]]"
+                saved(dropped, expected)
+                assert pngs() - before == {Path("Dropped picture 1.png"), Path(special.name)}
+                assert collision.read_bytes() == occupied and first.read_bytes() == clipboard.read_bytes()
+                assert (fixture / "Dropped picture 1.png").read_bytes() == first.read_bytes()
+                assert (fixture / special.name).read_bytes() == special.read_bytes()
+                capture("native-image-drop-source.png")
+                command("Live preview"); pause()
+                capture("native-image-drop-live.png")
+                screen = ImageGrab.grab(xdisplay=display).convert("RGB")
+                assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 4000, "Both dropped images must render"
+                command("Source editing"); editor_end()
+                left, top, right, bottom = control_bounds("editor-caret"); before = pngs()
+                drop_files([fixture / "Dropped picture 1.png"], (right + 24, (top + bottom) / 2))
+                saved(dropped, expected + "![[Dropped picture 1.png]]"); assert pngs() == before
+                key("ctrl+z"); saved(dropped, expected)
+                results.append("Native Xdnd multi-image drop inserted at the pointer instead of the old caret, copied exact bytes, preserved a filename collision, escaped ]]/# names, rendered both images, reused an existing vault attachment and supported Undo")
+                open_note(table.name, title=table.stem); command("Live preview")
+                click_control("edit-table-cell:0:1:0"); modified_shortcut(xdo, "a"); pause()
+                before = pngs(); paste_image(); new = pngs() - before; assert len(new) == 1, new
+                attachment = next(iter(new)); key("ctrl+s")
+                expected_cell = f"| ![[{attachment.as_posix()}]] |"
+                deadline = time.monotonic() + 4
+                while expected_cell not in table.read_text() and time.monotonic() < deadline: time.sleep(.05)
+                assert expected_cell in table.read_text(), table.read_text()
+                key("Escape")
+                open_note(literal.name, title=literal.stem); editor_end(); before = pngs(); paste_image()
+                saved(literal, "literal"); assert pngs() == before
+                results.append("Image paste also reached the focused Live Preview table cell; plain-text files retained literal contents without creating attachments")
+                open_note(failure.name, title=failure.stem); command("Source editing"); editor_end(); before = pngs()
+                mode = fixture.stat().st_mode
+                try:
+                    fixture.chmod(0o555); paste_image(); capture("native-image-import-error.png")
+                finally: fixture.chmod(mode)
+                assert pngs() == before
+                key("Escape"); saved(failure, "keep this draft")
+                results.append("A real unwritable-vault import failed visibly and preserved the note and all attachments")
+
             def delimiter_pair_checks():
                 pairs = [("round", "(", ")"), ("square", "[", "]"), ("curly", "{", "}"), ("single", "'", "'"), ("double", '"', '"')]
                 modes = ("Source editing", "Live preview")
@@ -9463,6 +9605,10 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
                 return
+            if args.section == "image-import":
+                image_import_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "image-import", "checks": len(results), "status": "passed"})); return
             if args.section == "delimiter-pairs":
                 delimiter_pair_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -10047,7 +10193,7 @@ def main():
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,
-                delimiter_pair_checks,
+                image_import_checks, delimiter_pair_checks,
                 settings_checks,
                 font_controls_checks,
                 font_family_checks,

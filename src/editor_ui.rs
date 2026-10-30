@@ -974,6 +974,96 @@ impl Editor {
         }
     }
 
+    fn import_images(
+        &mut self,
+        ui: &egui::Ui,
+        tab: &Tab,
+        id: egui::Id,
+        vault: Option<&mut rustidian::vault::Vault>,
+    ) -> Option<(String, egui::Pos2)> {
+        use image::ImageEncoder;
+        if !ui.is_enabled() || ui.is_sizing_pass() || tab.document.is_plain_text() {
+            return None;
+        }
+        let vault = vault?;
+        let paste = self.has_focus(ui.ctx(), id);
+        let drop_rect =
+            egui::Rect::from_min_max(ui.cursor().min, ui.max_rect().max).intersect(ui.clip_rect());
+        let drop_at = ui
+            .input(|input| input.pointer.hover_pos())
+            .filter(|pos| drop_rect.contains(*pos));
+        crate::ui_probe::record(ui.ctx(), "image-drop-target", drop_rect);
+        ui.input_mut(|input| {
+            if paste {
+                for event in &mut input.events {
+                    if let egui::Event::PasteImage(image) = event {
+                        let saved = (|| {
+                            let rgba: Vec<u8> = image
+                                .pixels
+                                .iter()
+                                .flat_map(|pixel| pixel.to_srgba_unmultiplied())
+                                .collect();
+                            let mut png = Vec::new();
+                            image::codecs::png::PngEncoder::new_with_quality(
+                                &mut png,
+                                image::codecs::png::CompressionType::Fast,
+                                image::codecs::png::FilterType::Adaptive,
+                            )
+                            .write_image(
+                                &rgba,
+                                image.size[0].try_into().map_err(|_| "Image is too wide.")?,
+                                image.size[1].try_into().map_err(|_| "Image is too tall.")?,
+                                image::ExtendedColorType::Rgba8,
+                            )
+                            .map_err(|error| format!("Cannot encode pasted image: {error}"))?;
+                            let name = format!(
+                                "Pasted image {}.png",
+                                chrono::Local::now().format("%Y%m%d%H%M%S")
+                            );
+                            vault.import_attachment(std::path::Path::new(&name), &png)
+                        })();
+                        *event = match saved {
+                            Ok(path) => egui::Event::Paste(format!(
+                                "![[{}]]",
+                                rustidian::paths::wiki_destination(&path)
+                            )),
+                            Err(error) => {
+                                self.error = Some(error);
+                                egui::Event::Paste(String::new())
+                            }
+                        };
+                    }
+                }
+            }
+            let pos = drop_at?;
+            let mut links = Vec::new();
+            for file in std::mem::take(&mut input.raw.dropped_files) {
+                if !rustidian::assets::is_image(file.path()) {
+                    input.raw.dropped_files.push(file);
+                    continue;
+                }
+                let saved = (|| {
+                    if let Ok(relative) = file.path().strip_prefix(&vault.root)
+                        && vault.attachments.iter().any(|path| path == relative)
+                    {
+                        return Ok(relative.to_path_buf());
+                    }
+                    let bytes = file.bytes()?;
+                    let name = file.path().file_name().ok_or("Invalid image name.")?;
+                    vault.import_attachment(std::path::Path::new(name), &bytes)
+                })();
+                match saved {
+                    Ok(path) => links.push(format!(
+                        "![[{}]]",
+                        rustidian::paths::wiki_destination(&path)
+                    )),
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            (!links.is_empty()).then(|| (links.join("\n"), pos))
+        })
+    }
+
     pub fn has_focus(&self, ctx: &egui::Context, id: egui::Id) -> bool {
         ctx.memory(|memory| memory.has_focus(id)) || self.tables.has_focus(ctx, id)
     }
@@ -985,8 +1075,10 @@ impl Editor {
         id: egui::Id,
         find: &mut Find,
         files: &mut FileMatcher,
-        vault: Option<&rustidian::vault::Vault>,
+        mut vault: Option<&mut rustidian::vault::Vault>,
     ) -> Option<String> {
+        let dropped = self.import_images(ui, tab, id, vault.as_deref_mut());
+        let vault = vault.as_deref();
         if let Some(vault) = vault {
             let mut local = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             let shared = ui.ctx().data_mut(|data| {
@@ -2205,6 +2297,12 @@ impl Editor {
                 data.get_temp_mut_or_default::<Histories>(histories(&vault.root))
                     .insert(tab.document.path.clone(), state);
             });
+        }
+        if let Some((text, pos)) = dropped {
+            let cursor = output.galley.cursor_from_pos(pos - output.galley_pos);
+            self.selection = Some((tab.id(), CCursorRange::one(cursor)));
+            self.insert_text(tab, text);
+            ui.ctx().request_repaint();
         }
         follow
     }

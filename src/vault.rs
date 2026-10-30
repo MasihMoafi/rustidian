@@ -481,6 +481,49 @@ impl Vault {
         self.incoming.take();
     }
 
+    /// Save a new image without replacing an existing vault entry.
+    pub fn import_attachment(&mut self, name: &Path, bytes: &[u8]) -> Result<PathBuf> {
+        if name.components().count() != 1
+            || !matches!(name.components().next(), Some(Component::Normal(_)))
+            || is_ignored_path(name)
+            || !crate::assets::is_image(name)
+        {
+            return Err("Choose a supported image file.".into());
+        }
+        let stem = name
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid image name.")?;
+        let extension = name
+            .extension()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid image extension.")?;
+        for number in 0.. {
+            let relative = if number == 0 {
+                name.to_path_buf()
+            } else {
+                PathBuf::from(format!("{stem} {number}.{extension}"))
+            };
+            let absolute = self.root.join(&relative);
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("Cannot access attachment: {error}")),
+            }
+            let absolute = self.safe_file_path(&relative, false)?;
+            let temporary = prepare_file(&absolute, bytes, None)?;
+            match temporary.persist_noclobber(&absolute) {
+                Ok(_) => {
+                    self.index_note(&relative, String::new());
+                    return Ok(relative);
+                }
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("Cannot save attachment: {error}")),
+            }
+        }
+        Err("Cannot find an available image name.".into())
+    }
+
     pub fn query(&self, query: &str) -> Result<Vec<&Note>> {
         let query = crate::query::Query::parse(query)?;
         Ok(self

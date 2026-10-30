@@ -3162,7 +3162,7 @@ impl NotesApp {
                         id,
                         &mut self.find,
                         &mut self.files,
-                        self.vault.as_ref(),
+                        self.vault.as_mut(),
                     );
                     let preview_link = preview::show(
                         &mut columns[1],
@@ -3211,7 +3211,7 @@ impl NotesApp {
                                     id,
                                     &mut self.find,
                                     &mut self.files,
-                                    self.vault.as_ref(),
+                                    self.vault.as_mut(),
                                 );
                             }
                             ui.add_space(ui.available_height().max(80.0));
