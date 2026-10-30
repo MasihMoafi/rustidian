@@ -1386,7 +1386,7 @@ fn events(
                     let escaped =
                         auto_pair && cursor_range.is_empty() && (pair.is_some() || closer) && {
                             let byte = text.byte_index_from_char_index(cursor_range.primary.index);
-                            text.as_str()[..byte]
+                            text.as_str()[..byte.0]
                                 .bytes()
                                 .rev()
                                 .take_while(|byte| *byte == b'\\')
@@ -1527,7 +1527,7 @@ fn events(
                     })
                     && {
                         let byte = text.byte_index_from_char_index((index - 1).into());
-                        text.as_str()[..byte]
+                        text.as_str()[..byte.0]
                             .bytes()
                             .rev()
                             .take_while(|byte| *byte == b'\\')
