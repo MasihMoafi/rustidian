@@ -7623,17 +7623,19 @@ def main():
                 finally: fixture.chmod(mode)
                 click_control("pending-save"); expect("B", "D"); title_contains("Menu B")
                 assert notes["C"].read_text() == original["C"] + "SAVE_DRAFT"
-                key("ctrl+shift+t"); expect("B", "D", "C")
-                key("ctrl+shift+t"); expect("B", "D", "C", "A")
+                # A closes last in the current B, D, C, A order, so it reopens first.
+                key("ctrl+shift+t"); expect("B", "D", "A")
+                key("ctrl+shift+t"); expect("B", "D", "A", "C")
                 results.append("A real failed save closed no tabs; Cancel kept the active draft and every view, while Save & continue after restoring access saved the draft before closing the requested group")
                 select("A"); command("Source editing"); editor_end(); type_text("DISCARD_DRAFT")
                 try:
                     fixture.chmod(0o555); menu("B", "right"); control_bounds("pending-discard")
-                    expect("B", "D", "C", "A")
+                    expect("B", "D", "A", "C")
                 finally: fixture.chmod(mode)
                 click_control("pending-discard"); expect("B", "D"); title_contains("Menu B")
                 assert notes["A"].read_text() == original["A"]
-                key("ctrl+shift+t"); expect("B", "D", "A"); title_contains("Menu A")
+                key("ctrl+shift+t"); expect("B", "D", "C")
+                key("ctrl+shift+t"); expect("B", "D", "C", "A"); title_contains("Menu A")
                 assert notes["A"].read_text() == original["A"]
                 capture("native-tab-close-discard-restored.png")
                 for name in "ABD": assert notes[name].read_text() == original[name]
