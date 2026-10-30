@@ -33,6 +33,16 @@ pub struct Note {
     folded: std::sync::OnceLock<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct LinkedMention {
+    pub path: PathBuf,
+    pub range: std::ops::Range<usize>,
+    pub line: usize,
+    pub before: String,
+    pub link: String,
+    pub after: String,
+}
+
 impl Note {
     pub(crate) fn new(path: PathBuf, text: String) -> Self {
         let metadata = crate::metadata::analyze(&text);
@@ -676,24 +686,77 @@ impl Vault {
         Ok(document)
     }
 
+    /// Each actual linked mention, using open drafts instead of their saved copies.
+    pub fn backlink_mentions(&self, path: &Path, open: &[(&Path, &str)]) -> Vec<LinkedMention> {
+        let mut sources: HashMap<PathBuf, &str> = self
+            .backlinks(path)
+            .into_iter()
+            .map(|note| (note.path.clone(), note.text.as_str()))
+            .collect();
+        for &(from, text) in open {
+            if from != path && !from.as_os_str().is_empty() {
+                sources.insert(from.to_owned(), text);
+            }
+        }
+        let mut mentions = Vec::new();
+        for (from, text) in sources {
+            if from == path {
+                continue;
+            }
+            for (range, target) in reference_spans(text) {
+                if self.resolve_destination(&from, &target).as_deref() != Some(path) {
+                    continue;
+                }
+                let line_start = text[..range.start].rfind('\n').map_or(0, |start| start + 1);
+                let line_end = text[range.end..]
+                    .find('\n')
+                    .map_or(text.len(), |end| range.end + end);
+                let prefix = &text[line_start..range.start];
+                let suffix = text[range.end..line_end].trim_end_matches('\r');
+                let mut before: String = prefix
+                    .chars()
+                    .rev()
+                    .take(50)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                if prefix.chars().count() > 50 {
+                    before.insert(0, '…');
+                }
+                let mut after: String = suffix.chars().take(70).collect();
+                if suffix.chars().count() > 70 {
+                    after.push('…');
+                }
+                mentions.push(LinkedMention {
+                    path: from.clone(),
+                    line: text[..range.start]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1,
+                    link: text[range.clone()].into(),
+                    range,
+                    before,
+                    after,
+                });
+            }
+        }
+        mentions.sort_by(|a, b| {
+            a.path
+                .cmp(&b.path)
+                .then_with(|| a.range.start.cmp(&b.range.start))
+        });
+        mentions
+    }
+
     pub fn backlinks(&self, path: &Path) -> Vec<&Note> {
         let incoming = self.incoming.get_or_init(|| {
             let mut incoming: HashMap<PathBuf, Vec<usize>> = HashMap::new();
             for (index, note) in self.notes.iter().enumerate() {
                 let mut targets = std::collections::HashSet::new();
-                for link in wiki_links(&note.text) {
+                for (_, link) in reference_spans(&note.text) {
                     if let Some(target) = self.resolve_destination(&note.path, &link)
-                        && target != note.path
-                    {
-                        targets.insert(target);
-                    }
-                }
-                for event in pulldown_cmark::Parser::new(&note.text) {
-                    if let pulldown_cmark::Event::Start(
-                        pulldown_cmark::Tag::Link { dest_url, .. }
-                        | pulldown_cmark::Tag::Image { dest_url, .. },
-                    ) = event
-                        && let Some(target) = self.resolve_destination(&note.path, &dest_url)
                         && target != note.path
                     {
                         targets.insert(target);
@@ -922,6 +985,39 @@ fn prose_lines(text: &str) -> impl Iterator<Item = &str> {
         }
         fence.is_none()
     })
+}
+
+fn reference_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+    let maths = crate::math::spans(text);
+    let mut links = wiki_spans_outside(text, &maths);
+    let wiki_ranges: Vec<_> = links.iter().map(|(range, _)| range.clone()).collect();
+    let body = crate::metadata::frontmatter(text)
+        .ok()
+        .flatten()
+        .map_or(0, |properties| properties.range.end);
+    for (event, range) in Parser::new_ext(
+        &text[body..],
+        Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_FOOTNOTES,
+    )
+    .into_offset_iter()
+    {
+        if let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event {
+            let range = body + range.start..body + range.end;
+            if maths
+                .iter()
+                .any(|math| math.range.start < range.end && math.range.end > range.start)
+                || wiki_ranges
+                    .iter()
+                    .any(|wiki| wiki.start < range.end && wiki.end > range.start)
+            {
+                continue;
+            }
+            links.push((range, dest_url.into_string()));
+        }
+    }
+    links.sort_by_key(|(range, _)| (range.start, range.end));
+    links
 }
 
 pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {

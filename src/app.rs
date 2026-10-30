@@ -2625,21 +2625,23 @@ impl NotesApp {
             .filter(|_| self.right_tab == 2)
             .map(|document| wiki_links(&document.text))
             .unwrap_or_default();
-        let backlinks: Vec<_> = document
+        let backlinks = document
             .filter(|_| self.right_tab == 1)
             .zip(self.vault.as_ref())
             .map(|(document, vault)| {
-                vault
-                    .backlinks(&document.path)
+                let open: Vec<_> = self
+                    .tabs
                     .iter()
-                    .map(|note| (note.path.clone(), note.title()))
-                    .collect()
+                    .map(|tab| (tab.document.path.as_path(), tab.document.text.as_str()))
+                    .collect();
+                vault.backlink_mentions(&document.path, &open)
             })
             .unwrap_or_default();
         let root = agent_tab
             .then(|| self.vault.as_ref().map(|vault| vault.root.clone()))
             .flatten();
         let mut selected = None;
+        let mut selected_backlink = None;
         let mut follow = None;
         let mut jump = None;
         self.prepare_sidebar(ui, "details", 1);
@@ -2720,27 +2722,73 @@ impl NotesApp {
                     if self.right_tab == 1 {
                         ui.label(RichText::new("Backlinks").size(14.0).strong());
                         ui.add_space(6.0);
-                        ui.label(
+                        let count = ui.label(
                             RichText::new(format!("{} linked mentions", backlinks.len()))
                                 .size(12.0)
                                 .weak(),
                         );
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("backlink-count:{}", backlinks.len()),
+                            count.rect,
+                        );
                         ui.add_space(9.0);
-                        for (path, title) in backlinks {
-                            let row = ui.add(
-                                egui::Button::new(
-                                    RichText::new(title).size(13.0).color(theme::accent(ui)),
-                                )
-                                .frame_when_inactive(false),
+                        let mut previous_source = None;
+                        for mention in backlinks {
+                            let first = previous_source.as_ref() != Some(&mention.path);
+                            if first {
+                                ui.add_space(6.0);
+                                ui.label(
+                                    RichText::new(rustidian::paths::display_path(&mention.path))
+                                        .size(13.0)
+                                        .strong(),
+                                );
+                                previous_source = Some(mention.path.clone());
+                            }
+                            let format = egui::TextFormat {
+                                font_id: egui::FontId::proportional(12.0),
+                                color: ui.visuals().text_color(),
+                                ..Default::default()
+                            };
+                            let mut job = egui::text::LayoutJob::default();
+                            job.wrap.max_width = (ui.available_width() - 12.0).max(24.0);
+                            job.append(
+                                &format!("{}: {}", mention.line, mention.before),
+                                0.0,
+                                format.clone(),
                             );
+                            job.append(
+                                &mention.link.replace(['\r', '\n'], " "),
+                                0.0,
+                                egui::TextFormat {
+                                    color: theme::accent(ui),
+                                    ..format.clone()
+                                },
+                            );
+                            job.append(&mention.after, 0.0, format);
+                            let row = ui
+                                .add(egui::Button::new(job).frame_when_inactive(false))
+                                .on_hover_text(mention.path.display().to_string());
                             crate::ui_probe::record(
                                 ui.ctx(),
-                                format!("backlink:{}", path.display()),
+                                format!(
+                                    "backlink-mention:{}:{}",
+                                    mention.path.display(),
+                                    mention.range.start
+                                ),
                                 row.rect,
                             );
-                            if row.clicked() {
-                                selected = Some(path);
+                            if first {
+                                crate::ui_probe::record(
+                                    ui.ctx(),
+                                    format!("backlink:{}", mention.path.display()),
+                                    row.rect,
+                                );
                             }
+                            if theme::link_clicked(&row) {
+                                selected_backlink = Some(mention);
+                            }
+                            ui.add_space(3.0);
                         }
                     }
                     if self.right_tab == 2 {
@@ -2783,9 +2831,40 @@ impl NotesApp {
         if let Some(path) = selected {
             self.open_note(&path);
         }
+        if let Some(mention) = selected_backlink {
+            self.open_linked_mention(mention);
+        }
         if let Some(target) = follow {
             self.follow_link(&target);
         }
+    }
+
+    fn open_linked_mention(&mut self, mention: rustidian::vault::LinkedMention) {
+        let new_tab = self.new_tab_gesture
+            || self.ctx.input(|input| {
+                input.modifiers.command || input.pointer.button_clicked(egui::PointerButton::Middle)
+            });
+        self.open_note_at(&mention.path, new_tab);
+        let Some(tab) = self
+            .tabs
+            .get_mut(self.active)
+            .filter(|tab| tab.document.path == mention.path)
+        else {
+            return;
+        };
+        if tab.document.text.get(mention.range.clone()) != Some(mention.link.as_str()) {
+            self.error = Some(
+                "The linked mention changed. Select it again to open its current location.".into(),
+            );
+            return;
+        }
+        if matches!(tab.view, View::Read | View::Graph) {
+            tab.set_view(tab.editing_view());
+        }
+        let start = tab.document.text[..mention.range.start].chars().count();
+        let end = start + mention.link.chars().count();
+        self.editor.reveal = Some((tab.id(), start..end));
+        self.focus_editor();
     }
 
     fn open_global_graph(&mut self) {

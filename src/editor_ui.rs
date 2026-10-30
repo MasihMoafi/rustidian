@@ -189,6 +189,7 @@ fn link_candidates(
 #[derive(Default)]
 pub struct Editor {
     pub jump: Option<usize>,
+    pub reveal: Option<(u64, Range<usize>)>,
     pub focus: bool,
     pub error: Option<String>,
     pending_edit: Option<PendingEdit>,
@@ -1314,6 +1315,19 @@ impl Editor {
         mut vault: Option<&mut rustidian::vault::Vault>,
         open_notes: &[(&std::path::Path, &str)],
     ) -> Option<String> {
+        if self
+            .reveal
+            .as_ref()
+            .is_some_and(|(target, _)| *target == tab.id())
+        {
+            let (_, range) = self.reveal.take().expect("target tab was checked");
+            self.jump = Some(range.start);
+            self.focus_range = Some((
+                id,
+                CCursorRange::two(CCursor::new(range.end), CCursor::new(range.start)),
+            ));
+            self.focus = true;
+        }
         let dropped = self.import_images(ui, tab, id, vault.as_deref_mut());
         let vault = vault.as_deref();
         if let Some(vault) = vault {

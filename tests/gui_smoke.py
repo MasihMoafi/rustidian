@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7569,6 +7569,78 @@ def main():
                 click_control("tab-full:Drag Beta.md"); command("Toggle pin")
                 results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
 
+            def backlink_context_checks():
+                close_tabs()
+                source_dir=fixture/'Backlink Sources'; source_dir.mkdir(exist_ok=True)
+                other_dir=fixture/'Backlink Other'; other_dir.mkdir(exist_ok=True)
+                target=fixture/'Backlink Target.md'; target.write_text('# Backlink Target\n\n## Section\n\nTARGET BODY ^id\n\n[[Backlink Target]]\n')
+                alias='[[Backlink Target#Section|alias]]'; same='[[Backlink Target]]'; markdown='[markdown alias](../Backlink%20Target.md#Section)'; embed='[[Backlink Target#^id]]'; image='![note image](../Backlink%20Target.md)'
+                source_text=('---\ntitle: "Café 👋"\n---\n# Context\n\n' + 'Padding before actual reference.\n' * 82
+                    + 'CAFÉ 👋 BEFORE ' + alias + ' CAFÉ AFTER\n\nSAME ONE ' + same + ' MIDDLE ' + same + ' SAME END\n\n'
+                    + markdown + '\n\n!' + embed + '\n\n' + image + '\n\n'
+                    + '```md\n[[Backlink Target]]\n[code](../Backlink%20Target.md)\n```\n\n'
+                    + '`[[Backlink Target]]` and ` [inline](../Backlink%20Target.md) `\n\n'
+                    + r'\[[Backlink Target]]' + '\n\n$[[Backlink Target]]$\n\n$[math](../Backlink%20Target.md)$\n')
+                source=source_dir/'Context.md'; source.write_text(source_text)
+                other=other_dir/'Context.md'; other_link='[[Backlink Target|other alias]]'; other_text='# Other\n\n'+'長い café prefix ' * 10 + other_link + ' DIFFERENT CONTEXT\n'; other.write_text(other_text)
+                windows=source_dir/'Windows.md'; windows_link='[reference label][target]'; windows_text='# Windows\r\n\r\nUnicode café 👋\r\nCRLF BEFORE '+windows_link+' CRLF AFTER\r\n\r\n[target]: ../Backlink%20Target.md#Section\r\n'; windows.write_bytes(windows_text.encode())
+                draft=source_dir/'Draft.md'; draft_original='# Draft\n\nORIGINAL DRAFT TEXT\n'; draft.write_text(draft_original)
+                expected=[]
+                for raw, occurrence in [(alias,0),(same,0),(same,1),(markdown,0),(embed,0),(image,0)]:
+                    position=-1
+                    for _ in range(occurrence+1): position=source_text.index(raw,position+1)
+                    expected.append(('Backlink Sources/Context.md',len(source_text[:position].encode()),raw))
+                expected += [('Backlink Other/Context.md',len(other_text[:other_text.index(other_link)].encode()),other_link),('Backlink Sources/Windows.md',len(windows_text[:windows_text.index(windows_link)].encode()),windows_link)]
+                snapshots={path:path.read_bytes() for path in [source,other,windows,target]}
+                command('Refresh vault')
+                def count(number): control_bounds('backlink-count:'+str(number))
+                def open_target(mode='Live preview',number=8):
+                    open_note(target.name,title=target.stem); command(mode)
+                    if control_bounds('panel:backlinks',required=False) is None: command('Toggle right sidebar')
+                    click_control('panel:backlinks'); count(number)
+                def selected(raw):
+                    control_bounds('editor-focused'); key('ctrl+c')
+                    copied=subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                    assert copied==raw, ('Backlink must select its exact source occurrence',raw,copied)
+                    caret=control_bounds('editor-caret'); viewport=control_bounds('document-viewport')
+                    assert caret[3]>=viewport[1] and caret[1]<=viewport[3], ('Reference caret must be in view',caret,viewport)
+                for mode in ('Source editing','Live preview'):
+                    for path,offset,raw in expected:
+                        open_target(mode); name='backlink-mention:'+path+':'+str(offset); control_bounds(name)
+                        if raw==alias and mode=='Live preview': capture('native-backlinks-context-list.png')
+                        click_control(name); title_contains(Path(path).stem); selected(raw)
+                        if raw==alias: capture('native-backlinks-jump-'+mode.split()[0].lower()+'.png')
+                    results.append(mode+': every wiki/alias/heading/block/embed/Markdown-image/reference-style mention selected exact source bytes below the top, including same-line duplicates, Unicode/frontmatter and CRLF offsets; code, escaped and math links did not inflate the visible count')
+                for path,data in snapshots.items(): assert path.read_bytes()==data, path
+                close_tabs(); open_note('Backlink Sources/Context.md',title='Context'); command('Source editing'); command('Reading view')
+                key('ctrl+t'); open_target(); path,offset,raw=expected[0]
+                xdo('keydown','ctrl'); click_control('backlink-mention:'+path+':'+str(offset)); xdo('keyup','ctrl')
+                selected(raw); control_bounds('view-mode:Source mode'); control_bounds('tab-full:Backlink Target.md')
+                results.append('Ctrl-click retained the target tab and activated an already-open source from Reading in its remembered editing mode, selecting the precise linked occurrence')
+                close_tabs(); open_target(); command('Toggle pin'); control_bounds('unpin-tab:Backlink Target.md')
+                click_control('backlink-mention:'+path+':'+str(offset)); selected(raw); control_bounds('unpin-tab:Backlink Target.md')
+                key('ctrl+w'); title_contains('Backlink Target'); command('Toggle pin'); close_tabs()
+                results.append('Plain backlink clicks protected a pinned target by opening the source in another tab')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
+                open_note('Backlink Sources/Draft.md',title='Draft'); command('Source editing'); editor_end(); paste_text('\nNEW BEFORE [[Backlink Target]] NEW AFTER'); time.sleep(1); assert draft.read_text()==draft_original
+                key('ctrl+t'); open_target(number=9); draft_text=draft_original+'\nNEW BEFORE [[Backlink Target]] NEW AFTER'; draft_offset=len(draft_text[:draft_text.index(same)].encode())
+                xdo('keydown','ctrl'); click_control('backlink-mention:Backlink Sources/Draft.md:'+str(draft_offset)); xdo('keyup','ctrl'); selected(same); assert draft.read_text()==draft_original
+                key('ctrl+z'); click_control('tab-full:Backlink Target.md'); count(8)
+                click_control('tab-full:Backlink Sources/Draft.md'); key('ctrl+shift+z'); click_control('tab-full:Backlink Target.md'); count(9)
+                click_control('tab-full:Backlink Sources/Draft.md'); key('ctrl+s'); assert draft.read_text()==draft_text
+                key('ctrl+z'); key('ctrl+s'); assert draft.read_text()==draft_original
+                click_control('tab-full:Backlink Target.md'); count(8)
+                capture('native-backlinks-live-draft.png')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',True); key('Escape')
+                results.append('An unsaved source draft contributed a new mention without being saved by navigation; Undo/Redo updated the target pane immediately, and explicit save/undo restored exact draft file bytes')
+                other.write_text('# Other\n\nREMOVED REFERENCE\n'); count(7)
+                changed='# Other\n\nEXTERNAL SHIFT café 👋\n\n'+other_link+' NEW EXTERNAL CONTEXT\n'; other.write_text(changed); count(8)
+                shifted=len(changed[:changed.index(other_link)].encode()); click_control('backlink-mention:Backlink Other/Context.md:'+str(shifted)); selected(other_link)
+                capture('native-backlinks-external-jump.png'); other.write_bytes(snapshots[other]); open_target()
+                for path,data in snapshots.items(): assert path.read_bytes()==data, path
+                assert draft.read_text()==draft_original
+                results.append('External link removal/reinsertion refreshed counts and context, clicking the shifted reference selected the new location, and all protected source/target file bytes were restored')
+
             def note_embed_checks():
                 close_tabs()
                 targets = fixture/'Embed Targets'; targets.mkdir(exist_ok=True)
@@ -10365,6 +10437,10 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
+            if args.section == "backlink-context":
+                backlink_context_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "backlink-context", "checks": len(results), "status": "passed"})); return
             if args.section == "note-embeds":
                 note_embed_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -10745,7 +10821,7 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
-                tab_close_menu_checks, tab_restore_checks, link_fragment_checks, block_completion_checks, note_embed_checks,
+                tab_close_menu_checks, tab_restore_checks, link_fragment_checks, block_completion_checks, note_embed_checks, backlink_context_checks,
                 tab_drag_checks,
                 list_indent_checks,
                 external_rename_checks,
