@@ -6430,16 +6430,26 @@ def main():
                     raise AssertionError("Reveal did not open the actual file manager")
 
                 def copied_item(expected):
-                    deadline = time.monotonic() + 5
+                    deadline = time.monotonic() + 6
+                    last = {}
                     while time.monotonic() < deadline:
-                        try:
-                            raw = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "text/uri-list"], env=environment, stderr=subprocess.DEVNULL, text=True, timeout=2)
-                            paths = [Path(unquote(urlsplit(line).path)) for line in raw.splitlines() if line.startswith("file:")]
-                            if paths == [expected]: return raw
-                        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-                            pass
+                        key("ctrl+c")
+                        # Nautilus 46 advertises its own file-copy serialization;
+                        # both formats below carry URIs from the real selection.
+                        for target in ("text/uri-list", "x-special/gnome-copied-files"):
+                            try:
+                                raw = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", target], env=environment, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                                last[target] = raw
+                                paths = [Path(unquote(urlsplit(line).path)) for line in raw.splitlines() if line.startswith("file:")]
+                                if paths == [expected]: return target, raw
+                            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                                pass
                         time.sleep(.1)
-                    raise AssertionError(("The system file manager did not select the requested item", str(expected), locals().get("raw")))
+                    try:
+                        last["TARGETS"] = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "TARGETS"], env=environment, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                        pass
+                    raise AssertionError(("The system file manager did not select the requested item", str(expected), last))
 
                 requests = []
                 cases = [(note, "file:" + str(note.relative_to(fixture)), "file"),
@@ -6455,9 +6465,9 @@ def main():
                     xdo("windowmove", manager, "270", "140")
                     pause()
                     key("ctrl+c")
-                    uri = copied_item(path)
+                    mime, uri = copied_item(path)
                     capture(f"native-reveal-{label}.png")
-                    requests.append({"case":label, "selected_path":str(path), "copied_uri":uri})
+                    requests.append({"case":label, "selected_path":str(path), "copied_mime":mime, "copied_uri":uri})
                     key("alt+F4")
                     xdo("windowactivate", "--sync", window)
                     title_contains("Home")
