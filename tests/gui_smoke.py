@@ -7996,7 +7996,8 @@ def main():
                     ("bullet", "- Alpha", "- Alpha\n- ", "Beta", []),
                     ("number", "9. Alpha", "9. Alpha\n10. ", "Beta", []),
                     ("task", "- [x] Alpha", "- [x] Alpha\n- [ ] ", "Beta", []),
-                    ("nested", "\t- Alpha", "\t- Alpha\n\t- ", "Beta", []),
+                    ("nested", "- Parent\n\t- Alpha", "- Parent\n\t- Alpha\n\t- ", "Beta", []),
+                    ("indented-code", "\t- Alpha", "\t- Alpha\n", "", []),
                     ("quote", "> - Alpha", "> - Alpha\n> - ", "Beta", []),
                     ("unicode", "- فارسی", "- فارسی\n- ", "café 👋", []),
                     ("empty", "- Alpha\n- ", "- Alpha\n", "", []),
@@ -8034,7 +8035,7 @@ def main():
                     if "unicode" in path.stem:
                         capture(f"native-list-enter-{mode.split()[0].lower()}.png")
                 results.append("Source and Live Enter continued bullets, numbered items, unchecked task markers, nested/quoted and Unicode lists; empty items exited, mid-item splits retained text, and exact saved bytes survived Undo/Redo")
-                results.append("Plain text Enter inserted an ordinary newline without continuing a Markdown-looking list")
+                results.append("Indented code and plain text Enter inserted an ordinary newline without continuing a Markdown-looking list")
 
             def tab_drag_checks():
                 nonlocal app, window
