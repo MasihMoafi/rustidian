@@ -4752,7 +4752,9 @@ def main():
                 time.sleep(.7)
                 editor_end()
                 queued_text("[[NO_MATCH_X92", "Return", "Return", "ctrl+s")
-                assert queued.read_text() == source + "[[NO_MATCH_X92\n\n", repr(queued.read_text())
+                # Enter keeps the untouched automatic closers after the caret.
+                assert queued.read_text() == source + "[[NO_MATCH_X92\n\n]]", repr(queued.read_text())
+                capture("native-keyboard-unmatched-pairs.png")
                 results.append("Queued wiki typing completed the current query; a closing delimiter followed by Enter preserved the newline and exact source")
 
             def tab_state_checks():
