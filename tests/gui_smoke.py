@@ -6476,6 +6476,20 @@ def main():
                 title_contains("A 1")
                 results.append("Ctrl-click selected two entries without opening/replacing a tab; one bulk move saved drafts, retained tabs, preserved collision bytes, and updated cross-selected wiki/Markdown links to navigable final paths")
 
+                key("ctrl+t")
+                select("file:Batch/C.md", "Control_L"); selected(1)
+                select("file:Batch/D.md", "Control_L"); selected(2)
+                key("Delete")
+                control_bounds("explorer-trash-confirm")
+                click_control("explorer-trash-cancel")
+                select("file:Batch/D.md", "Control_L")
+                key("ctrl+a")
+                controls = json.loads((base / "ui-probe.json").read_text())
+                assert any(name.startswith("explorer-selected:") and int(name.split(":")[-1]) > 2 for name in controls)
+                key("Delete"); click_control("explorer-trash-cancel")
+                assert (origin / "C.md").read_text() == content["C.md"]
+                assert (origin / "D.md").read_text() == content["D.md"]
+                results.append("A blank editor tab did not become an explorer entry; Ctrl+A and Delete operated only on focused explorer rows, and cancelling left all source bytes intact")
                 open_note("Batch/C.md", title="C")
                 select("file:Batch/D.md", "Shift_L")
                 selected(2)

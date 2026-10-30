@@ -15,7 +15,7 @@ struct Selection {
 }
 
 fn id() -> egui::Id {
-    egui::Id::new("explorer-selection")
+    egui::Id::unique("explorer-selection")
 }
 fn get(ctx: &egui::Context) -> Selection {
     ctx.data(|data| data.get_temp(id())).unwrap_or_default()
@@ -25,6 +25,7 @@ fn put(ctx: &egui::Context, state: Selection) {
 }
 
 pub fn begin(ctx: &egui::Context, active: Option<&Path>) {
+    let active = active.filter(|path| !path.as_os_str().is_empty());
     let mut state = get(ctx);
     if state.active.as_deref() != active {
         state.paths.clear();

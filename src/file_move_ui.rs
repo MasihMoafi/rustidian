@@ -84,7 +84,7 @@ impl Manager {
             let focus = std::mem::take(&mut self.trash_focus);
             let mut confirm = false;
             let mut close = false;
-            let response = egui::Modal::new(egui::Id::new("trash-selection"))
+            let response = egui::Modal::new(egui::Id::unique("trash-selection"))
                 .frame(theme::dialog_frame(ctx))
                 .show(ctx, |ui| {
                     ui.set_width((ctx.content_rect().width() - 80.0).clamp(220.0, 500.0));

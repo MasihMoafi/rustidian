@@ -4759,14 +4759,14 @@ impl NotesApp {
                 } else {
                     self.file_move.moved(Some(moved.updates));
                 }
-                self.status = Some(format!(
+                self.status = format!(
                     "Moved {count} items to {}",
                     if folder.as_os_str().is_empty() {
                         "/".into()
                     } else {
                         folder.display().to_string()
                     }
-                ));
+                );
                 self.refresh_file_views();
                 crate::explorer_selection::reset(ctx);
             }
@@ -4818,7 +4818,7 @@ impl NotesApp {
         } else {
             self.new_tab();
         }
-        self.status = Some(format!("Moved {} items to system Trash", removed.len()));
+        self.status = format!("Moved {} items to system Trash", removed.len());
         self.error = (!failures.is_empty())
             .then(|| format!("Some items were not deleted: {}", failures.join("; ")));
         self.refresh_file_views();
