@@ -47,7 +47,10 @@ impl LinkedMention {
     /// Visible link text, while `link` and `range` retain the exact source for navigation.
     pub fn label(&self) -> String {
         let raw = self.link.strip_prefix('!').unwrap_or(&self.link);
-        if let Some(wiki) = raw.strip_prefix("[[").and_then(|link| link.strip_suffix("]]")) {
+        if let Some(wiki) = raw
+            .strip_prefix("[[")
+            .and_then(|link| link.strip_suffix("]]"))
+        {
             return wiki.split_once('|').map_or(wiki, |(_, label)| label).into();
         }
         use pulldown_cmark::{Event, Options, Parser};

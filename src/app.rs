@@ -2786,7 +2786,11 @@ impl NotesApp {
                             let row = ui
                                 .add(egui::Button::new(job).frame_when_inactive(false))
                                 .on_hover_text(mention.path.display().to_string());
-                            crate::ui_probe::record(ui.ctx(), format!("backlink-label:{label}"), row.rect);
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("backlink-label:{label}"),
+                                row.rect,
+                            );
                             crate::ui_probe::record(
                                 ui.ctx(),
                                 format!(

@@ -477,8 +477,16 @@ fn backlink_labels_hide_encoded_destinations_and_keep_exact_navigation_ranges() 
     let vault = Vault::open(folder.path()).unwrap();
     let mentions = vault.backlink_mentions(Path::new("Target note.md"), &[]);
     assert_eq!(
-        mentions.iter().map(|mention| mention.label()).collect::<Vec<_>>(),
-        ["Article title", "Wiki alias", "Image label", "Reference label"]
+        mentions
+            .iter()
+            .map(|mention| mention.label())
+            .collect::<Vec<_>>(),
+        [
+            "Article title",
+            "Wiki alias",
+            "Image label",
+            "Reference label"
+        ]
     );
     for mention in mentions {
         assert_eq!(&source[mention.range], mention.link);
