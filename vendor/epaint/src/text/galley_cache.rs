@@ -253,6 +253,7 @@ impl GalleyCache {
         pixels_per_point: f32,
         mut job: LayoutJob,
         previous: Option<&ParagraphLayout>,
+        indents: &[f32],
     ) -> (Arc<Galley>, ParagraphLayout) {
         if job.wrap.max_width.is_finite() {
             job.wrap.max_width = job.wrap.max_width.round(); // As in `layout_internal`.
@@ -268,6 +269,7 @@ impl GalleyCache {
                     job,
                     paragraphs: Vec::new(),
                     galleys: Vec::new(),
+                    indents: Vec::new(),
                 },
             );
         };
@@ -278,9 +280,10 @@ impl GalleyCache {
                     && previous.paragraphs.len() == previous.galleys.len()
                     && same_settings(&previous.job, &job)
             })
-            .map(|previous| (&*previous.job, &previous.paragraphs, &previous.galleys));
-        let (prefix, suffix) = previous.as_ref().map_or((0, 0), |(old_job, old, _)| {
-            let same = |i: usize, j: usize| paragraph_eq(old_job, &old[i], &job, &new[j]);
+            .map(|previous| (&*previous.job, &previous.paragraphs, &previous.galleys, &previous.indents));
+        let (prefix, suffix) = previous.as_ref().map_or((0, 0), |(old_job, old, _, old_indents)| {
+            let same = |i: usize, j: usize| paragraph_eq(old_job, &old[i], &job, &new[j])
+                && old_indents.get(i).copied().unwrap_or(0.0) == indents.get(j).copied().unwrap_or(0.0);
             let prefix = (0..old.len().min(new.len()))
                 .take_while(|&i| same(i, i))
                 .count();
@@ -291,7 +294,7 @@ impl GalleyCache {
         });
         let mut child_galleys = Vec::with_capacity(new.len());
         for (index, paragraph) in new.iter().enumerate() {
-            if let Some((_, old, old_galleys)) = &previous
+            if let Some((_, old, old_galleys, _)) = &previous
                 && let Some(old_index) = if index < prefix {
                     Some(index)
                 } else if index >= new.len() - suffix {
@@ -303,12 +306,25 @@ impl GalleyCache {
                 child_galleys.push(Arc::clone(&old_galleys[old_index]));
                 continue;
             }
-            let paragraph_job = paragraph_job(&job, paragraph, index == 0, usize::MAX);
-            child_galleys.push(Arc::new(layout(
+            let indent = indents.get(index).copied().unwrap_or(0.0).max(0.0)
+                .min((job.wrap.max_width - 1.0).max(0.0));
+            let mut paragraph_job = paragraph_job(&job, paragraph, index == 0, usize::MAX);
+            paragraph_job.wrap.max_width -= indent;
+            if let Some(first) = paragraph_job.sections.first_mut() {
+                first.leading_space -= first.leading_space.min(indent);
+            }
+            let mut galley = layout(
                 fonts,
                 pixels_per_point,
                 Arc::new(paragraph_job),
-            )));
+            );
+            if indent > 0.0 {
+                for row in &mut galley.rows { row.pos.x += indent; }
+                galley.rect.max.x += indent;
+                galley.intrinsic_size.x += indent;
+                galley.mesh_bounds = galley.mesh_bounds.translate(crate::vec2(indent, 0.0));
+            }
+            child_galleys.push(Arc::new(galley));
         }
         let galley = Arc::new(Galley::concat(
             Arc::clone(&job),
@@ -321,6 +337,7 @@ impl GalleyCache {
                 job,
                 paragraphs: new,
                 galleys: child_galleys,
+                indents: indents.to_vec(),
             },
         )
     }
@@ -341,6 +358,7 @@ pub struct ParagraphLayout {
     job: Arc<LayoutJob>,
     paragraphs: Vec<Paragraph>,
     galleys: Vec<Arc<Galley>>,
+    indents: Vec<f32>,
 }
 
 impl ParagraphLayout {

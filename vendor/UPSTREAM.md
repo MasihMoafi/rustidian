@@ -82,3 +82,10 @@ unchanged paragraphs. `FontsView::layout_generation` changes whenever a new
 galleys across passes knows when they stopped being valid. Rustidian's editor
 uses both to lay out one paragraph per keystroke in a large note; a crate test
 compares the result of random edits with `layout_job` and checks paragraph reuse.
+
+Wrapped quote insets (31 Oct 2026)
+
+`FontsView::layout_job_incremental_indented` reserves an optional left inset per
+paragraph before wrapping and retains it on every row. Indents participate in
+paragraph reuse; the existing method keeps zero insets. Rustidian uses this for
+quotes so narrow wrapped text cannot cross its border or its right edge.

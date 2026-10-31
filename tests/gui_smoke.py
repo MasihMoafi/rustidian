@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7121,6 +7121,49 @@ def main():
                 assert all((fixture / name).read_bytes() == data for name, data in untouched.items())
                 results.append("Taken names got a number, as the Move dialog and Obsidian do: Notes/Drag source 1.md and Projects/Drag folder 1; the occupied note and the demo notes kept their bytes")
 
+            def narrow_html_checks():
+                close_tabs()
+                words = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November".split()
+                tags = ["<br>", "<br/>", "<br />", "</br>", "<BR>"]
+                text = "# Narrow Markdown\n\n" + "\n\n".join(f"[Before](before-{i}){tag}[After](after-{i})" for i, tag in enumerate(tags))
+                text += "\n\n> " + " ".join(f"[{word}](quote-{i})" for i, word in enumerate(words)) + "\n\nEnd.\n"
+                note = fixture / "Narrow Markdown.md"; note.write_text(text)
+                command("Refresh vault"); pause(); open_note("Narrow Markdown")
+                failures = []; observations = []
+                for width in (1440, 960):
+                    xdo("windowsize", window, str(width), "960"); pause()
+                    command("Live preview"); pause()
+                    quote = control_bounds("quote:0")
+                    words_bounds = {word: control_bounds(f"editor-link:quote-{i}") for i, word in enumerate(words)}
+                    crossed = [word for word, box in words_bounds.items() if box[0] < quote[0] + 12]
+                    if crossed: failures.append(f"{width}: quote border crosses wrapped words {crossed}")
+                    breaks = []
+                    for i, tag in enumerate(tags):
+                        before = control_bounds(f"editor-link:before-{i}"); after = control_bounds(f"editor-link:after-{i}")
+                        breaks.append({"tag": tag, "before": before, "after": after})
+                        if after[1] < before[3] - 1: failures.append(f"{width}: {tag} must put After below Before")
+                    observations.append({"width": width, "quote": quote, "words": words_bounds, "breaks": breaks})
+                    capture(f"native-narrow-html-{width}.png")
+                    assert note.read_text() == text, "Rendering and resizing must not rewrite Markdown"
+                (reports / "narrow-html-layout.json").write_text(json.dumps(observations, indent=2) + "\n")
+                assert not failures, "\n".join(failures)
+                results.append("Wide and narrow Live Preview keep wrapped quote text inside the border and render all five HTML break forms without changing the source")
+                command("Source editing")
+                for i, tag in enumerate(tags):
+                    before = control_bounds(f"editor-link:before-{i}"); after = control_bounds(f"editor-link:after-{i}")
+                    assert abs(after[1] - before[1]) < 2, "Source mode must retain literal tags on the original source line"
+                assert note.read_text() == text
+                results.append("Source editing retains literal break syntax and the note remains byte-identical")
+                command("Live preview"); click_control("editor-link:after-0"); type_text("EDIT_MARK"); key("ctrl+s")
+                edited = note.read_text()
+                assert edited.replace("EDIT_MARK", "") == text, "Typing after a rendered break must preserve every other source character"
+                start = text.index("[After](after-0)") + 1
+                assert start <= edited.index("EDIT_MARK") <= start + len("After"), "The visible caret must edit the visible word after the break"
+                key("ctrl+z"); key("ctrl+s"); assert note.read_text() == text
+                key("ctrl+y"); key("ctrl+s"); assert note.read_text() == edited
+                capture("native-narrow-html-editing.png")
+                results.append("A real click after a rendered HTML break edits the intended word; Save, Undo and Redo retain every break tag and source character")
+
             def html_import_checks():
                 close_tabs()
                 source = fixture / "Editable.html"
@@ -10782,6 +10825,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"section": "folder-copy", "checks": len(results), "status": "passed"}))
                 return
+            if args.section == "narrow-html":
+                narrow_html_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "html-import":
                 html_import_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -11407,6 +11455,7 @@ def main():
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,
+                narrow_html_checks,
                 html_import_checks,
                 file_copy_checks,
                 file_move_checks,

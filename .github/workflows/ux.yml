@@ -137,6 +137,12 @@ jobs:
       - name: HTML import behavior checks
         if: ${{ contains(inputs.sections, 'html-import') }}
         run: cargo test --locked --test html_import_behavior 2>&1 | tee reports/html-import-tests.log
+      - name: Narrow Markdown renderer checks
+        if: ${{ contains(inputs.sections, 'narrow-html') }}
+        run: |
+          cargo test --locked --test inline_rendering_behavior 2>&1 | tee reports/inline-rendering-tests.log
+          cargo test --locked --bin rustidian markdown_layout_ 2>&1 | tee reports/markdown-layout-tests.log
+          cargo test --locked --bin rustidian incremental_layout_matches_full_layout_across_random_edits 2>&1 | tee reports/incremental-layout-tests.log
       - name: Build optimized Rustidian
         env:
           GUI_ONLY: ${{ inputs.gui_only }}

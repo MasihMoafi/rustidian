@@ -455,7 +455,19 @@ impl FontsView<'_> {
     ) -> (Arc<Galley>, ParagraphLayout) {
         *self.used_since_begin_pass = true;
         self.galley_cache
-            .layout_incremental(self.fonts, self.pixels_per_point, job, previous)
+            .layout_incremental(self.fonts, self.pixels_per_point, job, previous, &[])
+    }
+
+    /// Keep a left inset on every wrapped row of each paragraph, including reuse.
+    pub fn layout_job_incremental_indented(
+        &mut self,
+        job: LayoutJob,
+        previous: Option<&ParagraphLayout>,
+        indents: &[f32],
+    ) -> (Arc<Galley>, ParagraphLayout) {
+        *self.used_since_begin_pass = true;
+        self.galley_cache
+            .layout_incremental(self.fonts, self.pixels_per_point, job, previous, indents)
     }
 
     /// Changes whenever galleys from earlier passes stop being valid.

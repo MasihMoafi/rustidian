@@ -1822,181 +1822,187 @@ impl Editor {
                 .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start)
         });
         let mut updated_parsed = None;
-        let mut layouter =
-            |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, width: f32| -> Arc<egui::Galley> {
-                let text = buffer.as_str();
-                if text == source && updated_parsed.take().is_some() && live {
+        let mut layouter = |ui: &egui::Ui,
+                            buffer: &dyn egui::TextBuffer,
+                            width: f32|
+         -> Arc<egui::Galley> {
+            let text = buffer.as_str();
+            if text == source && updated_parsed.take().is_some() && live {
+                images = live_images(
+                    ui,
+                    source,
+                    vault,
+                    from,
+                    parsed,
+                    active_line.as_ref(),
+                    open_notes,
+                );
+                retain_visible_images(&mut images, sections, &collapsed);
+            }
+            // An edit moves the caret to its end; the line there is the active one,
+            // which the next frame's caret confirms. Using the pre-edit line would
+            // style the new text as inactive for one frame and lay out twice.
+            let active_line = match &active_line {
+                Some(line) if text != source => Some(edited_line(source, text, line)),
+                line => line.clone(),
+            };
+            let parsed = if text == source {
+                parsed
+            } else {
+                updated_parsed = Some(Markdown::parse(text));
+                if live {
                     images = live_images(
                         ui,
-                        source,
+                        text,
                         vault,
                         from,
-                        parsed,
+                        updated_parsed.as_ref().unwrap(),
                         active_line.as_ref(),
                         open_notes,
                     );
-                    retain_visible_images(&mut images, sections, &collapsed);
                 }
-                // An edit moves the caret to its end; the line there is the active one,
-                // which the next frame's caret confirms. Using the pre-edit line would
-                // style the new text as inactive for one frame and lay out twice.
-                let active_line = match &active_line {
-                    Some(line) if text != source => Some(edited_line(source, text, line)),
-                    line => line.clone(),
-                };
-                let parsed = if text == source {
-                    parsed
-                } else {
-                    updated_parsed = Some(Markdown::parse(text));
-                    if live {
-                        images = live_images(
-                            ui,
-                            text,
-                            vault,
-                            from,
-                            updated_parsed.as_ref().unwrap(),
-                            active_line.as_ref(),
-                            open_notes,
-                        );
+                updated_parsed.as_ref().unwrap()
+            };
+            let updated_sections;
+            let current_sections = if text != source && !collapsed.is_empty() {
+                updated_sections = rustidian::folding::Sections::new(text, parsed);
+                &updated_sections
+            } else {
+                sections
+            };
+            retain_visible_images(&mut images, current_sections, &collapsed);
+            images.retain(|image| {
+                !parsed
+                    .tables
+                    .iter()
+                    .any(|table| table.range.contains(&image.range.start))
+            });
+            let mut hidden = current_sections.hidden(&collapsed);
+            if live {
+                for (callout, key) in parsed.callouts.iter().zip(callout_keys(parsed)) {
+                    if callout_folds
+                        .get(&key)
+                        .copied()
+                        .unwrap_or(callout.folded.unwrap_or(false))
+                        && !callout.body.is_empty()
+                    {
+                        let start = text[..callout.body.start].chars().count();
+                        hidden.push(start..start + text[callout.body.clone()].chars().count());
                     }
-                    updated_parsed.as_ref().unwrap()
-                };
-                let updated_sections;
-                let current_sections = if text != source && !collapsed.is_empty() {
-                    updated_sections = rustidian::folding::Sections::new(text, parsed);
-                    &updated_sections
-                } else {
-                    sections
-                };
-                retain_visible_images(&mut images, current_sections, &collapsed);
-                images.retain(|image| {
-                    !parsed
-                        .tables
-                        .iter()
-                        .any(|table| table.range.contains(&image.range.start))
-                });
-                let mut hidden = current_sections.hidden(&collapsed);
-                if live {
-                    for (callout, key) in parsed.callouts.iter().zip(callout_keys(parsed)) {
-                        if callout_folds
-                            .get(&key)
-                            .copied()
-                            .unwrap_or(callout.folded.unwrap_or(false))
-                            && !callout.body.is_empty()
-                        {
-                            let start = text[..callout.body.start].chars().count();
-                            hidden.push(start..start + text[callout.body.clone()].chars().count());
-                        }
-                    }
-                    for image in &images {
-                        if let Some(block) = &image.block {
-                            let start = (image.range.end + 1).min(block.end);
-                            hidden.push(
-                                text[..start].chars().count()..text[..block.end].chars().count(),
-                            );
-                        }
-                    }
-                    hidden.sort_by_key(|range| range.start);
-                    let mut merged: Vec<Range<usize>> = Vec::new();
-                    for range in hidden {
-                        if let Some(previous) = merged
-                            .last_mut()
-                            .filter(|previous| previous.end >= range.start)
-                        {
-                            previous.end = previous.end.max(range.end);
-                        } else {
-                            merged.push(range);
-                        }
-                    }
-                    hidden = merged;
-                    images.retain(|image| {
-                        let character = text[..image.range.start].chars().count();
-                        !hidden.iter().any(|range| range.contains(&character))
-                    });
                 }
-                table_placements = if live {
-                    tables.prepare(
-                        ui,
-                        (&tab.document.path, text),
-                        &parsed.tables,
-                        active_line.as_ref(),
-                        caret,
-                        &hidden,
-                    )
-                } else {
-                    Vec::new()
-                };
-                let key = LayoutKey {
-                    version: if text == source {
-                        source_version
+                for image in &images {
+                    if let Some(block) = &image.block {
+                        let start = (image.range.end + 1).min(block.end);
+                        hidden
+                            .push(text[..start].chars().count()..text[..block.end].chars().count());
+                    }
+                }
+                hidden.sort_by_key(|range| range.start);
+                let mut merged: Vec<Range<usize>> = Vec::new();
+                for range in hidden {
+                    if let Some(previous) = merged
+                        .last_mut()
+                        .filter(|previous| previous.end >= range.start)
+                    {
+                        previous.end = previous.end.max(range.end);
                     } else {
-                        source_version + 1
-                    },
-                    width,
-                    live,
-                    plain_text,
-                    path: from.to_owned(),
-                    active_line: active_line.clone(),
-                    matched: selected_match.clone(),
-                    images: images.clone(),
-                    hidden,
-                    tables: table_placements.clone(),
-                    theme: ThemeKey::new(ui),
-                    syntax: crate::syntax::generation(),
-                    fonts: (
-                        ui.fonts(|fonts| fonts.layout_generation()),
-                        ui.ctx().pixels_per_point(),
-                    ),
-                };
-                if text == source
-                    && let Some(cached) = layout_cache.as_ref()
-                    && cached.key == key
-                {
-                    return cached.galley.clone();
+                        merged.push(range);
+                    }
                 }
-                let hidden = &key.hidden;
-                let job = if plain_text {
-                    crate::syntax::source_job(ui, text, from, width, selected_match.as_ref())
+                hidden = merged;
+                images.retain(|image| {
+                    let character = text[..image.range.start].chars().count();
+                    !hidden.iter().any(|range| range.contains(&character))
+                });
+            }
+            table_placements = if live {
+                tables.prepare(
+                    ui,
+                    (&tab.document.path, text),
+                    &parsed.tables,
+                    active_line.as_ref(),
+                    caret,
+                    &hidden,
+                )
+            } else {
+                Vec::new()
+            };
+            let key = LayoutKey {
+                version: if text == source {
+                    source_version
                 } else {
-                    layout(
-                        ui,
-                        text,
-                        parsed,
-                        width,
-                        Decorations {
-                            live,
-                            active_line: active_line.as_ref(),
-                            matched: selected_match.as_ref(),
-                            images: &images,
-                        },
-                    )
-                };
-                let previous = layout_cache
-                    .as_ref()
-                    .filter(|cached| cached.key.fonts == key.fonts)
-                    .map(|cached| &cached.paragraphs);
-                let (original, paragraphs) =
-                    ui.fonts_mut(|fonts| fonts.layout_job_incremental(job, previous));
-                let mut galley = original;
-                space_rows(
-                    &mut galley,
+                    source_version + 1
+                },
+                width,
+                live,
+                plain_text,
+                path: from.to_owned(),
+                active_line: active_line.clone(),
+                matched: selected_match.clone(),
+                images: images.clone(),
+                hidden,
+                tables: table_placements.clone(),
+                theme: ThemeKey::new(ui),
+                syntax: crate::syntax::generation(),
+                fonts: (
+                    ui.fonts(|fonts| fonts.layout_generation()),
+                    ui.ctx().pixels_per_point(),
+                ),
+            };
+            if text == source
+                && let Some(cached) = layout_cache.as_ref()
+                && cached.key == key
+            {
+                return cached.galley.clone();
+            }
+            let hidden = &key.hidden;
+            let job = if plain_text {
+                crate::syntax::source_job(ui, text, from, width, selected_match.as_ref())
+            } else {
+                layout(
+                    ui,
                     text,
                     parsed,
-                    live,
-                    &images,
-                    active_line.as_ref(),
-                );
-                reserve_table_rows(&mut galley, &table_placements);
-                if !hidden.is_empty() {
-                    collapse_rows(&mut galley, hidden);
-                }
-                *layout_cache = Some(LayoutCache {
-                    key,
-                    paragraphs,
-                    galley: galley.clone(),
-                });
-                galley
+                    width,
+                    Decorations {
+                        live,
+                        active_line: active_line.as_ref(),
+                        matched: selected_match.as_ref(),
+                        images: &images,
+                    },
+                )
             };
+            let previous = layout_cache
+                .as_ref()
+                .filter(|cached| cached.key.fonts == key.fonts)
+                .map(|cached| &cached.paragraphs);
+            let indents = if live && !plain_text {
+                quote_indents(text, parsed, &job)
+            } else {
+                Vec::new()
+            };
+            let (original, paragraphs) = ui
+                .fonts_mut(|fonts| fonts.layout_job_incremental_indented(job, previous, &indents));
+            let mut galley = original;
+            space_rows(
+                &mut galley,
+                text,
+                parsed,
+                live,
+                &images,
+                active_line.as_ref(),
+            );
+            reserve_table_rows(&mut galley, &table_placements);
+            if !hidden.is_empty() {
+                collapse_rows(&mut galley, hidden);
+            }
+            *layout_cache = Some(LayoutCache {
+                key,
+                paragraphs,
+                galley: galley.clone(),
+            });
+            galley
+        };
         let text_height = layouter(ui, &tab.document.text, ui.available_width())
             .size()
             .y;
@@ -3207,12 +3213,7 @@ fn paint_markers(
         let end = position(end_byte);
         let active = active_line
             .is_some_and(|line| line.start <= quote.range.start && line.end >= quote.range.end);
-        let left = start.left()
-            - if active {
-                0.0
-            } else {
-                17.0 * quote.depth as f32
-            };
+        let left = start.left() - 17.0 * quote.depth as f32;
         let rect = egui::Rect::from_min_max(
             egui::pos2(left, start.top()),
             egui::pos2(output.response.rect.right(), end.bottom()),
@@ -3334,6 +3335,50 @@ fn edited_line(before: &str, after: &str, previous: &Range<usize>) -> Range<usiz
     start..end
 }
 
+/// Quote padding belongs to every visual row, including rows introduced by HTML breaks.
+fn quote_indents(text: &str, parsed: &Markdown, job: &LayoutJob) -> Vec<f32> {
+    if parsed.quotes.is_empty() {
+        return Vec::new();
+    }
+    let lines: Vec<_> = parsed
+        .quotes
+        .iter()
+        .map(|quote| {
+            let start = text[..quote.range.start].rfind('\n').map_or(0, |i| i + 1);
+            let end = text[quote.range.end..]
+                .find('\n')
+                .map_or(text.len(), |i| quote.range.end + i + 1);
+            let callouts = parsed
+                .callouts
+                .iter()
+                .filter(|callout| callout.range.contains(&quote.range.start))
+                .count();
+            (
+                start..end,
+                17.0 * quote.depth as f32 + 7.0 * callouts as f32,
+            )
+        })
+        .collect();
+    let mut current = 0;
+    let mut first = true;
+    let mut indents = Vec::new();
+    for ((byte, _), display) in text.char_indices().zip(job.text.chars()) {
+        while current < lines.len() && lines[current].0.end <= byte {
+            current += 1;
+        }
+        if first {
+            indents.push(
+                lines
+                    .get(current)
+                    .filter(|(range, _)| range.contains(&byte))
+                    .map_or(0.0, |(_, indent)| *indent),
+            );
+        }
+        first = display == '\n';
+    }
+    indents
+}
+
 fn layout(
     ui: &egui::Ui,
     text: &str,
@@ -3415,7 +3460,8 @@ fn layout(
                 start >= image.range.start && content_end <= image.range.end
             });
             let hidden = live
-                && (style.task_marker
+                && (style.html_break
+                    || style.task_marker
                     || style.property
                     || style.hidden && !active && !style.image
                     || style.quote_marker && !active
@@ -3469,12 +3515,16 @@ fn layout(
             };
             let highlighted = matched
                 .is_some_and(|range| character < range.end && character + count > range.start);
-            let display = if live && style.bullet && !active && !style.task_marker {
+            let break_display;
+            let display = if live && style.html_break {
+                break_display = section.replace('<', "\n");
+                break_display.as_str()
+            } else if live && style.bullet && !active && !style.task_marker {
                 "•"
             } else {
                 section
             };
-            let quote_indent = if live && !active && style.quote_marker {
+            let quote_indent = if live && style.quote_marker {
                 parsed
                     .quotes
                     .binary_search_by_key(&start, |quote| quote.range.start)
@@ -3507,7 +3557,9 @@ fn layout(
             let format = egui::TextFormat {
                 font_id: FontId::new(size, family),
                 color,
-                line_height: Some(if live && style.callout_header && !active {
+                line_height: Some(if live && style.html_break {
+                    0.01
+                } else if live && style.callout_header && !active {
                     callout_heights
                         .iter()
                         .find(|(range, _)| range.contains(&start))
@@ -4186,6 +4238,133 @@ mod tests {
             }
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn markdown_layout_keeps_wrapped_quote_rows_inside_their_inset() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let source = "> Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November\n\nOutside.\n";
+        let parsed = Markdown::parse(source);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            for width in [180.0, 320.0, 900.0] {
+                let job = layout(
+                    ui,
+                    source,
+                    &parsed,
+                    width,
+                    Decorations {
+                        live: true,
+                        active_line: None,
+                        matched: None,
+                        images: &[],
+                    },
+                );
+                let indents = quote_indents(source, &parsed, &job);
+                let (galley, previous) = ui.fonts_mut(|fonts| {
+                    fonts.layout_job_incremental_indented(job.clone(), None, &indents)
+                });
+                let (reused, _) = ui.fonts_mut(|fonts| {
+                    fonts.layout_job_incremental_indented(job, Some(&previous), &indents)
+                });
+                let mut character = 0;
+                let quote_end = source.find('\n').unwrap();
+                let mut visible_rows = 0;
+                for (row, reused_row) in galley.rows.iter().zip(&reused.rows) {
+                    assert!(
+                        Arc::ptr_eq(&row.row, &reused_row.row),
+                        "Unchanged paragraphs must still reuse layout"
+                    );
+                    if character < quote_end
+                        && row.glyphs.iter().any(|glyph| glyph.chr.is_alphabetic())
+                    {
+                        visible_rows += 1;
+                        assert!(
+                            row.rect().left() >= 16.5,
+                            "width={width}: wrapped row crossed the quote rule: {:?}",
+                            row.rect()
+                        );
+                        assert!(
+                            row.rect().right() <= width + 1.0,
+                            "The inset must also reserve space at the right edge"
+                        );
+                    }
+                    character += row.char_count_including_newline().0;
+                }
+                if width < 900.0 {
+                    assert!(visible_rows > 1);
+                }
+                let mut deeper = indents.clone();
+                deeper[0] += 17.0;
+                let job = layout(
+                    ui,
+                    source,
+                    &parsed,
+                    width,
+                    Decorations {
+                        live: true,
+                        active_line: None,
+                        matched: None,
+                        images: &[],
+                    },
+                );
+                let (changed, _) = ui.fonts_mut(|fonts| {
+                    fonts.layout_job_incremental_indented(job, Some(&previous), &deeper)
+                });
+                assert!(
+                    !Arc::ptr_eq(&galley.rows[0].row, &changed.rows[0].row),
+                    "A changed inset must invalidate that paragraph"
+                );
+                assert!(
+                    Arc::ptr_eq(
+                        &galley.rows.last().unwrap().row,
+                        &changed.rows.last().unwrap().row
+                    ),
+                    "Unchanged outside text must still reuse layout"
+                );
+            }
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn markdown_layout_html_breaks_preserve_character_indices_and_source_mode() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            for tag in ["<br>", "<br/>", "<br />", "</br>", "<BR>"] {
+                let source = format!("Before{tag}After");
+                let parsed = Markdown::parse(&source);
+                for live in [false, true] {
+                    let job = layout(
+                        ui,
+                        &source,
+                        &parsed,
+                        500.0,
+                        Decorations {
+                            live,
+                            active_line: None,
+                            matched: None,
+                            images: &[],
+                        },
+                    );
+                    assert_eq!(job.text.chars().count(), source.chars().count());
+                    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                    let before = galley.pos_from_cursor(CCursor::new(1));
+                    let after = galley.pos_from_cursor(CCursor::new(6 + tag.len()));
+                    if live {
+                        assert!(
+                            after.top() >= before.bottom() - 0.1,
+                            "{tag} must create a line break"
+                        );
+                    } else {
+                        assert_eq!(before.top(), after.top());
+                        assert_eq!(galley.job.text, source);
+                    }
+                }
+            }
+        })
+        .drop_without_applying_deltas();
     }
 
     #[test]

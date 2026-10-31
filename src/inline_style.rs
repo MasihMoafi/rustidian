@@ -33,6 +33,24 @@ pub enum Tag {
     Close(Element),
 }
 
+/// Recognize a break token already validated by the Markdown HTML tokenizer.
+/// HTML also treats the legacy closing `</br>` spelling as a break.
+pub fn is_line_break(tag: &str) -> bool {
+    let Some(inner) = tag
+        .trim()
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+    else {
+        return false;
+    };
+    let inner = inner.strip_prefix('/').unwrap_or(inner);
+    let name = inner
+        .split(|ch: char| ch.is_ascii_whitespace() || ch == '/')
+        .next()
+        .unwrap_or("");
+    name.eq_ignore_ascii_case("br")
+}
+
 /// Read one complete mark/span tag. Attributes and CSS are never executed.
 /// Native `data-highlight` markup remains owned by the theme-aware parser.
 pub fn parse(tag: &str) -> Option<Tag> {

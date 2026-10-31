@@ -443,6 +443,14 @@ impl Parsed {
                     }
                 }
                 Event::End(TagEnd::Table) => flush(&mut block, &mut parsed.blocks),
+                Event::InlineHtml(tag) | Event::Html(tag)
+                    if rustidian::inline_style::is_line_break(&tag) =>
+                {
+                    block.parts.push(Inline {
+                        text: "\n".into(),
+                        ..style.clone()
+                    });
+                }
                 Event::InlineHtml(tag)
                     if rustidian::highlight::NativeColor::from_tag(&tag).is_some() =>
                 {
@@ -1664,6 +1672,38 @@ mod callout_tests;
 mod tests {
     use super::{Parsed, TableCell, prepare};
     use eframe::egui;
+
+    #[test]
+    fn markdown_layout_html_breaks_render_in_paragraphs_quotes_and_table_cells() {
+        for tag in ["<br>", "<br/>", "<br />", "</br>", "<BR>"] {
+            for source in [
+                format!("Before{tag}After"),
+                format!("> Before{tag}After"),
+                format!("| Cell |\n| --- |\n| Before{tag}After |\n"),
+            ] {
+                let parsed = Parsed::new(&source);
+                assert!(!parsed.fallback, "{source} must use the native renderer");
+                let rendered: String = parsed
+                    .blocks
+                    .iter()
+                    .flat_map(|block| {
+                        if let Some(table) = &block.table {
+                            table
+                                .rows
+                                .iter()
+                                .flat_map(|row| row.iter().flat_map(|cell| cell.iter()))
+                                .map(|part| part.text.as_str())
+                                .collect::<Vec<_>>()
+                        } else {
+                            block.parts.iter().map(|part| part.text.as_str()).collect()
+                        }
+                    })
+                    .collect();
+                assert!(rendered.contains("Before\nAfter"), "{source}: {rendered}");
+                assert!(!rendered.contains(tag));
+            }
+        }
+    }
 
     #[test]
     fn preview_transforms_do_not_rewrite_math_as_links_highlights_or_images() {
