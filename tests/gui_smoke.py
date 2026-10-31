@@ -2424,7 +2424,7 @@ def main():
                     click_control(current);time.sleep(.2)
                     for label in ("Reading","Source mode","Live Preview"):
                         control_bounds("view-choice:"+label)
-                    capture("native-view-menu")
+                    capture("native-view-menu.png")
                     click_control("view-choice:"+choice);time.sleep(.2);control_bounds("view-mode:"+mode)
                     probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
                     expected="Current view: reading" if mode=="Reading" else "Current view: editing"
@@ -2440,7 +2440,7 @@ def main():
                     click_control(next(k for k in probe if k.startswith("button:"+opposite)))
                     control_bounds("view-mode:"+mode)
                 assert source.read_text()==original
-                capture("native-view-modes")
+                capture("native-view-modes.png")
                 results.append("Status mode menu matches Obsidian's Reading, Source mode and Live Preview choices; toolbar names current view and action")
 
             def navigation_checks():
