@@ -52,6 +52,7 @@ imara-diff = { version = "=0.2.0", default-features = false }
 fastrand = "=2.5.0"
 portable-pty = "0.9"
 vt100 = "0.16"
+htmd = "=0.5.6"
 
 # A launch's activation token raises the running window (src/window.rs).
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -89,7 +89,7 @@ jobs:
           gh run download "$REUSE_RUN" --repo "$GITHUB_REPOSITORY" --name "rustidian-candidate-$source_commit" --dir "$RUNNER_TEMP/reused-candidate"
           python3 scripts/reuse-actions-candidate.py --source-commit "$source_commit" --artifact-dir "$RUNNER_TEMP/reused-candidate" --run-metadata "$RUNNER_TEMP/reused-run.json"
       - name: Verify and obtain dependency notices
-        if: ${{ !inputs.gui_only || inputs.package_after_checks }}
+        if: ${{ !inputs.gui_only || inputs.package_after_checks || contains(inputs.sections, 'html-import') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -134,6 +134,9 @@ jobs:
           BASELINE
           cp "$RUNNER_TEMP/rustidian-fixed-app.rs" src/app.rs
           git diff --exit-code -- src/app.rs
+      - name: HTML import behavior checks
+        if: ${{ contains(inputs.sections, 'html-import') }}
+        run: cargo test --locked --test html_import_behavior 2>&1 | tee reports/html-import-tests.log
       - name: Build optimized Rustidian
         env:
           GUI_ONLY: ${{ inputs.gui_only }}

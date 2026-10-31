@@ -307,6 +307,15 @@ impl NotesApp {
     }
 
     fn set_view(&mut self, view: View) {
+        if matches!(view, View::Live | View::Read | View::Split)
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| rustidian::html_import::is_html(&tab.document.path))
+            && !self.edit_html_as_markdown()
+        {
+            return;
+        }
         if let Some(tab) = self.tabs.get_mut(self.active) {
             tab.set_view(view);
         }
@@ -323,10 +332,48 @@ impl NotesApp {
     }
 
     fn toggle_reading(&mut self) {
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| rustidian::html_import::is_html(&tab.document.path))
+        {
+            self.set_view(View::Read);
+            return;
+        }
         if let Some(tab) = self.tabs.get_mut(self.active) {
             tab.toggle_reading();
         }
         self.focus_editor();
+    }
+
+    fn edit_html_as_markdown(&mut self) -> bool {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return false;
+        };
+        let Some(vault) = &mut self.vault else {
+            return false;
+        };
+        match vault.import_html(&tab.document) {
+            Ok(document) => {
+                let path = document.path.clone();
+                self.error = None;
+                self.open_note_at(&path, true);
+                let Some(tab) = self
+                    .tabs
+                    .get_mut(self.active)
+                    .filter(|tab| tab.document.path == path)
+                else {
+                    return false;
+                };
+                tab.set_view(View::Live);
+                self.status = format!("Created {} from HTML", path.display());
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
+        }
     }
 
     fn load_vault(&mut self, root: &Path) {

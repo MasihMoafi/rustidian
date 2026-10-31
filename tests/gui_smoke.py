@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7121,6 +7121,49 @@ def main():
                 assert all((fixture / name).read_bytes() == data for name, data in untouched.items())
                 results.append("Taken names got a number, as the Move dialog and Obsidian do: Notes/Drag source 1.md and Projects/Drag folder 1; the occupied note and the demo notes kept their bytes")
 
+            def html_import_checks():
+                close_tabs()
+                source = fixture / "Editable.html"
+                original = b'<!doctype html><html><head><style>HIDDEN_STYLE</style><script>HIDDEN_SCRIPT</script></head><body><h1>Editable HTML</h1><p>Normal <strong>bold</strong> content.</p><ul><li>First item</li><li>Second item</li></ul><a href="Home.md">Home</a></body></html>'
+                source.write_bytes(original)
+                collision = fixture / "Editable.md"
+                collision.write_bytes(b"KEEP_EXISTING_NOTE\n")
+                command("Refresh vault"); pause(); open_note("Editable.html", title="Editable")
+                command("Reading view")
+                copied = fixture / "Editable 1.md"
+                assert copied.exists(), "HTML Reading view must convert the page to editable Markdown, not show its HTML source"
+                title_contains("Editable 1")
+                converted = copied.read_text()
+                assert "# Editable HTML" in converted and "**bold**" in converted
+                assert "[Home](Home.md)" in converted
+                assert all(value not in converted for value in ("<html", "<body", "<strong", "HIDDEN_STYLE", "HIDDEN_SCRIPT"))
+                assert source.read_bytes() == original and collision.read_bytes() == b"KEEP_EXISTING_NOTE\n"
+                capture("native-html-import-reading.png")
+                key("ctrl+e"); editor_end(); type_text("\nEDITED_HTML_IMPORT\n"); key("ctrl+s")
+                assert "EDITED_HTML_IMPORT" in copied.read_text(), "Converted content must be editable and save as Markdown"
+                key("ctrl+z"); key("ctrl+s")
+                assert "EDITED_HTML_IMPORT" not in copied.read_text()
+                key("ctrl+y"); key("ctrl+s")
+                assert "EDITED_HTML_IMPORT" in copied.read_text()
+                assert source.read_bytes() == original
+                capture("native-html-import-editing.png")
+                results.append("HTML Reading view created structured Markdown without page tags, skipped an occupied name, and supported editing, save, Undo and Redo while preserving the HTML")
+
+                open_note("Editable.html", title="Editable")
+                command("Live preview")
+                title_contains("Editable 2")
+                assert (fixture / "Editable 2.md").read_text() == converted
+                assert source.read_bytes() == original
+                results.append("Live preview uses the same converter and opens an editable note without overwriting either previous conversion")
+
+                empty = fixture / "Empty HTML.html"
+                empty.write_text("<html><head><script>hidden</script></head><body></body></html>")
+                command("Refresh vault"); pause(); open_note("Empty HTML.html", title="Empty HTML")
+                command("Reading view")
+                assert not (fixture / "Empty HTML.md").exists()
+                assert control_bounds("error-notice", required=False) is not None
+                results.append("A page with no editable body content reports an error and creates no empty note")
+
             def file_copy_checks():
                 close_tabs()
                 originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
@@ -10739,6 +10782,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"section": "folder-copy", "checks": len(results), "status": "passed"}))
                 return
+            if args.section == "html-import":
+                html_import_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "file-copy":
                 file_copy_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -11359,6 +11407,7 @@ def main():
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,
+                html_import_checks,
                 file_copy_checks,
                 file_move_checks,
                 drag_move_checks,

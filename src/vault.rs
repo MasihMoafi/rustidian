@@ -369,6 +369,44 @@ impl Vault {
         })
     }
 
+    /// Import the current HTML buffer beside its source without replacing either
+    /// the source file or an existing Markdown note. Relative links keep their base.
+    pub fn import_html(&mut self, source: &Document) -> Result<Document> {
+        if !crate::html_import::is_html(&source.path) || source.is_image() {
+            return Err("Choose an HTML file to convert to Markdown.".into());
+        }
+        self.safe_file_path(&source.path, false)?;
+        let text = crate::html_import::convert(&source.text)?;
+        let stem = source
+            .path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid HTML file name.")?;
+        let parent = source.path.parent().unwrap_or(Path::new(""));
+        for number in 0..u64::MAX {
+            let name = if number == 0 {
+                format!("{stem}.md")
+            } else {
+                format!("{stem} {number}.md")
+            };
+            let path = parent.join(name);
+            let absolute = self.root.join(&path);
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            let mut document = Document::new(path);
+            document.text.clone_from(&text);
+            match self.save(&mut document) {
+                Ok(()) => return Ok(document),
+                Err(_) if fs::symlink_metadata(&absolute).is_ok() => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err("Cannot find an unused Markdown note name.".into())
+    }
+
     /// Create an empty note without asking for a name or replacing an existing file.
     pub fn create_untitled(&mut self) -> Result<Document> {
         self.create_untitled_in(Path::new(""))
