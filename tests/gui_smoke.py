@@ -2684,6 +2684,7 @@ def main():
 
 
             def task_checks():
+                set_theme(True)
                 key("ctrl+n")
                 capture("native-new-note-created.png")
                 key("Escape")
@@ -3963,6 +3964,7 @@ def main():
                 results.append("The active tab stayed visible at compact width while switching, with every note unchanged")
 
             def code_checks():
+                set_theme(True)
                 source = "Before\n\n```text\n**literal** [[No link]]\n> literal π\n```\n\nAfter\n"
                 note = fixture / "Code GUI.md"
                 note.write_text(source)
