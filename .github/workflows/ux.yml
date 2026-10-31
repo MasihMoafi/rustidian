@@ -94,7 +94,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cargo fetch --locked --target x86_64-unknown-linux-gnu
-          gh release download v0.1.0 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/baseline-notices/
+          gh release download v0.1.0 --repo "$GITHUB_REPOSITORY" --pattern THIRD_PARTY_NOTICES.txt --dir reports/baseline-notices/ --skip-existing
           python3 scripts/language-notices.py --baseline-notices reports/baseline-notices/THIRD_PARTY_NOTICES.txt --output reports/THIRD_PARTY_NOTICES.txt | tee reports/notices-generation.json
       - name: Rust behavior checks
         if: ${{ !inputs.gui_only }}
