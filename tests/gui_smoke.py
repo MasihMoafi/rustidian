@@ -4690,7 +4690,20 @@ def main():
                 type_text("path:Notes/")
                 assert control_bounds("search:Notes/First steps.md")
                 assert first.read_text() == original + "QUICK_OPEN_FOCUS"
-                results.append("Global search retained keyboard focus and did not insert its query into the open note")
+                key("ctrl+a"); type_text("NO_MATCH_BODY_SEARCH_X92")
+                deadline = time.monotonic() + 3
+                while control_bounds("search:Notes/First steps.md", required=False) is not None and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert control_bounds("search:Notes/First steps.md", required=False) is None
+                open_note(anchor.stem)
+                key("ctrl+shift+f"); key("ctrl+a"); type_text("QUICK_OPEN_FOCUS")
+                control_bounds("search:Notes/First steps.md")
+                assert control_bounds("search:Home.md", required=False) is None
+                capture("native-search-content.png")
+                click_control("search:Notes/First steps.md"); title_contains("First steps")
+                assert first.read_text() == original + "QUICK_OPEN_FOCUS"
+                assert anchor.read_text() == anchor_source
+                results.append("Global search retained keyboard focus, excluded an absent query, found body text rather than a filename and opened its matching note without changing either note")
                 create_note_named('Notes/Keyboard focus.md')
                 title_contains("Keyboard focus")
                 created = fixture / "Notes/Keyboard focus.md"
