@@ -138,8 +138,7 @@ pub fn blocks(text: &str) -> Vec<Block> {
             continue;
         };
         if !stack.is_empty()
-            && !(kind == BlockKind::Item
-                && !stack.iter().any(|(kind, _)| *kind == BlockKind::Quote))
+            && (kind != BlockKind::Item || stack.iter().any(|(kind, _)| *kind == BlockKind::Quote))
         {
             continue;
         }
