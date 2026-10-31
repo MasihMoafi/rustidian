@@ -43,13 +43,13 @@ Close and Copy use the same generated-image workflow. Their selected monochrome 
 `proof/source-vs-vector.html` compares all traces at 24/48/128/512px on light/dark surfaces with full-frame and foreground measurements. `proof/native-tints.png` compares silhouettes with the actual native tinting at 12/18/24/48px. Both were inspected for counters, silhouettes, margins, speckles, and legibility, followed by native-window review in both themes. Rust tests reject duplicated artwork across distinct icon identities and embedded rasters/text/scripts/foreign objects.
 
 ```sh
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-icons.mjs
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs properties
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs file-toolbar
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs files-tab
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs disclosure
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs code-controls
-SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/prove-icons.mjs
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-icons.mjs
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs properties
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs file-toolbar
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs files-tab
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs disclosure
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/build-atlas-icons.mjs code-controls
+SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js node scripts/prove-icons.mjs
 ```
 
 Node and SVG Studio prepare artwork; the application itself remains native Rust.
@@ -69,7 +69,7 @@ The complete proof is now paginated at30 marks per sheet to stay below the rende
 
 Minimize, Maximize and Restore come from `artwork/window-controls-sheet-original.png`; Trash comes from `artwork/trash-original.png`. Their exact built-in generation prompts, normalized source rasters, unchanged SVG Studio traces and white-fill native variants are retained in the manifest. The existing generated Close icon is reused for closing. Reproduce these four glyphs with `scripts/build-atlas-icons.mjs window-controls` and `scripts/build-atlas-icons.mjs trash` using the engine above. `proof/window-controls.html` and its PNG/JSON retain the source/vector comparison; all six logo-pipeline checks pass.
 
-The installed048fced source integrates49 of54 selected artworks. Current note-aids source adds the existing generated/SVG Studio Daily note and Templates marks to their working ribbon actions, bringing source coverage to51; their native click/hover checks await the new Actions candidate. Graph, Canvas and Recovery remain prepared only. Actions39596948260 verifies the earlier99d60be app's actual hover feedback, Openbox maximize/restore, minimize/reopen, title-bar drag, edge resize and protected Close. Release verification is recorded in each release’s BUILDINFO.json.
+The installed048fced source integrates49 of54 selected artworks. Current note-aids source adds the existing generated/SVG Studio Daily note and Templates marks to their working ribbon actions, bringing source coverage to51; their native click/hover checks await the new Actions candidate. Graph, Canvas and Recovery remain prepared only. Actions39596948260 verifies the earlier99d60be app's actual hover feedback, Openbox maximize/restore, minimize/reopen, title-bar drag, edge resize and protected Close. Full release acceptance is recorded separately in `ES.md`.
 
 ## Tab pin — 21 October
 

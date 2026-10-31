@@ -2,6 +2,315 @@ use crate::theme::{self, Icon};
 use eframe::egui::{
     self, Align, Color32, FontId, Layout, Margin, PointerButton, Sense, ViewportCommand,
 };
+use std::sync::atomic::{AtomicI32, Ordering};
+
+/// Leave Rustidian's exact Ctrl+Q as the only quit key. egui's built-in one
+/// also matches Ctrl+Shift+Q and Ctrl+Alt+Q, and fires under dialogs.
+pub fn disable_builtin_quit(ctx: &egui::Context) {
+    ctx.options_mut(|options| options.quit_shortcuts.clear());
+}
+
+/// Whether Ctrl+Q (Cmd+Q on macOS) was pressed with no other modifier;
+/// consumes it.
+fn quit_key(ctx: &egui::Context) -> bool {
+    ctx.input_mut(|input| {
+        let before = input.events.len();
+        input.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::Q,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.matches_exact(egui::Modifiers::COMMAND)
+            )
+        });
+        input.events.len() < before
+    })
+}
+
+/// What Ctrl+Q asks. It never closes the window by itself: on 28 Oct an
+/// accidental press closed Masih's windows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuitQuestion {
+    /// "Quit Rustidian?"
+    Quit,
+    /// Unsaved edits: the unsaved-changes dialog asks, alone.
+    UnsavedChanges,
+}
+
+/// The question exact Ctrl+Q asks; consumes the key. `dirty` says whether
+/// edits are unsaved and is read only once Ctrl+Q was pressed.
+pub fn quit_question(ctx: &egui::Context, dirty: impl FnOnce() -> bool) -> Option<QuitQuestion> {
+    quit_key(ctx).then(|| {
+        if dirty() {
+            QuitQuestion::UnsavedChanges
+        } else {
+            QuitQuestion::Quit
+        }
+    })
+}
+
+/// "Quit Rustidian?", built like the unsaved-changes dialog. Quit or Enter
+/// closes the window; Cancel, Escape or a click outside keeps it. Returns
+/// the answer once given.
+pub fn quit_dialog(ctx: &egui::Context) -> Option<bool> {
+    let mut answer = None;
+    let response = egui::Modal::new(egui::Id::unique("quit-question"))
+        .frame(theme::dialog_frame(ctx))
+        .show(ctx, |ui| {
+            theme::dialog_style(ui);
+            ui.set_width(440.0);
+            ui.heading(format!("Quit {}?", rustidian::APP_NAME));
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                let quit = ui.button("Quit");
+                crate::ui_probe::record(ctx, "quit-confirm", quit.rect);
+                let cancel = ui.button("Cancel");
+                crate::ui_probe::record(ctx, "quit-cancel", cancel.rect);
+                // Keys answer the question; nothing behind it keeps the
+                // keyboard. This runs after the frame's other widgets, so
+                // keys typed just before Ctrl+Q still landed.
+                ui.memory_mut(|memory| {
+                    if let Some(id) = memory.focused()
+                        && id != quit.id
+                        && id != cancel.id
+                    {
+                        memory.surrender_focus(id);
+                    }
+                });
+                if cancel.clicked() {
+                    answer = Some(false);
+                } else if quit.clicked()
+                    || ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+                    })
+                {
+                    answer = Some(true);
+                }
+            });
+        });
+    crate::ui_probe::record(ctx, "dialog:quit", response.response.rect);
+    if answer.is_none() && response.should_close() {
+        answer = Some(false);
+    }
+    if answer == Some(true) {
+        close(ctx, "quit dialog");
+    }
+    answer
+}
+
+fn close_source_id() -> egui::Id {
+    egui::Id::new("rustidian-close-source")
+}
+
+/// Close the window because of `source`. The close handler prints
+/// `close: <source>` once the close goes ahead, so `app.log` names it.
+pub fn close(ctx: &egui::Context, source: &'static str) {
+    ctx.data_mut(|data| data.insert_temp(close_source_id(), source));
+    ctx.send_viewport_cmd(ViewportCommand::Close);
+    // A hidden window runs its next pass only on request.
+    ctx.request_repaint();
+}
+
+/// Why the window was asked to close: what `close` was given, otherwise the
+/// window manager (Alt+F4, the dock, the overview).
+pub fn take_close_source(ctx: &egui::Context) -> &'static str {
+    ctx.data_mut(|data| data.remove_temp::<&'static str>(close_source_id()))
+        .unwrap_or("window manager")
+}
+
+/// Bring the window forward for a launch that handed over to it, with the
+/// activation token its launcher gave it.
+///
+/// The focus request raises the window on X11. On Wayland winit sends none,
+/// and GNOME would ignore one from a window that is not active; there the
+/// window activates its own surface with the launch's token, as GTK
+/// applications do. A window that gets no focus within a second gives the
+/// launch the socket, and the launch opens a window of its own (`instance`).
+pub fn bring_forward(ctx: &egui::Context, frame: &eframe::Frame, token: Option<&str>) {
+    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(ViewportCommand::Focus);
+    let Some(token) = token else {
+        eprintln!("hand-off: no token");
+        return;
+    };
+    #[cfg(target_os = "linux")]
+    match wayland::activate(frame, token) {
+        Ok(true) => eprintln!("hand-off: token, xdg_activation_v1.activate sent"),
+        Ok(false) => eprintln!("hand-off: token, focus request"),
+        Err(error) => eprintln!("hand-off: token, xdg_activation_v1 failed: {error}"),
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (frame, token);
+        eprintln!("hand-off: token, focus request");
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod wayland {
+    use raw_window_handle::{
+        HasDisplayHandle as _, HasWindowHandle as _, RawDisplayHandle, RawWindowHandle,
+    };
+    use wayland_client::{
+        Connection, Dispatch, Proxy as _, QueueHandle,
+        backend::{Backend, ObjectId},
+        delegate_noop,
+        globals::{GlobalListContents, registry_queue_init},
+        protocol::{wl_registry, wl_surface::WlSurface},
+    };
+    use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
+
+    /// `xdg_activation_v1.activate(token, wl_surface)` on this window's
+    /// surface, sent through winit's own connection on a queue of its own.
+    /// `Ok(false)` off Wayland.
+    pub fn activate(
+        frame: &eframe::Frame,
+        token: &str,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(window)) = (
+            frame.display_handle()?.as_raw(),
+            frame.window_handle()?.as_raw(),
+        ) else {
+            return Ok(false);
+        };
+        // SAFETY: eframe's handles are the window's live `wl_display` and
+        // `wl_surface`; both outlive `connection`, which ends with this call.
+        let connection = Connection::from_backend(unsafe {
+            Backend::from_foreign_display(display.display.as_ptr().cast())
+        });
+        // SAFETY: as above.
+        let surface =
+            unsafe { ObjectId::from_ptr(WlSurface::interface(), window.surface.as_ptr().cast()) }?;
+        let surface = WlSurface::from_id(&connection, surface)?;
+        let (globals, queue) = registry_queue_init::<Activation>(&connection)?;
+        let activation: XdgActivationV1 = globals.bind(&queue.handle(), 1..=1, ())?;
+        activation.activate(token.to_owned(), &surface);
+        activation.destroy();
+        globals.destroy();
+        connection.flush()?;
+        Ok(true)
+    }
+
+    /// The state of `activate`'s queue, which only binds `xdg_activation_v1`.
+    struct Activation;
+
+    impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Activation {
+        fn event(
+            _: &mut Self,
+            _: &wl_registry::WlRegistry,
+            _: wl_registry::Event,
+            _: &GlobalListContents,
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+        }
+    }
+
+    delegate_noop!(Activation: XdgActivationV1);
+}
+
+/// The write end of the pipe that wakes the signal thread.
+static SIGNAL_PIPE: AtomicI32 = AtomicI32::new(-1);
+/// The process that installed the handler. A child forked to start a helper
+/// runs the handler too until its program starts; it must not close this window.
+static SIGNAL_OWNER: AtomicI32 = AtomicI32::new(0);
+/// The signal the window has not yet acted on.
+static SIGNALLED: AtomicI32 = AtomicI32::new(0);
+
+const SIG_DFL: usize = 0;
+const SIG_IGN: usize = 1;
+
+unsafe extern "C" {
+    /// libc's `signal`; std already links libc.
+    #[link_name = "signal"]
+    fn set_disposition(signal: i32, handler: usize) -> usize;
+}
+
+extern "C" fn on_signal(signal: i32) {
+    // Only async-signal-safe calls here: getpid and write.
+    if rustix::process::getpid().as_raw_nonzero().get() != SIGNAL_OWNER.load(Ordering::Relaxed) {
+        return;
+    }
+    let pipe = SIGNAL_PIPE.load(Ordering::Relaxed);
+    if pipe >= 0 {
+        // SAFETY: the write end stays open until the process exits.
+        let pipe = unsafe { std::os::fd::BorrowedFd::borrow_raw(pipe) };
+        let _ = rustix::io::write(pipe, &[signal as u8]);
+    }
+}
+
+/// SIGTERM, SIGHUP and SIGINT close the window the way its close button does,
+/// without asking about unsaved edits, so the Agent terminal and the helper
+/// processes end with it. A second signal, or a window still open five
+/// seconds later, ends the process the way the signal would have. Signals
+/// the launch ignored (nohup, a background job) stay ignored.
+pub fn close_on_signals(ctx: egui::Context) {
+    use rustix::process::Signal;
+    use std::io::Read as _;
+    let Ok((mut reader, writer)) = std::io::pipe() else {
+        return;
+    };
+    SIGNAL_OWNER.store(
+        rustix::process::getpid().as_raw_nonzero().get(),
+        Ordering::Relaxed,
+    );
+    SIGNAL_PIPE.store(
+        std::os::fd::IntoRawFd::into_raw_fd(writer),
+        Ordering::Relaxed,
+    );
+    let handler = on_signal as extern "C" fn(i32) as usize;
+    for signal in [Signal::TERM, Signal::HUP, Signal::INT] {
+        // SAFETY: `on_signal` makes only async-signal-safe calls.
+        unsafe {
+            if set_disposition(signal.as_raw(), handler) == SIG_IGN {
+                set_disposition(signal.as_raw(), SIG_IGN);
+            }
+        }
+    }
+    let _ = std::thread::Builder::new()
+        .name("rustidian-signals".into())
+        .spawn(move || {
+            let mut received = [0];
+            if reader.read_exact(&mut received).is_err() {
+                return;
+            }
+            let number = i32::from(received[0]);
+            SIGNALLED.store(number, Ordering::Relaxed);
+            ctx.request_repaint();
+            let mut next = [rustix::event::PollFd::new(
+                &reader,
+                rustix::event::PollFlags::IN,
+            )];
+            let _ = rustix::event::poll(
+                &mut next,
+                Some(&rustix::event::Timespec {
+                    tv_sec: 5,
+                    tv_nsec: 0,
+                }),
+            );
+            // SAFETY: restores the default disposition, which ends the process.
+            unsafe { set_disposition(number, SIG_DFL) };
+            if let Some(signal) = Signal::from_named_raw(number) {
+                let _ = rustix::process::kill_process(rustix::process::getpid(), signal);
+            }
+        });
+}
+
+/// The signal that asked the window to close, once.
+pub fn take_signal() -> Option<&'static str> {
+    use rustix::process::Signal;
+    let number = SIGNALLED.swap(0, Ordering::Relaxed);
+    [
+        (Signal::TERM, "SIGTERM"),
+        (Signal::HUP, "SIGHUP"),
+        (Signal::INT, "SIGINT"),
+    ]
+    .into_iter()
+    .find_map(|(signal, name)| (signal.as_raw() == number).then_some(name))
+}
 
 /// Keep window controls in the native app so hover feedback matches every other control.
 pub fn title_bar(
@@ -58,8 +367,8 @@ pub fn title_bar(
                 crate::ui_probe::record(ui.ctx(), "file-menu", menu.response.rect);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if control(ui, Icon::Close, "Close window", true).clicked() {
-                        // The existing close-request handler keeps unsaved changes safe.
-                        ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                        // The close-request handler keeps unsaved changes safe.
+                        close(ui.ctx(), "title bar");
                     }
                     if control(
                         ui,
@@ -177,5 +486,185 @@ fn resize_edges(ui: &egui::Ui) {
     if pressed {
         ui.ctx()
             .send_viewport_cmd(ViewportCommand::BeginResize(direction));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A key press as egui-winit reports it on Linux.
+    fn press(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    /// How many times `output` asked to close the window.
+    fn closes(output: &egui::FullOutput) -> usize {
+        output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map_or(0, |viewport| {
+                viewport
+                    .commands
+                    .iter()
+                    .filter(|command| **command == ViewportCommand::Close)
+                    .count()
+            })
+    }
+
+    /// Run one frame in which Q is pressed with `modifiers`, with edits
+    /// `dirty` or not; returns the question Ctrl+Q asked and whether the
+    /// frame asked to close the window.
+    fn press_q(
+        ctx: &egui::Context,
+        modifiers: egui::Modifiers,
+        dirty: bool,
+    ) -> (Option<QuitQuestion>, bool) {
+        let mut question = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![press(egui::Key::Q, modifiers)],
+                ..Default::default()
+            },
+            |ui| question = question.or(quit_question(ui.ctx(), || dirty)),
+        );
+        let closed = closes(&output) > 0;
+        output.drop_without_applying_deltas();
+        (question, closed)
+    }
+
+    const CTRL: egui::Modifiers = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..egui::Modifiers::NONE
+    };
+
+    #[test]
+    fn only_exact_ctrl_q_asks_and_never_closes() {
+        let ctx = egui::Context::default();
+        disable_builtin_quit(&ctx);
+        assert_eq!(
+            press_q(&ctx, CTRL, false),
+            (Some(QuitQuestion::Quit), false)
+        );
+        assert_eq!(
+            press_q(&ctx, CTRL, true),
+            (Some(QuitQuestion::UnsavedChanges), false),
+            "Unsaved edits get the unsaved-changes dialog, not the quit question"
+        );
+        for (extra, name) in [
+            (egui::Modifiers::SHIFT, "Ctrl+Shift+Q"),
+            (egui::Modifiers::ALT, "Ctrl+Alt+Q"),
+        ] {
+            assert_eq!(
+                press_q(&ctx, CTRL | extra, false),
+                (None, false),
+                "{name} must neither ask nor close the window"
+            );
+        }
+    }
+
+    /// One frame of the quit dialog on an 800×600 window with `events`;
+    /// returns its answer and how many times the frame asked to close.
+    fn quit_frame(ctx: &egui::Context, events: Vec<egui::Event>) -> (Option<bool>, usize) {
+        let mut answer = None;
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| answer = answer.or(quit_dialog(ui.ctx())),
+        );
+        let closed = closes(&output);
+        output.drop_without_applying_deltas();
+        (answer, closed)
+    }
+
+    /// A window showing the quit dialog and ready for an answer: the first
+    /// frame only measures the dialog.
+    fn asking() -> egui::Context {
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        for _ in 0..2 {
+            assert_eq!(quit_frame(&ctx, Vec::new()), (None, 0));
+        }
+        ctx
+    }
+
+    #[test]
+    fn quit_dialog_closes_once_on_enter_and_never_on_cancel() {
+        let ctx = asking();
+        let enter = press(egui::Key::Enter, egui::Modifiers::NONE);
+        assert_eq!(quit_frame(&ctx, vec![enter]), (Some(true), 1));
+        assert_eq!(take_close_source(&ctx), "quit dialog");
+
+        let ctx = asking();
+        let escape = press(egui::Key::Escape, egui::Modifiers::NONE);
+        assert_eq!(quit_frame(&ctx, vec![escape]), (Some(false), 0));
+
+        let ctx = asking();
+        let outside = egui::pos2(20.0, 20.0);
+        let answers: Vec<_> = [true, false]
+            .into_iter()
+            .map(|pressed| {
+                quit_frame(
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(outside),
+                        egui::Event::PointerButton {
+                            pos: outside,
+                            button: PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                )
+            })
+            .collect();
+        assert_eq!(
+            answers,
+            [(None, 0), (Some(false), 0)],
+            "A click outside the dialog must cancel it"
+        );
+    }
+
+    #[test]
+    fn egui_builtin_quit_shortcut_is_off() {
+        // egui's default closes the window by itself, even on Ctrl+Shift+Q.
+        let ctx = egui::Context::default();
+        let builtin_closes = |modifiers| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![press(egui::Key::Q, modifiers)],
+                    ..Default::default()
+                },
+                |_| {},
+            );
+            let closed = closes(&output) > 0;
+            output.drop_without_applying_deltas();
+            closed
+        };
+        assert!(builtin_closes(CTRL | egui::Modifiers::SHIFT));
+        disable_builtin_quit(&ctx);
+        for modifiers in [
+            CTRL,
+            CTRL | egui::Modifiers::SHIFT,
+            CTRL | egui::Modifiers::ALT,
+        ] {
+            assert!(
+                !builtin_closes(modifiers),
+                "egui closed the window on {modifiers:?}+Q"
+            );
+        }
     }
 }

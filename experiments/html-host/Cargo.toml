@@ -1,0 +1,16 @@
+[package]
+name = "rustidian-html-host-spike"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "MIT"
+
+# Standalone experiment: it must not add a browser dependency to Rustidian.
+[workspace]
+
+[dependencies]
+cef = { version = "=156.2.0", default-features = false, features = ["sandbox", "resources"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+serde_json = "1"
+url = "2"

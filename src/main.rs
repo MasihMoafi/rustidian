@@ -3,10 +3,18 @@ mod callout_ui;
 mod code_ui;
 mod diagrams;
 mod editor_ui;
+mod explorer_selection;
 mod file_move_ui;
 mod file_tree;
+mod graph_animation;
 mod graph_ui;
 mod image_view;
+#[cfg(unix)]
+mod instance;
+mod math_inline;
+mod math_ui;
+mod note_embed_ui;
+mod page_pan;
 mod page_preview;
 mod preview;
 mod properties_ui;
@@ -15,6 +23,7 @@ mod session;
 mod syntax;
 mod table_layout;
 mod table_ui;
+mod terminal_ui;
 mod theme;
 mod title_ui;
 mod ui_probe;
@@ -71,6 +80,30 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    // Set once the window exists; launches handed over before then wait in
+    // the queue for its first pass.
+    #[cfg(unix)]
+    let ui_context = std::sync::Arc::<std::sync::OnceLock<eframe::egui::Context>>::default();
+    #[cfg(unix)]
+    let launches = {
+        let requested = first
+            .as_ref()
+            .map(|input| std::path::absolute(input).unwrap_or_else(|_| PathBuf::from(input)));
+        match instance::launch(requested.as_deref()) {
+            instance::Launch::HandedOff => return Ok(()),
+            instance::Launch::Serve(instance) => {
+                let ui_context = ui_context.clone();
+                Some(instance.serve(move || {
+                    let opened = ui_context.get();
+                    if let Some(ctx) = opened {
+                        ctx.request_repaint();
+                    }
+                    opened.is_some()
+                }))
+            }
+            instance::Launch::Alone => None,
+        }
+    };
     let default_vault = rustidian::vaults::default_vault();
     let input = first
         .map(PathBuf::from)
@@ -105,16 +138,24 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         rustidian::APP_NAME,
         options,
         Box::new(move |cc| {
-            Ok(Box::new(app::NotesApp::new(
-                cc,
-                &root,
-                started,
-                startup_document,
-            )))
+            window::close_on_signals(cc.egui_ctx.clone());
+            #[cfg(unix)]
+            let _ = ui_context.set(cc.egui_ctx.clone());
+            let mut app = app::NotesApp::new(cc, &root, started, startup_document);
+            #[cfg(unix)]
+            {
+                app.launches = launches;
+            }
+            Ok(Box::new(app))
         }),
-    )
+    );
+    // The socket file stays: the next launch finds nobody listening on it and
+    // replaces it. Removing it here could remove a newer window's socket.
+    // The window is gone; an agent that ignores SIGTERM still gets its SIGKILL.
+    rustidian::terminal::wait_for_closing();
+    result
 }

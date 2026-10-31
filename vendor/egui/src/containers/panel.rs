@@ -838,10 +838,14 @@ impl Panel {
                 .layout(Layout::top_down(Align::Min)),
         );
         panel_ui.expand_to_include_rect(shifted_outer_rect);
-        // Hides the off-screen part during a slide; also prevents overflow (#4475).
-        // Intersected with the parent's clip rect so a tighter clip (for instance, from window
-        // collapse) isn't overridden.
-        panel_ui.shrink_clip_rect(visible_outer_rect);
+        // Contents can grow the frame beyond the requested size. Paint that
+        // same area that Frame::show will allocate, bounded by the panel max.
+        // Sliding panels still hide the off-screen portion.
+        panel_ui.shrink_clip_rect(if self.slide_fraction == 1.0 {
+            max_rect
+        } else {
+            visible_outer_rect
+        });
 
         let axis = side.axis();
         let panel_axis_min =

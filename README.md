@@ -13,9 +13,9 @@
 
 **A native Markdown notebook for Linux. Your files, your folders, no account.**
 
-**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.2/rustidian-linux-amd64.deb)**
+**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb)**
 
-[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.2/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
+[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
 
 Linux desktop · Plain files · Native Rust
 
@@ -25,13 +25,16 @@ I built Rustidian for myself because every note editor I tried felt too slow, es
 
 **Try Rustidian for Linux. Contributors are welcome.**
 
-![Rustidian showing its bundled Markdown notebook](docs/images/rustidian.png)
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/rustidian-light.png">
+  <img src="docs/images/rustidian.png" alt="Rustidian showing its bundled Markdown notebook">
+</picture>
 
 ## Quick start
 
-Linux x86_64, **glibc 2.39 or newer**. Native UI checks use X11; Wayland is enabled, with broader coverage still open. Check your system with `ldd --version`.
+**Requirements:** Linux x86_64 with **glibc 2.39 or newer** (Ubuntu 24.04 or newer; check with `ldd --version`) and an X11 or Wayland desktop. The Open dialogs use `zenity`, which the package installs; with the portable archive, install `zenity` with your package manager. Native UI checks use X11; Wayland is enabled, with broader coverage still open.
 
-Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.2/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.2/SHA256SUMS), then run:
+Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/latest/download/SHA256SUMS), then run:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
@@ -41,12 +44,12 @@ rustidian
 
 The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. The installer is built and checked on Ubuntu 24.04.
 
-For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/download/v0.1.2/rustidian-linux-x86_64.tar.gz) and the same checksums:
+For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) and the same checksums:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf rustidian-linux-x86_64.tar.gz
-./rustidian
+mkdir rustidian && tar -xzf rustidian-linux-x86_64.tar.gz -C rustidian
+cd rustidian && ./rustidian
 ```
 
 The bundled demo opens immediately. To add Rustidian to your applications menu, run `python3 install.py`; it installs for your user without root. You can also run it from the extracted folder:
@@ -57,7 +60,7 @@ The bundled demo opens immediately. To add Rustidian to your applications menu, 
 ./rustidian --version
 ```
 
-**Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases, math and other gaps are listed below. Keep Obsidian available for other workflows.
+**Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases and other gaps are listed below. Keep Obsidian available for other workflows.
 
 **Why don't Obsidian plugins work?** Rustidian's interface is native Rust with egui/eframe. Obsidian plugins require Obsidian's JavaScript API and often its browser DOM and CSS. Running them needs a compatibility runtime or individual feature ports; copying plugin folders is insufficient.
 
@@ -77,9 +80,10 @@ Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If anot
 ## Why Rustidian?
 
 - **Native throughout.** Rust powers the interface, text editor, Markdown renderer, search, and vault operations.
-- **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, and native Mermaid diagrams bring your notes to life.
+- **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, LaTeX math and native Mermaid diagrams bring your notes to life.
 - **Follow your ideas.** Wiki links, backlinks, tags, aliases, properties, bookmarks, a quick switcher, and vault-wide search keep your knowledge connected.
 - **Return to your rhythm.** Daily notes, templates, pinned tabs, named workspaces, recent vaults, and tab restoration after a clean exit.
+- **Work beside an agent.** The Agent tab (Ctrl+Shift+A) runs Codex, Claude Code or Elpis in a terminal in your vault folder, whichever is installed.
 - **Keep control of your files.** Plain UTF-8 Markdown and text, atomic saves, external-change protection, recovery snapshots, and recoverable Trash. Workspace state lives outside the vault.
 
 ## Development status
@@ -88,10 +92,10 @@ Rustidian is a work in progress toward a complete, fast Obsidian-style app. The 
 
 | Area | Current state |
 | --- | --- |
-| Markdown editing, links, tasks, tables, Mermaid | Implemented workflows with ongoing parity work |
+| Markdown editing, links, tasks, tables, Mermaid, LaTeX math | Implemented workflows with ongoing parity work |
 | Vaults, daily notes, templates, workspaces, recovery | Implemented workflows with remaining gaps |
 | Global and local graph | Native views verified; graph parity work continues |
-| Canvas, Bases, math, full settings and hotkeys | Missing or incomplete |
+| Canvas, Bases, full settings and hotkeys | Missing or incomplete |
 | Existing Obsidian community plugins | Unsupported; compatibility design remains open |
 
 The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining work. Full parity and existing Obsidian plugin compatibility are unfinished.

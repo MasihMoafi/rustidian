@@ -1,7 +1,13 @@
 //! Native, cached syntax colors; source text and Markdown ranges stay unchanged.
 use eframe::egui::{self, Color32};
 use rustidian::editor::Markdown;
-use std::{ops::Range, sync::OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
+    ops::Range,
+    sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc},
+    time::{Duration, Instant},
+};
 use syntect::{
     easy::HighlightLines,
     highlighting::{Color, StyleModifier, Theme, ThemeItem, ThemeSettings},
@@ -115,109 +121,254 @@ fn settings() -> &'static Settings {
 }
 
 // Preserve measured default grammars; load additional languages only on demand.
+static EXTRA: OnceLock<SyntaxSet> = OnceLock::new();
+
 fn extra_syntaxes() -> &'static SyntaxSet {
-    static EXTRA: OnceLock<SyntaxSet> = OnceLock::new();
     EXTRA.get_or_init(two_face::syntax::extra_newlines)
 }
 
-#[derive(Default)]
-struct Highlighter;
+/// Load the default grammars off the UI thread, so the first note with code
+/// does not wait for them.
+pub fn prepare() {
+    let _ = std::thread::Builder::new()
+        .name("rustidian-grammars".into())
+        .spawn(|| {
+            settings();
+        });
+}
 
-impl egui::cache::ComputerMut<(&str, &str, bool, bool), Vec<Token>> for Highlighter {
-    fn compute(&mut self, (code, language, dark, reading): (&str, &str, bool, bool)) -> Vec<Token> {
-        let settings = settings();
-        let syntaxes = if settings.syntaxes.find_syntax_by_token(language).is_some() {
-            &settings.syntaxes
-        } else {
-            extra_syntaxes()
-        };
-        let Some(syntax) = syntaxes.find_syntax_by_token(language) else {
+/// Whether `language` can be highlighted without first loading the extra grammars.
+fn loaded(language: &str) -> bool {
+    EXTRA.get().is_some() || settings().syntaxes.find_syntax_by_token(language).is_some()
+}
+
+fn compute(code: &str, language: &str, dark: bool, reading: bool) -> Vec<Token> {
+    let settings = settings();
+    let syntaxes = if settings.syntaxes.find_syntax_by_token(language).is_some() {
+        &settings.syntaxes
+    } else {
+        extra_syntaxes()
+    };
+    let Some(syntax) = syntaxes.find_syntax_by_token(language) else {
+        return Vec::new();
+    };
+    let theme = match (dark, reading) {
+        (true, false) => &settings.dark,
+        (false, false) => &settings.light,
+        (true, true) => &settings.reading_dark,
+        (false, true) => &settings.reading_light,
+    };
+    let normal = if dark {
+        crate::theme::DARK_MUTED
+    } else {
+        crate::theme::LIGHT_MUTED
+    };
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let mut tokens: Vec<Token> = Vec::new();
+    let mut offset = 0;
+    for line in LinesWithEndings::from(code) {
+        let Ok(highlighted) = highlighter.highlight_line(line, syntaxes) else {
             return Vec::new();
         };
-        let theme = match (dark, reading) {
-            (true, false) => &settings.dark,
-            (false, false) => &settings.light,
-            (true, true) => &settings.reading_dark,
-            (false, true) => &settings.reading_light,
-        };
-        let normal = if dark {
-            crate::theme::DARK_MUTED
-        } else {
-            crate::theme::LIGHT_MUTED
-        };
-        let mut highlighter = HighlightLines::new(syntax, theme);
-        let mut tokens: Vec<Token> = Vec::new();
-        let mut offset = 0;
-        for line in LinesWithEndings::from(code) {
-            let Ok(highlighted) = highlighter.highlight_line(line, syntaxes) else {
-                return Vec::new();
-            };
-            for (style, text) in highlighted {
-                let end = offset + text.len();
-                let mut foreground =
-                    Color32::from_rgb(style.foreground.r, style.foreground.g, style.foreground.b);
-                // Syntect groups Rust primitives with declaration keywords.
-                // The measured reference leaves these types in the normal code color.
-                if !reading
-                    && syntax.name == "Rust"
-                    && matches!(
-                        text,
-                        "u8" | "u16"
-                            | "u32"
-                            | "u64"
-                            | "u128"
-                            | "usize"
-                            | "i8"
-                            | "i16"
-                            | "i32"
-                            | "i64"
-                            | "i128"
-                            | "isize"
-                            | "f32"
-                            | "f64"
-                            | "bool"
-                            | "char"
-                            | "str"
-                    )
-                {
-                    foreground = normal;
-                }
-                if offset < end && foreground != normal {
-                    if let Some(previous) = tokens.last_mut()
-                        && previous.range.end == offset
-                        && previous.color == foreground
-                    {
-                        previous.range.end = end;
-                    } else {
-                        tokens.push(Token {
-                            range: offset..end,
-                            color: foreground,
-                        });
-                    }
-                }
-                offset = end;
+        for (style, text) in highlighted {
+            let end = offset + text.len();
+            let mut foreground =
+                Color32::from_rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+            // Syntect groups Rust primitives with declaration keywords.
+            // The measured reference leaves these types in the normal code color.
+            if !reading
+                && syntax.name == "Rust"
+                && matches!(
+                    text,
+                    "u8" | "u16"
+                        | "u32"
+                        | "u64"
+                        | "u128"
+                        | "usize"
+                        | "i8"
+                        | "i16"
+                        | "i32"
+                        | "i64"
+                        | "i128"
+                        | "isize"
+                        | "f32"
+                        | "f64"
+                        | "bool"
+                        | "char"
+                        | "str"
+                )
+            {
+                foreground = normal;
             }
+            if offset < end && foreground != normal {
+                if let Some(previous) = tokens.last_mut()
+                    && previous.range.end == offset
+                    && previous.color == foreground
+                {
+                    previous.range.end = end;
+                } else {
+                    tokens.push(Token {
+                        range: offset..end,
+                        color: foreground,
+                    });
+                }
+            }
+            offset = end;
         }
-        tokens
+    }
+    tokens
+}
+
+/// Highlighting a note's code blocks on the UI thread is capped per frame;
+/// the rest arrives from a background thread (27 Oct: opening a note with 375
+/// blocks froze one frame for 764 ms).
+const BUDGET: Duration = Duration::from_millis(8);
+
+/// Tokens shared by every view, kept while recent frames use them.
+#[derive(Default)]
+struct Cache {
+    tokens: HashMap<u64, (Arc<Vec<Token>>, u64)>,
+    queued: HashSet<u64>,
+}
+
+impl Cache {
+    fn lookup(&mut self, key: u64, pass: u64) -> Option<Arc<Vec<Token>>> {
+        let (tokens, used) = self.tokens.get_mut(&key)?;
+        *used = pass;
+        Some(tokens.clone())
+    }
+
+    fn insert(&mut self, key: u64, tokens: Arc<Vec<Token>>, pass: u64) {
+        // Each edit inside a block leaves its previous text behind.
+        if self.tokens.len() >= 4096 {
+            self.tokens.retain(|_, (_, used)| *used + 600 > pass);
+        }
+        self.tokens.insert(key, (tokens, pass));
+        GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
+fn cache() -> MutexGuard<'static, Cache> {
+    static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+    CACHE
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
+
+fn key(code: &str, language: &str, dark: bool, reading: bool) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (code, language, dark, reading).hash(&mut hasher);
+    hasher.finish()
+}
+
+struct Job {
+    key: u64,
+    code: String,
+    language: String,
+    dark: bool,
+    pass: u64,
+    ctx: egui::Context,
+}
+
+fn finish(job: &Job) {
+    let tokens = Arc::new(compute(&job.code, &job.language, job.dark, false));
+    let mut cache = cache();
+    cache.queued.remove(&job.key);
+    cache.insert(job.key, tokens, job.pass);
+}
+
+/// Highlight `job` off the UI thread and repaint once it is ready.
+fn queue(job: Job) {
+    if !cache().queued.insert(job.key) {
+        return;
+    }
+    static WORKER: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
+    let worker = WORKER.get_or_init(|| {
+        let (sender, jobs) = mpsc::channel::<Job>();
+        let _ = std::thread::Builder::new()
+            .name("rustidian-highlight".into())
+            .spawn(move || {
+                while let Ok(job) = jobs.recv() {
+                    finish(&job);
+                    let mut ctx = job.ctx;
+                    for job in jobs.try_iter() {
+                        finish(&job);
+                        ctx = job.ctx;
+                    }
+                    ctx.request_repaint();
+                }
+            });
+        sender
+    });
+    if let Err(mpsc::SendError(job)) = worker.send(job) {
+        finish(&job);
+    }
+}
+
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Changes whenever a block's tokens arrive, so a cached layout knows to refresh.
+pub fn generation() -> u64 {
+    GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn highlights(ui: &egui::Ui, source: &str, parsed: &Markdown) -> Vec<Token> {
+    let started = Instant::now();
+    let dark = ui.visuals().dark_mode;
+    let pass = ui.ctx().cumulative_pass_nr();
+    // `BUDGET` spans every layout of one frame of this context.
+    let spent_id = egui::Id::new("highlight-budget");
+    let budget = ui.ctx().data_mut(|data| {
+        let spent = data.get_temp_mut_or_default::<(u64, Duration)>(spent_id);
+        if spent.0 != pass {
+            *spent = (pass, Duration::ZERO);
+        }
+        BUDGET.saturating_sub(spent.1)
+    });
     let mut result = Vec::new();
     for block in &parsed.code_blocks {
         let Some(range) = block.content_range(source) else {
             continue;
         };
-        let tokens = code_tokens(ui, &source[range.clone()], &block.language, false);
-        result.extend(tokens.into_iter().map(|mut token| {
-            token.range = token.range.start + range.start..token.range.end + range.start;
-            token
+        let Some(language) = grammar(&block.language) else {
+            continue;
+        };
+        let code = &source[range.clone()];
+        let key = key(code, &language, dark, false);
+        let cached = cache().lookup(key, pass);
+        let tokens = match cached {
+            Some(tokens) => tokens,
+            None if started.elapsed() < budget && loaded(&language) => {
+                let tokens = Arc::new(compute(code, &language, dark, false));
+                cache().insert(key, tokens.clone(), pass);
+                tokens
+            }
+            None => {
+                queue(Job {
+                    key,
+                    code: code.to_owned(),
+                    language,
+                    dark,
+                    pass,
+                    ctx: ui.ctx().clone(),
+                });
+                continue;
+            }
+        };
+        result.extend(tokens.iter().map(|token| Token {
+            range: token.range.start + range.start..token.range.end + range.start,
+            color: token.color,
         }));
     }
+    ui.ctx().data_mut(|data| {
+        data.get_temp_mut_or_default::<(u64, Duration)>(spent_id).1 += started.elapsed();
+    });
     result
 }
 
-pub fn code_tokens(ui: &egui::Ui, body: &str, language: &str, reading: bool) -> Vec<Token> {
+/// The grammar name for a fence's language, or `None` for plain text.
+fn grammar(language: &str) -> Option<String> {
     let token = language
         .split_whitespace()
         .next()
@@ -233,20 +384,26 @@ pub fn code_tokens(ui: &egui::Ui, body: &str, language: &str, reading: bool) -> 
         "shell" | "sh" => "bash",
         _ => token.as_str(),
     };
-    if ["", "text", "txt", "plain", "plaintext"]
+    (!["", "text", "txt", "plain", "plaintext"]
         .iter()
-        .any(|plain| language.eq_ignore_ascii_case(plain))
-    {
+        .any(|plain| language.eq_ignore_ascii_case(plain)))
+    .then(|| language.to_owned())
+}
+
+pub fn code_tokens(ui: &egui::Ui, body: &str, language: &str, reading: bool) -> Vec<Token> {
+    let Some(language) = grammar(language) else {
         return Vec::new();
-    }
-    type Cache = egui::cache::FrameCache<Vec<Token>, Highlighter>;
-    ui.ctx().memory_mut(|memory| {
-        memory
-            .caches
-            .cache::<Cache>()
-            .get((body, language, ui.visuals().dark_mode, reading))
-            .clone()
-    })
+    };
+    let dark = ui.visuals().dark_mode;
+    let pass = ui.ctx().cumulative_pass_nr();
+    let key = key(body, &language, dark, reading);
+    let cached = cache().lookup(key, pass);
+    let tokens = cached.unwrap_or_else(|| {
+        let tokens = Arc::new(compute(body, &language, dark, reading));
+        cache().insert(key, tokens.clone(), pass);
+        tokens
+    });
+    tokens.to_vec()
 }
 
 pub fn source_job(

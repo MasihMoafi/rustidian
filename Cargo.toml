@@ -1,6 +1,6 @@
 [package]
 name = "rustidian"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.95"
 description = "Rustidian — a native Markdown notebook for local vaults"
@@ -28,9 +28,13 @@ egui_extras = { version = "0.37", default-features = false, features = ["svg", "
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 walkdir = "2.5"
 pulldown-cmark = { version = "0.13.4", default-features = false }
+ratex-parser = { version = "=0.1.15", default-features = false }
+ratex-layout = { version = "=0.1.15", default-features = false }
+ratex-types = "=0.1.15"
+ratex-svg = { version = "=0.1.15", default-features = false, features = ["embed-fonts"] }
 notify = "8.2"
 nucleo-matcher = "0.3"
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1", features = ["event", "fs", "process"] }
 trash = "5.2"
 percent-encoding = "2.3"
 serde_yaml_ng = "0.10"
@@ -46,6 +50,18 @@ usvg = { version = "=0.45.1", default-features = false, features = ["text"] }
 redb = "=4.4.0"
 imara-diff = { version = "=0.2.0", default-features = false }
 fastrand = "=2.5.0"
+portable-pty = "0.9"
+vt100 = "0.16"
+htmd = "=0.5.6"
+
+# A launch's activation token raises the running window (src/window.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+raw-window-handle = { version = "0.6", features = ["std"] }
+wayland-client = { version = "0.31", features = ["system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+egui-winit = { version = "0.37", default-features = false }
 
 [profile.release]
 opt-level = 3

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Rustidian local HTML fixture</title>
+<link rel="stylesheet" href="assets/page.css">
+<main>
+  <h1>Rendered local HTML</h1>
+  <p id="status" data-probe>Ready</p>
+  <button id="increment" type="button">Increment: <span id="count">0</span></button>
+  <p><img src="assets/vault.svg" width="48" height="48" alt="Local vault icon"> Relative image and CSS</p>
+  <input id="entry" aria-label="Text input" placeholder="Keyboard input">
+  <section><h2>Scroll target</h2><p id="bottom">End of local page</p></section>
+</main>
+<script>
+  document.querySelector('#increment').addEventListener('click', () => {
+    const count = document.querySelector('#count');
+    count.textContent = String(Number(count.textContent) + 1);
+    document.querySelector('#status').textContent = 'Clicked';
+  });
+</script>
+</html>

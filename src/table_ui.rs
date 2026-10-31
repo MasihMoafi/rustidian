@@ -325,6 +325,20 @@ impl Tables {
                 })
                 .collect();
         }
+        // Tables come in text order: one forward walk gives every start in characters.
+        let mut counted = (0, 0);
+        let starts: Vec<usize> = self
+            .views
+            .iter()
+            .map(|view| {
+                let byte = view.model.range.start;
+                if byte < counted.0 {
+                    counted = (0, 0);
+                }
+                counted = (byte, counted.1 + source[counted.0..byte].chars().count());
+                counted.1
+            })
+            .collect();
         self.views
             .iter()
             .enumerate()
@@ -342,7 +356,7 @@ impl Tables {
                         None => return None,
                     }
                 }
-                let start = source[..view.model.range.start].chars().count();
+                let start = starts[ordinal];
                 if hidden.iter().any(|range| range.contains(&start)) {
                     return None;
                 }
@@ -680,8 +694,9 @@ impl Tables {
                                             ui.fonts_mut(|fonts| {
                                                 fonts.layout_no_wrap(
                                                     buffer.as_str().into(),
-                                                    egui::FontId::proportional(
+                                                    egui::FontId::new(
                                                         crate::theme::document_size(ui, 18.0),
+                                                        crate::theme::fonts::text("regular"),
                                                     ),
                                                     ui.visuals().text_color(),
                                                 )
@@ -699,8 +714,10 @@ impl Tables {
                                     inner,
                                     TextEdit::singleline(&mut cell.text)
                                         .id(field_id)
-                                        .font(egui::FontId::proportional(
+                                        .auto_pair(true)
+                                        .font(egui::FontId::new(
                                             crate::theme::document_size(ui, 18.0),
+                                            crate::theme::fonts::text("regular"),
                                         ))
                                         .frame(egui::Frame::NONE)
                                         .margin(0)
@@ -714,6 +731,18 @@ impl Tables {
                                         })
                                         .layouter(&mut layouter),
                                 );
+                                if !focused {
+                                    let mut math_ui =
+                                        ui.new_child(egui::UiBuilder::new().max_rect(inner));
+                                    math_ui.set_clip_rect(inner.intersect(ui.clip_rect()));
+                                    cell.presentation.paint(
+                                        &math_ui,
+                                        &rendered,
+                                        alignment
+                                            .align_size_within_rect(rendered.size(), inner)
+                                            .min,
+                                    );
+                                }
                                 crate::ui_probe::record(
                                     ui.ctx(),
                                     format!("edit-table-cell:{table}:{row}:{column}"),

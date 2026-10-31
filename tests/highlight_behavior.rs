@@ -1,6 +1,7 @@
 use rustidian::{
-    editor::{Markdown, surround, wrap},
-    highlight::{Color, mark_color},
+    editor::{Markdown, wrap},
+    highlight::Color,
+    inline_style::{self, Element, Style, Tag},
 };
 
 #[test]
@@ -15,10 +16,6 @@ fn highlight_ranges_keep_unicode_formatting_and_original_source() {
             .iter()
             .any(|span| span.style.highlight.is_some() && span.style.strong)
     );
-    let mut edited = "before فارسی after".to_owned();
-    let selected = surround(&mut edited, 7..12, "==");
-    assert_eq!(edited, "before ==فارسی== after");
-    assert_eq!(selected, 9..14);
 }
 
 #[test]
@@ -58,26 +55,17 @@ fn five_colors_wrap_unicode_and_parse_without_changing_other_bytes() {
 }
 
 #[test]
-fn color_parser_rejects_executable_or_unknown_styles_and_ignores_code_and_yaml() {
+fn mark_colors_default_to_yellow_nest_and_ignore_code_and_yaml() {
     assert_eq!(
-        mark_color("<mark style='background-color: #123456;'>"),
-        Some([18, 52, 86, 255])
-    );
-    for tag in [
-        "<mark onclick=\"alert(1)\">",
-        "<mark style=\"background: url(x);\">",
-    ] {
-        assert_eq!(mark_color(tag), None);
-    }
-    assert_eq!(
-        mark_color(
-            "<mark style=\"background-color:rgba(46,204,113,0.4);color:inherit;padding:0.1em 0.2em\">"
-        ),
-        Some([46, 204, 113, 102])
-    );
-    assert_eq!(
-        mark_color("<mark style=\"color:#123456\">"),
-        Some(Color::Yellow.rgba())
+        inline_style::parse("<mark style=\"color:#123456\">"),
+        Some(Tag::Open(
+            Element::Mark,
+            Style {
+                color: Some([18, 52, 86, 255]),
+                background: Some(Color::Yellow.rgba()),
+                ..Style::default()
+            },
+        ))
     );
     let (opening, closing) = Color::Cyan.markers();
     for text in [

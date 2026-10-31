@@ -17,6 +17,14 @@ mod diagrams;
 mod editor_ui;
 #[cfg(not(test))]
 #[allow(dead_code)]
+#[path = "../src/math_inline.rs"]
+mod math_inline;
+#[cfg(not(test))]
+#[allow(dead_code)]
+#[path = "../src/math_ui.rs"]
+mod math_ui;
+#[cfg(not(test))]
+#[allow(dead_code)]
 #[path = "../src/page_preview.rs"]
 mod page_preview;
 #[cfg(not(test))]
@@ -26,6 +34,10 @@ mod preview;
 #[cfg(not(test))]
 #[path = "../src/syntax.rs"]
 mod syntax;
+#[cfg(not(test))]
+#[allow(dead_code)]
+#[path = "../src/table_layout.rs"]
+mod table_layout;
 #[cfg(not(test))]
 #[allow(dead_code)]
 #[path = "../src/table_ui.rs"]
@@ -51,17 +63,40 @@ fn main() {
 
     assert!(std::env::var_os("RUSTIDIAN_UI_PROBE").is_none());
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    // `--note PATH` times typing at the end of one real note instead of the synthetic corpus.
+    let note = arguments
+        .iter()
+        .position(|argument| argument == "--note")
+        .map(|index| arguments[index + 1].clone());
     assert!(
         arguments
             .iter()
-            .all(|argument| matches!(argument.as_str(), "--diverse" | "--folded")),
-        "Use --diverse and/or --folded"
+            .enumerate()
+            .all(|(index, argument)| matches!(
+                argument.as_str(),
+                "--diverse" | "--folded" | "--note" | "--edits"
+            ) || index > 0
+                && matches!(arguments[index - 1].as_str(), "--note" | "--edits")),
+        "Use --diverse, --folded, --note PATH and/or --edits N"
     );
+    // `--edits N` types N characters (default 25) so a sampler sees enough frames.
+    let edits: usize = arguments
+        .iter()
+        .position(|argument| argument == "--edits")
+        .map_or(25, |index| arguments[index + 1].parse().unwrap());
     let diverse = arguments.iter().any(|argument| argument == "--diverse");
     let folded = arguments.iter().any(|argument| argument == "--folded");
     let mut conditions = Vec::new();
-    for count in [20, 200, 500] {
+    let counts: Vec<usize> = if note.is_some() {
+        vec![0]
+    } else {
+        vec![20, 200, 500]
+    };
+    for count in counts {
         let mut source = String::from("# Editor benchmark\n\n");
+        if let Some(note) = &note {
+            source = fs::read_to_string(note).unwrap();
+        }
         for index in 0..count {
             let body = if diverse {
                 format!("body π {index}")
@@ -98,7 +133,11 @@ fn main() {
             assert_eq!(collapsed.len(), count - 1);
             ctx.data_mut(|data| data.insert_temp(id.with("editing-folds"), collapsed));
         }
-        let insertion = source.find("let value").unwrap() + 4;
+        let insertion = if note.is_some() {
+            source.len()
+        } else {
+            source.find("let value").unwrap() + 4
+        };
         let character = source[..insertion].chars().count();
         let mut state = TextEditState::default();
         state
@@ -109,7 +148,7 @@ fn main() {
         let mut cold = None;
         let mut stable = Vec::new();
         let mut edited = Vec::new();
-        for frame in 0..51 {
+        for frame in 0..26 + edits {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
@@ -167,14 +206,14 @@ fn main() {
             match frame {
                 0 => cold = Some(sample),
                 6..=25 => stable.push(sample),
-                31..=50 => edited.push(sample),
+                31.. => edited.push(sample),
                 _ => {}
             }
         }
         let expected = format!(
             "{}{}{}",
             &source[..insertion],
-            "x".repeat(25),
+            "x".repeat(edits),
             &source[insertion..]
         );
         assert_eq!(
@@ -185,7 +224,7 @@ fn main() {
             "blocks": count,
             "source_bytes": source.len(),
             "original_characters": source.chars().count(),
-            "insertions_verified": 25,
+            "insertions_verified": edits,
             "cold": cold,
             "stable": stable,
             "edited": edited,

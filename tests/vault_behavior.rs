@@ -1,4 +1,4 @@
-use rustidian::vault::{Document, Vault, headings, wiki_links};
+use rustidian::vault::{Document, Vault, wiki_links};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -128,7 +128,7 @@ fn backlink_cache_tracks_saved_created_moved_and_externally_changed_notes() {
     );
     assert!(vault.resolve(Path::new("A.md"), "New").is_none());
     fs::write(dir.path().join("Deep/Moved.md"), "No links now").unwrap();
-    vault.refresh().unwrap();
+    vault = Vault::open(dir.path()).unwrap();
     assert!(vault.backlinks(Path::new("Home.md")).is_empty());
 }
 
@@ -278,23 +278,12 @@ fn resolves_links_and_backlinks_without_guessing_ambiguous_names() {
         Some("Notes/Idea.md".into())
     );
     assert_eq!(vault.backlinks(Path::new("Notes/Idea.md")).len(), 1);
-    assert!(
-        vault
-            .search("unrelated")
-            .iter()
-            .any(|note| note.path == Path::new("Other/Idea.md"))
-    );
-    assert!(vault.search("absent").is_empty());
 }
 
 #[test]
-fn markdown_metadata_ignores_fenced_code() {
+fn wiki_links_ignore_fenced_code() {
     let source = "# Title\n[[Real|label]]\n```rust\n# Not a heading\n[[Fake]]\n```\n## Second\n";
     assert_eq!(wiki_links(source), vec!["Real|label"]);
-    assert_eq!(
-        headings(source),
-        vec![(1, "Title".into()), (2, "Second".into())]
-    );
 }
 
 #[test]
@@ -308,6 +297,40 @@ fn wiki_links_ignore_inline_code_and_escaped_openers() {
         wiki_links("an unmatched ` is literal: [[Real]]"),
         vec!["Real"]
     );
+}
+
+#[test]
+fn autosave_writes_on_its_thread_and_text_typed_meanwhile_stays_unsaved() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("Note.md");
+    fs::write(&path, "original").unwrap();
+    let mut vault = Vault::open(dir.path()).unwrap();
+    let mut document = vault.read(Path::new("Note.md")).unwrap();
+    document.text = "first edit".into();
+    let mut writer = rustidian::autosave::Writer::default();
+    writer.submit(7, vault.prepare_save(&document).unwrap(), || {});
+    assert!(writer.busy(7));
+    document.text.push_str(" and more");
+    let mut finished = writer.wait();
+    assert!(!writer.busy(7));
+    let done = finished.pop().unwrap();
+    assert!(finished.is_empty() && done.tab == 7);
+    done.result.unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "first edit");
+    vault.commit_save(&mut document, done.save.text);
+    assert_eq!(document.saved_text(), Some("first edit"));
+    assert!(document.dirty());
+    assert_eq!(vault.notes[0].text, "first edit");
+    vault.save(&mut document).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "first edit and more");
+
+    document.text = "mine".into();
+    let pending = vault.prepare_save(&document).unwrap();
+    fs::write(&path, "theirs").unwrap();
+    writer.submit(7, pending, || {});
+    let error = writer.wait().pop().unwrap().result.unwrap_err();
+    assert!(error.contains("changed outside"), "{error}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
 }
 
 #[cfg(unix)]
@@ -376,7 +399,7 @@ fn follows_or_creates_links_without_overwriting_or_guessing_ambiguous_names() {
     assert!(vault.open_link("Home.md".as_ref(), "../Outside").is_err());
     std::fs::create_dir(root.path().join("Other")).unwrap();
     std::fs::write(root.path().join("Other/你好.v1.md"), "# Other\n").unwrap();
-    vault.refresh().unwrap();
+    vault = Vault::open(root.path()).unwrap();
     assert!(vault.open_link("Home.md".as_ref(), "你好.v1").is_err());
     assert!(!root.path().join("你好.v1.md").exists());
 }
@@ -443,4 +466,29 @@ fn text_links_resolve_relative_encoded_paths_without_creating_markdown_copies() 
             .open_link(Path::new("Notes/From.md"), "../../Outside.txt")
             .is_err()
     );
+}
+
+#[test]
+fn backlink_labels_hide_encoded_destinations_and_keep_exact_navigation_ranges() {
+    let folder = tempdir().unwrap();
+    fs::write(folder.path().join("Target note.md"), "# Target\n").unwrap();
+    let source = "[**Article** `title`](Target%20note.md)\n[[Target note|Wiki alias]]\n![Image label](Target%20note.md)\n[Reference label][target]\n\n[target]: Target%20note.md\n";
+    fs::write(folder.path().join("Index.md"), source).unwrap();
+    let vault = Vault::open(folder.path()).unwrap();
+    let mentions = vault.backlink_mentions(Path::new("Target note.md"), &[]);
+    assert_eq!(
+        mentions
+            .iter()
+            .map(|mention| mention.label())
+            .collect::<Vec<_>>(),
+        [
+            "Article title",
+            "Wiki alias",
+            "Image label",
+            "Reference label"
+        ]
+    );
+    for mention in mentions {
+        assert_eq!(&source[mention.range], mention.link);
+    }
 }

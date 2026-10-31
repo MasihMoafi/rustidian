@@ -16,6 +16,16 @@ MIME_TYPES = ('text/markdown;text/x-markdown;text/plain;text/rust;'
               'text/x-shellscript;application/json;application/toml;application/yaml;'
               'text/yaml;application/xml;text/xml;text/css;text/html;application/sql;')
 
+# A dock launch lacks folders an interactive shell puts on PATH, so the Agent tab
+# would miss agents installed there. Prepending in reverse keeps the shell's order.
+LAUNCHER_PATH = ('for folder in /usr/local/node/bin "$HOME/.local/bin"; do\n'
+                 '    case ":$PATH:" in\n'
+                 '        *":$folder:"*) ;;\n'
+                 '        *) if [ -d "$folder" ]; then PATH="$folder${PATH:+:$PATH}"; fi ;;\n'
+                 '    esac\n'
+                 'done\n'
+                 'export PATH\n')
+
 
 def atomic_copy(source, destination, mode):
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -71,19 +81,20 @@ def main():
     if args.default_vault:
         default = ('if [ -z "${RUSTIDIAN_DEFAULT_VAULT+x}" ]; then\n'
                    '    export RUSTIDIAN_DEFAULT_VAULT=' + shlex.quote(str(args.default_vault.resolve())) + '\nfi\n')
-    script = '#!/bin/sh\n' + default + 'exec ' + shlex.quote(str(target / 'rustidian')) + ' "$@"\n'
+    script = '#!/bin/sh\n' + LAUNCHER_PATH + default + 'exec ' + shlex.quote(str(target / 'rustidian')) + ' "$@"\n'
     with tempfile.TemporaryDirectory(prefix='rustidian-install-') as scratch:
         staging = Path(scratch) / 'launcher'
         staging.write_text(script)
         atomic_copy(staging, launcher, 0o755)
         icon = data / 'icons/hicolor/256x256/apps/rustidian.png'
         atomic_copy(bundle / 'rustidian.png', icon, 0o644)
+        os.utime(data / 'icons/hicolor')  # icon themes rescan on the folder's time
         entry = ('[Desktop Entry]\nType=Application\nName=Rustidian\n'
                  'Comment=Write and connect local Markdown notes\n'
                  'Exec=' + desktop_exec(launcher) + ' %f\n'
-                 'Icon=' + desktop_string(icon) + '\nTerminal=false\n'
+                 'Icon=rustidian\nTerminal=false\n'
                  'Categories=Office;TextEditor;\nKeywords=Markdown;Notes;Vault;\n'
-                 'StartupWMClass=rustidian\nMimeType=' + MIME_TYPES + '\n')
+                 'StartupWMClass=rustidian\nStartupNotify=true\nMimeType=' + MIME_TYPES + '\n')
         staging.write_text(entry)
         applications = data / 'applications'
         atomic_copy(staging, applications / 'rustidian.desktop', 0o644)

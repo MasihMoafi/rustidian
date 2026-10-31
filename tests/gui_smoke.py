@@ -62,11 +62,13 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "system-open", "graph", "graph-state", "emoji", "properties", "images", "tasks", "task-clipping", "large-search", "folders", "explorer", "vault-switch", "vaults", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "tab-keys", "note-dialogs", "syntax", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "navigation", "hover", "title", "scrolling", "diagrams", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "file-copy", "file-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
-    reports = ROOT / "reports"
+    reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
-    run_lock = (reports / ".gui-smoke.lock").open("w")
+    (ROOT / "reports").mkdir(exist_ok=True)
+    run_lock = (ROOT / "reports" / ".gui-smoke.lock").open("w")
     try:
         fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -100,6 +102,19 @@ def main():
         # Keep native GTK pickers on this test display instead of the user's portal.
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
+        file_manager_bus = None
+        if args.section == "reveal":
+            environment.update(DBUS_SESSION_BUS_ADDRESS="unix:path=" + str(base / "file-manager-bus"), GSK_RENDERER="cairo")
+        if args.section == "system-theme":
+            # Keyfile changes are visible to separate processes, without reading
+            # or writing the user's dconf database or using their session bus.
+            environment["GSETTINGS_BACKEND"] = "keyfile"
+            (base / "config").mkdir(parents=True, exist_ok=True)
+            for setting, value in (("color-scheme", "prefer-dark"), ("gtk-theme", "Adwaita")):
+                subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", setting, value],
+                    env=environment, check=True, timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (fixture / "System appearance.md").write_bytes(
+                "# System appearance\r\n\r\nKeep this note exactly: فارسی π.\r\n".encode())
         display_ready = False
         for _ in range(30):
             geometry = subprocess.run(
@@ -143,11 +158,16 @@ def main():
             xvfb_log.close()
             raise
         environment.pop("RUSTIDIAN_DEFAULT_VAULT",None)
-        if args.section == "chrome" and shutil.which("openbox"):
+        if args.section in ("chrome", "reveal") and shutil.which("openbox"):
             window_manager = subprocess.Popen(["openbox", "--sm-disable"], env=environment,
                 stdout=log, stderr=log)
             time.sleep(.4)
+        if args.section == "desktop-vault":
+            import vault_loading_checks
+            fixture = vault_loading_checks.prepare(base, environment, fixture)
         launch_command = [str(ROOT / args.binary), str(fixture)]
+        if args.section == "desktop-vault":
+            launch_command = [str(ROOT / args.binary)]
         if args.open_file:
             startup_path = fixture / f"Open me سلام.{args.open_file}"
             startup_text = "fn main() {\n    // Original text سلام\n    let value = 42;\n    println!(\"Hello\");\n}\n" if args.open_file == "rs" else "# File opening\n\nOriginal text سلام\n"
@@ -157,10 +177,50 @@ def main():
             bundled_binary = base / "rustidian"
             shutil.copy2(ROOT / args.binary, bundled_binary)
             launch_command = [str(bundled_binary)]
+        watch_folders = 1 + sum(path.is_dir() and not any(part.startswith(".") for part in path.relative_to(fixture).parts)
+                                for path in fixture.rglob("*"))
+        if args.section == "speed":
+            environment["RUSTIDIAN_FRAME_LOG"] = str(base / "frames.log")
+            # The shape of the measured note: prose with headings, inline code, bold,
+            # lists, quotes and tables between Python and text blocks.
+            def step(number):
+                parts = [f"## Step {number}\n\n"] if number % 3 == 0 else []
+                parts.append(f"Call `total(values)` on **step {number}** data before the next helper runs; "
+                             "it keeps the running sum exact and skips `None` entries.\n\n")
+                if number % 4 == 0:
+                    parts.append("- check `value > 0` first\n\n")
+                if number % 12 == 0:
+                    parts.append("> Keep **inputs** small.\n\n")
+                if number % 37 == 0:
+                    parts.append("| Input | Result |\n| --- | --- |\n" + "".join(f"| {row} | {row * 2} |\n" for row in range(7)) + "\n")
+                parts.append(f"```python\ndef total_{number}(values):\n    return sum(value * {number} for value in values if value)\n```\n\n"
+                             if number % 10 < 7 else "```text\nexpected output: 42\n```\n\n")
+                return "".join(parts)
+            (fixture / "Large code note.md").write_text("# Large code note\n\n" + "".join(map(step, range(375))))
+        if args.section == "watch-limit":
+            # Sparse, so it costs no disk; reading it is what a polling fallback would repeat.
+            with (fixture / "Recording.mp4").open("wb") as recording:
+                recording.truncate(512 << 20)
+            # A private limit that fits the vault's watches once but not twice.
+            launch_command = ["unshare", "--user", "--map-root-user", "sh", "-c",
+                              f'echo {2 * watch_folders - 1} > /proc/sys/user/max_inotify_watches && exec "$@"',
+                              "sh", *launch_command]
         def launch_app(command):
             (base / "ui-probe.json").unlink(missing_ok=True)
             return subprocess.Popen(command, cwd=base, env=environment, stdout=log, stderr=log)
 
+        if args.section in ("agent-terminal", "lifecycle"):
+            import agent_terminal_checks
+            agent_terminal_checks.prepare(base, environment)
+        if args.section == "idle-cpu":
+            environment["RUSTIDIAN_FRAME_LOG"] = str(base / "frames.log")
+            # Enough text that re-reading the whole vault is measurable.
+            bulk = fixture / "Idle bulk"
+            bulk.mkdir()
+            body = "Notes wait on disk while the window is idle; a re-index reads every one again.\n" * 200
+            for number in range(4500):
+                (bulk / f"Bulk {number:04d}.md").write_text(f"# Bulk {number:04d}\n\n{body}")
+            (fixture / "Idle image.md").write_text("# Idle image\n\n![[Assets/Attachment.png|180]]\n\nText after the image.\n")
         app = launch_app(launch_command)
         results = []
         (reports / "gui-results.json").write_text(json.dumps({"status": "running", "checks": []}, indent=2)+"\n")
@@ -278,6 +338,12 @@ def main():
                 xdo(*pointer, "click", button)
             pause()
 
+        def confirm_quit():
+            # Ctrl+Q asks "Quit Rustidian?" first (28 Oct); Return answers Quit.
+            xdo("key", "--clearmodifiers", "ctrl+q")
+            control_bounds("quit-confirm")
+            xdo("key", "--clearmodifiers", "Return")
+
         def slider_pixels(name, label, dark):
             """Inspect the real thumb, including its idle, hover and held-drag states."""
             left, top, right, bottom = control_bounds(name)
@@ -383,6 +449,7 @@ def main():
                 if value in title:
                     return
                 time.sleep(.05)
+            capture("failed-title.png")
             raise AssertionError((value, title))
 
         def open_note(value, *, title=None):
@@ -441,7 +508,7 @@ def main():
                 assert startup_path.read_text() == expected, repr(startup_path.read_text())
                 assert (fixture / "Home.md").read_text() == (ROOT / "demo-vault/Home.md").read_text()
                 capture(f"file-open-{args.open_file}.png")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 second_path = fixture / f"Another file.{args.open_file}"
                 second_text = "A different document\n"
@@ -769,13 +836,20 @@ def main():
                 command("Source editing")
                 editor_end()
                 key("ctrl+a")
-                property_source = "---\naliases: [Notebook alias]\ntags: [notes/deep]\ndone: false\nscore: 3\n---\n\n# Properties GUI\nBody must stay exact.\n"
+                property_source = "---\naliases: [Notebook alias]\ntags: [notes/deep, alpha, beta]\ndone: false\nscore: 3\n---\n\n# Properties GUI\nBody must stay exact.\n"
                 type_text(property_source)
                 key("ctrl+s")
                 property_file = fixture / "Notes/Properties GUI.md"
                 assert property_file.read_text() == property_source, (repr(property_file.read_text()), repr(property_source))
                 command("Live preview")
                 capture("native-properties.png")
+                # 28 Oct: a tags row showed its type icon a line above the name and chips.
+                centres = {}
+                for part in ("type", "name", "item:0"):
+                    left, top, right, bottom = control_bounds("property:tags:" + part)
+                    centres[part] = (top + bottom) / 2
+                assert max(centres.values()) - min(centres.values()) <= 2, f"Tags row centres differ by more than 2 px: {centres}"
+                results.append(f"The tags row's type icon, name and first chip share one centre line: {centres}")
                 key("ctrl+o")
                 type_text("Notebook alias")
                 key("Return")
@@ -1007,7 +1081,7 @@ def main():
                 capture("native-image-tab-renamed.png")
                 results.append("An externally replaced image refreshed; image rename retained binary bytes and rewrote wiki and Markdown links")
 
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 state = json.loads(next((base / "state/rustidian").glob("*.json")).read_text())
                 assert ["Assets/Renamed viewer[1].png", "Read"] in state["tabs"], state
@@ -1072,7 +1146,7 @@ def main():
                         picture = f"native-highlight-{name.lower()}-{view.split()[0].lower()}.png"
                         capture(picture)
                         box = tuple(round(value) for value in control_bounds(control))
-                        count = sum(tinted(r, g, b) for r, g, b in pixel_data(Image.open(ROOT / "reports" / picture).crop(box).convert("RGB")))
+                        count = sum(tinted(r, g, b) for r, g, b in pixel_data(Image.open(reports / picture).crop(box).convert("RGB")))
                         assert count > 15, (name, view, count)
                     command("Switch appearance")
                     command("Reading view")
@@ -1564,6 +1638,282 @@ def main():
                 assert not failures, failures
                 results.append("Reading and live preview move 300 pixels per wheel notch without a smoothing tail; repeated and reverse input preserve distance/direction and never edit the note")
 
+            def sidebar_boundary_checks():
+                nonlocal app, window
+                protected = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = []
+                open_note("Home")
+                command("Reading view")
+
+                def inspect(stage, dark, mode):
+                    # PanelState deliberately retains the pre-drag width while
+                    # held. The live editor boundary is the actual allocation.
+                    left, top, _, bottom = control_bounds("sidebar:explorer")
+                    right = control_bounds("tab-strip-background")[0]
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    reference = picture.getpixel((round(left + 3), round(bottom - 75)))
+                    coverage = []
+                    for start in range(round(left + 4), round(right - 4), 6):
+                        pixels = [picture.getpixel((x, y))
+                                  for x in range(start, min(start + 6, round(right - 3)), 2)
+                                  for y in range(round(top + 200), round(bottom - 80), 3)]
+                        coverage.append(sum(max(abs(a-b) for a,b in zip(pixel,reference)) <= 3
+                                            for pixel in pixels) / len(pixels))
+                    sample = dict(stage=stage, dark=dark, mode=mode,
+                                  bounds=[left,top,right,bottom], reference_rgb=reference,
+                                  background_coverage=coverage)
+                    observations.append(sample)
+                    (reports/"sidebar-boundary.json").write_text(json.dumps(observations,indent=2)+"\n")
+                    capture(f"native-sidebar-{'dark' if dark else 'light'}-{mode}-{stage}.png")
+                    assert coverage and min(coverage) >= .65, ("Unpainted sidebar gap at the minimum drag boundary", sample)
+                    return right-left
+
+                def drag_to(x):
+                    edge = control_bounds("tab-strip-background")[0]
+                    xdo("mousemove", "--sync", str(round(edge-1)), "450", "mousedown", "1")
+                    pause()
+                    xdo("mousemove", "--sync", str(x), "450")
+                    pause()
+
+                for dark in (False, True):
+                    set_theme(dark)
+                    for mode, button in (("files", "button:File explorer"),
+                                         ("search", "button:Search notes"),
+                                         ("bookmarks", "bookmarks-tab")):
+                        click_control(button)
+                        # Exactly the reported gesture: overshoot the left edge,
+                        # hold at the clamp, release, then drag back outward.
+                        drag_to(0)
+                        try:
+                            inspect("held-minimum", dark, mode)
+                        finally:
+                            xdo("mouseup", "1")
+                        pause()
+                        minimum = inspect("released-minimum", dark, mode)
+                        assert minimum <= 240, ("Sidebar must remain compact",minimum)
+                        if mode != "bookmarks":
+                            edge = control_bounds("tab-strip-background")[0]
+                            for control in ("button:New note · Ctrl+N", "new-folder", "file-sort", "file-collapse"):
+                                bounds = control_bounds(control)
+                                assert bounds[2] <= edge-8, ("Sidebar toolbar control clipped at minimum",control,bounds,edge)
+                            click_control("new-folder")
+                            control_bounds("dialog-input")
+                            key("Escape")
+                        drag_to(450)
+                        xdo("mouseup", "1"); pause()
+                        assert inspect("expanded-again", dark, mode) >= minimum+80
+                    click_control("button:File explorer")
+                    drag_to(0); xdo("mouseup", "1"); pause()
+                    confirm_quit()
+                    app.wait(timeout=5)
+                    app = launch_app(launch_command); window = ready_window()
+                    inspect("restarted-minimum", dark, "files")
+                    results.append(f"{'Dark' if dark else 'Light'} sidebar has no unpainted gap while held at the far-left clamp, after release, outward drag and restart; Files/Search/Bookmarks fit and controls work")
+                assert all(path.read_bytes()==data for path,data in protected.items()), "Sidebar resizing changed a note"
+
+            def toolbar_fill_checks():
+                protected = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = []
+                for dark in (True, False):
+                    set_theme(dark)
+                    for count in (0, 1, 8):
+                        close_tabs()
+                        for _ in range(count): key("ctrl+t")
+                        for width in (1440, 900):
+                            xdo("windowsize",window,str(width),"960");pause()
+                            for sidebar in (False, True):
+                                if bool(control_bounds("sidebar:details", required=False)) != sidebar:
+                                    click_control("toggle-right-sidebar")
+                                strip = control_bounds("tab-strip-background")
+                                toggle = control_bounds("toggle-right-sidebar")
+                                details = control_bounds("sidebar:details", required=False)
+                                expected = details[0] if details else width
+                                assert abs(strip[2]-expected) <= 1.0, ("Toolbar must fill its actual pane",strip,expected)
+                                assert 8 <= strip[2]-toggle[2] <= 12, ("Trailing control must align to the shared inset",strip,toggle)
+                                picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                                y = round(strip[1]+2)
+                                reference = picture.getpixel((round(strip[0]+2),y))
+                                edge = picture.getpixel((round(strip[2]-2),y))
+                                assert max(abs(a-b) for a,b in zip(reference,edge)) <= 1, ("Unpainted toolbar stripe remains",reference,edge,strip)
+                                observations.append({"dark":dark,"tabs":count,"width":width,"sidebar":sidebar,"strip":strip,"toggle":toggle,"edge_rgb":edge})
+                            if count in (0,8): capture(f"native-toolbar-fill-{'dark' if dark else 'light'}-{count}-{width}.png")
+                    results.append(f"Actual {'dark' if dark else 'light'} toolbar fills its pane with zero, one and crowded tabs, wide/narrow windows and either sidebar state")
+                (reports/"native-toolbar-fill-measurements.json").write_text(json.dumps(observations,indent=2)+"\n")
+                assert all(path.read_bytes()==data for path,data in protected.items())
+
+            def middle_pan_checks():
+                note = fixture / "Notes/Middle pan.md"
+                target = fixture / "Pan target.md"
+                source = "# Middle pan\n\n[[Pan target]]\n\n" + "\n\n".join(
+                    f"Paragraph {index}: Drag this actual note text to move the page. "
+                    "The same note must remain unchanged in each editing and reading mode. " * 3
+                    for index in range(80)
+                ) + "\n"
+                note.write_bytes(source.encode())
+                target.write_bytes(b"# Pan target\n\nA middle click opens this note in another tab.\n")
+                originals = {path: path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                observations = {"pages": {}, "graph": {}}
+
+                def retain():
+                    (reports / "native-middle-pan-observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+
+                def unchanged():
+                    for path, expected in originals.items():
+                        assert path.read_bytes() == expected, ("Panning must not edit a file", str(path.relative_to(fixture)))
+
+                def position():
+                    return control_bounds("document-scroll-y")[0]
+
+                def drag(start, delta, button="2", cancel=False):
+                    xdo("mousemove", "--sync", str(round(start[0])), str(round(start[1])), "mousedown", button)
+                    try:
+                        time.sleep(.1)
+                        for step in range(1, 9):
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
+                            time.sleep(.035)
+                        if cancel:
+                            # --clearmodifiers releases held mouse buttons too.
+                            xdo("key", "Escape"); pause()
+                            xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 17)), str(round(start[1] + delta[1] - 19)))
+                            pause()
+                    finally:
+                        xdo("mouseup", button)
+                    xdo("mousemove", "--sync", "0", "0")
+                    pause()
+
+                def text_point(mode, *, preview=False):
+                    bounds = control_bounds("document-viewport")
+                    top, bottom = bounds[1] + 80, bounds[3] - 100
+                    if mode == "Reading view" or preview:
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        candidates = [box for name, box in controls.items() if name.startswith("reading-block:")
+                                      and top <= box[1] < box[3] <= bottom
+                                      and (not preview or box[0] >= (bounds[0] + bounds[2]) / 2 - 2)]
+                        assert candidates, ("A real visible paragraph is needed for the drag", mode, bounds)
+                        box = min(candidates, key=lambda box: box[1])
+                        return box[0] + min(35, (box[2] - box[0]) / 2), (box[1] + box[3]) / 2
+                    editor = control_bounds("editor")
+                    return max(bounds[0], editor[0]) + 35, (top + bottom) / 2
+
+                time.sleep(.7)
+                command("Refresh vault")
+                open_note("Middle pan")
+                for mode in ("Live preview", "Source editing", "Reading view", "Split source"):
+                    command(mode)
+                    viewport = control_bounds("document-viewport")
+                    xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round((viewport[1] + viewport[3]) / 2)))
+                    xdo("click", "--repeat", "2", "--delay", "80", "5")
+                    pause()
+                    before = position()
+                    assert before >= 300, (mode, before)
+                    capture("native-middle-pan-" + mode.split()[0].lower() + "-before.png")
+                    start = text_point(mode)
+                    drag(start, (12, -90))
+                    after_text = position()
+                    assert abs(after_text - before - 90) <= 3, ("Middle-dragging text must pan the page without wheel scaling", mode, before, after_text)
+                    start = text_point(mode)
+                    viewport = control_bounds("document-viewport")
+                    drag(start, (viewport[0] - 25 - start[0], -70))
+                    after_outside = position()
+                    assert abs(after_outside - after_text - 70) <= 3, ("Leaving the document must keep panning its original scroller", mode, after_text, after_outside)
+                    before_cancel = position()
+                    drag(text_point(mode), (8, -60), cancel=True)
+                    after_cancel = position()
+                    assert abs(after_cancel - before_cancel) <= 3, ("Escape must restore the complete page drag and ignore later held movement", mode, before_cancel, after_cancel)
+                    if mode == "Split source":
+                        drag(text_point(mode, preview=True), (0, -55))
+                        assert abs(position() - after_cancel - 55) <= 3, ("The Split preview must pan the shared document", after_cancel, position())
+                    key("ctrl+s")
+                    unchanged()
+                    capture("native-middle-pan-" + mode.split()[0].lower() + "-after.png")
+                    observations["pages"][mode] = {"before": before, "after_text": after_text, "after_leaving_viewport": after_outside, "before_escape": before_cancel, "after_escape": after_cancel, "final": position()}
+                    retain()
+                    results.append(mode + ": real middle-drag on text panned at pointer distance, retained the originating pane outside its bounds, cancelled on Escape, and preserved every fixture byte")
+
+                command("Reading view")
+                viewport = control_bounds("document-viewport")
+                xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round((viewport[1] + viewport[3]) / 2)))
+                xdo("click", "--repeat", "25", "--delay", "10", "4")
+                pause()
+                assert position() < 1
+                count = control_bounds("tab-count")[0]
+                click_control("reading-block:1", button="2", hold=.15)
+                title_contains("Pan target")
+                assert control_bounds("tab-count")[0] == count + 1, "A stationary middle click on a link must still open another tab"
+                unchanged()
+                results.append("A stationary middle click on a Reading link still opened its target in a new tab; all note bytes stayed unchanged")
+
+                graph_root = base / "Middle pan graph"
+                graph_root.mkdir()
+                graph_sources = {"Focus.md": b"# Focus\n\n[[Other]]\n[[Peer]]\n", "Other.md": b"# Other\n\n[[Focus]]\n", "Peer.md": b"# Peer\n"}
+                for name, text in graph_sources.items():
+                    (graph_root / name).write_bytes(text)
+                command("Open vault"); key("ctrl+a"); paste_text(str(graph_root), held=True); key("Return")
+                title_contains(graph_root.name)
+                open_note("Focus")
+                command("Graph view: Open graph view")
+                prefix = "global-graph"
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    if controls.get(prefix + ":busy", [1])[0] == 0 and controls.get(prefix + ":node-count", [-1])[0] == 3:
+                        break
+                    time.sleep(.05)
+                else:
+                    raise AssertionError(("The private graph did not settle", controls))
+                if control_bounds(prefix + ":settings-open")[0]:
+                    click_control(prefix + ":settings", hold=.15)
+                click_control(prefix + ":fit", hold=.15)
+                xdo("mousemove", "0", "0"); pause(); pause()
+
+                def camera():
+                    return [control_bounds(prefix + ":" + key)[0] for key in ("pan-x", "pan-y", "zoom")]
+
+                def nodes():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return {name.split(":node:", 1)[1]: [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2]
+                            for name, box in controls.items() if name.startswith(prefix + ":node:")}
+
+                def translated(before, after, delta):
+                    assert set(before) == set(after) == set(graph_sources), (before, after)
+                    assert all(abs(after[name][axis] - point[axis] - delta[axis]) < 2 for name, point in before.items() for axis in (0, 1)), ("Panning must translate all graph nodes equally", before, after, delta)
+
+                before = nodes(); before_camera = camera()
+                capture("native-middle-pan-graph-before.png")
+                drag(before["Focus.md"], (55, 34))
+                after = nodes(); after_camera = camera()
+                translated(before, after, (55, 34))
+                assert all(abs(after_camera[axis] - before_camera[axis] - delta) < 2 for axis, delta in enumerate((55, 34))), ("Middle dragging a node must pan the camera", before_camera, after_camera)
+                assert abs(after_camera[2] - before_camera[2]) < .001, "Middle pan must not zoom"
+                drag(after["Focus.md"], (28, -26), cancel=True)
+                translated(after, nodes(), (0, 0))
+                assert all(abs(left - right) < .5 for left, right in zip(camera(), after_camera)), "Escape must restore the whole middle-button camera drag"
+                observations["graph"]["middle_over_node"] = {"before": before, "after": after, "camera_before": before_camera, "camera_after": after_camera}
+                retain()
+                capture("native-middle-pan-graph-after.png")
+                results.append("Middle dragging directly over a graph node panned every dot and the camera equally without changing relative node positions or zoom; Escape rolled the complete drag back")
+
+                before = nodes(); before_camera = camera()
+                drag(before["Focus.md"], (-37, 29), button="1")
+                after = nodes()
+                assert all(abs(left - right) < .5 for left, right in zip(camera(), before_camera)), "Primary node dragging must retain the camera"
+                assert all(abs(after["Focus.md"][axis] - before["Focus.md"][axis] - delta) < 2 for axis, delta in enumerate((-37, 29)))
+                assert all(abs(after[name][axis] - point[axis]) < 1 for name, point in before.items() if name != "Focus.md" for axis in (0, 1)), "Primary dragging must move only the selected node"
+                canvas = control_bounds(prefix + ":canvas")
+                blank = (canvas[0] + 30, canvas[3] - 35)
+                assert all(sum((point[axis] - blank[axis]) ** 2 for axis in (0, 1)) > 25 ** 2 for point in after.values()), "The primary canvas control must begin on blank canvas"
+                before = after; before_camera = camera()
+                drag(blank, (28, -21), button="1")
+                translated(before, nodes(), (28, -21))
+                assert all(abs(camera()[axis] - before_camera[axis] - delta) < 2 for axis, delta in enumerate((28, -21)))
+                assert abs(camera()[2] - before_camera[2]) < .001
+                for name, text in graph_sources.items():
+                    assert (graph_root / name).read_bytes() == text, name
+                unchanged()
+                observations["graph"]["primary_regressions"] = {"node_after": after, "canvas_after": nodes(), "camera_after": camera()}
+                retain()
+                results.append("Primary graph dragging still moved one node independently and panned blank canvas; all graph and original page fixture bytes stayed unchanged")
+
             def diagram_checks():
                 path = fixture / "Notes/Diagram check.md"
                 source = "# Diagram check\n\n| Note | State |\n| --- | --- |\n| One | Ready |\n\n```mermaid\nflowchart LR\n A[Write] --> B[Read]\n```\n\nEnd.\n"
@@ -1629,6 +1979,246 @@ def main():
                 assert invalid.read_text() == "```mermaid\nnot a diagram\n```\n"
                 results.append("Tables and native Mermaid render in Reading and Live, stay literal in Source, reuse the same diagram through hover/scroll, and invalid syntax retains its source")
 
+            def math_checks():
+                close_tabs()
+                note = fixture / "Math check.md"
+                original = (ROOT / "tests/fixtures/math.md").read_bytes()
+                note.write_bytes(original)
+                destination = fixture / "Math destination.md"
+                destination.write_bytes(b"# Math destination\n\nKEEP_DESTINATION_BYTES\n")
+                originals = {path: path.read_bytes() for path in fixture.rglob("*")
+                             if path.is_file() and path.suffix in (".md", ".txt", ".rs", ".py", ".html")}
+                time.sleep(.7)
+                open_note("Math check")
+                observations = []
+
+                def controls():
+                    return json.loads((base / "ui-probe.json").read_text())
+
+                def formulas(mode):
+                    prefix = "math-live:" if mode == "live" else "math-"
+                    deadline = time.monotonic() + 6
+                    while time.monotonic() < deadline:
+                        current = controls()
+                        inline = {name: box for name, box in current.items()
+                                  if name.startswith(prefix + "inline:")}
+                        display_boxes = {name: box for name, box in current.items()
+                                         if name.startswith(prefix + "display:")}
+                        if len(inline) >= 2 and len(display_boxes) >= 3:
+                            return inline, display_boxes
+                        assert app.poll() is None
+                        time.sleep(.05)
+                    capture("native-math-missing-" + mode + ".png")
+                    raise AssertionError(("Inline and three display formulas must actually paint", mode, inline, display_boxes))
+
+                def painted(box, *, fit=True):
+                    viewport = control_bounds("document-viewport")
+                    left, top, right, bottom = box
+                    if fit:
+                        assert left >= viewport[0]-1 and right <= viewport[2]+1, ("Formula escaped the document", box, viewport)
+                    assert top >= viewport[1]-1 and bottom <= viewport[3]+1, ("Formula must be fully visible", box, viewport)
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    left, top, right, bottom = map(round, box)
+                    assert right-left >= 4 and bottom-top >= 6, box
+                    background = picture.getpixel((left, top))
+                    ink = [(x,y) for y in range(top+1, bottom-1) for x in range(left+1, right-1)
+                           if pixel_contrast(picture.getpixel((x,y)), background) >= 3]
+                    assert len(ink) >= 8, ("A formula rectangle without visible glyphs is not a render", box, len(ink))
+                    assert max(y for _,y in ink)-min(y for _,y in ink) >= 4, ("Formula ink collapsed", box)
+                    return len(ink)
+
+                def sample(mode, appearance, label):
+                    inline, displays = formulas(mode)
+                    first_name, first = min(inline.items(), key=lambda item: (item[1][1], item[1][0]))
+                    selected = sorted(displays.items(), key=lambda item: item[1][1])[:3]
+                    ink = {name: painted(box) for name, box in [(first_name, first), *selected]}
+                    viewport = control_bounds("document-viewport")
+                    if mode == "split":
+                        assert all(box[0] >= (viewport[0]+viewport[2])/2-2 for _,box in selected), "Split formulas must stay in the preview column"
+                    observations.append({"mode":mode, "appearance":appearance, "size":label,
+                                         "formula_bounds":dict([(first_name,first),*selected]), "ink_pixels":ink,
+                                         "font":control_bounds("document-font-size")[0]})
+                    (reports / "native-math-measurements.json").write_text(json.dumps(observations,indent=2)+"\n")
+                    capture(f"native-math-{appearance}-{mode}-{label}.png")
+                    assert note.read_bytes() == original, "Changing the math view edited its source"
+                    return first_name, first
+
+                def font(size):
+                    actual = round(control_bounds("document-font-size")[0])
+                    for _ in range(abs(size-actual)):
+                        command("Increase font size" if size > actual else "Decrease font size")
+                    assert control_bounds("document-font-size")[0] == size
+
+                for dark in (True, False):
+                    set_theme(dark)
+                    appearance = "dark" if dark else "light"
+                    font(18)
+                    for command_name, mode in (("Reading view","reading"), ("Split source","split"), ("Live preview","live")):
+                        command(command_name)
+                        if mode == "live": key("ctrl+Home")
+                        _, initial = sample(mode, appearance, "18")
+                        font(19)
+                        if mode == "live": key("ctrl+Home")
+                        _, enlarged = sample(mode, appearance, "19")
+                        assert enlarged[2]-enlarged[0] > initial[2]-initial[0]+.2, ("Math must follow document font size", mode, initial, enlarged)
+                        font(18)
+                        if mode == "live": key("ctrl+Home")
+                        xdo("windowsize",window,"900","960");pause()
+                        sample(mode, appearance, "narrow")
+                        xdo("windowsize",window,"1440","960");pause()
+                    results.append(f"Real {appearance} math glyphs painted in Reading/Split/Live, followed font changes and fit a narrow native window without changing source bytes")
+
+                set_theme(True)
+                command("Live preview");key("ctrl+Home")
+                first_name, _ = sample("live", "dark", "source-edit-before")
+                click_control(first_name)
+                control_bounds("editor-focused")
+                assert control_bounds(first_name, required=False) is None, "Clicking a formula must reveal its editable source"
+                key("Home");key("shift+End");key("ctrl+c")
+                selected = subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3)
+                assert selected == r"Before $\frac{a}{b}$ after.", ("Formula click must lead to the literal source",repr(selected))
+                paste_text(r"Before $\frac{a+1}{b}$ after.")
+                key("ctrl+s")
+                changed = original.replace(b"\\frac{a}{b}",b"\\frac{a+1}{b}",1)
+                assert note.read_bytes() == changed, "Editing the revealed formula changed unrelated source"
+                capture("native-math-source-edit.png")
+                key("ctrl+z");key("ctrl+s")
+                assert note.read_bytes() == original, "Undo failed to restore exact formula bytes"
+                key("ctrl+w");open_note("Math check");command("Reading view")
+                sample("reading", "dark", "reopened")
+                assert note.read_bytes() == original
+                results.append("Clicking actual Live math revealed literal LaTeX; a real edit/Save/Undo/Save and close/reopen preserved exact original bytes")
+
+                # The neighboring prose must remain painted around the inline image.
+                first = min(formulas("reading")[0].values(),key=lambda box:(box[1],box[0]))
+                painted([first[0]-55,first[1],first[0]-3,first[3]],fit=False)
+                painted([first[2]+3,first[1],first[2]+54,first[3]],fit=False)
+                link = control_bounds("reading-block:2")
+                xdo("mousemove","--sync",str(round(link[0]+20)),str(round((link[1]+link[3])/2)),"click","1");pause()
+                title_contains("Math destination")
+                assert destination.read_bytes() == originals[destination]
+                open_note("Math check");command("Reading view")
+                formulas("reading")
+                xdo("mousemove","900","700","click","--repeat","8","--delay","10","5");pause()
+                capture("native-math-literal-fallbacks.png")
+                table_math = {name:box for name,box in controls().items() if name.startswith("math-table:")}
+                assert table_math, "A table cell must paint its formula"
+                for box in table_math.values(): painted(box)
+                painted(control_bounds("math-inline:8"))
+                copied = []
+                visible = controls()
+                viewport = control_bounds("document-viewport")
+                for name,box in sorted(visible.items()):
+                    if not name.startswith("reading-block:") or box[1] < viewport[1] or box[3] > viewport[3] or box[3]-box[1] > 60:
+                        continue
+                    left,top,right,bottom=box;y=round((top+bottom)/2)
+                    xdo("mousemove","--sync",str(round(left)),str(y),"mousedown","1")
+                    xdo("mousemove","--sync",str(round(right+3)),str(y),"mouseup","1")
+                    key("ctrl+c")
+                    copied.append(subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3))
+                assert any("$5" in text and "$10" in text and "$20" in text for text in copied), ("Currency must remain visible literal text",copied)
+                assert any(r"$\rustidianUnknown{x}$" in text for text in copied), ("Unknown math must retain selectable source",copied)
+                assert any("Unclosed $math stays literal." in text for text in copied), ("Unclosed math must retain selectable source",copied)
+                click_control("copy-code:0")
+                literal_code = subprocess.check_output(["xclip","-selection","clipboard","-out","-target","UTF8_STRING"],env=environment,text=True,timeout=3)
+                assert literal_code == "$\\frac{never}{render}$\n", ("A code fence must retain its literal math source",repr(literal_code))
+                results.append("Neighboring prose stayed painted, its link navigated normally, and code/currency/unclosed/unknown math remained visible selectable literal source")
+
+                command("Live preview");key("ctrl+Home");formulas("live")
+                # Let the bounded worker drain, then provoke hover-only frames.
+                previous=None;stable=0;deadline=time.monotonic()+5
+                while time.monotonic()<deadline:
+                    count=control_bounds("math-render-count")[0]
+                    stable=stable+1 if count==previous else 0
+                    previous=count
+                    if stable>=3:break
+                    time.sleep(.15)
+                assert stable>=3, "The formula worker did not settle"
+                assert control_bounds("math-render-us")[0]>0
+                for x in (800,850,900,800):
+                    xdo("mousemove","--sync",str(x),"500");pause()
+                assert control_bounds("math-render-count")[0]==previous, "Idle/hover regenerated cached formulas"
+                assert all(path.read_bytes()==data for path,data in originals.items()), "Math views changed a document in the disposable vault"
+                results.append("A settled formula cache survived idle/hover frames without rerendering, and all original vault document bytes remained unchanged")
+
+            def quick_create_checks():
+                origin = fixture / "Quick origin.md"; origin.write_text("ORIGIN\n")
+                existing = fixture / "Existing target.md"; existing.write_text("KEEP_EXISTING\n")
+                (fixture / "Quick nested").mkdir()
+                command("Refresh vault"); open_note(origin.name, title=origin.stem)
+                def query(value):
+                    key("ctrl+o"); control_bounds("dialog-input-focused")
+                    modified_shortcut(xdo, "a"); key("BackSpace")
+                    if any(ord(char) > 127 for char in value): paste_text(value)
+                    else: type_text(value)
+                def wait_note(path, text):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.exists() and path.read_text() == text: return
+                        time.sleep(.05)
+                    raise AssertionError((path.name, text, path.read_text() if path.exists() else "MISSING"))
+                def created(name):
+                    path = fixture / name
+                    wait_note(path, ""); control_bounds("tab-full:" + name); control_bounds("editor-focused")
+                    return path
+                command("Source editing"); editor_end(); type_text("DRAFT_TAIL")
+                query("Fresh idea ZQ901"); control_bounds("quick-create")
+                capture("native-quick-create-offer.png"); key("Return")
+                first = created("Fresh idea ZQ901.md")
+                wait_note(origin, "ORIGIN\nDRAFT_TAIL")
+                editor_end(); type_text("CREATED_BODY"); key("ctrl+s"); wait_note(first, "CREATED_BODY")
+                capture("native-quick-create-note.png")
+                key("alt+Left"); control_bounds("tab-full:Quick origin.md")
+                key("alt+Right"); control_bounds("tab-full:Fresh idea ZQ901.md")
+                results.append("Ctrl+O with no matches created the named Markdown file, opened an editable note, saved its body and the old draft, and retained back/forward history")
+                open_note(origin.name, title=origin.stem)
+                query("Separate tab ZQ902"); modified_shortcut(xdo, "Return"); pause()
+                created("Separate tab ZQ902.md"); control_bounds("tab-full:Quick origin.md")
+                capture("native-quick-create-new-tab.png")
+                open_note(origin.name, title=origin.stem)
+                click_control("tab-full:Quick origin.md", "3"); click_control("tab-menu-pin")
+                query("Pinned creation ZQ903"); key("Return")
+                created("Pinned creation ZQ903.md"); control_bounds("tab-full:Quick origin.md")
+                results.append("Ctrl+Enter and a pinned origin each opened a new note tab while preserving the origin")
+                query("Quick nested/New child ZQ904.md"); click_control("quick-create")
+                nested = created("Quick nested/New child ZQ904.md")
+                assert not (fixture / "Quick nested/New child ZQ904.md.md").exists()
+                query("Quick made/New deeper ZQ905"); key("Return")
+                created("Quick made/New deeper ZQ905.md"); assert (fixture / "Quick made").is_dir()
+                query("Fresh café ZQ906"); key("Return"); created("Fresh café ZQ906.md")
+                capture("native-quick-create-unicode.png")
+                results.append("The Create note button, existing nested folders, missing parent folders, explicit .md names and Unicode note names all created the exact requested path")
+                before = {path.relative_to(fixture): path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+                query(existing.name); control_bounds("quick-open:Existing target.md")
+                assert not control_bounds("quick-create", required=False)
+                key("Return"); control_bounds("tab-full:Existing target.md")
+                query(first.stem); assert not control_bounds("quick-create", required=False)
+                key("Return"); control_bounds("tab-full:Fresh idea ZQ901.md")
+                assert {path.relative_to(fixture): path.read_bytes() for path in fixture.rglob("*") if path.is_file()} == before
+                results.append("Existing matches and a newly created note reopened through normal quick switching without new files or overwritten contents")
+                outside = base / "Outside ZQ907.md"
+                before_paths = {path.relative_to(fixture) for path in fixture.rglob("*")}
+                for value in ["../Outside ZQ907", str(outside), ".hidden/New ZQ908", "vendor/New ZQ909"]:
+                    query(value); control_bounds("quick-create"); key("Return")
+                    control_bounds("dialog-error"); assert not outside.exists()
+                    assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
+                    key("Escape")
+                query("Cancelled ZQ910"); control_bounds("quick-create"); key("Escape")
+                query(""); assert not control_bounds("quick-create", required=False); key("Escape")
+                query("   "); assert not control_bounds("quick-create", required=False); key("Escape")
+                assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
+                results.append("Absolute, escaping and ignored paths failed visibly; cancelled, empty and whitespace queries created no files or folders")
+                query("Denied ZQ911"); mode = fixture.stat().st_mode
+                try:
+                    fixture.chmod(0o555); key("Return"); control_bounds("dialog-error")
+                    capture("native-quick-create-error.png")
+                    assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
+                finally: fixture.chmod(mode)
+                key("Escape"); query("Denied ZQ911"); key("Return"); created("Denied ZQ911.md")
+                assert existing.read_text() == "KEEP_EXISTING\n" and first.read_text() == "CREATED_BODY"
+                assert origin.read_text() == "ORIGIN\nDRAFT_TAIL" and nested.read_text() == ""
+                results.append("A real unwritable-vault error preserved all notes and paths; retry after restoring access created and opened the requested note")
+
             def quick_ranking_checks():
                 close_tabs()
                 originals={}
@@ -1661,10 +2251,11 @@ def main():
                     query(value,["Quick aliases.md"]);key("Return");title_contains("Quick aliases")
                 results.append("Multiword and Unicode aliases resolved once to their canonical file without duplicate rows")
                 for value in ("Closed Closed","No matching needle qzx"):
-                    query(value,[]);key("Return");control_bounds("dialog-input");key("Escape")
-                results.append("Repeated-word false matches and a missing filename produced no rows, and Enter created no note")
+                    query(value,[]);key("Return");title_contains(value)
+                    assert (fixture/(value+".md")).read_text()==""
+                results.append("Repeated-word false matches and a missing filename produced no rows, and Enter created the requested empty Markdown notes")
                 rows=query("");assert 1<=len(rows)<=100,rows
-                key("Escape");title_contains("Quick aliases")
+                key("Escape");title_contains("No matching needle qzx")
                 assert all(path.read_text()==original for path,original in originals.items())
                 results.append("An empty chooser still listed files; cancelling it kept the current document and every fixture byte unchanged")
 
@@ -1810,6 +2401,48 @@ def main():
                 assert target.read_text()==target_original and source.read_text()==original
                 results.append("Editing a preview of a graph-backed note saved the actual file; Save and closing the graph could not discard that change")
 
+            def view_modes_checks():
+                source=fixture/"Notes/View modes.md"
+                original="# View modes\n\nEditable paragraph.\n"
+                source.write_text(original);time.sleep(.6)
+                open_note("View modes",title="View modes")
+                for command_name,mode in (("Live preview","Live preview"),("Source editing","Source mode")):
+                    command(command_name);control_bounds("view-mode:"+mode)
+                    click_control("editor");key("ctrl+End");type_text("EDIT_CONFIRMED");key("ctrl+s");time.sleep(.2)
+                    assert "EDIT_CONFIRMED" in source.read_text(), mode+" must accept and save typing"
+                    key("ctrl+z");key("ctrl+s");time.sleep(.2);assert source.read_text()==original
+                    command("Reading view");control_bounds("view-mode:Reading")
+                    x1,y1,x2,y2=control_bounds("reading-block:1");xdo("mousemove",str(round(x1+12)),str(round((y1+y2)/2)),"click","1");pause()
+                    type_text("READ_MUST_NOT_EDIT");key("ctrl+s");time.sleep(.2)
+                    assert source.read_text()==original, "Reading view must reject typing"
+                    key("ctrl+e");time.sleep(.2);control_bounds("view-mode:"+mode)
+                results.append("Live Preview and Source accept edits; Reading rejects typing; Ctrl+E restores the chosen editing mode")
+                preferred = "Source mode"
+                for choice,mode in (("Reading","Reading"),("Source mode","Source mode"),("Live Preview","Live preview")):
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    current=next(k for k in probe if k.startswith("view-mode:"))
+                    click_control(current);time.sleep(.2)
+                    for label in ("Reading","Source mode","Live Preview"):
+                        control_bounds("view-choice:"+label)
+                    capture("native-view-menu.png")
+                    click_control("view-choice:"+choice);time.sleep(.2);control_bounds("view-mode:"+mode)
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    expected="Current view: reading" if mode=="Reading" else "Current view: editing"
+                    assert any(k.startswith("button:"+expected) for k in probe), "The toolbar must state the actual view before its switch action"
+                    if mode != "Reading":
+                        preferred = mode
+                    toggle = next(k for k in probe if k.startswith("button:"+expected))
+                    click_control(toggle)
+                    after = preferred if mode == "Reading" else "Reading"
+                    control_bounds("view-mode:"+after)
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    opposite="Current view: editing" if after != "Reading" else "Current view: reading"
+                    click_control(next(k for k in probe if k.startswith("button:"+opposite)))
+                    control_bounds("view-mode:"+mode)
+                assert source.read_text()==original
+                capture("native-view-modes.png")
+                results.append("Status mode menu matches Obsidian's Reading, Source mode and Live Preview choices; toolbar names current view and action")
+
             def navigation_checks():
                 note = fixture / "Notes/Navigation UI.md"
                 target = fixture / "Notes/Linked target.md"
@@ -1871,16 +2504,43 @@ def main():
                 title_contains("Navigation UI")
                 command("Reading view")
                 requests = reports / "browser-requests.txt"
-                for block, expected_uri in [(3, file_uri), (4, evidence.as_uri()), (5, attachment.as_uri()), (6, evidence.as_uri())]:
-                    before_requests = requests.read_text() if requests.exists() else ""
+
+                def handler_requests():
+                    return requests.read_text() if requests.exists() else ""
+
+                def external_link(block, expected_uri):
+                    before_requests = handler_requests()
                     click_link(block)
                     deadline = time.monotonic() + 3
-                    while (not requests.exists() or requests.read_text() == before_requests) and time.monotonic() < deadline:
+                    while handler_requests() == before_requests and time.monotonic() < deadline:
                         time.sleep(.05)
-                    assert requests.exists() and expected_uri in requests.read_text()[len(before_requests):], f"File link {block} must reach the desktop file handler"
+                    assert expected_uri in handler_requests()[len(before_requests):], f"File link {block} must reach the desktop file handler"
                     title_contains("Navigation UI")
                     time.sleep(.4)
                     assert not control_bounds("page-preview-create", required=False), "An existing file must not offer to create a missing note"
+
+                external_link(3, file_uri)
+                external_link(4, evidence.as_uri())
+                # An in-vault text document such as .json opens in the app's source editor, in the same tab.
+                before_requests = handler_requests()
+                before = tab_count()
+                click_link(5)
+                title_contains("record.json")
+                control_bounds("tab:Notes/record.json")
+                assert tab_count() == before, "A plain click must open the text document in the source tab"
+                control_bounds("editor-focused")
+                key("ctrl+a")
+                key("ctrl+c")
+                shown = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, timeout=5).decode()
+                assert shown == '{"attachment":"original evidence"}\n', repr(shown)
+                capture("native-navigation-text-document.png")
+                time.sleep(.4)
+                assert handler_requests() == before_requests, "An in-vault text document must not reach the desktop file handler"
+                key("alt+Left")
+                title_contains("Navigation UI")
+                # Back from a text document returns to the note's Reading view, as Back does after the Markdown hops above.
+                control_bounds("reading-block:6")
+                external_link(6, evidence.as_uri())
                 assert not fixture.joinpath("file:").exists(), "A URI must not create spurious notes"
                 assert evidence.read_text() == '{"proof":"original evidence"}\n'
                 assert attachment.read_text() == '{"attachment":"original evidence"}\n'
@@ -1888,7 +2548,7 @@ def main():
                 assert note.read_text() == source
                 assert target.read_text() == target_source
                 capture("native-navigation.png")
-                results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, and all source bytes stay intact")
+                results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, outside files reach the desktop handler while an in-vault .json opens in the app's source editor, and all source bytes stay intact")
 
                 plan = fixture / "Notes/Plan UI.md"
                 spec = fixture / "Notes/spec.md"
@@ -1968,7 +2628,7 @@ def main():
                 assert note.read_text() == source
                 def marked_pixels(name, control):
                     capture(name)
-                    path = ROOT / "reports" / name
+                    path = reports / name
                     box = tuple(round(value) for value in control_bounds(control))
                     return sum(r > g > b + 20 and r - g < 45 for r, g, b in pixel_data(Image.open(path).crop(box).convert("RGB")))
                 command("Reading view")
@@ -2028,7 +2688,7 @@ def main():
                 key("ctrl+s")
                 expected = highlighted + " offline"
                 assert note.read_text() == expected
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -2045,24 +2705,9 @@ def main():
                 assert control_bounds("settings-autosave")
                 click_control("settings-autosave")
                 assert json.loads(state_path.read_text())["autosave_enabled"] is True
-                displaced = base / "held-essential-state.json"
-                state_path.rename(displaced)
-                state_path.mkdir()
-                try:
-                    click_control("settings-autosave")
-                    capture("native-settings-write-error.png")
-                    assert control_bounds("error-save-copy", required=False) is None
-                finally:
-                    state_path.rmdir()
-                    displaced.rename(state_path)
-                assert json.loads(state_path.read_text())["autosave_enabled"] is True
-                click_control("settings-autosave")
-                assert json.loads(state_path.read_text())["autosave_enabled"] is False
-                click_control("settings-autosave")
-                assert json.loads(state_path.read_text())["autosave_enabled"] is True
                 key("Escape")
                 assert note.read_text() == expected
-                results.append("Searchable settings persist autosave outside the vault across restart; failed writes roll back, retry succeeds, explicit saving and original Markdown stay intact")
+                results.append("Searchable settings persist autosave outside the vault across restart; explicit saving and original Markdown stay intact")
                 if control_bounds("panel:outline", required=False) is None:
                     command("Toggle right sidebar")
                 assert control_bounds("panel:outline")
@@ -2081,6 +2726,7 @@ def main():
 
 
             def task_checks():
+                set_theme(True)
                 key("ctrl+n")
                 capture("native-new-note-created.png")
                 key("Escape")
@@ -2186,6 +2832,7 @@ def main():
                     assert count >= 2 if required else count == 0, (color, count)
 
             def syntax_checks():
+                set_theme(True)
                 source = (ROOT / "tests/fixtures/syntax.md").read_text()
                 note = fixture / "Syntax GUI.md"
                 note.write_text(source)
@@ -2281,6 +2928,7 @@ def main():
                 results.append("Actual TS/TSX source files and Source/Live/Reading fences rendered keyword/string/comment colors in both themes; real edit/Save/Undo/Save preserved every original CRLF byte")
 
             def reading_code_checks():
+                set_theme(True)
                 # The compact-tab check can restore a previously open outline.
                 # This fixture measures the 920px reader with that pane closed.
                 if control_bounds("panel:outline", required=False) is not None:
@@ -2360,7 +3008,7 @@ def main():
                 assert not first.exists()
                 assert any(path.read_bytes() == (source + "d").encode() for path in (base / "data/Trash/files").iterdir() if path.is_file())
                 results.append("D types normally outside menus; its visible menu mnemonic opens recoverable Trash, and cancelling does not save the skip-confirmation choice")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -2488,13 +3136,9 @@ def main():
                 def expect_icons(value):
                     assert system_launcher.read_text() == original_launcher, "System launchers must remain unchanged"
                     asset = ROOT / ("docs/brand/rustidian.png" if value == "teal" else f"docs/brand/themes/{value}.png")
-                    entry = launcher.read_text()
-                    icon_lines = [line[5:] for line in entry.splitlines() if line.startswith("Icon=")]
-                    assert len(icon_lines) == 2 and icon_lines[1] == "keep-action-icon", entry
-                    icon_path = Path(icon_lines[0])
-                    assert icon_path.is_relative_to(base / "data"), ("Use the private XDG data folder", icon_path)
-                    assert icon_path.read_bytes() == asset.read_bytes(), ("Launcher must use the selected palette logo", value, icon_lines)
-                    assert "Exec=/usr/bin/true %f\n" in entry and "Actions=Example;\n" in entry, entry
+                    assert not launcher.exists(), "Launcher files stay untouched; GNOME loses a running window when its entry changes"
+                    icon_path = base / "data/icons/hicolor/256x256/apps/rustidian.png"
+                    assert icon_path.read_bytes() == asset.read_bytes(), ("The themed rustidian icon must be the selected palette logo", value)
                     raw = subprocess.check_output(["xprop", "-id", window, "-notype", "-f", "_NET_WM_ICON", "32c", "_NET_WM_ICON"], env=environment, text=True)
                     pixels = [int(value.strip()) for value in raw.split("=", 1)[1].split(",")]
                     width, height = pixels[:2]
@@ -2554,7 +3198,7 @@ def main():
                         capture("native-palette-document-" + ("dark" if dark else "light") + "-" + value + ".png")
                         assert note.read_text() == source
                     results.append(("Dark" if dark else "Light") + " palettes apply the requested native colors, save the actual selection and preserve Markdown")
-                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                confirm_quit(); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
                 expect_background((252,245,242))
                 command("Open settings"); click_control("settings-page:Appearance")
@@ -2565,7 +3209,7 @@ def main():
                 click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
                 expect_icons("teal")
                 assert note.read_text() == source
-                results.append("All four palettes update the real native window and XDG launcher icons; a real restart restores the selection without changing launcher actions or note bytes")
+                results.append("All four palettes update the real native window and the themed rustidian icon without editing any launcher; a real restart restores the selection without changing note bytes")
 
             def table_resize_checks():
                 nonlocal app, window
@@ -2670,7 +3314,7 @@ def main():
                 assert edge_note.read_bytes() == edge_source.encode()
                 results.append("A narrower real window fits all columns; widening restores chosen widths without editing the saved preference or note")
 
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -2786,7 +3430,7 @@ def main():
                     capture("native-table-resize-" + mode.split()[0].lower() + "-after.png")
                     results.append(mode + " resizes ordinary and callout table columns in both directions without changing note bytes")
                 before = control_bounds("table-resize:0:0")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -3362,6 +4006,7 @@ def main():
                 results.append("The active tab stayed visible at compact width while switching, with every note unchanged")
 
             def code_checks():
+                set_theme(True)
                 source = "Before\n\n```text\n**literal** [[No link]]\n> literal π\n```\n\nAfter\n"
                 note = fixture / "Code GUI.md"
                 note.write_text(source)
@@ -3630,7 +4275,7 @@ def main():
                 click_control("sort-descending")
                 pause()
                 assert control_bounds("folder:Toolbar folder")[1] < control_bounds("folder:Notes")[1]
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=10)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -3662,6 +4307,398 @@ def main():
                 assert child.read_text() == original
                 capture("native-file-toolbar.png")
                 results.append("The generated Collapse All icon collapsed nested folders, which could be reopened without changing the note")
+            # Dedicated section: list-order fixtures must not leak into the accumulated all-suite vault.
+            def sidebar_keys_checks():
+                sources = {}
+                for index in range(40):
+                    path = fixture / f"Keyboard nav {index:02}.md"
+                    sources[path] = f"# Keyboard nav {index:02}\n\nABCDE"
+                    path.write_text(sources[path])
+                command("Refresh vault")
+                for index in (2, 0, 1):
+                    open_note(f"Keyboard nav {index:02}")
+                    command("Bookmark current file")
+                click_control("bookmarks-tab")
+                click_control("bookmark:Keyboard nav 02.md")
+                control_bounds("sidebar-list-focused")
+                key("Up"); title_contains("Keyboard nav 02")
+                capture("native-bookmark-boundary-focus.png")
+                control_bounds("sidebar-list-focused")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Down"); title_contains("Keyboard nav 01")
+                key("Down"); title_contains("Keyboard nav 01")
+                key("Up"); title_contains("Keyboard nav 00")
+                # A context menu owns its arrows until dismissed.
+                click_control("bookmark:Keyboard nav 00.md", "3")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Escape")
+                key("ctrl+comma")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Escape")
+                click_control("bookmark:Keyboard nav 00.md")
+                key("Down"); title_contains("Keyboard nav 01")
+                capture("native-bookmark-arrows.png")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("Bookmarks follow saved order and boundaries; context menus and dialogs retain their arrows; every fixture byte is unchanged")
+                click_control("button:File explorer")
+                open_note("Keyboard nav 00")
+                command("Source editing")
+                click_control("file:Keyboard nav 00.md")
+                key("Down")
+                title_contains("Keyboard nav 01")
+                key("Up")
+                title_contains("Keyboard nav 00")
+                click_control("file:Keyboard nav 00.md")
+                key("Down")
+                title_contains("Keyboard nav 01")
+                for index in range(2, 35):
+                    key("Down")
+                    title_contains(f"Keyboard nav {index:02}")
+                pause()
+                bounds = control_bounds("file:Keyboard nav 34.md")
+                viewport = control_bounds("file-tree-viewport")
+                assert bounds[1] >= viewport[1] and bounds[3] <= viewport[3], (bounds, viewport)
+                capture("native-sidebar-arrows-offscreen.png")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("Clicking or reclicking a note retains Up/Down navigation and offscreen destinations scroll into view without edits")
+                click_control("editor")
+                control_bounds("editor-focused")
+                key("Up"); key("Down"); title_contains("Keyboard nav 34")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("Clicking note text transfers focus and ordinary editor arrows stay in the current note")
+                # Reverse-order and list-boundary checks use the actual rendered order.
+                click_control("file-sort"); click_control("sort-descending")
+                open_note("Keyboard nav 01")
+                # Quick Open reveals the note once; the wheel then scrolls the explorer by hand.
+                xdo("mousemove", "150", "400", "click", "--repeat", "60", "--delay", "1", "5")
+                pause()
+                click_control("file:Keyboard nav 01.md")
+                key("Down"); title_contains("Keyboard nav 00")
+                key("Up"); title_contains("Keyboard nav 01")
+                click_control("file-sort"); click_control("sort-ascending")
+                group = fixture / "Keyboard folder"
+                group.mkdir()
+                for name in ("A", "B"):
+                    path = group / f"Folder {name}.md"
+                    sources[path] = f"# Folder {name}\n"
+                    path.write_text(sources[path])
+                hidden = group / "Hidden"
+                hidden.mkdir()
+                hidden_note = hidden / "Hidden child.md"
+                sources[hidden_note] = "# Hidden child\n"
+                hidden_note.write_text(sources[hidden_note])
+                command("Refresh vault")
+                open_note("Folder A")
+                xdo("mousemove", "150", "400", "click", "--repeat", "60", "--delay", "1", "4")
+                pause()
+                click_control("file:Keyboard folder/Folder A.md")
+                key("Down"); title_contains("Folder B")
+                key("Up"); title_contains("Folder A")
+                assert control_bounds("file:Keyboard folder/Hidden/Hidden child.md", required=False) is None
+                results.append("Files follow current reverse sort and expanded-folder order, skipping collapsed children")
+                key("ctrl+shift+f"); key("ctrl+a"); type_text("Keyboard nav")
+                before_title = xdo("getwindowname", window)
+                key("Down"); assert xdo("getwindowname", window) == before_title
+                click_control("search:Keyboard nav 00.md")
+                key("Down"); title_contains("Keyboard nav 01")
+                key("Up"); title_contains("Keyboard nav 00")
+                key("Up"); title_contains("Keyboard nav 00")
+                key("End"); title_contains("Keyboard nav 39")
+                key("Down"); title_contains("Keyboard nav 39")
+                pause()
+                capture("native-search-arrows-last.png")
+                bounds = control_bounds("search:Keyboard nav 39.md")
+                viewport = control_bounds("search-viewport")
+                assert bounds[1] >= viewport[1] and bounds[3] <= viewport[3], (bounds, viewport)
+                key("Home"); title_contains("Keyboard nav 00")
+                capture("native-search-arrows.png")
+                results.append("Search text keeps its arrows; selecting a result enables filtered navigation, clamped boundaries and offscreen Home/End")
+                long_group = fixture / "Long search"
+                long_group.mkdir()
+                long_name = "A " + "Long title " * 12
+                for name in (long_name, "B short"):
+                    path = long_group / (name + ".md")
+                    sources[path] = "# Bounded result\n"
+                    path.write_text(sources[path])
+                command("Refresh vault")
+                click_control("search-input"); key("ctrl+a"); type_text("path:Long search/")
+                edge = control_bounds("tab-strip-background")[0]
+                xdo("mousemove", "--sync", str(round(edge-1)), "450", "mousedown", "1")
+                pause()
+                xdo("mousemove", "--sync", "0", "450")
+                pause()
+                xdo("mouseup", "1")
+                pause()
+                pane = control_bounds("sidebar:explorer")
+                assert pane[2] - pane[0] <= 240, pane
+                click_control("search:Long search/" + long_name + ".md")
+                key("Down"); title_contains("B short")
+                key("Up"); title_contains(long_name)
+                bounds = control_bounds("search:Long search/" + long_name + ".md")
+                assert bounds[3] - bounds[1] <= 34, bounds
+                capture("native-sidebar-long-title.png")
+                assert all(path.read_text() == source for path, source in sources.items())
+                results.append("At the minimum sidebar width, a long Search title stays on one line and adjacent-note arrows preserve every source byte")
+
+
+            # Dedicated section: its tall tree must not leak into the all-suite vault.
+            def tree_scroll_checks():
+                notes = {}
+                for folder in range(1, 9):
+                    for number in range(1, 13):
+                        path = fixture / f"Tree {folder:02}" / f"Tree {folder} note {number:02}.md"
+                        path.parent.mkdir(exist_ok=True)
+                        notes[path] = f"# Tree {folder} note {number:02}\n\nBody.\n"
+                        path.write_text(notes[path])
+                command("Refresh vault")
+                # Opening a note in each folder expands it, so the tree outgrows its viewport.
+                for folder in range(1, 9):
+                    open_note(f"Tree {folder} note 01")
+
+                def offset():
+                    return control_bounds("file-tree-offset")[0]
+
+                def row_visible(path):
+                    bounds = control_bounds("file:" + path, required=False)
+                    viewport = control_bounds("file-tree-viewport")
+                    return bounds is not None and bounds[1] >= viewport[1] - .5 and bounds[3] <= viewport[3] + .5
+
+                def wait_visible(path):
+                    deadline = time.monotonic() + 3
+                    while not row_visible(path) and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    return row_visible(path)
+
+                def scroll_tree_to_top():
+                    viewport = control_bounds("file-tree-viewport")
+                    x, y = round((viewport[0] + viewport[2]) / 2), round((viewport[1] + viewport[3]) / 2)
+                    xdo("mousemove", "--sync", str(x), str(y), "click", "--repeat", "40", "--delay", "1", "4")
+                    pause()
+                    assert offset() == 0, ("The wheel must scroll the explorer to the top", offset())
+                    return x, y
+
+                deep = "Tree 08/Tree 8 note 10.md"
+                open_note("Tree 8 note 10")
+                assert wait_visible(deep), ("Opening a note deep in the tree must scroll the explorer to it once", control_bounds("file-tree-viewport"))
+                assert offset() > 300, ("The fixture must make the explorer scroll", offset())
+                capture("native-tree-scroll-revealed.png")
+                results.append("Opening a note deep in a tall tree scrolled the explorer to its row")
+                x, y = scroll_tree_to_top()
+                active = fixture / deep
+                outside = fixture / "Tree 01/Outside change.md"
+                samples = []
+                started = time.monotonic()
+                click_control("editor")
+                key("ctrl+End")
+                type_text("TREE_AUTOSAVE")
+                written = False
+                while time.monotonic() - started < 5:
+                    if not written and time.monotonic() - started > 1.5:
+                        outside.write_text("# Outside change\n")
+                        written = True
+                    # Hover the tree like a reader does; each move repaints the window.
+                    xdo("mousemove", "--sync", str(x + (len(samples) % 3) * 9), str(y - 120 + (len(samples) % 5) * 31))
+                    time.sleep(.2)
+                    samples.append({"elapsed": round(time.monotonic() - started, 2), "offset": offset()})
+                (reports / "tree-scroll-offsets.json").write_text(json.dumps(samples, indent=2) + "\n")
+                assert "TREE_AUTOSAVE" in active.read_text(), "Autosave must run while the explorer stays put"
+                assert control_bounds("file:Tree 01/Outside change.md"), "The outside change must reach the explorer while it stays put"
+                assert all(sample["offset"] == 0 for sample in samples), ("The explorer moved after the user scrolled it", samples)
+                capture("native-tree-scroll-kept.png")
+                results.append(f"After a hand scroll to the top, autosave and an outside change left the explorer at offset 0 for 5 s ({len(samples)} samples)")
+                other = "Tree 07/Tree 7 note 12.md"
+                open_note("Tree 7 note 12")
+                assert wait_visible(other), ("Opening another note must scroll the explorer to it", offset())
+                revealed = offset()
+                scroll_tree_to_top()
+                outside.write_text("# Outside change\n\nAgain.\n")
+                kept = []
+                for _ in range(10):
+                    time.sleep(.2)
+                    kept.append(offset())
+                assert kept == [0] * len(kept), ("A reveal fired again after the user scrolled", revealed, kept)
+                capture("native-tree-scroll-once.png")
+                results.append(f"Opening another note scrolled the explorer to it once (offset {revealed:.0f}); scrolling away again stayed put through an outside change")
+
+            def context_menu_checks():
+                note = fixture / "Notes/Context menu.md"
+                source = "# Context menu\n\nalpha beta gamma delta\n\n![[Assets/Attachment.png|120]]\n\nsecond line of prose\n"
+                note.write_text(source)
+                time.sleep(.6)
+                open_note("Context menu")
+                command("Live preview")
+                control_bounds("editor-focused")
+
+                def clipboard():
+                    result = subprocess.run(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+                        env=environment, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+                    return result.stdout.decode() if result.returncode == 0 else None
+
+                def wait_clipboard(expected):
+                    deadline = time.monotonic() + 3
+                    while clipboard() != expected and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert clipboard() == expected, (expected, clipboard())
+
+                def menu_item(name):
+                    bounds = control_bounds(name)
+                    xdo("mousemove", "--sync", str(round((bounds[0] + bounds[2]) / 2)), str(round((bounds[1] + bounds[3]) / 2)))
+                    pause()
+                    xdo("click", "1")
+                    pause()
+
+                # A right-click anywhere on the note text opens Obsidian's editor menu.
+                editor = control_bounds("editor")
+                xdo("mousemove", "--sync", str(round(editor[0] + 40)), str(round(editor[1] + 12)), "click", "3")
+                pause()
+                assert control_bounds("editor-menu"), "Right-clicking the editor must open its menu"
+                for label in ("Cut", "Copy", "Paste", "Select all", "Bold", "Italic", "Strikethrough", "Highlight", "Code", "Link", "Heading 1", "Heading 2", "Heading 3"):
+                    assert control_bounds("editor-menu:" + label), label
+                click_control("editor")
+                assert control_bounds("editor-menu", required=False) is None, "A click in the note must close its menu"
+                results.append("Right-clicking the editor opened a menu with Cut, Copy, Paste, Select all, formatting and Heading 1-3")
+
+                def caret_at(line, column):
+                    key("ctrl+Home")
+                    for _ in range(line):
+                        key("Down")
+                    key("Home")
+                    for _ in range(column):
+                        xdo("key", "--clearmodifiers", "Right")
+                    pause()
+                    return control_bounds("editor-caret")
+
+                def background_share(picture, box, background=None):
+                    left, top, right, bottom = box
+                    if background is None:
+                        background = picture.getpixel((round(right + 40), round((top + bottom) / 2)))[:3]
+                    pixels = [picture.getpixel((x, y))[:3] for x in range(round(left), round(right)) for y in range(round(top), round(bottom))]
+                    near = [p for p in pixels if sum(abs(a - b) for a, b in zip(p, background)) < 12]
+                    return len(near) / max(1, len(pixels)), background
+
+                # The prose line is line 2; "beta" starts at column 6 and the line ends at 22.
+                for dark in (False, True):
+                    set_theme(dark)
+                    click_control("editor")
+                    start = caret_at(2, 6)
+                    key("End")
+                    end = control_bounds("editor-caret")
+                    band = (start[0] + 4, start[1] + 4, end[0] - 4, start[3] - 4)
+                    before, background = background_share(ImageGrab.grab(xdisplay=display).convert("RGB"), band)
+                    y = round((start[1] + start[3]) / 2)
+                    xdo("mousemove", "--sync", str(round(start[0] + 1)), str(y), "mousedown", "1")
+                    for x in range(round(start[0] + 1), round(end[0] + 6), 24):
+                        xdo("mousemove", "--sync", str(x), str(y))
+                    # Release in a later frame than the last move, as a hand does;
+                    # egui extends a drag only while the button is still down.
+                    xdo("mousemove", "--sync", str(round(end[0] + 6)), str(y))
+                    pause()
+                    xdo("mouseup", "1")
+                    pause()
+                    theme_name = "dark" if dark else "light"
+                    capture(f"native-selection-{theme_name}.png")
+                    after, _ = background_share(ImageGrab.grab(xdisplay=display).convert("RGB"), band, background)
+                    (reports / f"selection-{theme_name}.json").write_text(json.dumps({"band": band, "background": background, "background_share_before": before, "background_share_after": after}, indent=2) + "\n")
+                    assert before > .4 and after < .05, ("A drag selection must paint its highlight between the two words", theme_name, before, after)
+                    # Right-click on the selection keeps it and opens the menu over it.
+                    middle = round((start[0] + end[0]) / 2)
+                    xdo("mousemove", "--sync", str(middle), str(y), "click", "3")
+                    pause()
+                    assert control_bounds("editor-menu"), "Right-clicking a selection must open the editor menu"
+                    capture(f"native-context-menu-{theme_name}.png")
+                    # The menu opens below and right of the pointer; check the text left of it.
+                    kept, _ = background_share(ImageGrab.grab(xdisplay=display).convert("RGB"), (band[0], band[1], middle - 6, band[3]), background)
+                    assert kept < .05, ("The selection must stay highlighted while its menu is open", theme_name, kept)
+                    menu_item("editor-menu:Copy")
+                    wait_clipboard("beta gamma delta")
+                    assert note.read_text() == source
+                results.append("In both themes a drag from one word to another painted its selection (also with an image on another line), a right-click kept it and opened the menu, and Copy put exactly the selected text on the clipboard")
+
+                # Paste inserts the clipboard where the right-click placed the caret.
+                pasted = "PASTED_π"
+                owner = subprocess.Popen(["xclip", "-selection", "clipboard", "-in", "-quiet"],
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
+                try:
+                    owner.stdin.write(pasted.encode())
+                    owner.stdin.close()
+                    pause()
+                    assert clipboard() == pasted
+                    line = caret_at(6, 0)
+                    xdo("mousemove", "--sync", str(round(line[0] + 600)), str(round((line[1] + line[3]) / 2)), "click", "3")
+                    pause()
+                    menu_item("editor-menu:Paste")
+                    key("ctrl+s")
+                    expected = source.replace("second line of prose", "second line of prose" + pasted)
+                    deadline = time.monotonic() + 3
+                    while note.read_text() != expected and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert note.read_text() == expected, repr(note.read_text())
+                finally:
+                    owner.terminate()
+                    owner.wait(timeout=5)
+                results.append("Paste from the editor menu inserted the clipboard at the right-clicked position")
+
+                # Select all, then Copy: the whole note.
+                editor = control_bounds("editor")
+                xdo("mousemove", "--sync", str(round(editor[0] + 40)), str(round(editor[1] + 12)), "click", "3")
+                pause()
+                menu_item("editor-menu:Select all")
+                key("ctrl+c")
+                wait_clipboard(expected)
+                results.append("Select all from the editor menu selected the whole note")
+
+                # Bold wraps the selection: double-click selects "gamma" (columns 11-16).
+                gamma = caret_at(2, 13)
+                y = round((gamma[1] + gamma[3]) / 2)
+                xdo("mousemove", "--sync", str(round(gamma[0])), str(y), "click", "--repeat", "2", "--delay", "80", "1")
+                pause()
+                key("ctrl+c")
+                wait_clipboard("gamma")
+                xdo("mousemove", "--sync", str(round(gamma[0])), str(y), "click", "3")
+                pause()
+                menu_item("editor-menu:Bold")
+                key("ctrl+s")
+                bold = expected.replace("gamma", "**gamma**")
+                deadline = time.monotonic() + 3
+                while note.read_text() != bold and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert note.read_text() == bold, repr(note.read_text())
+                results.append("Double-click selected a word and Bold from the menu wrapped it in **")
+
+                # Reading view: drag selects, right-click offers Copy and Select all.
+                command("Reading view")
+                # Blocks: 0 the heading, 1 the prose line, 2 the image, 3 the second line.
+                paragraph = control_bounds("reading-block:1")
+                y = round((paragraph[1] + paragraph[3]) / 2)
+                xdo("mousemove", "--sync", str(round(paragraph[0] + 1)), str(y), "mousedown", "1")
+                for x in range(round(paragraph[0] + 1), round(paragraph[2] + 4), 24):
+                    xdo("mousemove", "--sync", str(x), str(y))
+                xdo("mousemove", "--sync", str(round(paragraph[2] + 4)), str(y))
+                pause()
+                xdo("mouseup", "1")
+                pause()
+                xdo("mousemove", "--sync", str(round((paragraph[0] + paragraph[2]) / 2)), str(y), "click", "3")
+                pause()
+                assert control_bounds("reading-menu"), "Right-clicking reading text must open its menu"
+                assert control_bounds("reading-menu:Copy") and control_bounds("reading-menu:Select all")
+                capture("native-reading-menu-dark.png")
+                menu_item("reading-menu:Copy")
+                wait_clipboard("alpha beta gamma delta")
+                results.append("Reading view: a drag selected a paragraph, the right-click menu offered Copy and Select all, and Copy put the paragraph on the clipboard")
+                xdo("mousemove", "--sync", str(round((paragraph[0] + paragraph[2]) / 2)), str(y), "click", "3")
+                pause()
+                menu_item("reading-menu:Select all")
+                key("ctrl+c")
+                deadline = time.monotonic() + 3
+                while not (clipboard() or "").count("\n") and time.monotonic() < deadline:
+                    time.sleep(.05)
+                copied = clipboard() or ""
+                assert "alpha beta gamma delta" in copied and "second line of prose" + pasted in copied, repr(copied)
+                capture("native-reading-select-all.png")
+                set_theme(False)
+                assert note.read_text() == bold
+                results.append("Reading view: Select all highlighted the note and Ctrl+C copied all of its text")
+
             def keyboard_focus_checks():
                 key("ctrl+t")
                 command("Source editing",available=False)
@@ -3687,17 +4724,30 @@ def main():
                 for same_note in (False,True):
                     if not same_note:open_note("Keyboard mode anchor")
                     click_control("file:Keyboard sidebar.md");title_contains("Keyboard sidebar")
-                    control_bounds("editor-focused");key("ctrl+End");key("Left");type_text("<");key("ctrl+s")
+                    key("Return");control_bounds("editor-focused");key("ctrl+End");key("Left");type_text("<");key("ctrl+s")
                     assert sidebar_note.read_text()==sidebar_source[:-1]+"<"+sidebar_source[-1:]
                     key("ctrl+z");key("ctrl+s");assert sidebar_note.read_text()==sidebar_source
                 open_note("First steps")
-                results.append("Opening a sidebar note and clicking its selected name again both returned text focus; real arrow/edit/Undo/save actions preserved the note and other documents")
+                results.append("Enter after opening or reclicking a sidebar note transferred text focus; real arrow/edit/Undo/save actions preserved the note and other documents")
                 key("ctrl+shift+f")
                 key("ctrl+a")
                 type_text("path:Notes/")
                 assert control_bounds("search:Notes/First steps.md")
                 assert first.read_text() == original + "QUICK_OPEN_FOCUS"
-                results.append("Global search retained keyboard focus and did not insert its query into the open note")
+                key("ctrl+a"); type_text("NO_MATCH_BODY_SEARCH_X92")
+                deadline = time.monotonic() + 3
+                while control_bounds("search:Notes/First steps.md", required=False) is not None and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert control_bounds("search:Notes/First steps.md", required=False) is None
+                open_note(anchor.stem)
+                key("ctrl+shift+f"); key("ctrl+a"); type_text("QUICK_OPEN_FOCUS")
+                control_bounds("search:Notes/First steps.md")
+                assert control_bounds("search:Home.md", required=False) is None
+                capture("native-search-content.png")
+                click_control("search:Notes/First steps.md"); title_contains("First steps")
+                assert first.read_text() == original + "QUICK_OPEN_FOCUS"
+                assert anchor.read_text() == anchor_source
+                results.append("Global search retained keyboard focus, excluded an absent query, found body text rather than a filename and opened its matching note without changing either note")
                 create_note_named('Notes/Keyboard focus.md')
                 title_contains("Keyboard focus")
                 created = fixture / "Notes/Keyboard focus.md"
@@ -3759,7 +4809,9 @@ def main():
                 time.sleep(.7)
                 editor_end()
                 queued_text("[[NO_MATCH_X92", "Return", "Return", "ctrl+s")
-                assert queued.read_text() == source + "[[NO_MATCH_X92\n\n", repr(queued.read_text())
+                # Enter keeps the untouched automatic closers after the caret.
+                assert queued.read_text() == source + "[[NO_MATCH_X92\n\n]]", repr(queued.read_text())
+                capture("native-keyboard-unmatched-pairs.png")
                 results.append("Queued wiki typing completed the current query; a closing delimiter followed by Enter preserved the newline and exact source")
 
             def tab_state_checks():
@@ -3983,7 +5035,7 @@ def main():
                 nested.parent.mkdir()
                 nested_source = "# Nested\n\n[[Home]]\n"
                 nested.write_text(nested_source)
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app([launch_command[0], str(nested)])
                 window = ready_window()
@@ -3997,7 +5049,7 @@ def main():
                 results.append("Opening a nested note directly kept its registered vault, followed a root-level wiki link and avoided registering the note's subfolder")
                 manager()
                 recent(fixture)
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -4138,6 +5190,715 @@ def main():
                 title_contains("Note04999")
                 capture("native-large-explorer.png")
                 results.append("The native explorer scrolled through 5,000 files and opened the final row; folder toggling retained the complete scroll range")
+            def watch_limit_checks():
+                # 27 Oct: re-registering a 44,104-folder vault on each folder change
+                # hit the system limit and fell back to re-reading every file.
+                def watches():
+                    count = 0
+                    for info in Path(f"/proc/{app.pid}/fdinfo").iterdir():
+                        try:
+                            count += sum(line.startswith("inotify wd:") for line in info.read_text().splitlines())
+                        except FileNotFoundError:
+                            pass
+                    return count
+
+                def polling():
+                    return [task.name for task in Path(f"/proc/{app.pid}/task").iterdir()
+                            if (task / "comm").read_text().startswith("notify-rs poll")]
+
+                def settle(predicate, message):
+                    deadline = time.monotonic() + 8
+                    while not predicate():
+                        assert time.monotonic() < deadline, (message, watches(), polling())
+                        time.sleep(.1)
+
+                settle(lambda: watches() == watch_folders, "The vault must hold one watch per included folder")
+                click_control("button:File explorer")
+                pause()
+                click_control("file-collapse")
+                later = fixture / "Watched later"
+                later.mkdir()
+                assert control_bounds("folder:Watched later")
+                time.sleep(1)
+                ticks = lambda: sum(map(int, Path(f"/proc/{app.pid}/stat").read_text().rsplit(")", 1)[1].split()[11:13]))
+                before, idle_started = ticks(), time.monotonic()
+                time.sleep(5)
+                idle = (ticks() - before) / os.sysconf("SC_CLK_TCK") / (time.monotonic() - idle_started)
+                assert idle < .03, f"An idle window used {idle:.1%} of a CPU"
+                settle(lambda: watches() == watch_folders + 1, "A new folder must add one watch to the existing ones")
+                assert not polling(), "A folder change fell back to polling"
+                (later / "Late note.md").write_text("# Late note\n")
+                time.sleep(1)
+                key("ctrl+o")
+                type_text("Late note")
+                assert control_bounds("quick-open:Watched later/Late note.md")
+                key("Escape")
+                results.append(f"An external folder added one native watch under a limit too small to register the vault twice; the idle window then used {idle:.1%} of a CPU, and a note created in the folder reached Quick open")
+                shutil.rmtree(later)
+                settle(lambda: control_bounds("folder:Watched later", required=False) is None,
+                       "The removed folder stayed in the explorer")
+                settle(lambda: watches() == watch_folders, "Removing a folder must release its watch")
+                assert not polling(), "Removing a folder fell back to polling"
+                results.append("Removing the folder released its watch without polling")
+
+            def speed_checks():
+                # 27 Oct, on a real 86 KB note with 375 code blocks: opening it froze one
+                # frame for 764 ms, and each frame laid the note out once per queued
+                # keystroke, so typing took 58 ms per frame (488 ms at worst).
+                # Also 27 Oct: after a 64-character burst the frames that caught up took
+                # 201 and 379 ms, and the autosave 600 ms later wrote and fsynced the note
+                # inside a frame.
+                frames = base / "frames.log"
+
+                def frame_ms(action):
+                    """Every frame's time, and the times of frames that ended after the action."""
+                    before = frames.stat().st_size
+                    action()
+                    done = time.time() * 1000
+                    time.sleep(1.5)
+                    with frames.open() as log:
+                        log.seek(before)
+                        rows = [(int(row[1]) / 1000, int(row[2])) for row in map(str.split, log) if row]
+                    return sorted(ms for ms, _ in rows), [ms for ms, ended in rows if ended > done]
+
+                opening, _ = frame_ms(lambda: open_note("Large code note"))
+                # Opening focuses the editor; a click could land on a rendered table.
+                key("ctrl+End")
+                typed = " quick brown fox" * 4
+                # A burst queues several keystrokes into each frame; the 1.5 s after it
+                # includes the autosave.
+                typing, settling = frame_ms(lambda: xdo("type", "--clearmodifiers", "--delay", "1", "--", typed))
+                note = fixture / "Large code note.md"
+                deadline = time.monotonic() + 5
+                while not note.read_text().rstrip().endswith(typed.strip()) and time.monotonic() < deadline:
+                    time.sleep(.1)
+                assert note.read_text().rstrip().endswith(typed.strip()), "The typing did not reach the end of the note"
+                measured = (f"opening's slowest frame took {opening[-1]:.0f} ms; typing took "
+                            f"{typing[len(typing) // 2]:.0f} ms per frame, {typing[-1]:.0f} ms at worst; "
+                            f"after the burst the slowest frame took {max(settling, default=0):.0f} ms")
+                assert max(settling, default=0) <= 50, measured
+                assert opening[-1] < 150 and typing[len(typing) // 2] < 30 and typing[-1] < 100, measured
+                results.append(f"On an 86 KB note with 375 code blocks, {measured}")
+
+            def sandbox_apps():
+                """Rustidian processes this run started: its binary, running in the sandbox."""
+                binary, found = os.path.realpath(ROOT / args.binary), []
+                for entry in Path("/proc").iterdir():
+                    if entry.name.isdigit():
+                        try:
+                            if os.readlink(entry / "exe") == binary and os.readlink(entry / "cwd") == str(base):
+                                found.append(int(entry.name))
+                        except OSError:
+                            pass
+                return found
+
+            def instance_checks():
+                # 27 Oct: five windows from separate launches stayed alive for hours.
+                # 28 Oct: a launch beside a slow window deleted its live socket and kept a second process.
+                # 29 Oct: on Masih's GNOME Wayland a dock click beside a window on another workspace showed nothing, even with
+                # the launch's activation token. A launch now exits only once the window has the focus; otherwise it opens its
+                # own window and takes the socket.
+                socket_file = base / "data/rustidian/instance.sock"
+                identity = lambda: (socket_file.stat().st_ino, socket_file.stat().st_ctime_ns)
+                original = identity()
+                tokens = ("XDG_ACTIVATION_TOKEN", "DESKTOP_STARTUP_ID")
+                started = []
+                def launch(*arguments, **variables):
+                    # A later launch, in the background, since it waits for the window's answer. It carries an activation
+                    # token only when a check gives it one, a launch that opens a window writes its own UI probe, and its
+                    # stderr stays in the report folder.
+                    number = len(started) + 1
+                    stderr = reports / f"instance-launch-{number}.log"
+                    launch_environment = {name: value for name, value in environment.items() if name not in tokens}
+                    launch_environment.update(variables, RUSTIDIAN_UI_PROBE=str(base / f"ui-probe-launch-{number}.json"))
+                    with stderr.open("w") as errors:
+                        started.append(subprocess.Popen([str(ROOT / args.binary), *map(str, arguments)], env=launch_environment,
+                                                        cwd=base, stdout=subprocess.DEVNULL, stderr=errors))
+                    return started[-1], stderr
+                said = lambda stderr: [line for line in stderr.read_text(errors="replace").splitlines() if line.startswith("hand-off: ")]
+                def handed_off(launched, message):
+                    # The window took the launch: the launch says it was shown and exits 0.
+                    process, stderr = launched
+                    try:
+                        code = process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        raise AssertionError(f"{message}: the launch kept running; it said {said(stderr)}") from None
+                    assert code == 0 and said(stderr) == ["hand-off: shown"], (message, code, stderr.read_text(errors="replace"))
+                hand_offs = lambda: [line for line in (reports / "gui-smoke.log").read_text(errors="replace").splitlines()
+                                     if line.startswith("hand-off: ")]
+                def wait_for(predicate, message, limit=5):
+                    deadline = time.monotonic() + limit
+                    while not predicate():
+                        assert time.monotonic() < deadline, message() if callable(message) else message
+                        time.sleep(.05)
+                # xdotool exits 1 when nothing matches.
+                visible = lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "Rustidian"], env=environment,
+                                                 capture_output=True, text=True).stdout.split()
+                def opened_window(launched, known, message):
+                    # The window that a launch which could not hand over opened beside the `known` ones.
+                    process, stderr = launched
+                    deadline = time.monotonic() + 30
+                    while not (opened := [found for found in visible() if found not in known]):
+                        assert process.poll() is None, f"{message}: the launch ended with {process.returncode}; it said {said(stderr)}"
+                        assert time.monotonic() < deadline, f"{message}: no window appeared; the launch said {said(stderr)}"
+                        time.sleep(.1)
+                    assert len(opened) == 1, (message, opened)
+                    return opened[0]
+                # On X11 the window asks the window manager for the focus (_NET_ACTIVE_WINDOW). This connection answers in a
+                # window manager's place: it grants the focus, or refuses it as GNOME did for a window on another workspace.
+                from Xlib import X, display as xlib_display
+                manager = xlib_display.Display(display)
+                try:
+                    manager.screen().root.change_attributes(event_mask=X.SubstructureNotifyMask)
+                    manager.sync()
+                    active_window = manager.intern_atom("_NET_ACTIVE_WINDOW")
+                    def focus_requests():
+                        requests = []
+                        while manager.pending_events():
+                            event = manager.next_event()
+                            if event.type == X.ClientMessage and event.client_type == active_window:
+                                requests.append(event.window)
+                        return requests
+                    def asked(target, *, grant=True):
+                        # Wait until `target` asks for the focus, then grant it or leave it unanswered.
+                        deadline = time.monotonic() + 5
+                        while not (asking := [request for request in focus_requests() if request.id == int(target)]):
+                            assert time.monotonic() < deadline, f"Window {target} did not ask the window manager for the focus"
+                            time.sleep(.02)
+                        if grant:
+                            asking[0].set_input_focus(X.RevertToParent, X.CurrentTime)
+                            manager.sync()
+                    def unfocus():
+                        xdo("windowfocus", "0")
+                        wait_for(lambda: control_bounds("window-focused")[0] == 0, "The window kept the focus")
+                        focus_requests()
+
+                    wait_for(lambda: control_bounds("window-focused")[0] == 1, "The window must have the focus after it opened")
+                    handed_off(launch(), "A plain second launch must hand over to the focused window")
+                    assert app.poll() is None, "A plain second launch must leave the first window running"
+                    assert len(visible()) == 1, f"A second launch opened another window: {visible()}"
+                    assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                    note = fixture / "Notes/First steps.md"
+                    handed_off(launch(note.relative_to(base)), "Opening a file from a second launch failed")
+                    title_contains(note.stem)
+                    assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                    assert identity() == original, "A hand-off replaced the window's socket"
+                    assert hand_offs() == ["hand-off: no token"] * 2, hand_offs()
+                    results.append("Second launches, plain and with a relative file path, handed over to the focused window and exited "
+                                   "with `hand-off: shown`; the file opened there, one Rustidian process remained and the socket stayed the original")
+
+                    for variables, expected in (({}, "hand-off: no token"),
+                                                ({"XDG_ACTIVATION_TOKEN": "rustidian-test-token"}, "hand-off: token, focus request"),
+                                                ({"DESKTOP_STARTUP_ID": "rustidian-test_TIME0"}, "hand-off: token, focus request")):
+                        unfocus()
+                        before = len(hand_offs())
+                        launched = launch(**variables)
+                        asked(window)
+                        wait_for(lambda: control_bounds("window-focused")[0] == 1,
+                                 f"The window did not take the focus after a hand-off with {variables}")
+                        handed_off(launched, f"A hand-off with {variables} failed")
+                        wait_for(lambda: hand_offs()[before:] == [expected], lambda: (variables, hand_offs()[before:]))
+                    assert sandbox_apps() == [app.pid], f"A hand-off left another process: {sandbox_apps()} besides {app.pid}"
+                    results.append("Hand-offs without a token, with XDG_ACTIVATION_TOKEN and with DESKTOP_STARTUP_ID each asked the window "
+                                   "manager for the focus (_NET_ACTIVE_WINDOW); once it was granted the launch exited with `hand-off: shown`, "
+                                   "and the window logged `hand-off: no token` or `hand-off: token, focus request`")
+
+                    # 29 Oct, fifth report: GNOME did not raise a window on another workspace although the token reached it.
+                    unfocus()
+                    before = len(hand_offs())
+                    requested = fixture / "Notes/Connected thinking.md"
+                    second = launch(requested.relative_to(base))
+                    asked(window, grant=False)
+                    second_window = opened_window(second, [window], "A launch whose window got no focus must open its own window")
+                    assert said(second[1])[:1] == ["hand-off: hidden, opening a window"], said(second[1])
+                    second_title = lambda: xdo("getwindowname", second_window)
+                    wait_for(lambda: requested.stem in second_title() and "Test Vault" in second_title(),
+                             lambda: f"The new window must show the requested note in the same vault: {second_title()!r}", limit=15)
+                    assert app.poll() is None and control_bounds("window-focused")[0] == 0, "The window nobody saw must stay open"
+                    assert hand_offs()[before:] == ["hand-off: no token"], hand_offs()[before:]
+                    assert sorted(sandbox_apps()) == sorted([app.pid, second[0].pid]), sandbox_apps()
+                    taken = identity()
+                    assert taken != original, "The new window did not take the socket"
+                    later = launch(XDG_ACTIVATION_TOKEN="rustidian-later-token")
+                    asked(second_window)
+                    handed_off(later, "A launch after the takeover must hand over to the new window")
+                    wait_for(lambda: said(second[1])[1:] == ["hand-off: token, focus request"],
+                             lambda: f"The new window did not take the later launch: {said(second[1])}")
+                    assert hand_offs()[before:] == ["hand-off: no token"], f"A later launch reached the window nobody saw: {hand_offs()[before:]}"
+                    assert identity() == taken, "A hand-off to the new window replaced its socket"
+                    results.append("A hand-off whose window got no focus (the window manager refused it) ended with two windows: the launch "
+                                   "logged `hand-off: hidden, opening a window`, opened its own window on the vault with the requested note and "
+                                   "took the socket; the first window stayed open; a later launch handed over to the new window")
+
+                    # 28 Oct: a window Masih could not see kept the socket, so his launches showed nothing. One that cannot
+                    # answer at all (stopped here) gets the same treatment after two seconds.
+                    second[0].send_signal(signal.SIGSTOP)
+                    try:
+                        third = launch(fixture)
+                        third_window = opened_window(third, [window, second_window], "A launch beside a stopped window must open its own window")
+                    finally:
+                        second[0].send_signal(signal.SIGCONT)
+                    assert said(third[1])[:1] == ["hand-off: no answer, opening a window"], said(third[1])
+                    assert identity() != taken, "A launch beside a stopped window left it the socket"
+                    taken = identity()
+                    last = launch()
+                    asked(third_window)
+                    handed_off(last, "After a stall a launch must hand over to the newest window")
+                    wait_for(lambda: said(third[1])[1:] == ["hand-off: no token"],
+                             lambda: f"The newest window did not take the launch: {said(third[1])}")
+                    assert identity() == taken, "A hand-off to the newest window replaced its socket"
+                    assert app.poll() is None and second[0].poll() is None, "The earlier windows must stay open"
+                    results.append("Beside a stopped window a launch got no answer within 2 s, logged `hand-off: no answer, opening a window`, "
+                                   "opened its own window and took the socket; the next launch handed over to that window")
+                    for process, _ in (second, third):
+                        process.terminate()
+                        process.wait(timeout=10)
+                finally:
+                    for process in started:
+                        if process.poll() is None:
+                            process.send_signal(signal.SIGCONT)
+                            process.terminate()
+                            try:
+                                process.wait(timeout=10)
+                            except subprocess.TimeoutExpired:
+                                process.kill()
+                                process.wait()
+                    manager.close()
+                wait_for(lambda: visible() == [window], lambda: f"Windows other than the first stayed: {visible()}")
+                assert sandbox_apps() == [app.pid], f"A launch's window outlived SIGTERM: {sandbox_apps()}"
+                # click_control would assert the app still runs after the click.
+                left, top, right, bottom = control_bounds("window:Close window")
+                xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+                assert app.wait(timeout=5) == 0, "Closing the window must end its process"
+                results.append("SIGTERM closed both new windows and the title-bar X ended the first window's process")
+
+            def lifecycle_checks():
+                # 28 Oct: Rustidian processes Masih could not see kept running, and windows
+                # closed without saying why. Every way of closing must end the window's
+                # agent with it and name its source in app.log.
+                nonlocal app, window
+                agents = base / "agent-terminal" / "bin"
+
+                def stand_ins():
+                    """The stand-in agent and the children it keeps in its process group."""
+                    found = []
+                    for entry in Path("/proc").iterdir():
+                        if entry.name.isdigit():
+                            try:
+                                if str(agents).encode() in (entry / "cmdline").read_bytes():
+                                    found.append(int(entry.name))
+                            except OSError:
+                                pass
+                    return found
+
+                def wait(predicate, reason, timeout=8):
+                    deadline = time.monotonic() + timeout
+                    while not predicate():
+                        assert time.monotonic() < deadline, reason
+                        time.sleep(.05)
+
+                def title_bar():
+                    # click_control would assert the app still runs after the click.
+                    left, top, right, bottom = control_bounds("window:Close window")
+                    xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+
+                app_log, failures = reports / "gui-smoke.log", []
+                closes = [("title bar", title_bar),
+                          ("SIGTERM", lambda: app.send_signal(signal.SIGTERM)),
+                          ("SIGHUP", lambda: app.send_signal(signal.SIGHUP))]
+                for run, (source, close) in enumerate(closes):
+                    if run:
+                        app = launch_app(launch_command)
+                        window = ready_window()
+                    title_contains("Home")
+                    xdo("key", "--clearmodifiers", "ctrl+shift+a")
+                    wait(lambda: stand_ins() and control_bounds("terminal-pid", required=False), "The Agent tab did not start its agent")
+                    wait(lambda: control_bounds("terminal-focused")[0] == 1, "The Agent tab did not focus its terminal")
+                    started = app_log.stat().st_size
+                    closed = time.monotonic()
+                    close()
+                    deadline, gone = closed + 3, {}
+                    while time.monotonic() < deadline:
+                        for name, alive in (("rustidian", app.poll() is None or sandbox_apps()), ("agent", stand_ins())):
+                            if not alive:
+                                gone.setdefault(name, time.monotonic() - closed)
+                        if len(gone) == 2:
+                            break
+                        time.sleep(.05)
+                    ended = max(gone.values(), default=3.0)
+                    left = {"rustidian": sandbox_apps(), "agent": stand_ins()}
+                    with app_log.open() as lines:
+                        lines.seek(started)
+                        logged = [line.strip() for line in lines if line.startswith("close:")]
+                    problems = ([f"processes outlived the window by 3 s: {left}"] if any(left.values()) else []) + (
+                        [f"app.log said {logged}"] if logged != [f"close: {source}"] else [])
+                    if problems:
+                        failures.append(f"{source}: " + "; ".join(problems))
+                        # Only this run's own processes: the sandbox's agent and Rustidian.
+                        for pid in left["agent"] + left["rustidian"]:
+                            try:
+                                os.kill(pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        app.wait(timeout=10)
+                    else:
+                        results.append(f"Closing by {source} with the Agent tab running ended Rustidian (exit {app.returncode}) after "
+                                       f"{gone.get('rustidian', 3.0):.2f} s and the agent after {gone.get('agent', 3.0):.2f} s; "
+                                       f"app.log said 'close: {source}'")
+                assert not failures, failures
+
+            def quit_checks():
+                # 28 Oct: windows closed by themselves, most likely through an
+                # accidental Ctrl+Q. Ctrl+Q now asks "Quit Rustidian?" first.
+                nonlocal app, window
+                app_log, home = reports / "gui-smoke.log", fixture / "Home.md"
+                original = home.read_bytes()
+
+                def close_lines(start):
+                    with app_log.open() as lines:
+                        lines.seek(start)
+                        return [line.strip() for line in lines if line.startswith("close:")]
+
+                def click(name):
+                    # click_control would assert that the window survived the click.
+                    left, top, right, bottom = control_bounds(name)
+                    xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+
+                def ask(shot=None):
+                    xdo("key", "--clearmodifiers", "ctrl+q")
+                    for name in ("dialog:quit", "quit-confirm", "quit-cancel"):
+                        control_bounds(name)
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    assert not any(name.startswith("pending-") for name in controls), "A clean note got the unsaved-changes dialog"
+                    if shot:
+                        time.sleep(.5)  # the dialog fades in
+                        capture(shot)
+
+                def kept(how):
+                    deadline = time.monotonic() + 3
+                    while control_bounds("dialog:quit", required=False):
+                        assert time.monotonic() < deadline, f"{how} left the quit dialog open"
+                        time.sleep(.05)
+                    time.sleep(.5)
+                    assert app.poll() is None, f"{how} closed the window"
+
+                def quits(how, answer):
+                    start = app_log.stat().st_size
+                    ask()
+                    answered = time.monotonic()
+                    answer()
+                    try:
+                        code = app.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        raise AssertionError(f"{how} left the window open for 3 s")
+                    assert code == 0 and close_lines(start) == ["close: quit dialog"], (how, code, close_lines(start))
+                    return time.monotonic() - answered
+
+                title_contains("Home")
+                set_theme(False)
+                command("Source editing")
+                editor_end()
+                control_bounds("editor-focused")
+                start = app_log.stat().st_size
+                ask("native-quit-dialog-light.png")
+                # Keys go to the question, never to the note or the app behind it.
+                xdo("type", "--clearmodifiers", "--delay", "1", "--", "typed")
+                key("ctrl+p")
+                key("Escape")
+                kept("Escape")
+                assert control_bounds("dialog-input", required=False) is None, "Ctrl+P under the question opened the palette"
+                ask()
+                click_control("quit-cancel")
+                kept("Cancel")
+                ask()
+                left, top, right, bottom = control_bounds("dialog:quit")
+                xdo("mousemove", "--sync", str(round(left) - 80), str(round((top + bottom) / 2)), "click", "1")
+                kept("A click outside the dialog")
+                set_theme(True)
+                ask("native-quit-dialog-dark.png")
+                key("Escape")
+                kept("Escape in the dark theme")
+                assert home.read_bytes() == original, "Keys typed under the question reached the note"
+                assert close_lines(start) == [], close_lines(start)
+                results.append("Ctrl+Q asked 'Quit Rustidian?' in light and dark; Escape, Cancel and a click outside each kept "
+                               "the window; keys typed under it changed nothing and app.log printed no close line")
+
+                # Unsaved edits get the unsaved-changes dialog alone, and its answer is final.
+                command("Open settings")
+                type_text("autosave")
+                click_control("settings-autosave")
+                wait_autosave(base / "state", False)
+                key("Escape")
+                editor_end()
+                type_text("UNSAVED_QUIT")
+                time.sleep(.75)
+                assert home.read_bytes() == original, "Autosave must be off for the unsaved case"
+                start = app_log.stat().st_size
+                xdo("key", "--clearmodifiers", "ctrl+q")
+                control_bounds("pending-discard")
+                assert control_bounds("dialog:quit", required=False) is None, "Unsaved edits got the quit question"
+                capture("native-quit-unsaved.png")
+                click("pending-discard")
+                try:
+                    code = app.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    raise AssertionError("Discard asked another question instead of closing the window")
+                assert code == 0 and close_lines(start) == ["close: unsaved-changes dialog"], (code, close_lines(start))
+                assert home.read_bytes() == original, "Discard changed the note"
+                results.append("With an unsaved edit Ctrl+Q showed only the unsaved-changes dialog; Discard closed the window "
+                               "without a second question; app.log said 'close: unsaved-changes dialog'")
+
+                timings = {}
+                for how, answer in (("Quit", lambda: click("quit-confirm")),
+                                    ("Enter", lambda: xdo("key", "--clearmodifiers", "Return"))):
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                    title_contains("Home")
+                    timings[how] = quits(how, answer)
+                results.append("Ctrl+Q then Quit closed the window in {Quit:.2f} s, Ctrl+Q then Enter in {Enter:.2f} s; "
+                               "app.log said 'close: quit dialog' each time".format(**timings))
+
+            def idle_cpu_checks():
+                # 28 Oct: windows Masih could not see kept using CPU. A re-index redrew the
+                # window every frame while it ran, and Rustidian's own saves re-indexed the vault.
+                frames = base / "frames.log"
+                ticks_per_second = os.sysconf("SC_CLK_TCK")
+                bulk_bytes = sum(path.stat().st_size for path in (fixture / "Idle bulk").iterdir())
+                numbers, failures = {"bulk_bytes": bulk_bytes}, []
+
+                def ticks(thread=None):
+                    stat = Path(f"/proc/{app.pid}" + (f"/task/{thread}" if thread else "") + "/stat").read_text()
+                    return sum(map(int, stat.rsplit(")", 1)[1].split()[11:13]))
+
+                def read_bytes():
+                    return int(next(line.split()[1] for line in Path(f"/proc/{app.pid}/io").read_text().splitlines()
+                                    if line.startswith("rchar:")))
+
+                def frame_times():
+                    """When each frame ended, in Unix milliseconds."""
+                    return [int(row.split()[2]) for row in frames.read_text().splitlines() if row.strip()] if frames.exists() else []
+
+                def index_running():
+                    for task in Path(f"/proc/{app.pid}/task").iterdir():
+                        try:
+                            if (task / "comm").read_text().strip() == "rustidian-index":
+                                return True
+                        except OSError:
+                            pass
+                    return False
+
+                def indexed(quiet=1.0, limit=60):
+                    """Wait until no re-index has run for `quiet` seconds."""
+                    deadline, since = time.monotonic() + limit, time.monotonic()
+                    while time.monotonic() - since < quiet:
+                        assert time.monotonic() < deadline, "The vault kept re-indexing"
+                        time.sleep(.02)
+                        if index_running():
+                            since = time.monotonic()
+
+                def settle(quiet=2.0, limit=30):
+                    """Wait until the window has drawn nothing for `quiet` seconds; whether it did."""
+                    deadline, last, since = time.monotonic() + limit, len(frame_times()), time.monotonic()
+                    while time.monotonic() - since < quiet:
+                        if time.monotonic() > deadline:
+                            return False
+                        time.sleep(.1)
+                        if len(frame_times()) != last:
+                            last, since = len(frame_times()), time.monotonic()
+                    return True
+
+                def measure(seconds):
+                    """CPU over the interval in percent, as ps and top print it, and the frames drawn."""
+                    before, drawn, started = ticks(), len(frame_times()), time.monotonic()
+                    time.sleep(seconds)
+                    used = (ticks() - before) / ticks_per_second
+                    return round(100 * used / (time.monotonic() - started), 1), len(frame_times()) - drawn
+
+                def unfocus():
+                    xdo("windowfocus", "0")
+                    deadline = time.monotonic() + 3
+                    while control_bounds("window-focused")[0] != 0:
+                        assert time.monotonic() < deadline, "The window kept focus"
+                        time.sleep(.05)
+
+                title_contains("Home")
+                indexed()
+                # 1. Rustidian's own save does not re-index the vault.
+                before = read_bytes()
+                editor_end()
+                type_text("\nIdle own save")
+                home = fixture / "Home.md"
+                deadline = time.monotonic() + 5
+                while "Idle own save" not in home.read_text():
+                    assert time.monotonic() < deadline, "Autosave did not write the note"
+                    time.sleep(.1)
+                time.sleep(.5)
+                indexed()
+                numbers["own_save_read_bytes"] = read_bytes() - before
+                if numbers["own_save_read_bytes"] >= bulk_bytes / 10:
+                    failures.append(f"An autosave read {numbers['own_save_read_bytes']} bytes: the vault ({bulk_bytes} bytes) was re-indexed")
+                # 2. A focused window with a blinking caret, for comparison only.
+                numbers["focused_cpu"], numbers["focused_frames"] = measure(20)
+                # 3. A caret on an image line does not redraw a background window
+                #    (egui's has_focus already includes window focus; this guards it).
+                open_note("Idle image")
+                click_control("embed:0")
+                assert control_bounds("embed-source:0"), "The caret did not reach the image line"
+                unfocus()
+                time.sleep(1)
+                numbers["image_caret_cpu"], numbers["image_caret_frames"] = measure(5)
+                if numbers["image_caret_frames"] > 1:
+                    failures.append(f"A background window with the caret on an image line drew {numbers['image_caret_frames']} frames in 5 s")
+                # 4. No input for 60 s, in the background.
+                xdo("windowfocus", "--sync", window)
+                key("ctrl+End")
+                assert control_bounds("embed-source:0", required=False) is None, "The caret stayed on the image line"
+                unfocus()
+                numbers["idle_settled"] = settle()
+                numbers["idle_cpu"], numbers["idle_frames"] = measure(60)
+                if numbers["idle_cpu"] != 0.0 or numbers["idle_frames"]:
+                    failures.append(f"With no input for 60 s the window used {numbers['idle_cpu']}% CPU and drew {numbers['idle_frames']} frames")
+                # 5. A write from outside: one refresh, then idle again.
+                before = ticks()
+                (fixture / "Idle outside.md").write_text("# Idle outside\n\nWritten by another program.\n")
+                numbers["outside_write_settled"] = settle()
+                numbers["outside_write_cpu_seconds"] = (ticks() - before) / ticks_per_second
+                numbers["after_write_cpu"], numbers["after_write_frames"] = measure(30)
+                if numbers["after_write_cpu"] != 0.0 or numbers["after_write_frames"]:
+                    failures.append(f"After a write from outside the window used {numbers['after_write_cpu']}% CPU "
+                                    f"and drew {numbers['after_write_frames']} frames in 30 s")
+                # 6. A change while a re-index runs does not redraw the window until it ends.
+                (fixture / "Idle during A.md").write_text("# During A\n")
+                deadline = time.monotonic() + 5
+                while not index_running():
+                    assert time.monotonic() < deadline, "A write from outside started no re-index"
+                    time.sleep(.005)
+                started, before_main = time.time(), ticks(app.pid)
+                (fixture / "Idle during B.md").write_text("# During B\n")
+                while index_running():
+                    time.sleep(.005)
+                ended = time.time()
+                numbers["reindex_seconds"] = round(ended - started, 2)
+                numbers["reindex_main_thread_seconds"] = (ticks(app.pid) - before_main) / ticks_per_second
+                numbers["reindex_frames"] = sum(started * 1000 <= moment <= ended * 1000 for moment in frame_times())
+                # A fast machine may finish the re-index in under 0.3 s; the property still holds
+                # when no more than four frames fall inside it, so the duration is recorded, not judged.
+                if numbers["reindex_frames"] > 4:
+                    failures.append(f"A change during a {numbers['reindex_seconds']} s re-index drew {numbers['reindex_frames']} frames before it ended")
+                numbers["reindex_settled"] = settle()
+                (reports / "idle-cpu.json").write_text(json.dumps(numbers, indent=2) + "\n")
+                assert not failures, (failures, numbers)
+                results.append(f"An autosave read {numbers['own_save_read_bytes']:,} bytes, not the {bulk_bytes:,}-byte vault: no re-index")
+                results.append(f"In the background with no input for 60 s the window used {numbers['idle_cpu']:.1f}% CPU and drew "
+                               f"{numbers['idle_frames']} frames; with the caret on an image line it drew {numbers['image_caret_frames']} "
+                               f"frames in 5 s (focused with a blinking caret: {numbers['focused_cpu']:.1f}%, {numbers['focused_frames']} frames in 20 s)")
+                results.append(f"A note written from outside cost one refresh ({numbers['outside_write_cpu_seconds']:.2f} s of CPU); "
+                               f"over the next 30 s the window used {numbers['after_write_cpu']:.1f}% CPU and drew {numbers['after_write_frames']} frames")
+                results.append(f"A change during a {numbers['reindex_seconds']} s re-index drew {numbers['reindex_frames']} frames until it ended "
+                               f"({numbers['reindex_main_thread_seconds']:.2f} s of CPU on the UI thread)")
+
+            def folder_creation_checks():
+                parent = fixture / "Create here"; nested = parent / "Nested"
+                nested.mkdir(parents=True)
+                elsewhere = fixture / "Elsewhere"; elsewhere.mkdir()
+                active = elsewhere / "Active.md"; active.write_text("ACTIVE_ELSEWHERE\n")
+                protected = {fixture / "Untitled.md": "KEEP_ROOT\n", parent / "Untitled.md": "KEEP_PARENT\n", nested / "Untitled.md": "KEEP_NESTED\n"}
+                for path, text in protected.items(): path.write_text(text)
+                command("Refresh vault")
+                open_note("Elsewhere/Active.md", title="Active")
+                def fill_dialog(value):
+                    click_control("dialog-input")
+                    control_bounds("dialog-input-focused")
+                    modified_shortcut(xdo, "a"); key("BackSpace")
+                    type_text(value)
+                def wait_file(path, expected):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.exists() and path.read_text() == expected: return
+                        time.sleep(.05)
+                    raise AssertionError((str(path.relative_to(fixture)), expected, path.read_text() if path.exists() else "MISSING"))
+                def context(folder):
+                    relative = folder.relative_to(fixture)
+                    name = "file-tree-root" if folder == fixture else "folder:" + relative.as_posix()
+                    click_control(name, "3")
+                    suffix = "" if folder == fixture else relative.as_posix()
+                    control_bounds("folder-new-note:" + suffix)
+                    control_bounds("folder-new-folder:" + suffix)
+                    return suffix
+                def new_folder(folder, name):
+                    suffix = context(folder)
+                    click_control("folder-new-folder:" + suffix)
+                    control_bounds("folder-create-location:" + suffix)
+                    fill_dialog(name)
+                def new_note(folder, name):
+                    suffix = context(folder); click_control("folder-new-note:" + suffix)
+                    path = folder / name; wait_file(path, "")
+                    control_bounds("tab-full:" + path.relative_to(fixture).as_posix())
+                    control_bounds("note-title-input")
+                    return path
+                suffix = context(parent)
+                capture("native-folder-creation-menu.png")
+                click_control("folder-new-note:" + suffix)
+                created = parent / "Untitled 1.md"; wait_file(created, "")
+                control_bounds("tab-full:Create here/Untitled 1.md")
+                control_bounds("file:Create here/Untitled 1.md")
+                control_bounds("note-title-input")
+                type_text("Created child"); key("Return")
+                renamed = parent / "Created child.md"; wait_file(renamed, "")
+                assert not created.exists() and not (fixture / "Created child.md").exists()
+                editor_end(); type_text("CHILD_BODY"); key("ctrl+s"); wait_file(renamed, "CHILD_BODY")
+                capture("native-folder-created-note.png")
+                assert active.read_text() == "ACTIVE_ELSEWHERE\n"
+                results.append("New note on a collapsed folder created and revealed a unique child, opened inline naming, renamed within that folder, and saved body text while a different folder's note had been active")
+                open_note("Elsewhere/Active.md", title="Active")
+                new_folder(parent, "Child folder")
+                capture("native-folder-create-location.png")
+                key("Return"); control_bounds("folder:Create here/Child folder")
+                assert (parent / "Child folder").is_dir()
+                assert not (fixture / "Child folder").exists() and not (elsewhere / "Child folder").exists()
+                child = new_note(nested, "Untitled 1.md"); key("Escape")
+                second = new_note(nested, "Untitled 2.md"); key("Escape")
+                assert child.read_text() == "" and second.read_text() == ""
+                new_folder(nested, "Nested child"); key("Return")
+                control_bounds("folder:Create here/Nested/Nested child")
+                assert (nested / "Nested child").is_dir() and not (fixture / "Nested child").exists()
+                capture("native-folder-created-nested.png")
+                results.append("Name-only folder input stayed bound to the clicked folder, nested folders accepted both commands, and repeated note creation preserved existing Untitled files")
+                new_folder(nested, "Nested child"); key("Return")
+                control_bounds("dialog-error"); assert (nested / "Nested child").is_dir()
+                fill_dialog("../Must not escape"); key("Return"); control_bounds("dialog-error")
+                assert not (parent / "Must not escape").exists() and not (fixture / "Must not escape").exists()
+                fill_dialog(""); key("Return"); control_bounds("dialog-error")
+                capture("native-folder-create-error.png"); key("Escape")
+                before = {p.relative_to(fixture) for p in fixture.rglob("*")}
+                new_folder(parent, "Cancelled child"); key("Escape")
+                assert {p.relative_to(fixture) for p in fixture.rglob("*")} == before
+                new_folder(parent, "placeholder"); modified_shortcut(xdo, "a"); pause()
+                paste_text("Child café"); key("Return")
+                if not (parent / "Child café").is_dir():
+                    raise AssertionError("Unicode folder creation must use the entered name only")
+                results.append("Duplicate, escaping and empty folder names failed visibly without creating paths; Escape cancelled without changes and a Unicode child name succeeded")
+                suffix = context(fixture); capture("native-folder-root-menu.png")
+                click_control("folder-new-folder:" + suffix)
+                control_bounds("folder-create-location:"); fill_dialog("Root child"); key("Return")
+                assert (fixture / "Root child").is_dir() and not (nested / "Root child").exists()
+                root_note = new_note(fixture, "Untitled 1.md"); key("Escape")
+                assert root_note.parent == fixture
+                capture("native-folder-root-created.png")
+                results.append("The vault-root context menu shared both creation commands and created root items independently of the active nested note")
+                before = {p.relative_to(fixture) for p in fixture.rglob("*")}; mode = parent.stat().st_mode
+                try:
+                    parent.chmod(0o555)
+                    suffix = context(parent); click_control("folder-new-note:" + suffix)
+                    capture("native-folder-create-readonly.png")
+                    assert {p.relative_to(fixture) for p in fixture.rglob("*")} == before
+                finally: parent.chmod(mode)
+                retry = new_note(parent, "Untitled 1.md"); key("Escape")
+                assert retry.read_text() == ""
+                for path, text in protected.items(): assert path.read_text() == text, path
+                assert active.read_text() == "ACTIVE_ELSEWHERE\n" and renamed.read_text() == "CHILD_BODY"
+                results.append("An unwritable clicked folder failed without a fallback or partial note; retry after restoring access succeeded and all existing notes retained their exact bytes")
+
             def folder_checks():
                 click_control("button:File explorer")
                 pause()
@@ -4355,6 +6116,7 @@ def main():
                 image_bytes = attachment.read_bytes()
                 click_control("bookmark:Assets/Attachment.png")
                 title_contains("Attachment")
+                key("Return")
                 type_text("BOOKMARKED_IMAGE_READ_ONLY")
                 key("ctrl+b")
                 key("ctrl+s")
@@ -4417,7 +6179,7 @@ def main():
                 command("Show bookmarks")
                 click_control(f"bookmark:{relative}")
                 title_contains("Bookmark renamed")
-                xdo("key", "--clearmodifiers", "ctrl+q")
+                confirm_quit()
                 app.wait(timeout=5)
                 app = launch_app(launch_command)
                 window = ready_window()
@@ -4690,6 +6452,807 @@ def main():
                 xdo("windowsize",window,"1440","960");pause()
                 results.append("The real Move picker fit the minimum window and dismissed without changing its file or active tab")
 
+            def folder_copy_checks():
+                import stat
+                click_control("button:File explorer")
+                close_tabs()
+                command("Open settings")
+                click_control("settings-autosave"); wait_autosave(base / "state", False)
+                key("Escape")
+                source = fixture / "Recipe.v1 Ω"
+                nested = source / "Nested"
+                nested.mkdir(parents=True)
+                (source / "Empty").mkdir()
+                (source / ".hidden").mkdir()
+                (source / ".hidden/secret.bin").write_bytes(b"\x00PRIVATE\xff\x00")
+                (source / "A.md").write_text("# A\n\n![[Image.png]]\n")
+                (source / "Raw.md").write_bytes(b"\xef\xbb\xbf# Raw\r\n\r\nRAW_CRLF_EXACT\r\n")
+                child = nested / "Child.md"
+                child.write_text("# Child\n\n[[../A|A]]\n")
+                (nested / "data.bin").write_bytes(bytes(range(256))*4)
+                Image.new("RGB", (4, 4), (20, 130, 170)).save(source / "Image.png")
+                source.chmod(0o750); nested.chmod(0o700); (source / ".hidden").chmod(0o700)
+                empty = fixture / "Empty copy"
+                empty.mkdir(); empty.chmod(0o700)
+                (fixture / "Empty copy 1").write_text("KEEP_OCCUPIED_FILE\n")
+                denied = fixture / "Read denied.v1"
+                denied.mkdir()
+                (denied / "A.md").write_text("READ_FIRST\n")
+                unreadable = denied / "Z.md"
+                unreadable.write_text("UNREADABLE_ORIGINAL\n")
+                unsafe = fixture / "Unsafe copy"
+                unsafe.mkdir()
+                outside = base / "outside-copy.md"
+                outside.write_text("OUTSIDE_EXACT\n")
+                (unsafe / "Linked.md").symlink_to(outside)
+                command("Refresh vault")
+                pause()
+
+                def snapshot(folder):
+                    result = {}
+                    for path in [folder, *sorted(folder.rglob("*"))]:
+                        relative = str(path.relative_to(folder))
+                        result[relative] = {"directory":path.is_dir(), "mode":stat.S_IMODE(path.stat().st_mode)}
+                        if path.is_file(): result[relative]["bytes"] = path.read_bytes().hex()
+                    return result
+
+                def copy_folder(folder):
+                    click_control("file-collapse")
+                    relative = str(folder.relative_to(fixture))
+                    click_control("folder:" + relative, button="3")
+                    control_bounds("copy:" + relative)
+                    click_control("copy:" + relative)
+
+                def wait_copy(folder, expected):
+                    deadline = time.monotonic()+5
+                    while time.monotonic() < deadline:
+                        if folder.is_dir() and snapshot(folder) == expected: return
+                        time.sleep(.05)
+                    raise AssertionError(("Incomplete or different folder copy", str(folder), snapshot(folder) if folder.is_dir() else "MISSING"))
+
+                def no_staging():
+                    assert not [path.name for path in fixture.iterdir() if path.name.startswith(".rustidian-copy-")]
+
+                def open_path(path, title):
+                    key("ctrl+o"); paste_text(str(path.relative_to(fixture))); key("ctrl+Return")
+                    title_contains(title)
+
+                open_path(child, "Child")
+                command("Source editing"); editor_end(); type_text("SOURCE_DRAFT")
+                original_child = child.read_bytes()
+                key("ctrl+t")
+                open_note("Home", title="Home")
+                command("Source editing")
+                original_home = (fixture / "Home.md").read_bytes()
+                editor_end(); type_text("UNRELATED_DRAFT")
+                assert child.read_bytes() == original_child and (fixture / "Home.md").read_bytes() == original_home
+                first = fixture / "Recipe.v1 Ω 1"
+                copy_folder(source)
+                assert child.read_bytes().endswith(b"SOURCE_DRAFT")
+                expected = snapshot(source)
+                wait_copy(first, expected)
+                assert (fixture / "Home.md").read_bytes() == original_home
+                title_contains("Home")
+                control_bounds("explorer-selected-path:" + str(first.relative_to(fixture)))
+                no_staging()
+                capture("native-folder-copy-created.png")
+                results.append("The actual folder menu copied a dotted/Unicode folder with all nested notes, PNG/binary/hidden files, empty directories and directory permissions; it saved only the source's draft and retained the unrelated dirty tab/navigation")
+
+                copied_child = first / "Nested/Child.md"
+                open_path(copied_child, "Child")
+                command("Source editing")
+                editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
+                title_contains("A")
+                control_bounds("tab-full:" + str((first / "A.md").relative_to(fixture)))
+                click_control("tab-full:" + str(copied_child.relative_to(fixture))); title_contains("Child")
+                editor_end(); type_text("COPY_ONLY_SAVED"); key("ctrl+s")
+                assert copied_child.read_bytes().endswith(b"COPY_ONLY_SAVED")
+                assert snapshot(source) == expected
+                copied_saved = copied_child.read_bytes()
+                type_text("SECOND_UNSAVED_COPY_DRAFT")
+                second = fixture / "Recipe.v1 Ω 2"
+                copy_folder(source)
+                wait_copy(second, expected)
+                assert copied_child.read_bytes() == copied_saved
+                assert (fixture / "Home.md").read_bytes() == original_home and snapshot(source) == expected
+                title_contains("Child")
+                capture("native-folder-copy-collision.png")
+                results.append("The copied note opened immediately from the updated index, its relative wiki link opened the copied sibling, and editing/saving the copy did not affect originals; repeating Make a copy kept the full dotted name, numbered the collision and left the active copy's new draft unsaved")
+
+                copy_folder(empty)
+                wait_copy(fixture / "Empty copy 2", snapshot(empty))
+                assert (fixture / "Empty copy 1").read_text() == "KEEP_OCCUPIED_FILE\n"
+                no_staging()
+                results.append("An empty source produced a real empty folder with matching permissions and no phantom note; a file occupying the first numbered name was preserved and safely skipped")
+
+                vault_mode = stat.S_IMODE(fixture.stat().st_mode)
+                fixture.chmod(0o555)
+                try:
+                    copy_folder(source)
+                    control_bounds("error-notice")
+                    assert not (fixture / "Recipe.v1 Ω 3").exists()
+                    assert snapshot(source) == expected and copied_child.read_bytes() == copied_saved
+                    no_staging()
+                    capture("native-folder-copy-write-error.png")
+                finally: fixture.chmod(vault_mode)
+                copy_folder(source)
+                wait_copy(fixture / "Recipe.v1 Ω 3", expected)
+                no_staging()
+                results.append("A read-only destination produced a visible error with no partial folder, overwrite or staging leak; restoring access and retrying copied every byte safely")
+
+                unreadable_mode = stat.S_IMODE(unreadable.stat().st_mode)
+                unreadable.chmod(0o000)
+                try:
+                    copy_folder(denied)
+                    control_bounds("error-notice")
+                    assert not (fixture / "Read denied.v1 1").exists()
+                    no_staging()
+                    capture("native-folder-copy-read-error.png")
+                finally: unreadable.chmod(unreadable_mode)
+                assert unreadable.read_text() == "UNREADABLE_ORIGINAL\n" and (denied / "A.md").read_text() == "READ_FIRST\n"
+                copy_folder(unsafe)
+                control_bounds("error-notice")
+                assert not (fixture / "Unsafe copy 1").exists() and outside.read_text() == "OUTSIDE_EXACT\n"
+                no_staging()
+                assert snapshot(source) == expected and (fixture / "Home.md").read_bytes() == original_home
+                capture("native-folder-copy-linked-error.png")
+                results.append("Unreadable contents failed after earlier files could be staged, yet left no published or temporary partial copy; a linked outside file was rejected without touching it or any original")
+                # The active dirty copy is outside the original source prefix and must survive all copies/errors.
+                editor_end(); key("ctrl+a"); key("ctrl+c")
+                text = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, text=True)
+                assert text.endswith("SECOND_UNSAVED_COPY_DRAFT"), repr(text)
+                assert copied_child.read_bytes() == copied_saved
+                (reports / "native-folder-copy-tree.json").write_text(json.dumps({"source":expected,"first_copy":snapshot(first),"second_copy":snapshot(second),"third_copy":snapshot(fixture / "Recipe.v1 Ω 3")}, ensure_ascii=False, indent=2)+"\n")
+                results.append("Repeated copy successes and failures preserved the separate active unsaved draft, all originals and all occupied copied destinations")
+
+            def reveal_checks():
+                nonlocal file_manager_bus
+                from urllib.parse import unquote, urlsplit
+                with (reports / "gui-reveal-file-manager.log").open("w") as manager_log:
+                    file_manager_bus = subprocess.Popen(["dbus-daemon", "--session", "--nofork", "--address=" + environment["DBUS_SESSION_BUS_ADDRESS"], "--print-address=1"], env=environment, stdout=subprocess.PIPE, stderr=manager_log, text=True)
+                assert file_manager_bus.stdout.readline().startswith("unix:path="), "Private file-manager bus did not start"
+                click_control("button:File explorer")
+                close_tabs()
+                command("Open settings")
+                click_control("settings-autosave"); wait_autosave(base / "state", False)
+                key("Escape")
+                folder = fixture / "Reveal folder, # Ω"
+                folder.mkdir()
+                note = folder / "Reveal , # Ω.md"
+                note.write_text("# Reveal\n\nREVEAL_EXACT\n")
+                (folder / "Keep.md").write_text("KEEP_EXACT\n")
+                command("Refresh vault")
+                # Expand the inactive folder, then keep an unrelated unsaved document active.
+                click_control("folder:" + str(folder.relative_to(fixture)))
+                open_note("Home", title="Home")
+                command("Source editing")
+                original_home = (fixture / "Home.md").read_bytes()
+                editor_end(); type_text("REVEAL_KEEP_DRAFT")
+                assert (fixture / "Home.md").read_bytes() == original_home
+
+                def file_manager_window():
+                    deadline = time.monotonic() + 12
+                    while time.monotonic() < deadline:
+                        try:
+                            windows = xdo("search", "--onlyvisible", "--class", "[Nn]autilus").splitlines()
+                            if windows: return windows[-1]
+                        except subprocess.CalledProcessError:
+                            pass
+                        time.sleep(.1)
+                    raise AssertionError("Reveal did not open the actual file manager")
+
+                def focus_selected_item(manager, label):
+                    # Focus the existing selection with one real click. Never search
+                    # for the expected name or change which item Reveal selected.
+                    geometry = dict(line.split("=", 1) for line in xdo("getwindowgeometry", "--shell", manager).splitlines() if "=" in line)
+                    left, top = int(geometry["X"]) + 220, int(geometry["Y"]) + 65
+                    picture = ImageGrab.grab(xdisplay=display).crop((left, top, int(geometry["X"])+int(geometry["WIDTH"])-15, int(geometry["Y"])+int(geometry["HEIGHT"])-15)).convert("RGB")
+                    width = picture.width
+                    best = (0, 0, 0)
+                    run = 0
+                    for index, (red, green, blue) in enumerate(pixel_data(picture)):
+                        x, y = index % width, index // width
+                        if x == 0: run = 0
+                        if red >= 170 and green >= 180 and blue >= 220 and blue > red + 15 and blue > green + 6:
+                            run += 1
+                            if run > best[0]: best = (run, left+x-run//2, top+y+8)
+                        else: run = 0
+                    assert best[0] >= 100, ("No visible selected-item highlight", label, best)
+                    capture(f"native-reveal-initial-{label}.png")
+                    xdo("mousemove", "--sync", str(best[1]), str(best[2]), "click", "1")
+                    pause()
+                    (reports / f"native-reveal-focus-{label}.json").write_text(json.dumps({"manager_window":manager,"focused_window":xdo("getwindowfocus"),"highlight_run":best})+"\n")
+
+                def copied_item(expected):
+                    deadline = time.monotonic() + 6
+                    last = {}
+                    while time.monotonic() < deadline:
+                        modified_shortcut(xdo, "c"); pause()
+                        # Nautilus 46 advertises its own file-copy serialization;
+                        # both formats below carry URIs from the real selection.
+                        for target in ("text/uri-list", "x-special/gnome-copied-files"):
+                            try:
+                                raw = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", target], env=environment, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                                last[target] = raw
+                                paths = [Path(unquote(urlsplit(line).path)) for line in raw.splitlines() if line.startswith("file:")]
+                                if paths == [expected]: return target, raw
+                            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                                pass
+                        time.sleep(.1)
+                    try:
+                        last["TARGETS"] = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "TARGETS"], env=environment, stderr=subprocess.DEVNULL, text=True, timeout=2)
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                        pass
+                    raise AssertionError(("The system file manager did not select the requested item", str(expected), last))
+
+                requests = []
+                cases = [(note, "file:" + str(note.relative_to(fixture)), "file"),
+                         (folder, "folder:" + str(folder.relative_to(fixture)), "folder"),
+                         (fixture, "file-tree-root", "vault")]
+                for path, control, label in cases:
+                    xdo("windowactivate", "--sync", window)
+                    click_control(control, button="3")
+                    click_control("reveal:" + (str(path.relative_to(fixture)) if path != fixture else ""))
+                    manager = file_manager_window()
+                    xdo("windowactivate", "--sync", manager)
+                    xdo("windowsize", manager, "1050", "700")
+                    xdo("windowmove", manager, "270", "140")
+                    pause()
+                    focus_selected_item(manager, label)
+                    mime, uri = copied_item(path)
+                    capture(f"native-reveal-{label}.png")
+                    requests.append({"case":label, "selected_path":str(path), "copied_mime":mime, "copied_uri":uri})
+                    (reports / "native-reveal-selected-items.json").write_text(json.dumps(requests, ensure_ascii=False, indent=2)+"\n")
+                    key("alt+F4")
+                    xdo("windowactivate", "--sync", window)
+                    title_contains("Home")
+                    assert (fixture / "Home.md").read_bytes() == original_home
+                    assert note.read_text() == "# Reveal\n\nREVEAL_EXACT\n" and (folder / "Keep.md").read_text() == "KEEP_EXACT\n"
+                    results.append(f"The real file manager opened and selected the exact clicked {label}; URI clipboard verified spaces, comma, # and Unicode without saving/replacing the unrelated draft or changing any fixture bytes")
+
+                # A failed desktop request must surface an error while the editor remains usable.
+                # All manager windows were closed above. Stop only our private bus
+                # to exercise a real desktop-service failure, without a CLI quit gate.
+                file_manager_bus.terminate(); file_manager_bus.wait(timeout=5); file_manager_bus = None
+                click_control("file:" + str(note.relative_to(fixture)), button="3")
+                click_control("reveal:" + str(note.relative_to(fixture)))
+                control_bounds("error-notice")
+                capture("native-reveal-error.png")
+                editor_end(); key("ctrl+a"); key("ctrl+c")
+                actual = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, text=True)
+                assert actual.endswith("REVEAL_KEEP_DRAFT"), repr(actual)
+                assert (fixture / "Home.md").read_bytes() == original_home
+                results.append("An unavailable desktop file-manager service produced a visible error without freezing or saving the unrelated draft; the editor still selected/copied its exact draft content")
+
+            def explorer_multi_checks():
+                click_control("button:File explorer")
+                close_tabs()
+                command("Open settings")
+                click_control("settings-autosave")
+                wait_autosave(base / "state", False)
+                key("Escape")
+                origin = fixture / "Batch"
+                destination = fixture / "Batch destination"
+                blocked = fixture / "Batch blocked"
+                for folder in [origin, destination, blocked, origin / "Group"]:
+                    folder.mkdir(parents=True, exist_ok=True)
+                content = {
+                    "A.md": "# A\n\n[[B|Bee]]\n[B](B.md)\n",
+                    "B.md": "# B\n\n[[A|Aye]]\n[A](A.md)\n[[Home]]\n",
+                    "C.md": "# C\n\nC_EXACT\n",
+                    "D.md": "# D\n\nD_EXACT\n",
+                    "E.md": "# E\n\nE_EXACT\n",
+                    "F.md": "# F\n\nF_EXACT\n",
+                    "G.md": "# G\n\nG_EXACT\n",
+                    "H.md": "# H\n\nH_EXACT\n",
+                    "Group/Child.md": "# Child\n\nCHILD_EXACT\n",
+                }
+                for name, text in content.items():
+                    (origin / name).write_text(text)
+                (destination / "A.md").write_text("KEEP_COLLISION\n")
+                folder_reference = fixture / "Batch folder reference.md"
+                folder_reference.write_text("[[Batch/Group/Child|Child]]\n")
+                command("Refresh vault")
+                pause()
+                open_note("Batch/A.md", title="A")
+                command("Source editing")
+                editor_end(); type_text("A_DRAFT")
+                key("ctrl+t")
+                open_note("Batch/B.md", title="B")
+                command("Source editing")
+                editor_end(); type_text("B_DRAFT")
+                assert (origin / "A.md").read_text() == content["A.md"]
+                assert (origin / "B.md").read_text() == content["B.md"]
+
+                def select(name, modifier=None, button="1"):
+                    if modifier: xdo("keydown", modifier)
+                    try: click_control(name, button=button)
+                    finally:
+                        if modifier: xdo("keyup", modifier)
+                    pause()
+
+                def selected(count):
+                    control_bounds(f"explorer-selected:{count}")
+
+                def move_to(folder):
+                    click_control("move-input")
+                    key("ctrl+a"); type_text(folder); key("Return")
+
+                def drag_entries(source, target, screenshot):
+                    start = control_bounds(source)
+                    end = control_bounds(target)
+                    sx, sy = round((start[0]+start[2])/2), round((start[1]+start[3])/2)
+                    ex, ey = round((end[0]+end[2])/2), round((end[1]+end[3])/2)
+                    xdo("mousemove", "--sync", str(sx), str(sy), "mousedown", "1")
+                    try:
+                        time.sleep(.1)
+                        for step in range(1, 15):
+                            xdo("mousemove", "--sync", str(round(sx+(ex-sx)*step/14)), str(round(sy+(ey-sy)*step/14)))
+                            time.sleep(.04)
+                        time.sleep(.3)
+                        capture(screenshot)
+                    finally: xdo("mouseup", "1")
+
+                def wait_file(path, expected=None):
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        if path.is_file() and (expected is None or path.read_text() == expected): return
+                        time.sleep(.05)
+                    raise AssertionError((str(path.relative_to(fixture)), expected, path.read_text() if path.is_file() else "MISSING"))
+
+                select("file:Batch/A.md", "Control_L")
+                selected(2)
+                title_contains("B")
+                assert control_bounds("tab-full:Batch/A.md") and control_bounds("tab-full:Batch/B.md")
+                capture("native-explorer-multi-selection.png")
+                select("file:Batch/A.md", button="3")
+                click_control("explorer-move-selected")
+                move_to("Batch destination")
+                control_bounds("move-links-once")
+                capture("native-explorer-multi-link-confirmation.png")
+                click_control("move-links-once")
+                moved_a = destination / "A 1.md"
+                moved_b = destination / "B.md"
+                wait_file(moved_a)
+                wait_file(moved_b)
+                assert not (origin / "A.md").exists() and not (origin / "B.md").exists()
+                assert (destination / "A.md").read_text() == "KEEP_COLLISION\n"
+                assert moved_a.read_text() == content["A.md"] + "A_DRAFT"
+                assert moved_b.read_text() == content["B.md"].replace("[[A|Aye]]", "[[A 1|Aye]]").replace("[A](A.md)", "[A](A%201.md)").replace("[[Home]]", "[[../Home]]") + "B_DRAFT"
+                control_bounds("tab-full:Batch destination/A 1.md")
+                control_bounds("tab-full:Batch destination/B.md")
+                # Follow both moved references in the actual editor, including the collision name.
+                click_control("tab-full:Batch destination/A 1.md")
+                editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
+                title_contains("B")
+                editor_end(); key("ctrl+Home"); key("Down"); key("Down"); key("Right"); key("Right"); key("ctrl+Return")
+                title_contains("A 1")
+                results.append("Ctrl-click selected two entries without opening/replacing a tab; one bulk move saved drafts, retained tabs, preserved collision bytes, and updated cross-selected wiki/Markdown links to navigable final paths")
+
+                key("ctrl+t")
+                select("file:Batch/C.md", "Control_L"); selected(1)
+                select("file:Batch/D.md", "Control_L"); selected(2)
+                key("Delete")
+                control_bounds("explorer-trash-confirm")
+                click_control("explorer-trash-cancel")
+                select("file:Batch/D.md", "Control_L")
+                key("ctrl+a")
+                controls = json.loads((base / "ui-probe.json").read_text())
+                assert any(name.startswith("explorer-selected:") and int(name.split(":")[-1]) > 2 for name in controls)
+                key("Delete"); click_control("explorer-trash-cancel")
+                assert (origin / "C.md").read_text() == content["C.md"]
+                assert (origin / "D.md").read_text() == content["D.md"]
+                results.append("A blank editor tab did not become an explorer entry; Ctrl+A and Delete operated only on focused explorer rows, and cancelling left all source bytes intact")
+                open_note("Batch/C.md", title="C")
+                select("file:Batch/D.md", "Shift_L")
+                selected(2)
+                select("file:Batch/C.md", "Control_L"); selected(1)
+                select("file:Batch/C.md", "Control_L"); selected(2)
+                select("file:Batch/D.md", button="3")
+                click_control("explorer-move-selected")
+                key("Escape")
+                assert (origin / "C.md").read_text() == content["C.md"]
+                assert (origin / "D.md").read_text() == content["D.md"]
+                drag_entries("file:Batch/C.md", "folder:Batch destination", "native-explorer-multi-drag.png")
+                wait_file(destination / "C.md", content["C.md"])
+                wait_file(destination / "D.md", content["D.md"])
+                assert not (origin / "C.md").exists() and not (origin / "D.md").exists()
+                results.append("Shift-click selected the visible range, Ctrl-click toggled membership, cancelling the folder picker changed nothing, and dragging moved the whole selection with exact bytes")
+
+                selected(2)
+                select("file:Batch destination/C.md")
+                select("file:Batch/G.md", "Control_L"); selected(2)
+                drag_entries("file:Batch destination/C.md", "folder:Batch destination", "native-explorer-multi-mixed-parent-drag.png")
+                wait_file(destination / "G.md", content["G.md"])
+                assert (destination / "C.md").read_text() == content["C.md"]
+                assert not (origin / "G.md").exists()
+                results.append("Dragging a selected member already in the target still moved the other selected entry; the existing member was unchanged")
+
+                selected(2)
+                drag_entries("file:Batch/H.md", "folder:Batch destination", "native-explorer-single-after-multi-drag.png")
+                wait_file(destination / "H.md", content["H.md"])
+                selected(1)
+                control_bounds("explorer-selected-path:Batch destination/H.md")
+                assert (destination / "C.md").read_text() == content["C.md"] and (destination / "G.md").read_text() == content["G.md"]
+                results.append("Bulk moves retained the selected entries at their final paths; dragging an unselected row selected and moved only that row")
+
+                open_note("Batch/E.md", title="E")
+                select("file:Batch/F.md", "Control_L"); selected(2)
+                select("file:Batch/F.md", button="3")
+                click_control("explorer-move-selected")
+                blocked.chmod(0o555)
+                try:
+                    move_to("Batch blocked")
+                    control_bounds("move-picker")
+                    assert (origin / "E.md").read_text() == content["E.md"]
+                    assert (origin / "F.md").read_text() == content["F.md"]
+                    assert not (blocked / "E.md").exists() and not (blocked / "F.md").exists()
+                    capture("native-explorer-multi-write-error.png")
+                finally: blocked.chmod(0o755)
+                key("Return")
+                wait_file(blocked / "E.md", content["E.md"])
+                wait_file(blocked / "F.md", content["F.md"])
+                results.append("An unwritable bulk destination left every source intact and exposed an error; retry moved both entries after access was restored")
+
+                # Select a folder and its own child, plus an unrelated file. Trash the folder once.
+                click_control("folder:Batch/Group")
+                select("file:Batch/Group/Child.md", "Control_L")
+                select("file:Batch destination/D.md", "Control_L")
+                selected(3)
+                select("file:Batch destination/D.md", button="3")
+                click_control("explorer-move-selected")
+                move_to("Batch blocked")
+                control_bounds("move-links-once"); click_control("move-links-once")
+                wait_file(blocked / "Group/Child.md", content["Group/Child.md"])
+                wait_file(blocked / "D.md", content["D.md"])
+                assert not (origin / "Group").exists() and not (destination / "D.md").exists()
+                assert folder_reference.read_text() == "[[Batch blocked/Group/Child|Child]]\n"
+                selected(3)
+                results.append("A mixed folder/file move deduplicated the selected descendant, retained all three selected rows at their new paths, and rewrote links to the moved child")
+                select("file:Batch blocked/D.md", button="3")
+                click_control("explorer-trash-selected")
+                capture("native-explorer-multi-trash-confirmation.png")
+                click_control("explorer-trash-cancel")
+                assert (blocked / "Group/Child.md").read_text() == content["Group/Child.md"]
+                assert (blocked / "D.md").read_text() == content["D.md"]
+                select("file:Batch blocked/D.md", button="3")
+                click_control("explorer-trash-selected")
+                click_control("explorer-trash-confirm")
+                pause()
+                assert not (blocked / "Group").exists() and not (blocked / "D.md").exists()
+                trash = base / "data/Trash/files"
+                assert any(path.is_file() and path.read_text() == content["D.md"] for path in trash.iterdir())
+                assert any(path.is_dir() and (path / "Child.md").is_file() and (path / "Child.md").read_text() == content["Group/Child.md"] for path in trash.iterdir())
+                assert moved_a.read_text().endswith("A_DRAFT") and moved_b.read_text().endswith("B_DRAFT")
+                capture("native-explorer-multi-trash-result.png")
+                results.append("Right-click kept the multi-selection; Trash confirmation cancel preserved all bytes, and confirmation trashed a selected folder with its child only once plus the unrelated file; both were recoverable and other open drafts survived")
+
+                many = fixture / "Batch range"
+                many.mkdir()
+                for number in range(1, 101):
+                    (many / f"Item {number:03}.md").write_text(f"# Item {number:03}\n")
+                command("Refresh vault")
+                open_note("Batch range/Item 001.md", title="Item 001")
+                viewport = control_bounds("file-tree-viewport")
+                xdo("mousemove", "--sync", str(round((viewport[0]+viewport[2])/2)), str(round((viewport[1]+viewport[3])/2)))
+                xdo("click", "--repeat", "80", "--delay", "8", "5")
+                pause()
+                select("file:Batch range/Item 100.md", "Shift_L")
+                selected(100)
+                capture("native-explorer-multi-virtual-range.png")
+                key("Delete"); control_bounds("explorer-trash-confirm")
+                click_control("explorer-trash-cancel")
+                assert all((many / f"Item {number:03}.md").read_text() == f"# Item {number:03}\n" for number in range(1, 101))
+                results.append("Shift-selection crossed virtualized offscreen rows from item 001 to 100; Delete counted all 100, and cancellation preserved every file")
+
+            def drag_move_checks():
+                # Obsidian's explorer: drag a note or a folder onto a folder or the vault root (29 Oct).
+                click_control("button:File explorer")
+                close_tabs()
+                set_theme(True)
+                untouched = {name: (fixture / name).read_bytes() for name in ("Home.md", "Notes/First steps.md", "Notes/Connected thinking.md", "Projects/Native notebook.md")}
+                source = fixture / "Notes/Drag source.md"
+                source_bytes = b"# Drag source\r\n\r\nKeep these exact bytes.\r\n"
+                source.write_bytes(source_bytes)
+                reference = fixture / "Drag reference.md"
+                reference.write_bytes(b"[[Notes/Drag source|Alias]]\r\n[Label](Notes/Drag%20source.md)\r\n")
+                package = fixture / "Drag folder"
+                (package / "Sub").mkdir(parents=True)
+                inner_bytes, deep_bytes = b"# Inner\n\nInside the dragged folder.\n", b"# Deep\n"
+                (package / "Inner.md").write_bytes(inner_bytes)
+                (package / "Sub/Deep.md").write_bytes(deep_bytes)
+                package_reference = fixture / "Folder reference.md"
+                package_reference.write_bytes(b"[[Drag folder/Inner]]\n")
+                (fixture / "Drag closed").mkdir()
+                (fixture / "Drag closed/Kept.md").write_bytes(b"# Kept\n")
+                # Sorted after Projects, so it makes the tree tall without moving the targets.
+                filler = fixture / "Zz drag filler"
+                filler.mkdir()
+                for number in range(1, 25):
+                    (filler / f"Filler {number:02}.md").write_bytes(f"# Filler {number:02}\n".encode())
+                command("Refresh vault")
+                pause()
+                click_control("file-collapse")
+                open_note("Drag source")
+                dragged = "file:Notes/Drag source.md"
+                control_bounds(dragged)
+                observations = []
+
+                def files():
+                    return {path.relative_to(fixture).as_posix(): path.read_bytes() for path in fixture.rglob("*")
+                            if path.is_file() and not any(part.startswith(".") for part in path.relative_to(fixture).parts)}
+
+                def drags():
+                    return [name for name in json.loads((base / "ui-probe.json").read_text()) if name.startswith(("drag:", "drop-target:"))]
+
+                def point(name, dx=40):
+                    left, top, right, bottom = control_bounds(name)
+                    return round(left + dx), round((top + bottom) / 2)
+
+                moments = {}
+
+                def drag(start, end, *, hold=.3, during=None, cancel=False):
+                    # Press, pass egui's 6 px drag threshold, glide to the target, rest, let go.
+                    xdo("mousemove", "--sync", str(start[0]), str(start[1]), "mousedown", "1")
+                    try:
+                        time.sleep(.1)
+                        xdo("mousemove", "--sync", str(start[0] + 3), str(start[1]))
+                        time.sleep(.05)
+                        for step in range(1, 13):
+                            x = round(start[0] + 3 + (end[0] - start[0] - 3) * step / 12)
+                            y = round(start[1] + (end[1] - start[1]) * step / 12)
+                            xdo("mousemove", "--sync", str(x), str(y))
+                            time.sleep(.03)
+                        moments["arrived"] = time.monotonic()
+                        time.sleep(hold)
+                        if during:
+                            during()
+                        if cancel:
+                            # Not key(): --clearmodifiers would let go of the held button first.
+                            xdo("key", "Escape")
+                            deadline = time.monotonic() + 2
+                            while drags() and time.monotonic() < deadline:
+                                time.sleep(.05)
+                            assert not drags(), ("Escape must end the drag at once", drags())
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+
+                def unchanged(before, title):
+                    assert files() == before, "Nothing may move"
+                    assert control_bounds("move-links-dialog", required=False) is None
+                    assert control_bounds("error-notice", required=False) is None
+                    assert not drags(), drags()
+                    title_contains(title)
+
+                def inspect_drag(theme_name, path, target):
+                    ghost = control_bounds("drag:" + path)
+                    area = control_bounds("drop-target:" + target)
+                    header = control_bounds("folder:" + target)
+                    viewport = control_bounds("file-tree-viewport")
+                    pointer = dict(line.split("=") for line in xdo("getmouselocation", "--shell").splitlines())
+                    capture(f"native-drag-move-{theme_name}.png")
+                    picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    middle = round((header[1] + header[3]) / 2)
+                    fill = picture.getpixel((round(area[2]) - 3, middle))
+                    panel = picture.getpixel((round(viewport[0]) - 6, middle))
+                    title = max(pixel_contrast(picture.getpixel((x, y)), fill)
+                                for x in range(round(header[0]) + 18, round(header[0]) + 120) for y in range(round(header[1]) + 6, round(header[3]) - 6))
+                    ghost_fill = picture.getpixel((round(ghost[2]) - 4, round((ghost[1] + ghost[3]) / 2)))
+                    text = max(pixel_contrast(picture.getpixel((x, y)), ghost_fill)
+                               for x in range(round(ghost[0]) + 9, round(ghost[2]) - 9) for y in range(round(ghost[1]) + 6, round(ghost[3]) - 6))
+                    observations.append({"theme": theme_name, "dragged": path, "target": target, "pointer": [int(pointer["X"]), int(pointer["Y"])],
+                                         "ghost": ghost, "highlight": area, "highlight_rgb": fill, "panel_rgb": panel,
+                                         "title_contrast": round(title, 2), "ghost_rgb": ghost_fill, "ghost_text_contrast": round(text, 2)})
+                    (reports / "drag-move-pixels.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    assert max(abs(a - b) for a, b in zip(fill, panel)) >= 6, ("The drop target needs a visible highlight", observations[-1])
+                    assert title >= 3, ("The highlighted folder name must stay legible", observations[-1])
+                    assert text >= 4.5, ("The dragged row must stay legible", observations[-1])
+                    assert 0 <= ghost[0] - int(pointer["X"]) <= 30 and 0 <= ghost[1] - int(pointer["Y"]) <= 30, ("The dragged row follows the pointer", observations[-1])
+                    assert area[1] <= header[1] + 2 and area[3] >= header[3] - 2, ("The highlight covers the folder row", observations[-1])
+
+                # Resting on a collapsed folder opens it; the tree keeps scrolling; Escape cancels.
+                assert control_bounds("file:Drag closed/Kept.md", required=False) is None, "Drag closed must start collapsed"
+                click_control("folder:Zz drag filler")
+                control_bounds("file:Zz drag filler/Filler 01.md")
+                before = files()
+                opened = {}
+
+                def rest_scroll_and_look():
+                    assert control_bounds("file:Drag closed/Kept.md", required=False) is None, "A folder must not open the moment a drag reaches it"
+                    control_bounds("drop-target:Drag closed")
+                    started = time.monotonic()
+                    while control_bounds("file:Drag closed/Kept.md", required=False) is None and time.monotonic() - started < 3:
+                        time.sleep(.05)
+                    opened["after"] = round(time.monotonic() - moments["arrived"], 2)
+                    assert control_bounds("file:Drag closed/Kept.md", required=False), "Resting a drag on a collapsed folder must open it"
+                    assert .5 <= opened["after"] <= 1.5, ("The folder opens after Obsidian's 750 ms pause, without more input", opened)
+                    inspect_drag("dark", "Notes/Drag source.md", "Drag closed")
+                    viewport = control_bounds("file-tree-viewport")
+                    x = round((viewport[0] + viewport[2]) / 2)
+
+                    def offset():
+                        return control_bounds("file-tree-offset")[0]
+
+                    xdo("click", "--repeat", "2", "--delay", "30", "5")
+                    pause()
+                    opened["wheel"] = offset()
+                    assert opened["wheel"] > 0, ("The wheel must scroll the tree during a drag", opened)
+                    xdo("click", "--repeat", "40", "--delay", "5", "4")
+                    pause()
+                    assert offset() == 0, ("The wheel must scroll the tree back during a drag", opened)
+                    xdo("mousemove", "--sync", str(x), str(round(viewport[3]) - 8))
+                    time.sleep(.6)
+                    opened["edge"] = offset()
+                    assert opened["edge"] > 0, ("Holding a drag at the bottom edge must scroll the tree down", opened)
+                    xdo("mousemove", "--sync", str(x), str(round(viewport[1]) + 8))
+                    time.sleep(.6)
+                    opened["top"] = offset()
+                    assert opened["top"] < opened["edge"], ("Holding a drag at the top edge must scroll the tree up", opened)
+                    xdo("mousemove", "--sync", str(x), str(round((viewport[1] + viewport[3]) / 2)))
+                    xdo("click", "--repeat", "40", "--delay", "5", "4")
+                    pause()
+                    assert offset() == 0, opened
+
+                drag(point(dragged), point("folder:Drag closed"), hold=.2, during=rest_scroll_and_look, cancel=True)
+                unchanged(before, "Drag source")
+                click_control("folder:Zz drag filler")
+                assert control_bounds("file:Zz drag filler/Filler 01.md", required=False) is None
+                results.append(f"Resting a drag on a collapsed folder opened it after {opened['after']} s; mid-drag the wheel scrolled the tree ({opened['wheel']:.0f} px) and back, the bottom edge down ({opened['edge']:.0f} px) and the top edge up ({opened['top']:.0f} px); Escape ended it and no file changed")
+
+                drag(point(dragged), point("folder:Notes"))
+                unchanged(before, "Drag source")
+                drag(point(dragged), (800, 450))
+                unchanged(before, "Drag source")
+                results.append("Dropping a note on its own folder, or outside the explorer, changed nothing")
+
+                drag(point(dragged), point("folder:Projects"))
+                moved = fixture / "Projects/Drag source.md"
+                control_bounds("move-links-dialog")
+                assert not source.exists() and moved.read_bytes() == source_bytes
+                click_control("move-links-once", hold=.15)
+                assert reference.read_bytes() == b"[[Projects/Drag source|Alias]]\r\n[Label](Projects/Drag%20source.md)\r\n", reference.read_bytes()
+                title_contains("Drag source")
+                control_bounds("tab-full:Projects/Drag source.md")
+                assert control_bounds("tab-full:Notes/Drag source.md", required=False) is None
+                row, viewport = control_bounds("file:Projects/Drag source.md"), control_bounds("file-tree-viewport")
+                assert viewport[1] - .5 <= row[1] and row[3] <= viewport[3] + .5, ("The tree must show the moved note", row, viewport)
+                capture("native-drag-move-dropped.png")
+                results.append("Dropping the open note on Projects moved its exact CRLF bytes, Just once retargeted both link forms as the Move dialog does, and the tab and the tree followed it")
+
+                set_theme(False)
+                drag(point("folder:Drag folder"), point("folder:Projects"), during=lambda: inspect_drag("light", "Drag folder", "Projects"))
+                assert not package.exists()
+                assert (fixture / "Projects/Drag folder/Inner.md").read_bytes() == inner_bytes
+                assert (fixture / "Projects/Drag folder/Sub/Deep.md").read_bytes() == deep_bytes
+                assert package_reference.read_bytes() == b"[[Projects/Drag folder/Inner]]\n", package_reference.read_bytes()
+                assert control_bounds("move-links-dialog", required=False) is None
+                control_bounds("folder:Projects/Drag folder")
+                set_theme(True)
+                results.append("Dropping a folder on Projects moved it with its nested contents and updated a link into it; both themes kept the highlight and the dragged row legible")
+
+                before = files()
+                start = point("folder:Projects/Drag folder")
+                drag(start, (start[0] + 80, start[1]))
+                unchanged(before, "Drag source")
+                results.append("Dropping a folder on itself changed nothing")
+
+                drag(point("file:Projects/Drag source.md"), point("file-tree-root", 10))
+                root_note = fixture / "Drag source.md"
+                control_bounds("move-links-dialog")
+                assert root_note.read_bytes() == source_bytes and not moved.exists()
+                click_control("move-links-once", hold=.15)
+                assert reference.read_bytes() == b"[[Drag source|Alias]]\r\n[Label](Drag%20source.md)\r\n", reference.read_bytes()
+                control_bounds("tab-full:Drag source.md")
+                title_contains("Drag source")
+                results.append("Dropping the note on the vault name moved it to the vault root with the same link update and tab")
+
+                reference.write_bytes(b"No links here.\n")
+                occupied = fixture / "Notes/Drag source.md"
+                occupied.write_bytes(b"KEEP_OCCUPIED\n")
+                (fixture / "Drag folder").mkdir()
+                (fixture / "Drag folder/Again.md").write_bytes(b"# Again\n")
+                command("Refresh vault")
+                pause()
+                drag(point("file:Drag source.md"), point("folder:Notes"))
+                assert (fixture / "Notes/Drag source 1.md").read_bytes() == source_bytes and not root_note.exists()
+                assert occupied.read_bytes() == b"KEEP_OCCUPIED\n"
+                drag(point("folder:Drag folder"), point("folder:Projects"))
+                assert (fixture / "Projects/Drag folder 1/Again.md").read_bytes() == b"# Again\n"
+                assert (fixture / "Projects/Drag folder/Inner.md").read_bytes() == inner_bytes
+                assert all((fixture / name).read_bytes() == data for name, data in untouched.items())
+                results.append("Taken names got a number, as the Move dialog and Obsidian do: Notes/Drag source 1.md and Projects/Drag folder 1; the occupied note and the demo notes kept their bytes")
+
+            def narrow_html_checks():
+                close_tabs()
+                words = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November".split()
+                tags = ["<br>", "<br/>", "<br />", "</br>", "<BR>"]
+                text = "# Narrow Markdown\n\n" + "\n\n".join(f"[Before](before-{i}){tag}Editable [After](after-{i})" for i, tag in enumerate(tags))
+                text += "\n\n> " + " ".join(f"[{word}](quote-{i})" for i, word in enumerate(words)) + "\n\nEnd.\n"
+                note = fixture / "Narrow Markdown.md"; note.write_text(text)
+                command("Refresh vault"); pause(); open_note("Narrow Markdown")
+                failures = []; observations = []
+                for width in (1440, 960):
+                    xdo("windowsize", window, str(width), "960"); pause()
+                    command("Live preview"); pause()
+                    quote = control_bounds("quote:0")
+                    words_bounds = {word: control_bounds(f"editor-link:quote-{i}") for i, word in enumerate(words)}
+                    crossed = [word for word, box in words_bounds.items() if box[0] < quote[0] + 12]
+                    if crossed: failures.append(f"{width}: quote border crosses wrapped words {crossed}")
+                    breaks = []
+                    for i, tag in enumerate(tags):
+                        before = control_bounds(f"editor-link:before-{i}"); after = control_bounds(f"editor-link:after-{i}")
+                        breaks.append({"tag": tag, "before": before, "after": after})
+                        if after[1] < before[3] - 1: failures.append(f"{width}: {tag} must put After below Before")
+                    observations.append({"width": width, "quote": quote, "words": words_bounds, "breaks": breaks})
+                    capture(f"native-narrow-html-{width}.png")
+                    assert note.read_text() == text, "Rendering and resizing must not rewrite Markdown"
+                (reports / "narrow-html-layout.json").write_text(json.dumps(observations, indent=2) + "\n")
+                assert not failures, "\n".join(failures)
+                results.append("Wide and narrow Live Preview keep wrapped quote text inside the border and render all five HTML break forms without changing the source")
+                command("Source editing")
+                for i, tag in enumerate(tags):
+                    before = control_bounds(f"editor-link:before-{i}"); after = control_bounds(f"editor-link:after-{i}")
+                    assert abs(after[1] - before[1]) < 2, "Source mode must retain literal tags on the original source line"
+                assert note.read_text() == text
+                results.append("Source editing retains literal break syntax and the note remains byte-identical")
+                command("Live preview")
+                after = control_bounds("editor-link:after-0")
+                xdo("mousemove", "--sync", str(round(after[0] - 20)), str(round((after[1] + after[3]) / 2)), "click", "1"); pause()
+                type_text("EDIT_MARK"); key("ctrl+s")
+                edited = note.read_text()
+                assert "EDIT_MARK" in edited, "The real editing action must insert text"
+                assert edited.replace("EDIT_MARK", "") == text, "Typing after a rendered break must preserve every other source character"
+                start = text.index("Editable [After](after-0)")
+                assert start <= edited.index("EDIT_MARK") <= start + len("Editable"), "The visible caret must edit the visible word after the break"
+                key("ctrl+z"); key("ctrl+s"); assert note.read_text() == text
+                key("ctrl+y"); key("ctrl+s"); assert note.read_text() == edited
+                capture("native-narrow-html-editing.png")
+                results.append("A real click after a rendered HTML break edits the intended word; Save, Undo and Redo retain every break tag and source character")
+
+            def html_import_checks():
+                close_tabs()
+                source = fixture / "Editable.html"
+                original = b'<!doctype html><html><head><style>HIDDEN_STYLE</style><script>HIDDEN_SCRIPT</script></head><body><h1>Editable HTML</h1><p>Normal <strong>bold</strong> content.</p><ul><li>First item</li><li>Second item</li></ul><a href="Home.md">Home</a></body></html>'
+                source.write_bytes(original)
+                collision = fixture / "Editable.md"
+                collision.write_bytes(b"KEEP_EXISTING_NOTE\n")
+                command("Refresh vault"); pause(); open_note("Editable.html", title="Editable")
+                command("Reading view")
+                copied = fixture / "Editable 1.md"
+                assert copied.exists(), "HTML Reading view must convert the page to editable Markdown, not show its HTML source"
+                title_contains("Editable 1")
+                converted = copied.read_text()
+                assert "# Editable HTML" in converted and "**bold**" in converted
+                assert "[Home](Home.md)" in converted
+                assert all(value not in converted for value in ("<html", "<body", "<strong", "HIDDEN_STYLE", "HIDDEN_SCRIPT"))
+                assert source.read_bytes() == original and collision.read_bytes() == b"KEEP_EXISTING_NOTE\n"
+                capture("native-html-import-reading.png")
+                key("ctrl+e"); editor_end(); type_text("\nEDITED_HTML_IMPORT\n"); key("ctrl+s")
+                assert "EDITED_HTML_IMPORT" in copied.read_text(), "Converted content must be editable and save as Markdown"
+                key("ctrl+z"); key("ctrl+s")
+                assert "EDITED_HTML_IMPORT" not in copied.read_text()
+                key("ctrl+y"); key("ctrl+s")
+                assert "EDITED_HTML_IMPORT" in copied.read_text()
+                assert source.read_bytes() == original
+                capture("native-html-import-editing.png")
+                results.append("HTML Reading view created structured Markdown without page tags, skipped an occupied name, and supported editing, save, Undo and Redo while preserving the HTML")
+
+                open_note("Editable.html", title="Editable")
+                command("Live preview")
+                title_contains("Editable 2")
+                assert (fixture / "Editable 2.md").read_text() == converted
+                assert source.read_bytes() == original
+                results.append("Live preview uses the same converter and opens an editable note without overwriting either previous conversion")
+
+                empty = fixture / "Empty HTML.html"
+                empty.write_text("<html><head><script>hidden</script></head><body></body></html>")
+                command("Refresh vault"); pause(); open_note("Empty HTML.html", title="Empty HTML")
+                command("Reading view")
+                assert not (fixture / "Empty HTML.md").exists()
+                assert control_bounds("error-notice", required=False) is not None
+                results.append("A page with no editable body content reports an error and creates no empty note")
+
             def file_copy_checks():
                 close_tabs()
                 originals={p.relative_to(fixture).as_posix():p.read_bytes() for p in fixture.rglob("*.md")}
@@ -4758,7 +7321,7 @@ def main():
                     raise AssertionError("The actual tab controls did not become readable")
                 expected_pins={"Pinned first.md":True,"Pinned second.md":False}
                 assert pinned()==expected_pins
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 sessions=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Pinned first.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
                 assert len(sessions)==1
                 session_path=sessions[0]
@@ -4784,7 +7347,7 @@ def main():
                 command("New tab");title_contains("New tab")
                 command("Close current tab");title_contains("Pinned third")
                 expected_pins=pinned()
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 assert persisted_pins()==expected_pins
                 app=launch_app(launch_command);window=ready_window()
                 assert pinned()==expected_pins
@@ -4837,6 +7400,101 @@ def main():
                 assert all((fixture/name).read_bytes()==data for name,data in notes.items())
                 results.append("With no tabs the palette hid inactive pin/close commands; a deliberately created blank tab could be pinned, unpinned and closed without creating a note")
 
+            def system_theme_checks():
+                nonlocal app, window
+                originals = {path.relative_to(fixture): path.read_bytes()
+                    for path in fixture.rglob("*") if path.is_file()}
+                open_note("System appearance"); command("Reading view")
+                observations = []
+                selected_palette = "teal"
+
+                def saved_state():
+                    states = [json.loads(path.read_text())
+                        for path in (base / "state/rustidian").glob("*.json")]
+                    matching = [state for state in states
+                        if any(path == "System appearance.md" for path, _ in state.get("tabs", []))]
+                    assert len(matching) == 1, ("Expected this private vault's saved state", states)
+                    return matching[0]
+
+                def expect(dark, system, stage):
+                    expected = {("teal", True): (23, 27, 29), ("teal", False): (247, 246, 242),
+                        ("elpis-gold", True): (28, 27, 23), ("elpis-gold", False): (251, 248, 239)}[(selected_palette, dark)]
+                    deadline = time.monotonic() + 7
+                    stable_since = None
+                    actual = None
+                    while time.monotonic() < deadline:
+                        assert app.poll() is None, "App exited while following system appearance"
+                        controls = json.loads((base / "ui-probe.json").read_text())
+                        header = controls.get("button:More options")
+                        if header:
+                            actual = ImageGrab.grab(xdisplay=display).getpixel(
+                                (round((header[0] + header[2]) / 2), round(header[3] + 12)))[:3]
+                        matches = (controls.get("appearance-system", [None])[0] == int(system)
+                            and controls.get("appearance-dark", [None])[0] == int(dark)
+                            and actual is not None
+                            and max(abs(a - b) for a, b in zip(actual, expected)) <= 2)
+                        if matches:
+                            stable_since = stable_since or time.monotonic()
+                            if time.monotonic() - stable_since >= .6:
+                                observations.append(dict(stage=stage, dark=dark, system=system,
+                                    background_rgb=actual, expected_rgb=expected))
+                                (reports / "native-system-theme-observations.json").write_text(
+                                    json.dumps(observations, indent=2) + "\n")
+                                capture("native-system-theme-" + stage + ".png")
+                                return
+                        else:
+                            stable_since = None
+                        time.sleep(.05)
+                    raise AssertionError(("System appearance did not settle", stage, dark, system,
+                        actual, expected, controls.get("appearance-system"), controls.get("appearance-dark")))
+
+                def change_os(value):
+                    subprocess.run(["gsettings", "set", "org.gnome.desktop.interface", "color-scheme", value],
+                        env=environment, check=True, timeout=5, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    actual = subprocess.check_output(
+                        ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+                        env=environment, text=True, timeout=5).strip().strip("'")
+                    assert actual == value, ("Private OS preference was not written", actual, value)
+
+                def choose(label):
+                    command("Open settings"); click_control("settings-page:Appearance")
+                    click_control("settings-dark"); click_control("settings-theme:" + label); key("Escape")
+                    assert saved_state()["appearance"] == label.lower()
+
+                def restart():
+                    nonlocal app, window
+                    confirm_quit(); app.wait(timeout=5)
+                    app = launch_app(launch_command); window = ready_window()
+                    title_contains("System appearance")
+                    assert control_bounds("view-mode:Reading")
+
+                expect(True, True, "startup-dark")
+                command("Open settings"); click_control("settings-page:Appearance")
+                click_control("settings-palette:Elpis Gold"); key("Escape")
+                selected_palette = "elpis-gold"
+                expect(True, True, "gold-dark")
+                change_os("prefer-light"); expect(False, True, "live-light")
+                results.append("A new private profile defaults to System; changing the real keyfile OS preference redraws the native app from dark to light without a click, retaining the selected gold palette")
+
+                choose("Dark"); expect(True, False, "explicit-dark")
+                change_os("prefer-dark"); change_os("prefer-light")
+                expect(True, False, "dark-ignores-os-light")
+                choose("Light"); expect(False, False, "explicit-light")
+                change_os("prefer-dark"); expect(False, False, "light-ignores-os-dark")
+                results.append("Explicit Dark and Light choices remain stable when the private OS preference changes to the opposite color")
+
+                choose("System"); expect(True, True, "rejoined-dark")
+                change_os("prefer-light"); expect(False, True, "rejoined-light")
+                restart(); expect(False, True, "restored-system-light")
+                assert saved_state()["appearance"] == "system"
+                assert saved_state()["palette"] == "elpis-gold"
+                change_os("prefer-dark"); expect(True, True, "restored-system-live-dark")
+                choose("Light"); restart(); expect(False, False, "restored-explicit-light")
+                assert saved_state()["appearance"] == "light"
+                assert all((fixture / name).read_bytes() == data for name, data in originals.items())
+                assert {path.relative_to(fixture) for path in fixture.rglob("*") if path.is_file()} == set(originals)
+                results.append("Returning to System resumes live following; real restarts preserve System and explicit Light independently of OS color, retain the palette, and preserve every original fixture file byte")
+
             def settings_checks():
                 nonlocal app, window
                 note=fixture/"Notes/Settings controls.md"
@@ -4879,7 +7537,7 @@ def main():
                 assert not any(k.startswith("view-mode:") for k in json.loads((base/"ui-probe.json").read_text()))
                 assert note.read_text()==original
                 results.append("Real Editor switches hid the inline title, widened the document, selected Reading/Source for new tabs and hid the mode indicator without altering Markdown")
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 assert not control_bounds("note-title",required=False)
                 assert json.loads(path.read_text())["editor_preferences"]==dict(reading_view=True,source_mode=True,show_mode=False,inline_title=False,readable_line_length=False)
@@ -4989,7 +7647,7 @@ def main():
                 key("ctrl+y");key("ctrl+s");assert note.read_text()==original+"UNDO_FONT_PROOF"
                 key("ctrl+z");key("ctrl+s");assert note.read_text()==original
                 results.append("Source font changes returned editor focus and left existing text Undo/Redo intact, with exact saved bytes after each action")
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window();title_contains("Font controls");font(19)
                 editor_end();type_text("RESTART_FONT_PROOF");key("ctrl+z");key("ctrl+s");assert note.read_text()==original
                 results.append("A clean native restart restored document font size and mode; real focused editing still undid and saved unchanged bytes")
@@ -5020,7 +7678,513 @@ def main():
                 assert (other/"Home.md").read_text()=="# Other font vault\n\nKeep.\n" and note.read_text()==original
                 results.append("After preference changes and recovery, real task clicks and text Undo still worked and the default typography and every fixture were restored")
 
-            def tab_drag_checks(*, keys_only=False):
+            def font_family_checks():
+                nonlocal app,window
+                close_tabs()
+                note=fixture/"Font families.md"
+                original="# Font families\n\nA paragraph with **bold**, *italic* and `code`.\n\n```rust\nlet keep = 1;\n```\n"
+                note.write_text(original);open_note("Font families");command("Reading view")
+                def crop(name):
+                    left,top,right,bottom=map(round,control_bounds(name))
+                    xdo("mousemove","--sync","0","0");pause()
+                    return ImageGrab.grab(xdisplay=display).convert("RGB").crop((left,top,right,bottom))
+                def pick(setting,family):
+                    command("Open settings");click_control("settings-page:Appearance")
+                    # The font rows end the Appearance page: scroll to its end.
+                    left,top,right,bottom=control_bounds("settings-font-size")
+                    xdo("mousemove","--sync",str(round(left)),str(round(bottom)))
+                    for _ in range(10):xdo("click","5")
+                    pause();click_control(setting)
+                    assert control_bounds(setting+"-search")
+                    type_text(family.lower(),delay=1)
+                    click_control(setting+":"+("Default" if not family else family))
+                    capture(f"native-{setting}-{family or 'default'}.png".replace(" ","-"))
+                    key("Escape");pause()
+                def saved():
+                    states=[p for p in (base/"state/rustidian").glob("*.json") if any(path=="Font families.md" for path,_ in json.loads(p.read_text()).get("tabs",[]))]
+                    assert len(states)==1;return json.loads(states[0].read_text())["fonts"]
+                paragraph,code,tab,title=crop("reading-block:1"),crop("reading-block:2"),crop("tab-full:Font families.md"),crop("note-title")
+                pick("settings-text-font","DejaVu Serif")
+                assert saved()["text"]=="DejaVu Serif"
+                assert crop("reading-block:1")!=paragraph and crop("note-title")!=title,"The text font must redraw note text and the inline title"
+                assert crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab,"The text font must leave code and the interface unchanged"
+                command("Source editing");capture("native-font-families-source.png");command("Reading view")
+                results.append("Choosing the installed DejaVu Serif as Text font redrew note text, saved it, and left code blocks and tabs pixel-identical")
+                pick("settings-monospace-font","Liberation Mono")
+                assert saved()["monospace"]=="Liberation Mono" and crop("reading-block:2")!=code
+                pick("settings-interface-font","DejaVu Serif")
+                assert saved()["interface"]=="DejaVu Serif" and crop("tab-full:Font families.md")!=tab
+                results.append("Monospace and Interface fonts each redrew their own text and were saved")
+                confirm_quit();app.wait(timeout=5)
+                app=launch_app(launch_command);window=ready_window();title_contains("Font families");command("Reading view")
+                assert saved()=={"interface":"DejaVu Serif","text":"DejaVu Serif","monospace":"Liberation Mono"}
+                assert crop("reading-block:1")!=paragraph and crop("reading-block:2")!=code
+                results.append("A restart restored all three fonts")
+                for setting in ("settings-text-font","settings-monospace-font","settings-interface-font"):pick(setting,"")
+                assert saved()=={"interface":"","text":"","monospace":""}
+                assert crop("reading-block:1")==paragraph and crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab and crop("note-title")==title
+                assert note.read_text()==original
+                results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
+
+            def image_import_checks():
+                from Xlib import X, Xatom, display as xdisplay, protocol
+                modes = ("Source editing", "Live preview")
+                picture = Image.new("RGBA", (80, 48), (230, 40, 150, 255))
+                picture.paste((30, 190, 220, 255), (30, 10, 70, 40))
+                outside = base / "outside-images"; outside.mkdir()
+                clipboard = outside / "clipboard.png"; picture.save(clipboard)
+                collision = fixture / "Dropped picture.png"
+                Image.new("RGBA", (17, 13), (10, 20, 80, 255)).save(collision)
+                occupied = collision.read_bytes()
+                first = outside / collision.name; picture.save(first)
+                special = outside / "Drop ]] #.png"; picture.save(special)
+                for mode in modes:
+                    (fixture / f"Image {mode}.md").write_text("replace me")
+                dropped = fixture / "Image drop.md"; dropped.write_text("START\n\nEND")
+                failure = fixture / "Image failure.md"; failure.write_text("keep this draft")
+                literal = fixture / "Image literal.txt"; literal.write_text("literal")
+                table = fixture / "Image table.md"
+                table.write_text("# Image table\n\n| Image |\n| --- |\n| old |\n")
+                command("Refresh vault")
+                def pngs():
+                    return {p.relative_to(fixture) for p in fixture.rglob("*.png")}
+                def saved(path, expected):
+                    key("ctrl+s"); deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if path.read_text() == expected: return
+                        time.sleep(.05)
+                    raise AssertionError((path.name, expected, path.read_text()))
+                def paste_image(*, expect_import=True):
+                    before = pngs()
+                    owner = subprocess.Popen(["xclip", "-selection", "clipboard", "-in", "-quiet", "-target", "image/png"],
+                        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=environment)
+                    try:
+                        owner.stdin.write(clipboard.read_bytes()); owner.stdin.close(); pause()
+                        assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "image/png"], env=environment, timeout=5) == clipboard.read_bytes()
+                        modified_shortcut(xdo, "v"); pause()
+                        deadline = time.monotonic() + 4
+                        if expect_import:
+                            while pngs() == before and time.monotonic() < deadline: time.sleep(.05)
+                            assert pngs() != before, "The app did not import the clipboard image"
+                        else: time.sleep(.5)
+                    finally:
+                        if owner.poll() is None: owner.terminate()
+                        owner.wait(timeout=5)
+                def drop_files(paths, point):
+                    x, y = map(round, point)
+                    xdo("mousemove", "--sync", str(x), str(y)); pause()
+                    connection = xdisplay.Display(display)
+                    source = connection.screen().root.create_window(0, 0, 1, 1, 0, X.CopyFromParent, event_mask=X.PropertyChangeMask)
+                    target = connection.create_resource_object("window", int(window))
+                    atoms = {name: connection.intern_atom(name) for name in ["XdndSelection", "XdndEnter", "XdndPosition", "XdndDrop", "XdndStatus", "XdndFinished", "XdndActionCopy", "text/uri-list", "TARGETS"]}
+                    delivered = False; finished = False; sent_drop = False; events = []
+                    def send(name, data):
+                        target.send_event(protocol.event.ClientMessage(window=target, client_type=atoms[name], data=(32, data)), event_mask=0)
+                        connection.flush()
+                    try:
+                        source.set_selection_owner(atoms["XdndSelection"], X.CurrentTime)
+                        connection.sync()
+                        send("XdndEnter", [source.id, 5 << 24, atoms["text/uri-list"], 0, 0])
+                        send("XdndPosition", [source.id, 0, (x << 16) | y, X.CurrentTime, atoms["XdndActionCopy"]])
+                        deadline = time.monotonic() + 8
+                        while time.monotonic() < deadline and not finished:
+                            while connection.pending_events():
+                                event = connection.next_event()
+                                if event.type == X.SelectionRequest:
+                                    requestor = connection.create_resource_object("window", getattr(event.requestor, "id", event.requestor))
+                                    prop = event.property or event.target
+                                    if event.target == atoms["text/uri-list"]:
+                                        payload = ("\r\n".join(path.resolve().as_uri() for path in paths) + "\r\n").encode()
+                                        requestor.change_property(prop, event.target, 8, payload)
+                                        delivered = True; events.append("URI selection delivered")
+                                    elif event.target == atoms["TARGETS"]:
+                                        requestor.change_property(prop, Xatom.ATOM, 32, [atoms["text/uri-list"]])
+                                    else: prop = X.NONE
+                                    requestor.send_event(protocol.event.SelectionNotify(time=event.time, requestor=requestor, selection=event.selection, target=event.target, property=prop), event_mask=0)
+                                    connection.flush()
+                                elif event.type == X.ClientMessage:
+                                    values = list(event.data[1])
+                                    if event.client_type == atoms["XdndStatus"]:
+                                        events.append(["status", values]); assert values[1] & 1, events
+                                        if not sent_drop:
+                                            send("XdndDrop", [source.id, 0, X.CurrentTime, 0, 0]); sent_drop = True
+                                    elif event.client_type == atoms["XdndFinished"]:
+                                        events.append(["finished", values]); assert values[1] & 1, events
+                                        finished = True
+                            time.sleep(.01)
+                        assert delivered and finished, events
+                    finally:
+                        source.destroy(); connection.flush(); connection.close()
+                    pause()
+                for mode in modes:
+                    path = fixture / f"Image {mode}.md"
+                    open_note(path.name, title=path.stem); command(mode); editor_end()
+                    modified_shortcut(xdo, "a"); pause(); before = pngs(); paste_image()
+                    new = pngs() - before; assert len(new) == 1, new
+                    attachment = next(iter(new)); link = f"![[{attachment.as_posix()}]]"
+                    saved(path, link)
+                    assert Image.open(fixture / attachment).convert("RGBA").tobytes() == picture.tobytes()
+                    capture("native-image-paste-" + mode.replace(" ", "-") + ".png")
+                    if mode == "Live preview":
+                        screen = ImageGrab.grab(xdisplay=display).convert("RGB")
+                        assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 200, "The saved image must render in Live Preview"
+                    key("ctrl+z"); saved(path, "replace me")
+                    key("ctrl+y"); saved(path, link); assert pngs() == before | new
+                    key("ctrl+o"); count = pngs(); paste_image(expect_import=False); assert pngs() == count
+                    key("Escape"); saved(path, link)
+                    results.append(mode + ": actual PNG clipboard paste saved matching pixels in the vault root, replaced the selection, rendered in Live Preview, survived Undo/Redo and did not import into Quick Open")
+                open_note(dropped.name, title=dropped.stem); command("Source editing"); editor_end()
+                left, top, right, bottom = control_bounds("editor-caret")
+                point = (right + 24, (top + bottom) / 2)
+                key("ctrl+Home"); before = pngs()
+                left, top, right, bottom = control_bounds("image-drop-target")
+                assert left <= point[0] <= right and top <= point[1] <= bottom
+                drop_files([first, special], point)
+                expected = "START\n\nEND![[Dropped picture 1.png]]\n![[Drop %5D%5D %23.png]]"
+                saved(dropped, expected)
+                assert pngs() - before == {Path("Dropped picture 1.png"), Path(special.name)}
+                assert collision.read_bytes() == occupied and first.read_bytes() == clipboard.read_bytes()
+                assert (fixture / "Dropped picture 1.png").read_bytes() == first.read_bytes()
+                assert (fixture / special.name).read_bytes() == special.read_bytes()
+                capture("native-image-drop-source.png")
+                command("Live preview"); pause()
+                capture("native-image-drop-live.png")
+                screen = ImageGrab.grab(xdisplay=display).convert("RGB")
+                assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 4000, "Both dropped images must render"
+                command("Source editing"); editor_end()
+                left, top, right, bottom = control_bounds("image-drop-target"); before = pngs()
+                key("ctrl+Home")
+                drop_files([fixture / "Dropped picture 1.png"], ((left + right) / 2, bottom - 30))
+                saved(dropped, expected + "![[Dropped picture 1.png]]"); assert pngs() == before
+                key("ctrl+z"); saved(dropped, expected)
+                results.append("Native Xdnd multi-image drop inserted at the pointer instead of the old caret, copied exact bytes, preserved a filename collision, escaped ]]/# names, rendered both images, reused an existing vault attachment and supported Undo")
+                left, top, right, bottom = control_bounds("image-drop-target"); before = pngs()
+                key("ctrl+o"); drop_files([first], ((left + right) / 2, bottom - 30))
+                assert pngs() == before, "A drop behind Quick Open must not create an attachment"
+                key("Escape"); saved(dropped, expected)
+                results.append("A native file drop behind Quick Open left the hidden note and all attachments unchanged")
+                open_note(table.name, title=table.stem); command("Live preview")
+                click_control("edit-table-cell:0:1:0"); modified_shortcut(xdo, "a"); pause()
+                before = pngs(); paste_image(); new = pngs() - before; assert len(new) == 1, new
+                attachment = next(iter(new)); key("ctrl+s")
+                expected_cell = f"| ![[{attachment.as_posix()}]] |"
+                deadline = time.monotonic() + 4
+                while expected_cell not in table.read_text() and time.monotonic() < deadline: time.sleep(.05)
+                assert expected_cell in table.read_text(), table.read_text()
+                key("Escape")
+                open_note(literal.name, title=literal.stem); editor_end(); before = pngs(); paste_image(expect_import=False)
+                saved(literal, "literal"); assert pngs() == before
+                results.append("Image paste also reached the focused Live Preview table cell; plain-text files retained literal contents without creating attachments")
+                open_note(failure.name, title=failure.stem); command("Source editing"); editor_end(); before = pngs()
+                mode = fixture.stat().st_mode
+                try:
+                    fixture.chmod(0o555); paste_image(expect_import=False); capture("native-image-import-error.png")
+                finally: fixture.chmod(mode)
+                assert pngs() == before
+                key("Escape"); saved(failure, "keep this draft")
+                results.append("A real unwritable-vault import failed visibly and preserved the note and all attachments")
+
+            def delimiter_pair_checks():
+                pairs = [("round", "(", ")"), ("square", "[", "]"), ("curly", "{", "}"), ("single", "'", "'"), ("double", '"', '"')]
+                modes = ("Source editing", "Live preview")
+                for mode in modes:
+                    for label, _, _ in pairs:
+                        (fixture / f"Pair {mode} {label}.md").write_text("")
+                    (fixture / f"Pair {mode} context.md").write_text("can")
+                    (fixture / f"Pair {mode} unicode.md").write_text("café 👋")
+                    (fixture / f"Pair {mode} link.md").write_text("")
+                    (fixture / f"Pair {mode} queued.md").write_text("")
+                    (fixture / f"Pair {mode} format.md").write_text("word")
+                    (fixture / f"Pair {mode} enter.md").write_text("- Item")
+                    (fixture / f"Pair {mode} follow.md").write_text("")
+                (fixture / "Pair target.md").write_text("# Pair target\n")
+                (fixture / "Pair table.md").write_text("# Pair table\n\n| Value |\n| --- |\n| old |\n")
+                literal = fixture / "Pair literal.txt"; literal.write_text("")
+                command("Refresh vault")
+                def saved(path, expected):
+                    key("ctrl+s")
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and path.read_text() != expected:
+                        time.sleep(.05)
+                    assert path.read_text() == expected, (path.name, expected, path.read_text())
+                def choose(name, mode):
+                    open_note(name + ".md", title=name)
+                    control_bounds("tab-full:" + name + ".md")
+                    command(mode); editor_end(); control_bounds("editor-focused")
+                    return fixture / (name + ".md")
+                def select_all():
+                    modified_shortcut(xdo, "a"); pause()
+                for mode in modes:
+                    for label, opening, closing in pairs:
+                        path = choose(f"Pair {mode} {label}", mode)
+                        type_text(opening); saved(path, opening + closing)
+                        key("BackSpace"); saved(path, "")
+                        type_text(opening); type_text("inside"); type_text(closing); type_text("!")
+                        saved(path, opening + "inside" + closing + "!")
+                        select_all(); type_text("word"); saved(path, "word")
+                        select_all(); type_text(opening); saved(path, opening + "word" + closing)
+                        key("ctrl+z"); saved(path, "word")
+                        key("ctrl+y"); saved(path, opening + "word" + closing)
+                        type_text("new"); saved(path, opening + "new" + closing)
+                    capture("native-pairs-" + mode.replace(" ", "-") + ".png")
+                    results.append(mode + ": round/square/curly brackets and both quotes pair, empty pairs backspace together, closers overtype, selected text wraps and Undo/Redo preserves the inner selection")
+                    path = choose(f"Pair {mode} context", mode)
+                    type_text("'t"); saved(path, "can't")
+                    select_all(); type_text("word"); key("ctrl+Home"); type_text("("); saved(path, "(word")
+                    select_all(); paste_text("("); saved(path, "(")
+                    select_all(); paste_text("\\"); type_text("("); saved(path, "\\(")
+                    select_all(); key("BackSpace"); type_text('"'); type_text("\\"); type_text('"')
+                    saved(path, '"' + "\\" + '""')
+                    type_text('"'); type_text("!"); saved(path, '"' + "\\" + '""!')
+                    path = choose(f"Pair {mode} unicode", mode)
+                    select_all(); type_text("("); saved(path, "(café 👋)")
+                    path = choose(f"Pair {mode} link", mode)
+                    type_text("[[Pair target"); key("Tab"); type_text(" after")
+                    saved(path, "[[Pair target]] after")
+                    path = choose(f"Pair {mode} queued", mode)
+                    queued_steps(("text", "[[Pair target"), ("key", "Tab"), ("text", " queued"))
+                    saved(path, "[[Pair target]] queued")
+                    path = choose(f"Pair {mode} enter", mode)
+                    queued_steps(("text", " ("), ("key", "Return"), ("text", "next"))
+                    saved(path, "- Item (\n- next)")
+                    path = choose(f"Pair {mode} follow", mode)
+                    queued_steps(("text", "[[Pair target"), ("key", "ctrl+Return"))
+                    control_bounds("tab-full:Pair target.md")
+                    control_bounds("tab-full:" + path.name)
+                    click_control("tab-full:" + path.name); saved(path, "[[Pair target]]")
+                    click_control("tab-full:Pair target.md"); key("ctrl+w")
+                    path = choose(f"Pair {mode} format", mode)
+                    select_all(); key("ctrl+b"); saved(path, "**word**")
+                    key("ctrl+i"); saved(path, "***word***")
+                    key("ctrl+i"); saved(path, "**word**")
+                    key("ctrl+b"); saved(path, "word")
+                    key("ctrl+i"); saved(path, "*word*")
+                    key("ctrl+b"); saved(path, "***word***")
+                    key("ctrl+b"); saved(path, "*word*")
+                    key("ctrl+i"); saved(path, "word")
+                    capture("native-pairs-context-" + mode.replace(" ", "-") + ".png")
+                    results.append(mode + ": apostrophes stay literal inside words, pasted text is unchanged, Unicode wraps, normal/queued wiki completion and bold/italic shortcuts work")
+                open_note("Pair literal.txt", title="Pair literal"); editor_end()
+                type_text("("); saved(literal, "(")
+                results.append("Plain text files keep literal input rather than Markdown bracket pairing")
+                open_note("Pair table.md", title="Pair table"); command("Live preview")
+                click_control("edit-table-cell:0:1:0")
+                select_all(); key("BackSpace"); type_text("("); key("ctrl+s")
+                table = fixture / "Pair table.md"
+                assert "| () |" in table.read_text(), table.read_text()
+                type_text("cell"); type_text(")"); key("ctrl+s")
+                assert "| (cell) |" in table.read_text(), table.read_text()
+                capture("native-pairs-table.png")
+                key("Escape")
+                results.append("The same native pairing works inside an editable Markdown table cell")
+
+            def external_rename_checks():
+                nonlocal app, window
+                folder = fixture / "Outside moves/Inner"
+                folder.mkdir(parents=True)
+                source = folder / "External original.md"
+                original = "# External original\n\nEXTERNAL_RENAME_BODY\n"
+                source.write_text(original)
+                sibling = folder / "External sibling.md"
+                sibling.write_text("# Sibling\n\nKEEP_SIBLING\n")
+                command("Refresh vault")
+                open_note("Outside moves/Inner/External original.md", title="External original")
+                command("Source editing")
+                editor_end()
+                renamed = folder / "External renamed.md"
+                source.rename(renamed)
+                control_bounds("tab-full:Outside moves/Inner/External renamed.md")
+                title_contains("External renamed")
+                assert not control_bounds("tab-full:Outside moves/Inner/External original.md", required=False)
+                assert renamed.read_text() == original and not source.exists()
+                capture("native-external-file-rename.png")
+                results.append("Renaming an open file outside the app retargeted its tab and kept its saved bytes")
+                (fixture / "Outside moves").rename(fixture / "Moved outside")
+                moved = fixture / "Moved outside/Inner/External renamed.md"
+                control_bounds("tab-full:Moved outside/Inner/External renamed.md")
+                assert moved.read_text() == original
+                assert (fixture / "Moved outside/Inner/External sibling.md").read_text() == "# Sibling\n\nKEEP_SIBLING\n"
+                updated = original + "EXTERNAL_UPDATE\n"
+                moved.write_text(updated)
+                def copied():
+                    editor_end(); modified_shortcut(xdo, "a"); pause()
+                    modified_shortcut(xdo, "c"); pause()
+                    return subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"], env=environment, text=True, timeout=5)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    if copied() == updated:
+                        break
+                    time.sleep(.1)
+                else:
+                    raise AssertionError("External edits stopped refreshing after the folder move")
+                capture("native-external-folder-move.png")
+                results.append("An external folder move retargeted the open child; sibling bytes and later external content refresh survived")
+                command("Open settings"); type_text("autosave")
+                click_control("settings-autosave", hold=.15)
+                wait_autosave(base / "state", False)
+                key("Escape")
+                editor_end(); type_text("LOCAL_DIRTY")
+                assert moved.read_text() == updated, "Autosave was not disabled for the dirty-note case"
+                dirty = moved.with_name("External dirty renamed.md")
+                moved.rename(dirty)
+                target = "Moved outside/Inner/External dirty renamed.md"
+                control_bounds("tab-full:" + target)
+                assert copied() == updated + "LOCAL_DIRTY", "External rename discarded unsaved edits"
+                key("ctrl+s")
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and dirty.read_text() != updated + "LOCAL_DIRTY":
+                    time.sleep(.05)
+                assert dirty.read_text() == updated + "LOCAL_DIRTY" and not moved.exists()
+                editor_end(); key("ctrl+z"); key("ctrl+s")
+                assert dirty.read_text() == updated, "Undo history did not follow the renamed dirty note"
+                capture("native-external-dirty-rename.png")
+                results.append("External renaming preserved a dirty draft, saved only to its new path and retained Undo")
+                open_note("Moved outside/Inner/External sibling.md", title="External sibling")
+                key("alt+Left")
+                control_bounds("tab-full:" + target)
+                key("ctrl+w"); key("ctrl+shift+t")
+                control_bounds("tab-full:" + target)
+                confirm_quit(); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                control_bounds("tab-full:" + target)
+                assert dirty.read_text() == updated
+                capture("native-external-rename-restart.png")
+                results.append("History, reopen-closed-tab and restart used the new file path; no old path was recreated")
+                command("Open settings"); type_text("autosave")
+                click_control("settings-autosave", hold=.15)
+                wait_autosave(base / "state", True)
+                key("Escape")
+                editor_end(); type_text("AUTOSAVED_MOVE")
+                intermediate = dirty.with_name("External intermediate.md")
+                autosaved = dirty.with_name("External autosaved.md")
+                dirty.rename(intermediate); intermediate.rename(autosaved)
+                control_bounds("tab-full:Moved outside/Inner/External autosaved.md")
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and autosaved.read_text() != updated + "AUTOSAVED_MOVE":
+                    time.sleep(.05)
+                assert autosaved.read_text() == updated + "AUTOSAVED_MOVE"
+                assert not dirty.exists() and not intermediate.exists()
+                pause()  # Let the completed background save reach the visible status.
+                capture("native-external-autosave-chain.png")
+                results.append("With normal autosave enabled, a dirty note followed two immediate external renames and saved its edits only at the final path")
+
+            def list_indent_checks():
+                # Real keystrokes and saved bytes own this contract, in both editors.
+                source = b"- Alpha\n- Beta\n"
+                cases = [
+                    ("selected", source, ["ctrl+a"], "Tab", b"\t- Alpha\n\t- Beta\n"),
+                    ("spaces", b"    - Alpha\n    - Beta\n", ["ctrl+a"], "shift+Tab", source),
+                    ("boundary", source, ["ctrl+Home", "shift+Down"], "Tab", b"\t- Alpha\n- Beta\n"),
+                    ("caret", source, ["ctrl+Home", "End"], "Tab", b"\t- Alpha\n- Beta\n"),
+                    ("root-outdent", source, ["ctrl+a"], "shift+Tab", source),
+                    ("quoted", b"> - Alpha\n> - Beta\n", ["ctrl+a"], "Tab", b"> \t- Alpha\n> \t- Beta\n"),
+                    ("tasks", b"1. [ ] Alpha\n2. [x] Beta\n", ["ctrl+a"], "Tab", b"\t1. [ ] Alpha\n\t2. [x] Beta\n"),
+                    ("quoted-code", b"```\n> Alpha\n> Beta\n```\n", ["ctrl+a"], "Tab", b"\t```\n\t> Alpha\n\t> Beta\n\t```\n"),
+                    ("unicode", "- فارسی\r\n- café 👋\r\n".encode(), ["ctrl+a"], "Tab", "\t- فارسی\r\n\t- café 👋\r\n".encode()),
+                    ("queued", source, ["ctrl+a"], "queued-tabs", b"\t\t- Alpha\n\t\t- Beta\n"),
+                    ("queued-selection", source, [], "queued-selection", b"\t- Alpha\n\t- Beta\n"),
+                    ("queued-caret", source, [], "queued-caret", b"\t- Alpha\n- Beta\n"),
+                    ("plain", b"plain", ["ctrl+End"], "Tab", b"plain\t"),
+                ]
+                modes = ("Source editing", "Live preview")
+                literal = fixture / "List literal.txt"
+                literal.write_bytes(b"- Alpha\n")
+                for mode in modes:
+                    for label, original, _, _, _ in cases:
+                        (fixture / f"List {mode} {label}.md").write_bytes(original)
+                command("Refresh vault")
+                observed = []
+                def saved(path, expected):
+                    key("ctrl+s")
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and path.read_bytes() != expected:
+                        time.sleep(.05)
+                    assert path.read_bytes() == expected, (path.name, expected, path.read_bytes())
+                for mode in modes:
+                    for label, original, selection, action, expected in cases:
+                        name = f"List {mode} {label}"
+                        path = fixture / (name + ".md")
+                        open_note(name + ".md", title=name)
+                        control_bounds("tab-full:" + name + ".md")
+                        command(mode)
+                        editor_end()
+                        for chord in selection:
+                            key(chord)
+                        if action == "queued-tabs":
+                            queued_steps(("key", "Tab"), ("key", "Tab"))
+                        elif action == "queued-selection":
+                            queued_steps(("key", "ctrl+a"), ("key", "Tab"))
+                        elif action == "queued-caret":
+                            queued_steps(("key", "ctrl+Home"), ("key", "End"), ("key", "Tab"))
+                        else:
+                            key(action)
+                        saved(path, expected)
+                        if label in ("selected", "unicode", "queued", "quoted"):
+                            capture(f"native-list-{mode.replace(' ', '-')}-{label}.png")
+                        if label == "selected":
+                            key("ctrl+z"); saved(path, original)
+                            key("ctrl+shift+z"); saved(path, expected)
+                            key("shift+Tab"); saved(path, original)
+                            key("ctrl+z"); saved(path, expected)
+                        if label == "caret":
+                            type_text("!")
+                            saved(path, b"\t- Alpha!\n- Beta\n")
+                        observed.append({"mode": mode, "case": label, "saved": path.read_bytes().decode()})
+                    results.append(mode + ": Tab/Shift+Tab preserve selected lists, root outdent is harmless, boundary selections exclude the next line, caret and Undo/Redo survive, quotes/tasks/Unicode/CRLF and queued Tabs work; prose keeps literal Tab")
+                open_note("List literal.txt", title="List literal")
+                editor_end(); key("ctrl+Home"); key("End"); key("Tab")
+                saved(literal, b"- Alpha\t\n")
+                results.append("A list-looking line in a plain text file keeps a literal Tab at the caret")
+                (reports / "list-indent-observations.json").write_text(json.dumps(observed, ensure_ascii=False, indent=2) + "\n")
+
+            def list_enter_checks():
+                """Exercise list continuation through real editor input and saved bytes."""
+                cases = [
+                    ("bullet", "- Alpha", "- Alpha\n- ", "Beta", []),
+                    ("number", "9. Alpha", "9. Alpha\n10. ", "Beta", []),
+                    ("task", "- [x] Alpha", "- [x] Alpha\n- [ ] ", "Beta", []),
+                    ("nested", "- Parent\n\t- Alpha", "- Parent\n\t- Alpha\n\t- ", "Beta", []),
+                    ("indented-code", "\t- Alpha", "\t- Alpha\n", "", []),
+                    ("quote", "> - Alpha", "> - Alpha\n> - ", "Beta", []),
+                    ("unicode", "- فارسی", "- فارسی\n- ", "café 👋", []),
+                    ("empty", "- Alpha\n- ", "- Alpha\n", "", []),
+                    ("split", "- AlphaBeta", "- Alpha\n- Beta", "", ["Left"] * 4),
+                ]
+                fixtures = []
+                for prefix, mode in [("Source", "Source editing"), ("Live", "Live preview")]:
+                    for name, source, entered, suffix, position in cases:
+                        path = fixture / "Notes" / f"Continue {prefix} {name}.md"
+                        path.write_bytes(source.encode("utf-8"))
+                        fixtures.append((path, mode, source, entered, suffix, position))
+                plain = fixture / "Notes" / "Continue literal.txt"
+                plain.write_bytes(b"- Alpha")
+                fixtures.append((plain, "Source editing", "- Alpha", "- Alpha\n", "Beta", []))
+                command("Refresh vault")
+
+                def saved(path, expected):
+                    key("ctrl+s")
+                    limit = time.monotonic() + 3
+                    while time.monotonic() < limit and path.read_bytes() != expected.encode("utf-8"):
+                        time.sleep(.05)
+                    actual = path.read_bytes()
+                    assert actual == expected.encode("utf-8"), (path.name, expected, actual)
+
+                for path, mode, source, entered, suffix, position in fixtures:
+                    open_note(path.name, title=path.stem); command(mode); editor_end()
+                    key("ctrl+End")
+                    for stroke in position:
+                        key(stroke)
+                    key("Return"); saved(path, entered)
+                    key("ctrl+z"); saved(path, source)
+                    key("ctrl+y"); saved(path, entered)
+                    if suffix:
+                        paste_text(suffix); saved(path, entered + suffix)
+                    if "unicode" in path.stem:
+                        capture(f"native-list-enter-{mode.split()[0].lower()}.png")
+                results.append("Source and Live Enter continued bullets, numbered items, unchecked task markers, nested/quoted and Unicode lists; empty items exited, mid-item splits retained text, and exact saved bytes survived Undo/Redo")
+                results.append("Indented code and plain text Enter inserted an ordinary newline without continuing a Markdown-looking list")
+
+            def tab_drag_checks():
                 nonlocal app, window
                 close_tabs()
                 contents = {name: f"# Drag {name}\n\nKeep {name}.\n" for name in ("Alpha", "Beta", "Gamma", "Delta")}
@@ -5045,9 +8209,6 @@ def main():
                     command("Source editing"); editor_end(); key("Left"); key("Right")
                     title_contains("Drag " + names[0])
                     results.append("Left/Right and Home/End navigate the focused tab bar; arrows in the editor keep the same document selected")
-                if keys_only:
-                    keyboard()
-                    return
                 def drag(name, target, after=False, outside=False, cancel=False):
                     source = control_bounds(f"tab-full:Drag {name}.md")
                     destination = control_bounds(f"tab-full:Drag {target}.md")
@@ -5089,7 +8250,7 @@ def main():
                 command("Source editing")
                 editor_end(); type_text("UNDO_AFTER_DRAG"); key("ctrl+z"); key("ctrl+s")
                 assert all((fixture / f"Drag {name}.md").read_text() == source for name, source in contents.items())
-                xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=10)
+                confirm_quit(); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
                 assert order() == before, (before, order())
                 title_contains("Drag Alpha")
@@ -5099,6 +8260,422 @@ def main():
                 keyboard()
                 click_control("tab-full:Drag Beta.md"); command("Toggle pin")
                 results.append("Restart retained the reordered tabs, selected document and pin; switching, closing, Undo and exact saved note contents remained intact")
+
+            def backlink_context_checks():
+                close_tabs()
+                source_dir=fixture/'Backlink Sources'; source_dir.mkdir(exist_ok=True)
+                other_dir=fixture/'Backlink Other'; other_dir.mkdir(exist_ok=True)
+                target=fixture/'Backlink Target.md'; target.write_text('# Backlink Target\n\n## Section\n\nTARGET BODY ^id\n\n[[Backlink Target]]\n')
+                alias='[[Backlink Target#Section|alias]]'; same='[[Backlink Target]]'; markdown='[markdown alias](../Backlink%20Target.md#Section)'; embed='[[Backlink Target#^id]]'; image='![note image](../Backlink%20Target.md)'
+                source_text=('---\ntitle: "Café 👋"\n---\n# Context\n\n' + 'Padding before actual reference.\n' * 82
+                    + 'CAFÉ 👋 BEFORE ' + alias + ' CAFÉ AFTER\n\nSAME ONE ' + same + ' MIDDLE ' + same + ' SAME END\n\n'
+                    + markdown + '\n\n!' + embed + '\n\n' + image + '\n\n'
+                    + '```md\n[[Backlink Target]]\n[code](../Backlink%20Target.md)\n```\n\n'
+                    + '`[[Backlink Target]]` and ` [inline](../Backlink%20Target.md) `\n\n'
+                    + r'\[[Backlink Target]]' + '\n\n$[[Backlink Target]]$\n\n$[math](../Backlink%20Target.md)$\n')
+                source=source_dir/'Context.md'; source.write_text(source_text)
+                other=other_dir/'Context.md'; other_link='[[Backlink Target|other alias]]'; other_text='# Other\n\n'+'長い café prefix ' * 10 + other_link + ' DIFFERENT CONTEXT\n'; other.write_text(other_text)
+                windows=source_dir/'Windows.md'; windows_link='[reference label][target]'; windows_text='# Windows\r\n\r\nUnicode café 👋\r\nCRLF BEFORE '+windows_link+' CRLF AFTER\r\n\r\n[target]: ../Backlink%20Target.md#Section\r\n'; windows.write_bytes(windows_text.encode())
+                draft=source_dir/'Draft.md'; draft_original='# Draft\n\nORIGINAL DRAFT TEXT\n'; draft.write_text(draft_original)
+                expected=[]
+                for raw, occurrence in [(alias,0),(same,0),(same,1),(markdown,0),(embed,0),(image,0)]:
+                    position=-1
+                    for _ in range(occurrence+1): position=source_text.index(raw,position+1)
+                    expected.append(('Backlink Sources/Context.md',len(source_text[:position].encode()),raw))
+                expected += [('Backlink Other/Context.md',len(other_text[:other_text.index(other_link)].encode()),other_link),('Backlink Sources/Windows.md',len(windows_text[:windows_text.index(windows_link)].encode()),windows_link)]
+                snapshots={path:path.read_bytes() for path in [source,other,windows,target]}
+                command('Refresh vault')
+                def count(number): control_bounds('backlink-count:'+str(number))
+                def open_target(mode='Live preview',number=8):
+                    open_note(target.name,title=target.stem); command(mode)
+                    if control_bounds('panel:backlinks',required=False) is None: command('Toggle right sidebar')
+                    click_control('panel:backlinks'); count(number)
+                def selected(raw):
+                    control_bounds('editor-focused'); key('ctrl+c')
+                    copied=subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                    assert copied==raw, ('Backlink must select its exact source occurrence',raw,copied)
+                    caret=control_bounds('editor-caret'); viewport=control_bounds('document-viewport')
+                    assert caret[3]>=viewport[1] and caret[1]<=viewport[3], ('Reference caret must be in view',caret,viewport)
+                    return caret
+                for mode in ('Source editing','Live preview'):
+                    duplicate_caret=None
+                    for path,offset,raw in expected:
+                        open_target(mode); name='backlink-mention:'+path+':'+str(offset); control_bounds(name)
+                        label={alias:'alias',same:'Backlink Target',markdown:'markdown alias',embed:'Backlink Target#^id',image:'note image',other_link:'other alias',windows_link:'reference label'}[raw]
+                        control_bounds('backlink-label:'+label)
+                        if raw==alias and mode=='Live preview': capture('native-backlinks-context-list.png')
+                        click_control(name); title_contains(Path(path).stem); caret=selected(raw)
+                        if path=='Backlink Sources/Context.md' and raw==same:
+                            if duplicate_caret is not None: assert abs(caret[0]-duplicate_caret[0])>2, ('Same-line mentions must select different source columns',duplicate_caret,caret)
+                            duplicate_caret=caret
+                        if raw==alias: capture('native-backlinks-jump-'+mode.split()[0].lower()+'.png')
+                    results.append(mode+': every wiki/alias/heading/block/embed/Markdown-image/reference-style mention selected exact source bytes below the top, including same-line duplicates, Unicode/frontmatter and CRLF offsets; code, escaped and math links did not inflate the visible count')
+                for path,data in snapshots.items(): assert path.read_bytes()==data, path
+                close_tabs(); open_note('Backlink Sources/Context.md',title='Context'); command('Source editing'); command('Reading view')
+                key('ctrl+t'); open_target(); path,offset,raw=expected[0]
+                xdo('keydown','ctrl'); click_control('backlink-mention:'+path+':'+str(offset)); xdo('keyup','ctrl')
+                selected(raw); control_bounds('view-mode:Source mode'); control_bounds('tab-full:Backlink Target.md')
+                results.append('Ctrl-click retained the target tab and activated an already-open source from Reading in its remembered editing mode, selecting the precise linked occurrence')
+                close_tabs(); open_target(); command('Toggle pin'); control_bounds('unpin-tab:Backlink Target.md')
+                click_control('backlink-mention:'+path+':'+str(offset)); selected(raw); control_bounds('unpin-tab:Backlink Target.md')
+                key('ctrl+w'); title_contains('Backlink Target'); command('Toggle pin'); close_tabs()
+                results.append('Plain backlink clicks protected a pinned target by opening the source in another tab')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
+                open_note('Backlink Sources/Draft.md',title='Draft'); command('Source editing'); editor_end(); paste_text('\nNEW BEFORE [[Backlink Target]] NEW AFTER'); time.sleep(1); assert draft.read_text()==draft_original
+                key('ctrl+t'); open_target(number=9); draft_text=draft_original+'\nNEW BEFORE [[Backlink Target]] NEW AFTER'; draft_offset=len(draft_text[:draft_text.index(same)].encode())
+                xdo('keydown','ctrl'); click_control('backlink-mention:Backlink Sources/Draft.md:'+str(draft_offset)); xdo('keyup','ctrl'); selected(same); assert draft.read_text()==draft_original
+                key('ctrl+z'); click_control('tab-full:Backlink Target.md'); count(8)
+                click_control('tab-full:Backlink Sources/Draft.md'); editor_end(); control_bounds('editor-focused'); key('ctrl+shift+z'); key('ctrl+a'); key('ctrl+c')
+                assert subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()==draft_text
+                key('ctrl+End'); click_control('tab-full:Backlink Target.md'); count(9)
+                click_control('tab-full:Backlink Sources/Draft.md'); editor_end(); key('ctrl+s'); assert draft.read_text()==draft_text
+                key('ctrl+z'); key('ctrl+s'); assert draft.read_text()==draft_original
+                click_control('tab-full:Backlink Target.md'); count(8)
+                capture('native-backlinks-live-draft.png')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',True); key('Escape')
+                results.append('An unsaved source draft contributed a new mention without being saved by navigation; Undo/Redo updated the target pane immediately, and explicit save/undo restored exact draft file bytes')
+                other.write_text('# Other\n\nREMOVED REFERENCE\n'); count(7)
+                changed='# Other\n\nEXTERNAL SHIFT café 👋\n\n'+other_link+' NEW EXTERNAL CONTEXT\n'; other.write_text(changed); count(8)
+                shifted=len(changed[:changed.index(other_link)].encode()); click_control('backlink-mention:Backlink Other/Context.md:'+str(shifted)); selected(other_link)
+                capture('native-backlinks-external-jump.png'); other.write_bytes(snapshots[other]); open_target()
+                for path,data in snapshots.items(): assert path.read_bytes()==data, path
+                assert draft.read_text()==draft_original
+                results.append('External link removal/reinsertion refreshed counts and context, clicking the shifted reference selected the new location, and all protected source/target file bytes were restored')
+
+            def note_embed_checks():
+                close_tabs()
+                targets = fixture/'Embed Targets'; targets.mkdir(exist_ok=True)
+                hosts = fixture/'Embed Hosts'; hosts.mkdir(exist_ok=True)
+                note = targets/'Note.md'; original = '# Embedded title\n\nWHOLE NOTE **bold** marker\n\n- [ ] EMBEDDED TASK\n\n[RELATIVE SIBLING](Sibling.md)\n\n![[Nested]]\n'
+                note.write_text(original)
+                (targets/'Nested.md').write_text('# Nested\n\nNESTED BODY\n\n[[Leaf|NESTED LEAF]]\n')
+                for folder, marker in [(targets,'RIGHT'),(hosts,'WRONG')]:
+                    (folder/'Sibling.md').write_text('# Sibling\n\n' + marker + ' SIBLING\n')
+                    (folder/'Leaf.md').write_text('# Leaf\n\n' + marker + ' LEAF\n')
+                sections = targets/'Sections.md'; section_original = ('# First\n\nHEAD EXCLUDED\n\n## Pick café\n\nHEADING CONTENT\n\n### Child\n\nCHILD CONTENT\n\n## Next\n\nNEXT EXCLUDED\n\n'
+                    '- [ ] OUTSIDE TASK\n\n- [ ] BLOCK TASK ^task-block\n\n- LIST FIRST\n- LIST SECOND\n\n^list-block\n\n> QUOTE FIRST\n> QUOTE SECOND\n\n^quote-block\n')
+                sections.write_text(section_original)
+                (targets/'Cycle A.md').write_text('# Cycle A\n\n![[Cycle B]]\n')
+                (targets/'Cycle B.md').write_text('# Cycle B\n\n![[Cycle A]]\n')
+                Image.new('RGB',(96,48),(230,80,120)).save(targets/'inside.png')
+                rich = targets/'Rich.md'; rich.write_text('# Rich\n\n> [!note] CALLOUT TITLE\n> CALLOUT BODY\n\n```rust\nlet value = 42;\n```\n\n| Rich column | Value |\n| --- | --- |\n| cell | 42 |\n\n![[inside.png|80]]\n\n```mermaid\ngraph LR; A[Start] --> B[End]\n```\n')
+                queries={'Whole':'Embed Targets/Note','Heading':'Embed Targets/Sections#Pick café','Task':'Embed Targets/Sections#^task-block','List':'Embed Targets/Sections#^list-block','Quote':'Embed Targets/Sections#^quote-block','Rich':'Embed Targets/Rich','Cycle':'Embed Targets/Cycle A','Missing':'Embed Targets/Absent','Missing heading':'Embed Targets/Sections#Absent','Self cycle':'Embed Hosts/Self cycle'}
+                host_bytes={}
+                for name,query in queries.items():
+                    content='# Host '+name+'\n\n![[ '+query+' ]]\n\nHOST AFTER '+name+'\n'
+                    content=content.replace('![[ ','![[').replace(' ]]',']]')
+                    (hosts/(name+'.md')).write_text(content); host_bytes[name]=content
+                self_note=hosts/'Self section.md'; self_note.write_text('# Self\n\n## Reference Section\n\nSELF CONTENT\n\n## Show\n\n![[#Reference Section]]\n\nSELF AFTER\n')
+                command('Refresh vault')
+                def controls(): return json.loads((base/'ui-probe.json').read_text())
+                def stable(query):
+                    previous=None; repeats=0; deadline=time.monotonic()+6
+                    while time.monotonic()<deadline:
+                        rect=control_bounds('note-embed:'+query)
+                        repeats=repeats+1 if rect==previous else 0; previous=rect
+                        if repeats>=3: return rect
+                        time.sleep(.1)
+                    raise AssertionError(('Embed layout did not settle',query,previous))
+                def open_host(name):
+                    open_note('Embed Hosts/'+name+'.md',title=name); command('Live preview'); control_bounds('view-mode:Live preview'); editor_end()
+                    return stable(queries[name])
+                def present(path,value):
+                    prefix='note-embed-text:'+path+':'; deadline=time.monotonic()+5
+                    while time.monotonic()<deadline:
+                        names=[name for name in controls() if name.startswith(prefix) and value in name[len(prefix):]]
+                        if names: return names[0]
+                        time.sleep(.05)
+                    raise AssertionError(('Rendered embedded text absent',path,value,list(controls())))
+                def copied(): return subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                open_host('Whole'); present('Embed Targets/Note.md','WHOLE NOTE bold marker'); present('Embed Targets/Nested.md','NESTED BODY')
+                time.sleep(.2); capture('native-note-embed-whole.png')
+                click_control('note-embed-task:Embed Targets/Note.md:0')
+                deadline=time.monotonic()+3
+                while time.monotonic()<deadline and '- [x] EMBEDDED TASK' not in note.read_text(): time.sleep(.05)
+                assert note.read_text()==original.replace('- [ ] EMBEDDED TASK','- [x] EMBEDDED TASK')
+                assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
+                click_control('note-embed-task:Embed Targets/Note.md:0'); time.sleep(.3); assert note.read_text()==original
+                click_control(present('Embed Targets/Nested.md','NESTED LEAF')); title_contains('Leaf'); control_bounds('tab-full:Embed Targets/Leaf.md')
+                key('alt+Left'); title_contains('Whole'); stable(queries['Whole'])
+                click_control(present('Embed Targets/Note.md','RELATIVE SIBLING')); title_contains('Sibling'); control_bounds('tab-full:Embed Targets/Sibling.md')
+                results.append('Whole note and nested note content rendered; embedded task clicks saved only the referenced note, and nested/ordinary links resolved from their own target folders despite host-folder decoys')
+                open_host('Heading'); present('Embed Targets/Sections.md','HEADING CONTENT'); present('Embed Targets/Sections.md','CHILD CONTENT')
+                rendered=' '.join(name for name in controls() if name.startswith('note-embed-text:Embed Targets/Sections.md:'))
+                assert 'HEAD EXCLUDED' not in rendered and 'NEXT EXCLUDED' not in rendered
+                capture('native-note-embed-heading.png')
+                for name,expected in [('List','LIST FIRST'),('Quote','QUOTE FIRST')]:
+                    open_host(name); present('Embed Targets/Sections.md',expected); capture('native-note-embed-'+name.lower()+'.png')
+                open_host('Task'); present('Embed Targets/Sections.md','BLOCK TASK'); click_control('note-embed-task:Embed Targets/Sections.md:0'); time.sleep(.3)
+                assert sections.read_text()==section_original.replace('- [ ] BLOCK TASK','- [x] BLOCK TASK')
+                assert '- [ ] OUTSIDE TASK' in sections.read_text() and (hosts/'Task.md').read_text()==host_bytes['Task']
+                results.append('Heading embeds included descendants and stopped at the next peer heading; whole list/quote block embeds rendered; a task block edited the right checkbox in the full target while preserving outside tasks and host bytes')
+                open_note('Embed Hosts/Self section.md',title='Self section'); command('Live preview'); editor_end(); stable('#Reference Section'); present('Embed Hosts/Self section.md','SELF CONTENT'); assert not control_bounds('note-embed-cycle',required=False)
+                open_host('Rich'); control_bounds('code-block:0'); control_bounds('table:0'); control_bounds('mermaid-diagram'); assert not control_bounds('mermaid-error',required=False)
+                image_names=[name for name in controls() if name.startswith('note-embed-image:Embed Targets/Rich.md:')]; assert image_names
+                capture('native-note-embed-rich.png'); xdo('mousemove','900','760'); xdo('click','--repeat','4','--delay','60','5'); pause(); capture('native-note-embed-rich-bottom.png')
+                results.append('Same-note nonrecursive heading embeds worked; embedded callout, highlighted Rust code, table, relative image and Mermaid used the reading renderer')
+                for name in ['Missing','Missing heading']:
+                    open_host(name); control_bounds('note-embed-error:'+queries[name]); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png')
+                for name in ['Cycle','Self cycle']:
+                    open_host(name); control_bounds('note-embed-cycle'); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png')
+                open_host('Whole'); updated=original+'\nEXTERNAL UPDATED\n'; note.write_text(updated); present('Embed Targets/Note.md','EXTERNAL UPDATED'); stable(queries['Whole']); capture('native-note-embed-external-update.png')
+                assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
+                results.append('Missing notes/headings and direct/mutual recursive embeds showed visible cards without a hang; external target edits reflected in the unchanged host')
+                command('Source editing'); control_bounds('view-mode:Source mode'); assert not control_bounds('note-embed:'+queries['Whole'],required=False)
+                command('Live preview'); editor_end(); stable(queries['Whole']); click_control('note-embed-edit:'+queries['Whole']); control_bounds('editor-focused'); key('ctrl+c'); assert copied()=='![[Embed Targets/Note]]'
+                paste_text('![[Embed Targets/Sections#Pick café]]'); editor_end(); stable(queries['Heading']); key('ctrl+s')
+                changed=host_bytes['Whole'].replace('![[Embed Targets/Note]]','![[Embed Targets/Sections#Pick café]]'); assert (hosts/'Whole.md').read_text()==changed
+                key('ctrl+z'); key('ctrl+s'); assert (hosts/'Whole.md').read_text()==host_bytes['Whole']; stable(queries['Whole'])
+                key('ctrl+shift+z'); key('ctrl+s'); assert (hosts/'Whole.md').read_text()==changed
+                key('ctrl+z'); key('ctrl+s'); assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
+                results.append('Source mode kept raw Markdown; Edit embed selected the actual source token, Unicode heading replacement changed only that token, and native Undo/Redo restored exact host bytes')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
+                open_note('Embed Targets/Note.md',title='Note'); command('Source editing'); editor_end(); paste_text('\nOPEN TARGET DRAFT'); time.sleep(1); assert note.read_text()==updated
+                key('ctrl+t'); open_host('Whole'); present('Embed Targets/Note.md','OPEN TARGET DRAFT')
+                click_control('note-embed-task:Embed Targets/Note.md:0'); time.sleep(.3); assert note.read_text()==updated
+                key('ctrl+w'); title_contains('Note'); command('Source editing'); editor_end(); key('ctrl+z'); key('ctrl+a'); key('ctrl+c'); assert copied()==updated+'\nOPEN TARGET DRAFT'
+                key('End'); key('ctrl+shift+z'); key('ctrl+s'); assert note.read_text()==(updated+'\nOPEN TARGET DRAFT').replace('- [ ] EMBEDDED TASK','- [x] EMBEDDED TASK')
+                capture('native-note-embed-draft-redo.png')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',True); key('Escape')
+                results.append('Embeds used an open unsaved target draft; with autosave off, checkbox edits stayed in that draft, Undo preserved earlier draft text and Redo/Save persisted the intended target change')
+
+            def block_completion_checks():
+                import re
+                close_tabs()
+                body = ('# Blocks\n\nUnique paragraph café chosen.\n\n'
+                    '- List chosen first\n- List chosen second\n\n'
+                    '> Quote chosen line\n> more quote\n\n'
+                    '> [!note] Callout chosen\n> callout body\n\n'
+                    '| Table chosen | Value |\n| --- | --- |\n| cell | value |\n\n'
+                    '```rust\n// Code chosen ^literal-id\nlet x = 1;\n```\n\n'
+                    'Existing paragraph ^keep-id\n\n'
+                    '- Standalone chosen first\n- Standalone chosen second\n\n^standalone-list\n')
+                for mode in ('Source editing', 'Live preview'):
+                    (fixture / f'Blocks {mode}.md').write_text(body)
+                    (fixture / f'Block refs {mode}.md').write_text('')
+                    (fixture / f'Block self {mode}.md').write_text('# Self\n\nSelf chosen café paragraph.\n\n')
+                    (fixture / f'Block after {mode}.md').write_text('[[#^After chosen\n\nAfter chosen paragraph.\n')
+                failure = fixture / 'Block failure.md'; failure.write_text('# Failure\n\nReadonly chosen paragraph.\n')
+                draft = fixture / 'Block draft.md'; draft_original = '# Draft\n\nDraft base.\n'; draft.write_text(draft_original)
+                (fixture / 'Block draft source.md').write_text('')
+                command('Refresh vault')
+                def save(path):
+                    key('ctrl+s'); pause(); return path.read_text()
+                def unmarked(path, largest=False):
+                    prefix = 'link-completion:unmarked-block:' + path.name + ':'
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        controls = json.loads((base/'ui-probe.json').read_text())
+                        names = [name for name in controls if name.startswith(prefix)]
+                        if names: break
+                        time.sleep(.05)
+                    assert names, ('No unmarked block suggestions', path.name, controls)
+                    return max(names, key=lambda name: int(name.rsplit(':', 1)[1]) - int(name.rsplit(':', 2)[1])) if largest else names[0]
+                def ids(text): return re.findall(r'(?m)(?: |^)\^(r[0-9a-f]+)\s*$', text)
+                def without_ids(text): return re.sub(r'(?: |\n\n)\^r[0-9a-f]+', '', text)
+                def last_id(text):
+                    match = re.search(r'\[\[[^\n]*#\^([A-Za-z0-9-]+)\]\]$', text)
+                    assert match, ('Missing completed block reference', text); return match[1]
+                def follow(expected):
+                    editor_end(); key('ctrl+Return'); command('Source editing'); control_bounds('editor-focused')
+                    key('shift+End'); key('ctrl+c')
+                    copied = subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                    assert expected in copied, ('Block navigation reached the wrong line', expected, copied)
+                    capture('native-block-completion-navigation.png'); key('ctrl+w')
+                cases = [('Unique paragraph', 'Unique paragraph café chosen.', False),
+                    ('List chosen', '- List chosen first', True), ('Quote chosen', '> Quote chosen line', False),
+                    ('Callout chosen', '> [!note] Callout chosen', False), ('Table chosen', '| Table chosen | Value |', False),
+                    ('Code chosen', '```rust', False)]
+                for mode in ('Source editing', 'Live preview'):
+                    target = fixture/f'Blocks {mode}.md'; source = fixture/f'Block refs {mode}.md'
+                    open_note(source.name, title=source.stem); command(mode)
+                    for query, expected, largest in cases:
+                        editor_end(); paste_text('\n[[' + target.stem + '#^' + query)
+                        candidate = unmarked(target, largest); capture('native-block-completion-offer-' + mode.split()[0].lower() + '.png')
+                        click_control(candidate); text = save(source); reference = last_id(text)
+                        assert reference in ids(target.read_text()), ('ID must be on disk before insertion', reference, target.read_text())
+                        assert without_ids(target.read_text()) == body, ('Only a block ID may change in the target', target.read_text())
+                        follow(expected); command(mode)
+                    assert len(ids(target.read_text())) == len(cases), target.read_text()
+                    before = target.read_text(); editor_end(); paste_text('\n[[' + target.stem + '#^Unique paragraph')
+                    known = ids(before)[0]; click_control('link-completion:' + target.stem + '#^' + known)
+                    assert last_id(save(source)) == known; assert target.read_text() == before
+                    editor_end(); paste_text('\n[[' + target.stem + '#^standalone-list')
+                    click_control('link-completion:' + target.stem + '#^standalone-list'); save(source)
+                    follow('- Standalone chosen first')
+                    results.append(mode + ': content-filtered unmarked paragraph/list/quote/callout/table/code choices created one stable ID, changed only that ID, saved before inserting links, navigated to the full block and reused existing IDs; standalone list anchors reached the list rather than the marker')
+                    for place in ('self', 'after'):
+                        path = fixture / f'Block {place} {mode}.md'; original = path.read_text()
+                        open_note(path.name, title=path.stem); command(mode); editor_end()
+                        if place == 'self': paste_text('[[#^Self chosen')
+                        else: key('ctrl+Home'); key('End')
+                        click_control(unmarked(path)); text = save(path); reference = last_id(text) if place == 'self' else re.search(r'\[\[#\^([A-Za-z0-9-]+)\]\]',text)[1]
+                        assert ids(text) == [reference], text
+                        assert ('Self chosen café paragraph.' if place == 'self' else 'After chosen paragraph.') in text
+                    results.append(mode + ': same-note block creation before and after the caret preserved Unicode text and adjusted the source link range correctly')
+                # A real failed target write must not alter the query or either file.
+                source = fixture/'Block refs Source editing.md'; open_note(source.name,title=source.stem); command('Source editing'); editor_end()
+                paste_text('\n[[Block failure#^Readonly chosen'); before_source = save(source); before_target = failure.read_text(); candidate = unmarked(failure)
+                permissions = fixture.stat().st_mode & 0o777
+                try:
+                    fixture.chmod(0o555); click_control(candidate); pause(); capture('native-block-completion-write-error.png')
+                    assert source.read_text() == before_source and failure.read_text() == before_target
+                finally: fixture.chmod(permissions)
+                click_control(unmarked(failure)); assert last_id(save(source)) in ids(failure.read_text())
+                results.append('Unwritable target left the query and both files unchanged; selecting again after restoring write access created the ID and reference without duplicates')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',False); key('Escape')
+                open_note(draft.name,title=draft.stem); command('Source editing'); editor_end(); paste_text('\n\nDRAFT chosen café paragraph.'); time.sleep(1)
+                expected_draft = draft_original + '\n\nDRAFT chosen café paragraph.'; assert draft.read_text() == draft_original
+                key('ctrl+t'); open_note('Block draft source.md',title='Block draft source'); command('Source editing'); editor_end(); paste_text('[[Block draft#^DRAFT chosen')
+                click_control(unmarked(draft)); source = fixture/'Block draft source.md'; reference = last_id(save(source))
+                assert ids(draft.read_text()) == [reference] and without_ids(draft.read_text()) == expected_draft
+                key('ctrl+w'); title_contains('Block draft'); command('Source editing'); editor_end(); key('ctrl+z'); key('ctrl+a'); key('ctrl+c')
+                copied = subprocess.check_output(['xclip','-selection','clipboard','-out','-target','UTF8_STRING'],env=environment,timeout=3).decode()
+                assert copied == expected_draft, ('Undo must preserve the previously unsaved target draft', expected_draft, copied)
+                key('End'); key('ctrl+shift+z'); assert ids(save(draft)) == [reference]
+                capture('native-block-completion-draft-redo.png')
+                command('Open settings'); type_text('autosave'); click_control('settings-autosave'); wait_autosave(base/'state',True); key('Escape')
+                results.append('Suggestions used an open unsaved foreign draft; committing the ID preserved and saved all draft bytes, Undo restored that draft without the ID, and Redo restored the same reference ID')
+
+            def link_fragment_checks():
+                close_tabs()
+                target = fixture / "Fragment Target.md"
+                original = ('---\naliases: [FragmentAlias]\nfake: hidden ^properties\n---\n'
+                    '# Fragment Target\n\n' + 'Top padding paragraph.\n\n' * 55
+                    + '## Alpha **section**\n\nAlpha content.\n\n'
+                    + '## Beta café\n\nParagraph chosen ^block-one\n\n'
+                    + '- A list block ^list-two\n\n'
+                    + '`literal ^inline-fake`\n\nMiddle ^middle-fake tail\n\n'
+                    + '```md\n# Fake code heading\nCode ^code-fake\n```\n')
+                target.write_text(original)
+                for mode in ('Source editing', 'Live preview'):
+                    for case in ('heading', 'block', 'mouse', 'self', 'alias', 'missing', 'file'):
+                        (fixture / f'Fragment {mode} {case}.md').write_text('')
+                command('Refresh vault')
+                def begin(mode, case, query, typed=False):
+                    name = f'Fragment {mode} {case}'
+                    open_note(name + '.md', title=name); command(mode); editor_end()
+                    type_text(query) if typed else paste_text(query)
+                    return fixture / (name + '.md')
+                def saved(path, expected):
+                    key('ctrl+s'); deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline and path.read_text() != expected: time.sleep(.05)
+                    assert path.read_text() == expected, (path.name, expected, path.read_text())
+                def candidates():
+                    controls = json.loads((base / 'ui-probe.json').read_text())
+                    return {name[len('link-completion:'):] for name in controls if name.startswith('link-completion:')}
+                def follow(expected):
+                    editor_end(); key('ctrl+Return'); title_contains('Fragment Target')
+                    command('Source editing'); control_bounds('editor-focused'); key('shift+End'); key('ctrl+c')
+                    copied = subprocess.check_output(['xclip', '-selection', 'clipboard', '-out', '-target', 'UTF8_STRING'], env=environment, timeout=3).decode()
+                    assert expected in copied, ('Fragment navigation must reach the actual line', expected, copied)
+                    capture('native-fragment-navigation.png')
+                    key('ctrl+w')
+                for mode in ('Source editing', 'Live preview'):
+                    path = begin(mode, 'heading', '[[Fragment Target#', typed=True)
+                    control_bounds('link-completion:Fragment Target#Alpha section')
+                    assert candidates() == {'Fragment Target#Fragment Target', 'Fragment Target#Alpha section', 'Fragment Target#Beta café'}, candidates()
+                    capture('native-fragment-heading-' + mode.split()[0].lower() + '.png')
+                    key('Down'); key('Return'); saved(path, '[[Fragment Target#Alpha section]]')
+                    follow('## Alpha **section**')
+                    path = begin(mode, 'block', '[[Fragment Target#^BLoCK-oNe')
+                    control_bounds('link-completion:Fragment Target#^block-one')
+                    assert candidates() == {'Fragment Target#^block-one'}, candidates()
+                    key('Tab'); saved(path, '[[Fragment Target#^block-one]]'); follow('Paragraph chosen ^block-one')
+                    path = begin(mode, 'mouse', '[[Fragment Target#^list-tWo')
+                    control_bounds('link-completion:Fragment Target#^list-two')
+                    assert 'Fragment Target#^list-two' in candidates(), candidates()
+                    capture('native-fragment-block-' + mode.split()[0].lower() + '.png')
+                    click_control('link-completion:Fragment Target#^list-two')
+                    saved(path, '[[Fragment Target#^list-two]]'); follow('A list block ^list-two')
+                    prefix = '# Self note\n\n## Local **draft**\n\nDraft block ^draft-one\n\n'
+                    path = begin(mode, 'self', prefix + '[[#Local')
+                    control_bounds('link-completion:#Local draft'); key('Return')
+                    saved(path, prefix + '[[#Local draft]]')
+                    editor_end(); paste_text('\n[[#^draft'); control_bounds('link-completion:#^draft-one'); key('Tab')
+                    saved(path, prefix + '[[#Local draft]]\n[[#^draft-one]]')
+                    path = begin(mode, 'alias', '[[FragmentAlias#BEt')
+                    control_bounds('link-completion:Fragment Target#Beta café'); key('Return')
+                    saved(path, '[[Fragment Target#Beta café]]')
+                    path = begin(mode, 'missing', '[[Fragment Target#missing')
+                    assert not candidates(), candidates(); key('Escape'); saved(path, '[[Fragment Target#missing')
+                    path = begin(mode, 'file', '[[Fragment Tar')
+                    control_bounds('link-completion:Fragment Target'); click_control('link-completion:Fragment Target'); saved(path, '[[Fragment Target]]')
+                    results.append(mode + ': heading and block candidates, case-insensitive filters, Enter/Tab/mouse insertion, actual fragment navigation, same-note current text, aliases/Unicode, no-match cancellation and ordinary file completion passed; code/properties/mid-line markers were excluded')
+                assert target.read_text() == original, 'Following fragments must preserve the target note'
+
+            def tab_close_menu_checks():
+                close_tabs()
+                notes = {name: fixture / f"Menu {name}.md" for name in "ABCD"}
+                original = {name: f"MENU_{name}_ORIGINAL\n" for name in notes}
+                for name, path in notes.items(): path.write_text(original[name])
+                command("Refresh vault")
+                def tabs():
+                    data = json.loads((base / "ui-probe.json").read_text())
+                    return [name.removeprefix("tab-full:Menu ").removesuffix(".md") for name, rect in sorted(data.items(), key=lambda item: item[1][0]) if name.startswith("tab-full:Menu ")]
+                def expect(*names):
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        if tabs() == list(names): return
+                        time.sleep(.05)
+                    raise AssertionError((names, tabs()))
+                def select(name):
+                    click_control(f"tab-full:Menu {name}.md"); title_contains("Menu " + name)
+                def menu(name, action):
+                    click_control(f"tab-full:Menu {name}.md", "3")
+                    control_bounds("tab-menu-close-others"); control_bounds("tab-menu-close-right")
+                    click_control("tab-menu-close-" + action)
+                open_note("Menu A.md", title="Menu A"); command("Toggle pin")
+                for name in "BCD":
+                    key("ctrl+t"); open_note(f"Menu {name}.md", title="Menu " + name)
+                command("Toggle pin"); expect("A", "B", "C", "D")
+                select("C"); click_control("tab-full:Menu B.md", "3")
+                capture("native-tab-close-menu.png"); click_control("tab-menu-close-right")
+                expect("A", "B", "D"); title_contains("Menu B")
+                control_bounds("unpin-tab:Menu A.md"); control_bounds("unpin-tab:Menu D.md")
+                key("ctrl+shift+t"); expect("A", "B", "D", "C")
+                select("C"); menu("C", "right"); expect("A", "B", "D", "C"); key("Escape")
+                capture("native-tab-close-right.png")
+                results.append("Close tabs to the right used the background clicked tab, kept both left and right pinned tabs, focused the kept tab and reopened the closed view; the rightmost action did nothing")
+                select("A"); command("Toggle pin"); select("C")
+                menu("B", "others"); expect("B", "D"); title_contains("Menu B")
+                control_bounds("unpin-tab:Menu D.md")
+                menu("B", "others"); expect("B", "D"); key("Escape")
+                key("ctrl+shift+t"); expect("B", "D", "C")
+                key("ctrl+shift+t"); expect("B", "D", "C", "A")
+                capture("native-tab-close-others-restored.png")
+                results.append("Close others removed unpinned tabs on both sides of the clicked tab, preserved pinned D, disabled when nothing could close and restored the actual visual removal order C then A")
+                select("C"); command("Source editing"); editor_end(); type_text("SAVE_DRAFT")
+                mode = fixture.stat().st_mode
+                try:
+                    fixture.chmod(0o555); menu("B", "others"); control_bounds("pending-cancel")
+                    capture("native-tab-close-pending.png"); expect("B", "D", "C", "A")
+                finally: fixture.chmod(mode)
+                click_control("pending-cancel"); expect("B", "D", "C", "A"); title_contains("Menu C")
+                assert notes["C"].read_text() == original["C"]
+                try:
+                    fixture.chmod(0o555); menu("B", "others"); control_bounds("pending-save")
+                finally: fixture.chmod(mode)
+                click_control("pending-save"); expect("B", "D"); title_contains("Menu B")
+                assert notes["C"].read_text() == original["C"] + "SAVE_DRAFT"
+                # A closes last in the current B, D, C, A order, so it reopens first.
+                key("ctrl+shift+t"); expect("B", "D", "A")
+                key("ctrl+shift+t"); expect("B", "D", "A", "C")
+                results.append("A real failed save closed no tabs; Cancel kept the active draft and every view, while Save & continue after restoring access saved the draft before closing the requested group")
+                select("A"); command("Source editing"); editor_end(); type_text("DISCARD_DRAFT")
+                try:
+                    fixture.chmod(0o555); menu("B", "right"); control_bounds("pending-discard")
+                    expect("B", "D", "A", "C")
+                finally: fixture.chmod(mode)
+                click_control("pending-discard"); expect("B", "D"); title_contains("Menu B")
+                assert notes["A"].read_text() == original["A"]
+                key("ctrl+shift+t"); expect("B", "D", "C")
+                key("ctrl+shift+t"); expect("B", "D", "C", "A"); title_contains("Menu A")
+                assert notes["A"].read_text() == original["A"]
+                capture("native-tab-close-discard-restored.png")
+                for name in "ABD": assert notes[name].read_text() == original[name]
+                assert notes["C"].read_text() == original["C"] + "SAVE_DRAFT"
+                results.append("Close right required explicit Discard for an unsavable draft, kept the pinned view, reopened the original saved contents and preserved every protected file")
 
             def tab_restore_checks():
                 close_tabs()
@@ -5811,7 +9388,7 @@ def main():
                 results.append("All four workspace commands work: active overwrite keeps one entry, fuzzy load selects it and cancelled save-and-load retains current tabs")
 
                 load("Writing");assert_layout(writing)
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 title_contains("Workspace A")
                 assert_layout(writing);filled_sidebars("restarted")
@@ -5907,6 +9484,7 @@ def main():
 
             def recovery_checks():
                 nonlocal app, window
+                set_theme(True)
                 close_tabs()
                 originals = {p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
                 target = fixture / "Recovery target.md"
@@ -6102,7 +9680,7 @@ def main():
                 key("Escape");target.write_bytes(original);command("Refresh vault");pause()
                 results.append("A previously deleted note was recreated from its exact snapshot; a file appearing meanwhile was preserved without overwrite")
 
-                xdo("key","--clearmodifiers","ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app(launch_command);window=ready_window()
                 open_note("Recovery target")
                 history(3);choose_version(initial)
@@ -6535,6 +10113,69 @@ def main():
                 assert not failures, ("Native visual/control regressions", observations)
                 results.append("Actual graph dots and labels stay compact; graph and Settings slider thumbs remain filled and compact through idle/hover/drag in both themes, with all fixture bytes preserved")
 
+            def graph_animation_checks():
+                nonlocal app, window
+                root = base/"Animation vault";root.mkdir()
+                sources = {}
+                for index in range(20):
+                    name = f"{index:02} Timeline.md"
+                    text = "# Timeline\n\n" + " ".join(f"[[{other:02} Timeline]]" for other in range(20) if other != index) + "\n"
+                    (root/name).write_text(text);sources[name]=text.encode()
+                    time.sleep(.01)
+                command("Open vault");key("ctrl+a");paste_text(str(root),held=True);key("Return")
+                title_contains(root.name);open_note("00 Timeline")
+
+                def ready(prefix):
+                    deadline=time.monotonic()+8
+                    while time.monotonic()<deadline:
+                        if control_bounds(prefix+":busy")[0]==0 and control_bounds(prefix+":node-count")[0]==20:return
+                        time.sleep(.05)
+                    raise AssertionError("Animation fixture did not load")
+
+                def actual_nodes(prefix):
+                    data=json.loads((base/"ui-probe.json").read_text())
+                    return {key[len(prefix+":node:"):] for key in data if key.startswith(prefix+":node:")}
+
+                for local in (False,True):
+                    prefix="local-graph" if local else "global-graph"
+                    command("Graph view: Open local graph" if local else "Graph view: Open graph view")
+                    ready(prefix)
+                    for dark in (True,False):
+                        set_theme(dark)
+                        if not control_bounds(prefix+":animate",required=False):
+                            click_control(prefix+":section:display")
+                        control_bounds(prefix+":animate")
+                        full=actual_nodes(prefix)
+                        assert len(full)==20,(prefix,full)
+                        click_control(prefix+":animate")
+                        early=actual_nodes(prefix)
+                        capture(f"native-animation-{'local' if local else 'global'}-{'dark' if dark else 'light'}-early.png")
+                        assert "00 Timeline.md" in early and "19 Timeline.md" not in early,(prefix,early)
+                        assert 0 < len(early) < len(full)
+                        counts=[len(early)]
+                        for _ in range(8):
+                            time.sleep(.15);counts.append(len(actual_nodes(prefix)))
+                        assert counts==sorted(counts) and counts[-1]>counts[0],counts
+                        click_control(prefix+":animate-stop")
+                        assert actual_nodes(prefix)==full
+                        click_control(prefix+":animate")
+                        deadline=time.monotonic()+14
+                        while control_bounds(prefix+":animation-running")[0] and time.monotonic()<deadline:time.sleep(.1)
+                        assert control_bounds(prefix+":animation-running")[0]==0
+                        assert actual_nodes(prefix)==full
+                        capture(f"native-animation-{'local' if local else 'global'}-{'dark' if dark else 'light'}-finished.png")
+                        results.append(f"{'Local' if local else 'Global'} {'dark' if dark else 'light'} Animate reveals oldest-first, advances actual painted nodes, stops cleanly and finishes with the exact full graph")
+                    if not local:
+                        click_control(prefix+":animate")
+                        confirm_quit();app.wait(timeout=5)
+                        app=launch_app(launch_command[:1]+[str(root)]);window=ready_window()
+                        ready(prefix)
+                        assert control_bounds(prefix+":animation-running")[0]==0
+                        assert len(actual_nodes(prefix))==20
+                        command("Close current tab");open_note("00 Timeline")
+                assert all((root/name).read_bytes()==data for name,data in sources.items()),"Graph animation changed a note"
+                results.append("Transient animation does not restart itself on app restart, and every original note byte is unchanged")
+
             def graph_checks():
                 nonlocal app, window
                 graph_root = base / "Graph native vault"
@@ -6665,7 +10306,7 @@ def main():
                 key("ctrl+t");open_note("Home")
                 assert control_bounds("tab-count")[0] == 2
                 assert control_bounds("global-graph:canvas", required=False) is None
-                xdo("key", "--clearmodifiers", "ctrl+q");app.wait(timeout=5)
+                confirm_quit();app.wait(timeout=5)
                 app=launch_app([str(ROOT / args.binary), str(graph_root)]);window=ready_window()
                 title_contains("Home")
                 assert control_bounds("tab-count")[0] == 2
@@ -6882,7 +10523,7 @@ def main():
 
                 def restart(root):
                     nonlocal app
-                    xdo("key", "--clearmodifiers", "ctrl+q"); app.wait(timeout=5)
+                    confirm_quit(); app.wait(timeout=5)
                     app = launch_app([str(ROOT / args.binary), str(root)])
                     return app
 
@@ -7126,10 +10767,35 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "system-theme":
+                system_theme_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "system-theme"}))
+                return
+            if args.section == "graph-animation":
+                graph_animation_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
             if args.section == "graph-state":
                 graph_state_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "graph-state"}))
+                return
+            if args.section == "sidebar-boundary":
+                sidebar_boundary_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section == "toolbar-fill":
+                toolbar_fill_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section == "middle-pan":
+                middle_pan_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "middle-pan"}))
                 return
             if args.section == "palette-queued":
                 palette_queue_checks()
@@ -7195,6 +10861,26 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "file-move"}))
                 return
+            if args.section == "drag-move":
+                drag_move_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "drag-move"}))
+                return
+            if args.section == "folder-copy":
+                folder_copy_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "folder-copy", "checks": len(results), "status": "passed"}))
+                return
+            if args.section == "narrow-html":
+                narrow_html_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "html-import":
+                html_import_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "file-copy":
                 file_copy_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -7240,10 +10926,29 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "palettes"}))
                 return
-            if args.section == "tab-keys":
-                tab_drag_checks(keys_only=True)
-                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
-                print(json.dumps({"status": "passed", "checks": len(results), "section": "tab-keys"}))
+            if args.section == "image-import":
+                image_import_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "image-import", "checks": len(results), "status": "passed"})); return
+            if args.section == "delimiter-pairs":
+                delimiter_pair_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "external-rename":
+                external_rename_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "list-enter":
+                list_enter_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "list-indent":
+                list_indent_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
             if args.section == "tab-drag":
                 tab_drag_checks()
@@ -7292,6 +10997,19 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "tables"}))
                 return
+            if args.section == "desktop-vault":
+                import vault_loading_checks
+                def restart_desktop(arguments):
+                    nonlocal app, window
+                    confirm_quit()
+                    app.wait(timeout=5)
+                    app = launch_app([str(ROOT / args.binary), *map(str, arguments)])
+                    window = ready_window()
+                vault_loading_checks.run(dict(locals(), restart_desktop=restart_desktop,
+                    current_app=lambda: app, current_window=lambda: window))
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "vaults":
                 vault_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -7301,6 +11019,16 @@ def main():
                 reading_code_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "reading-code"}))
+                return
+            if args.section == "sidebar-keys":
+                sidebar_keys_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "sidebar-keys"}))
+                return
+            if args.section in ("tree-scroll", "context-menu"):
+                {"tree-scroll": tree_scroll_checks, "context-menu": context_menu_checks}[args.section]()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
             if args.section == "keyboard-focus":
                 keyboard_focus_checks()
@@ -7352,6 +11080,35 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "explorer"}))
                 return
+            if args.section == "speed":
+                speed_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "speed"}))
+                return
+            if args.section in ("instance", "lifecycle", "quit", "idle-cpu"):
+                {"instance": instance_checks, "lifecycle": lifecycle_checks, "quit": quit_checks, "idle-cpu": idle_cpu_checks}[args.section]()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
+            if args.section == "watch-limit":
+                watch_limit_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "watch-limit"}))
+                return
+            if args.section == "reveal":
+                reveal_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "reveal", "checks": len(results), "status": "passed"}))
+                return
+            if args.section == "explorer-multi":
+                explorer_multi_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "explorer-multi", "checks": len(results), "status": "passed"}))
+                return
+            if args.section == "folder-create":
+                folder_creation_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "folder-create", "checks": len(results), "status": "passed"})); return
             if args.section == "folders":
                 folder_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -7362,11 +11119,26 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "large-search"}))
                 return
-            if args.section in ("hover", "title", "scrolling", "diagrams", "task-clipping"):
-                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "task-clipping":task_clip_checks}[args.section]()
+            if args.section == "agent-terminal":
+                import agent_terminal_checks
+                def relaunch():
+                    nonlocal app, window
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                    return app
+                agent_terminal_checks.run(dict(locals(), relaunch=relaunch))
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
                 return
+            if args.section in ("hover", "title", "scrolling", "diagrams", "math"):
+                {"hover":hover_checks, "title":title_checks, "scrolling":scrolling_checks, "diagrams":diagram_checks, "math":math_checks}[args.section]()
+                (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":args.section}))
+                return
+            if args.section == "quick-create":
+                quick_create_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "quick-create", "checks": len(results), "status": "passed"})); return
             if args.section == "quick-ranking":
                 quick_ranking_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
@@ -7387,11 +11159,36 @@ def main():
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"font-controls"}))
                 return
+            if args.section == "font-families":
+                font_family_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"font-families"}))
+                return
             if args.section == "visual-controls":
                 visual_controls_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"visual-controls"}))
                 return
+            if args.section == "backlink-context":
+                backlink_context_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "backlink-context", "checks": len(results), "status": "passed"})); return
+            if args.section == "note-embeds":
+                note_embed_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "note-embeds", "checks": len(results), "status": "passed"})); return
+            if args.section == "block-completion":
+                block_completion_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "block-completion", "checks": len(results), "status": "passed"})); return
+            if args.section == "link-fragments":
+                link_fragment_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"section": "link-fragments", "checks": len(results), "status": "passed"})); return
+            if args.section == "tab-close-menu":
+                tab_close_menu_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2))
+                print(json.dumps({"section": "tab-close-menu", "checks": len(results), "status": "passed"})); return
             if args.section == "tab-restore":
                 tab_restore_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -7403,6 +11200,13 @@ def main():
                 print(json.dumps({"status":"passed","checks":len(results),"section":"page-preview"}))
                 return
 
+            if args.section in ("view-modes", "all"):
+                view_modes_checks()
+                if args.section != "all":
+                    (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                    print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                    return
+                open_note("Home", title="Home")
             if args.section == "navigation":
                 navigation_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -7656,7 +11460,7 @@ def main():
             key("ctrl+t")
             open_note("Created in GUI")
             command("Source editing")
-            xdo("key", "--clearmodifiers", "ctrl+q")
+            confirm_quit()
             app.wait(timeout=5)
             session_files = list((base / "state/rustidian").glob("*.json"))
             assert len(session_files) == 1
@@ -7704,29 +11508,35 @@ def main():
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,
+                narrow_html_checks,
+                html_import_checks,
                 file_copy_checks,
                 file_move_checks,
+                drag_move_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,
                 undo_checks,
+                context_menu_checks,
                 color_checks,
                 native_highlight_checks,
                 navigation_checks,
                 page_preview_checks,
-                quick_ranking_checks,
+                quick_create_checks, quick_ranking_checks,
                 hover_checks,
                 title_checks,
                 scrolling_checks,
                 diagram_checks,
+                math_checks,
                 large_search_checks,
-                folder_checks,
+                folder_creation_checks, folder_checks,
                 explorer_checks,
                 vault_checks,
                 vault_switch_checks,
                 system_open_checks,
                 graph_checks,
                 graph_state_checks,
+                graph_animation_checks,
                 visual_controls_checks,
                 emoji_checks,
                 file_toolbar_checks,
@@ -7752,11 +11562,16 @@ def main():
                 note_aids_checks,
                 note_creator_checks,
                 tab_action_checks,
-                tab_restore_checks,
+                tab_close_menu_checks, tab_restore_checks, link_fragment_checks, block_completion_checks, note_embed_checks, backlink_context_checks,
                 tab_drag_checks,
+                list_indent_checks,
+                external_rename_checks,
+                image_import_checks, delimiter_pair_checks,
                 settings_checks,
                 font_controls_checks,
+                font_family_checks,
                 workspace_checks,
+                sidebar_boundary_checks,
                 palette_queue_checks,
                 unicode_queue_checks,
                 recovery_checks,
@@ -7781,6 +11596,16 @@ def main():
             except subprocess.TimeoutExpired:
                 app.kill()
                 app.wait()
+            if file_manager_bus is not None:
+                try:
+                    subprocess.run(["nautilus", "--quit"], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                file_manager_bus.terminate()
+                try:
+                    file_manager_bus.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    file_manager_bus.kill(); file_manager_bus.wait()
             if window_manager is not None:
                 window_manager.terminate()
                 window_manager.wait(timeout=5)

@@ -57,7 +57,7 @@ const provenance = {
   raw: 'graph-toolbar-studio-raw.svg', traced: 'graph-toolbar-traced.svg', native: '../../graph.svg',
   hashes: { original: hash(await fs.readFile(original)), prepared: hash(await fs.readFile(source)), raw: hash(raw), traced: hash(traced), native: hash(native), pathData: hash(JSON.stringify(paths(native))) },
   pathCount: paths(native).length, nativeBytes: Buffer.byteLength(native),
-  reproduction: 'SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/workspace/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs',
+  reproduction: 'SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/home/masih/Desktop/p/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs',
 };
 await fs.writeFile(path.join(root, 'graph-toolbar-provenance.json'), JSON.stringify(provenance, null, 2) + '\n');
 console.log(JSON.stringify({ paths: provenance.pathCount, nativeBytes: provenance.nativeBytes, nativeSha256: provenance.hashes.native }));

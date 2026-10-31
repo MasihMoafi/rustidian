@@ -10,7 +10,7 @@
     "assets/icons/artwork/source-graph.png"
   ],
   "preprocessing_intent": "Use the existing SVG Studio icon pipeline: remove requested white canvas by luminance coverage, trim only empty margins and fit proportionally in768px with60px transparent margins. Preserve generated contours and holes.",
-  "generator_original": "/home/user/.elpis-next/generated_images/01a162a3-71c7-7413-b9e1-47dc4501f2aa/exec-deded576-80c6-4ff6-9cc3-dd6d18be4f2a.png",
+  "generator_original": "/home/masih/.elpis-next/generated_images/01a162a3-71c7-7413-b9e1-47dc4501f2aa/exec-deded576-80c6-4ff6-9cc3-dd6d18be4f2a.png",
   "original_sha256": "baeff567ec77d69cec4c83c3427498d6c75d3670b3a3ae3fbaa7d24888e50647",
   "selectedRationale": "The single requested candidate reads as a connected-notes graph with four open circular counters, three clear links and even monochrome contours. Agent selection for local review; user acceptance and native integration remain separate."
 }

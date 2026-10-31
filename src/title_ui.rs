@@ -37,7 +37,7 @@ impl Title {
         }
         let font = FontId::new(
             crate::theme::document_size(ui, 32.436),
-            egui::FontFamily::Name("bold".into()),
+            crate::theme::fonts::text("bold"),
         );
         if !self.editing {
             let response = ui.add(

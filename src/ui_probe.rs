@@ -72,6 +72,32 @@ pub fn metric(ctx: &egui::Context, name: &str, value: f32) {
     }
 }
 
+/// Append this frame's `ui` time to `RUSTIDIAN_FRAME_LOG`, independent of the
+/// probe, whose own bookkeeping would distort the timings.
+pub fn frame_time(ctx: &egui::Context, started: std::time::Instant) {
+    use std::io::Write;
+    static LOG: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let Some(path) = LOG
+        .get_or_init(|| std::env::var_os("RUSTIDIAN_FRAME_LOG").map(PathBuf::from))
+        .as_ref()
+    else {
+        return;
+    };
+    let line = format!(
+        "{} {} {}\n",
+        ctx.cumulative_pass_nr(),
+        started.elapsed().as_micros(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis())
+    );
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(line.as_bytes()));
+}
+
 pub fn flush(ctx: &egui::Context) {
     let Some(path) = destination() else {
         return;

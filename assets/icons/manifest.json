@@ -2,7 +2,7 @@
   "generator": "Built-in image_gen.imagegen tool; backend model not independently identified",
   "selected": "candidate-a.png; new-tab-original.png replaces the ambiguous folder-shaped new-tab cell; more-original.png is the separately generated note-actions glyph",
   "rationale": "A has the lightest, simplest line treatment and distinct reading/split silhouettes. B is boxier; C is heavier.",
-  "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+  "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
   "options": {
     "colours": 2,
     "removeBackground": false,
@@ -591,7 +591,7 @@
         "fit": 216,
         "margin": 20
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "colours": 2,
         "removeBackground": false
@@ -608,7 +608,7 @@
         "fit": 216,
         "margin": 20
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "colours": 2,
         "removeBackground": false
@@ -625,7 +625,7 @@
         "fit": 216,
         "margin": 20
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "colours": 2,
         "removeBackground": false
@@ -644,7 +644,7 @@
         "fit": 216,
         "margin": 20
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "colours": 2,
         "removeBackground": false
@@ -661,7 +661,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -679,7 +679,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -697,7 +697,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -715,7 +715,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -733,7 +733,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -751,7 +751,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -769,7 +769,7 @@
         "fit": 648,
         "margin": 60
       },
-      "engine": "/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js",
+      "engine": "/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js",
       "options": {
         "mode": "monochrome",
         "thresholdPercent": 60,
@@ -785,7 +785,7 @@
         "graph"
       ],
       "provenance": "artwork/graph-toolbar/graph-toolbar-provenance.json",
-      "reproduction": "SVG_STUDIO_MODULE=/workspace/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/workspace/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
+      "reproduction": "SVG_STUDIO_MODULE=/home/masih/Desktop/p/svg-wt-multicolour/mcp-server/dist/vectorize.js LOGO_SKILL_DIR=/home/masih/Desktop/p/skills/logo node assets/icons/artwork/graph-toolbar/graph-toolbar-reproduce.mjs",
       "selectedRationale": "Connected open circles remain recognizable at18px alongside the existing thin rounded Files and Bookmark icons. Original and trace proofs inspected; actual app verification pending."
     }
   },

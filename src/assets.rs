@@ -32,6 +32,7 @@ pub fn embedded_images(source: &str) -> Vec<EmbeddedImage> {
         .flatten()
         .map_or(0, |properties| properties.range.end);
     let mut images = Vec::new();
+    let maths = crate::math::spans(source);
     for (range, target) in crate::vault::wiki_spans(source) {
         if range.start <= body || source.as_bytes()[range.start - 1] != b'!' {
             continue;
@@ -96,6 +97,11 @@ pub fn embedded_images(source: &str) -> Vec<EmbeddedImage> {
             _ => {}
         }
     }
+    images.retain(|image| {
+        !maths
+            .iter()
+            .any(|math| math.range.start < image.range.end && math.range.end > image.range.start)
+    });
     images.sort_by_key(|image| (image.range.start, std::cmp::Reverse(image.range.end)));
     let mut previous_end = 0;
     images.retain(|image| {

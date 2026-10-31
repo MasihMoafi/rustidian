@@ -6,13 +6,15 @@ use std::path::{Path, PathBuf};
 #[derive(Default)]
 pub struct Manager {
     picker: Option<Picker>,
+    trash: Option<Vec<PathBuf>>,
+    trash_focus: bool,
     updates: Option<LinkUpdates>,
     updates_focus: bool,
     error: Option<String>,
 }
 
 struct Picker {
-    source: PathBuf,
+    sources: Vec<PathBuf>,
     query: String,
     folders: FileMatcher,
     paths: Vec<PathBuf>,
@@ -21,8 +23,9 @@ struct Picker {
 }
 
 pub enum Action {
+    Trash(Vec<PathBuf>),
     Move {
-        source: PathBuf,
+        sources: Vec<PathBuf>,
         folder: PathBuf,
         create: bool,
     },
@@ -34,17 +37,24 @@ pub enum Action {
 
 impl Manager {
     pub fn active(&self) -> bool {
-        self.picker.is_some() || self.updates.is_some()
+        self.picker.is_some() || self.updates.is_some() || self.trash.is_some()
     }
 
     pub fn open(&mut self, vault: &Vault, source: PathBuf) {
-        let current = source.parent().unwrap_or_else(|| Path::new(""));
+        self.open_many(vault, vec![source]);
+    }
+
+    pub fn open_many(&mut self, vault: &Vault, sources: Vec<PathBuf>) {
+        let current = sources
+            .first()
+            .and_then(|source| source.parent())
+            .unwrap_or_else(|| Path::new(""));
         let mut folders = FileMatcher::folders(vault, current);
         let paths = folders.rank_folders("", usize::MAX);
         self.picker = Some(Picker {
             folders,
             paths,
-            source,
+            sources,
             query: String::new(),
             selected: 0,
             focus: true,
@@ -63,7 +73,53 @@ impl Manager {
         self.error = Some(error);
     }
 
+    pub fn ask_trash(&mut self, sources: Vec<PathBuf>) {
+        self.trash = Some(sources);
+        self.trash_focus = true;
+        self.error = None;
+    }
+
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Action> {
+        if let Some(paths) = self.trash.clone() {
+            let focus = std::mem::take(&mut self.trash_focus);
+            let mut confirm = false;
+            let mut close = false;
+            let response = egui::Modal::new(egui::Id::unique("trash-selection"))
+                .frame(theme::dialog_frame(ctx))
+                .show(ctx, |ui| {
+                    ui.set_width((ctx.content_rect().width() - 80.0).clamp(220.0, 500.0));
+                    theme::dialog_style(ui);
+                    close = theme::dialog_header(ui, "Move selected items to Trash?", "Cancel")
+                        .clicked();
+                    ui.label(format!(
+                        "Move {} selected items and any folder contents to system Trash?",
+                        paths.len()
+                    ));
+                    egui::ScrollArea::vertical()
+                        .max_height(180.0)
+                        .show(ui, |ui| {
+                            for path in &paths {
+                                ui.label(path.display().to_string());
+                            }
+                        });
+                    ui.label("You can recover these items from system Trash.");
+                    let (submit, cancel) = theme::dialog_actions(ui, "Move to Trash", true);
+                    if focus {
+                        cancel.request_focus();
+                    }
+                    crate::ui_probe::record(ctx, "explorer-trash-cancel", cancel.rect);
+                    crate::ui_probe::record(ctx, "explorer-trash-confirm", submit.rect);
+                    close |= cancel.clicked();
+                    confirm = submit.clicked();
+                });
+            if close || response.should_close() {
+                self.trash = None;
+            } else if confirm {
+                self.trash = None;
+                return Some(Action::Trash(paths));
+            }
+            return None;
+        }
         if let Some(updates) = &self.updates {
             let (links, files) = updates.counts();
             let mut choice = None;
@@ -82,7 +138,7 @@ impl Manager {
                     if close.clicked() {
                         choice = Some(None);
                     }
-                    ui.label("Do you want to update internal links that link to this file?");
+                    ui.label("Do you want to update internal links affected by this move?");
                     ui.label(format!(
                         "This will affect {links} {} in {files} {}.",
                         if links == 1 { "link" } else { "links" },
@@ -211,7 +267,7 @@ impl Manager {
                 }
                 if (create || (enter && paths.is_empty())) && !query.is_empty() {
                     action = Some(Action::Move {
-                        source: picker.source.clone(),
+                        sources: picker.sources.clone(),
                         folder: if query == "/" {
                             PathBuf::new()
                         } else {
@@ -221,7 +277,7 @@ impl Manager {
                     });
                 } else if enter && let Some(folder) = paths.get(picker.selected) {
                     action = Some(Action::Move {
-                        source: picker.source.clone(),
+                        sources: picker.sources.clone(),
                         folder: folder.clone(),
                         create: false,
                     });
@@ -257,7 +313,7 @@ impl Manager {
                         }
                         if button.clicked() {
                             action = Some(Action::Move {
-                                source: picker.source.clone(),
+                                sources: picker.sources.clone(),
                                 folder: folder.clone(),
                                 create: false,
                             });
@@ -276,7 +332,7 @@ impl Manager {
                     ui_probe::record(ctx, "move-create-folder", button.rect);
                     if button.clicked() {
                         action = Some(Action::Move {
-                            source: picker.source.clone(),
+                            sources: picker.sources.clone(),
                             folder: PathBuf::from(query),
                             create: true,
                         });

@@ -200,6 +200,8 @@ def main():
                                         xdo("key", "Escape")
                                         time.sleep(.3)
                                         xdo("key", "--clearmodifiers", "ctrl+q")
+                                        time.sleep(.3)
+                                        xdo("key", "Return")  # Ctrl+Q asks "Quit Rustidian?"; Enter confirms
                                         app.wait(timeout=5)
                                         sessions = list((profile / "state/rustidian").glob("*.json"))
                                         assert len(sessions) == 1

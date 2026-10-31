@@ -22,6 +22,11 @@ pub struct LinkUpdates {
     rewrites: Vec<Rewrite>,
 }
 
+pub struct MovedEntries {
+    pub paths: Vec<(PathBuf, PathBuf)>,
+    pub updates: LinkUpdates,
+}
+
 impl LinkUpdates {
     pub fn path(&self) -> &Path {
         &self.path
@@ -60,6 +65,314 @@ pub struct RenameOutcome {
 }
 
 impl Vault {
+    #[cfg(target_os = "linux")]
+    pub fn duplicate_folder(&mut self, from: &Path) -> Result<PathBuf> {
+        if from.as_os_str().is_empty() || !self.folders.iter().any(|path| path == from) {
+            return Err("Choose an existing folder inside this vault.".into());
+        }
+        let original = self.folder_path(from)?;
+        let metadata = std::fs::symlink_metadata(&original).map_err(|error| error.to_string())?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("Choose an existing folder inside this vault.".into());
+        }
+        let entries = folder_entries(&original)?;
+        if !entries
+            .first()
+            .is_some_and(|(relative, directory)| relative.as_os_str().is_empty() && *directory)
+        {
+            return Err(
+                "The source is no longer a folder. Refresh the vault and try again.".into(),
+            );
+        }
+        let snapshot = entries
+            .iter()
+            .map(|(relative, directory)| {
+                let metadata = std::fs::symlink_metadata(original.join(relative))
+                    .map_err(|error| format!("Cannot inspect folder: {error}"))?;
+                Ok((relative.clone(), *directory, metadata))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let parent = from.parent().unwrap_or_else(|| Path::new(""));
+        let parent_absolute = if parent.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.folder_path(parent)?
+        };
+        let filename = from.file_name().ok_or("Choose a folder.")?;
+        let staging = tempfile::Builder::new()
+            .prefix(".rustidian-copy-")
+            .tempdir_in(&parent_absolute)
+            .map_err(|error| format!("Cannot copy folder: {error}"))?;
+        let copied = (|| -> Result<(PathBuf, Vault)> {
+            for (relative, directory, expected) in &snapshot {
+                if relative.as_os_str().is_empty() {
+                    continue;
+                }
+                let source = original.join(relative);
+                let target = staging.path().join(relative);
+                if *directory {
+                    std::fs::create_dir(&target)
+                        .map_err(|error| format!("Cannot copy folder: {error}"))?;
+                } else {
+                    let current =
+                        std::fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+                    if !same_move_source(expected, &current) {
+                        return Err("The source folder changed while copying. Try again.".into());
+                    }
+                    std::fs::copy(&source, &target)
+                        .map_err(|error| format!("Cannot copy folder: {error}"))?;
+                }
+            }
+            if folder_entries(&original)? != entries {
+                return Err("The source folder changed while copying. Try again.".into());
+            }
+            for (relative, directory, expected) in &snapshot {
+                let current = std::fs::symlink_metadata(original.join(relative))
+                    .map_err(|error| error.to_string())?;
+                if current.permissions() != expected.permissions()
+                    || (*directory && (!current.is_dir() || current.file_type().is_symlink()))
+                    || (!*directory && !same_move_source(expected, &current))
+                {
+                    return Err("The source folder changed while copying. Try again.".into());
+                }
+            }
+            // Index only the new tree, while it is still private and unpublished.
+            let index = Vault::open(staging.path())?;
+            for (relative, directory, metadata) in snapshot.iter().rev() {
+                if *directory {
+                    std::fs::set_permissions(staging.path().join(relative), metadata.permissions())
+                        .map_err(|error| format!("Cannot copy folder permissions: {error}"))?;
+                }
+            }
+            for counter in 1..u64::MAX {
+                // A directory's dots are part of its name, not a file extension.
+                let mut name = filename.to_os_string();
+                name.push(format!(" {counter}"));
+                let destination = parent.join(name);
+                let absolute = self.folder_path(&destination)?;
+                match std::fs::symlink_metadata(&absolute) {
+                    Ok(_) => continue,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(format!("Cannot check copy destination: {error}")),
+                }
+                match rename_noreplace(staging.path(), &absolute) {
+                    Ok(()) => return Ok((destination, index)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => return Err(format!("Cannot copy folder: {error}")),
+                }
+            }
+            Err("No available folder name was found.".into())
+        })();
+        let (destination, index) = match copied {
+            Ok(result) => result,
+            Err(error) => {
+                // Restore owner access in our staging tree so its guard can clean
+                // up even after copying read-only directory permissions.
+                use std::os::unix::fs::PermissionsExt;
+                for (relative, directory, _) in &snapshot {
+                    if *directory {
+                        let _ = std::fs::set_permissions(
+                            staging.path().join(relative),
+                            std::fs::Permissions::from_mode(0o700),
+                        );
+                    }
+                }
+                return Err(error);
+            }
+        };
+        let _ = staging.keep();
+        self.notes
+            .retain(|note| !note.path.starts_with(&destination));
+        self.attachments
+            .retain(|path| !path.starts_with(&destination));
+        self.folders.retain(|path| !path.starts_with(&destination));
+        self.notes.extend(index.notes.into_iter().map(|mut note| {
+            note.path = destination.join(note.path);
+            note
+        }));
+        self.attachments.extend(
+            index
+                .attachments
+                .into_iter()
+                .map(|path| destination.join(path)),
+        );
+        self.folders.push(destination.clone());
+        self.folders
+            .extend(index.folders.into_iter().map(|path| destination.join(path)));
+        self.warnings.extend(
+            index
+                .warnings
+                .into_iter()
+                .map(|warning| format!("{}: {warning}", destination.display())),
+        );
+        self.notes.sort_by(|a, b| a.path.cmp(&b.path));
+        self.attachments.sort();
+        self.attachments.dedup();
+        self.folders.sort();
+        self.folders.dedup();
+        self.rebuild_lookup();
+        Ok(destination)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn duplicate_folder(&mut self, _from: &Path) -> Result<PathBuf> {
+        Err("Guarded folder copying is currently available on Linux.".into())
+    }
+
+    /// Validate the complete selection before a batch changes anything. A selected
+    /// folder owns its descendants, so they are never moved or trashed twice.
+    pub fn selected_entries(&self, sources: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        let mut paths = sources.to_vec();
+        paths.sort();
+        paths.dedup();
+        paths.retain(|path| {
+            !sources
+                .iter()
+                .any(|parent| parent != path && path.starts_with(parent))
+        });
+        for path in &paths {
+            if path.as_os_str().is_empty() || crate::vault::is_ignored_path(path) {
+                return Err("Choose visible files or folders inside this vault.".into());
+            }
+            let absolute = if self.folders.contains(path) {
+                self.folder_path(path)?
+            } else {
+                self.safe_file_path(path, false)?
+            };
+            let metadata =
+                std::fs::symlink_metadata(absolute).map_err(|error| error.to_string())?;
+            if metadata.file_type().is_symlink()
+                || (self.folders.contains(path) && !metadata.is_dir())
+                || (!self.folders.contains(path) && !metadata.is_file())
+            {
+                return Err(format!(
+                    "{} is no longer a file or folder in this vault.",
+                    path.display()
+                ));
+            }
+        }
+        Ok(paths)
+    }
+
+    pub fn begin_move_entries(
+        &mut self,
+        sources: &[PathBuf],
+        folder: &Path,
+        create: bool,
+    ) -> Result<Option<MovedEntries>> {
+        let sources = self.selected_entries(sources)?;
+        if sources.iter().any(|source| folder.starts_with(source)) {
+            return Err("A selection cannot be moved into itself or one of its folders.".into());
+        }
+        if crate::vault::is_ignored_path(folder)
+            || folder
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err("Choose a visible folder inside this vault.".into());
+        }
+        // The existing safe-path routine checks every ancestor and rejects links.
+        let destination = self.safe_file_path(&folder.join("Untitled.md"), create)?;
+        let parent = destination.parent().ok_or("Choose a folder.")?;
+        let metadata = std::fs::symlink_metadata(parent)
+            .map_err(|_| "This folder does not exist. Use Shift+Enter to create it.")?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("Choose a real folder inside this vault.".into());
+        }
+        let mut plans = Vec::new();
+        let mut moves = Vec::new();
+        let mut reserved = std::collections::BTreeSet::new();
+        for source in sources {
+            if source.parent() == Some(folder) {
+                continue;
+            }
+            let filename = source.file_name().ok_or("Choose a file or folder.")?;
+            let is_folder = self.folders.contains(&source);
+            let mut target = folder.join(filename);
+            let mut counter = 0u64;
+            while reserved.contains(&target)
+                || self
+                    .root
+                    .join(&target)
+                    .try_exists()
+                    .map_err(|error| error.to_string())?
+            {
+                counter += 1;
+                let name = if is_folder {
+                    format!("{} {counter}", filename.to_string_lossy())
+                } else if let Some(extension) = source.extension() {
+                    format!(
+                        "{} {counter}.{}",
+                        source.file_stem().unwrap().to_string_lossy(),
+                        extension.to_string_lossy()
+                    )
+                } else {
+                    return Err("A file with this name already exists at the destination.".into());
+                };
+                target = folder.join(name);
+            }
+            let plan = self.plan_entry_move(&source, &target, false)?;
+            moves.push((source, target.clone(), is_folder));
+            reserved.insert(target);
+            plans.push(plan);
+        }
+        if plans.is_empty() {
+            return Ok(None);
+        }
+        let mut rewrites = self.plan_link_moves(&moves, true)?;
+        let mut completed = Vec::<(PathBuf, PathBuf)>::new();
+        for plan in plans {
+            let from = plan.from.clone();
+            let to = plan.to.clone();
+            if let Err(error) = self.begin_rename(plan) {
+                let mut rollback_errors = Vec::new();
+                for (original, moved) in completed.iter().rev() {
+                    let rollback = self
+                        .plan_entry_move(moved, original, false)
+                        .and_then(|plan| self.begin_rename(plan));
+                    if let Err(failure) = rollback {
+                        rollback_errors.push(format!(
+                            "{} remains at {}: {failure}",
+                            original.display(),
+                            moved.display()
+                        ));
+                    }
+                }
+                return Err(if rollback_errors.is_empty() {
+                    format!("No items moved: {error}")
+                } else {
+                    format!("Move interrupted: {error}. {}", rollback_errors.join("; "))
+                });
+            }
+            completed.push((from, to));
+        }
+        for rewrite in &mut rewrites {
+            for (from, to, is_folder) in &moves {
+                let next = moved_path(&rewrite.document.path, from, to, *is_folder);
+                if next != rewrite.document.path {
+                    rewrite.document.path = next;
+                    break;
+                }
+            }
+        }
+        self.folders.extend(
+            folder
+                .ancestors()
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(Path::to_owned),
+        );
+        self.folders.sort();
+        self.folders.dedup();
+        Ok(Some(MovedEntries {
+            paths: completed,
+            updates: LinkUpdates {
+                root: self.root.clone(),
+                path: folder.to_owned(),
+                rewrites,
+            },
+        }))
+    }
+
     pub fn create_folder(&mut self, relative: &Path) -> Result<()> {
         let absolute = self.folder_path(relative)?;
         std::fs::create_dir(&absolute).map_err(|error| format!("Cannot create folder: {error}"))?;
@@ -68,7 +381,7 @@ impl Vault {
         Ok(())
     }
 
-    fn folder_path(&self, relative: &Path) -> Result<PathBuf> {
+    pub(crate) fn folder_path(&self, relative: &Path) -> Result<PathBuf> {
         if relative.as_os_str().is_empty()
             || relative.components().any(|part| match part {
                 std::path::Component::Normal(name) => {
@@ -140,14 +453,16 @@ impl Vault {
             .file_stem()
             .and_then(|name| name.to_str())
             .ok_or("Invalid file name.")?;
-        let extension = from
-            .extension()
-            .and_then(|name| name.to_str())
-            .ok_or("Invalid file extension.")?;
+        let extension = from.extension().and_then(|name| name.to_str());
         for counter in 0_u64.. {
             let destination = if counter == 0 {
                 first.clone()
             } else {
+                // "Makefile 1" would no longer count as a text document, so an
+                // extension-less file keeps its name or stays where it is.
+                let Some(extension) = extension else {
+                    return Err("A file with this name already exists in that folder.".into());
+                };
                 folder.join(format!("{stem} {counter}.{extension}"))
             };
             let absolute = self.root.join(&destination);
@@ -193,14 +508,22 @@ impl Vault {
     }
 
     pub fn plan_rename(&self, from: &Path, to: &Path) -> Result<RenamePlan> {
+        self.plan_entry_move(from, to, true)
+    }
+
+    fn plan_entry_move(&self, from: &Path, to: &Path, links: bool) -> Result<RenamePlan> {
         if from == to {
             return Err("Choose a different name.".into());
         }
+        if crate::vault::is_ignored_path(to) {
+            return Err("Choose a visible destination inside this vault.".into());
+        }
         let folder = self.folders.iter().any(|path| path == from);
-        let image = self.attachments.iter().any(|path| path == from);
+        let attachment = self.attachments.iter().any(|path| path == from);
+        let image = attachment && crate::assets::is_image(from);
         let kind = if folder {
             MoveKind::Folder
-        } else if image {
+        } else if attachment {
             MoveKind::Image
         } else {
             MoveKind::Note
@@ -214,12 +537,15 @@ impl Vault {
         {
             return Err("Keep the image filename extension when renaming or moving it.".into());
         }
+        if attachment && !image && !crate::vault::is_text_document(to) {
+            return Err("Keep a text filename extension when renaming a text file.".into());
+        }
         if folder && to.starts_with(from) {
             return Err("A folder cannot move inside itself.".into());
         }
         let original = if folder {
             self.folder_path(from)?
-        } else if image {
+        } else if attachment {
             self.safe_file_path(from, false)?
         } else {
             self.safe_path(from, false)?
@@ -228,7 +554,7 @@ impl Vault {
             .map_err(|error| format!("Cannot read source: {error}"))?;
         if metadata.file_type().is_symlink()
             || (folder && !metadata.is_dir())
-            || (image && !metadata.is_file())
+            || (attachment && !metadata.is_file())
         {
             return Err("Choose an existing file or folder inside this vault.".into());
         }
@@ -243,14 +569,14 @@ impl Vault {
                 .filter(|note| note.path.starts_with(from))
                 .map(|note| self.read(&note.path))
                 .collect::<Result<Vec<_>>>()?
-        } else if image {
+        } else if attachment {
             Vec::new()
         } else {
             vec![self.read(from)?]
         };
         let destination = if folder {
             self.folder_path(to)?
-        } else if image {
+        } else if attachment {
             self.safe_file_path(to, false)?
         } else {
             self.safe_path(to, false)?
@@ -261,22 +587,63 @@ impl Vault {
         {
             return Err("A file or folder already exists at this destination.".into());
         }
+        let rewrites = if links {
+            self.plan_link_moves(&[(from.to_owned(), to.to_owned(), folder)], false)?
+        } else {
+            Vec::new()
+        };
+        Ok(RenamePlan {
+            from: from.to_owned(),
+            to: to.to_owned(),
+            source,
+            kind,
+            metadata,
+            entries,
+            rewrites,
+        })
+    }
+
+    fn plan_link_moves(
+        &self,
+        moves: &[(PathBuf, PathBuf, bool)],
+        batch: bool,
+    ) -> Result<Vec<Rewrite>> {
+        let relocate = |path: &Path| {
+            moves
+                .iter()
+                .find_map(|(from, to, folder)| {
+                    let next = moved_path(path, from, to, *folder);
+                    (next != path).then_some(next)
+                })
+                .unwrap_or_else(|| path.to_owned())
+        };
         let mut rewrites = Vec::new();
         for note in &self.notes {
-            let note_destination = moved_path(&note.path, from, to, folder);
+            let note_destination = relocate(&note.path);
             let mut changes = Vec::new();
             for (range, target) in wiki_spans(&note.text) {
                 if let Some(resolved) = self.resolve_destination(&note.path, &target)
-                    && (resolved == from
-                        || (folder && resolved.starts_with(from))
+                    && (relocate(&resolved) != resolved
                         || (note_destination != note.path
-                            && self.resolve_destination(&note_destination, &target)
-                                != Some(resolved.clone())))
+                            && (batch
+                                || self.resolve_destination(&note_destination, &target)
+                                    != Some(resolved.clone()))))
                 {
                     let name = target.split('|').next().unwrap();
                     let fragment = name.split_once('#').map(|(_, value)| value);
-                    let destination = moved_path(&resolved, from, to, folder);
-                    let mut link = paths::wiki_destination(&destination);
+                    let destination = relocate(&resolved);
+                    let wiki_path = if batch {
+                        PathBuf::from(
+                            paths::decode(&paths::markdown_destination(
+                                &note_destination,
+                                &destination,
+                            ))
+                            .ok_or("Invalid link destination.")?,
+                        )
+                    } else {
+                        destination.clone()
+                    };
+                    let mut link = paths::wiki_destination(&wiki_path);
                     if !paths::wiki_path_supported(&destination) {
                         return Err("This destination would break wiki links. Choose another name without separators such as # or |.".into());
                     }
@@ -327,11 +694,9 @@ impl Vault {
             }
             for (url, range) in markdown_links {
                 if let Some(resolved) = self.resolve_destination(&note.path, &url)
-                    && (resolved == from
-                        || (folder && resolved.starts_with(from))
-                        || note_destination != note.path)
+                    && (relocate(&resolved) != resolved || note_destination != note.path)
                 {
-                    let relocated = moved_path(&resolved, from, to, folder);
+                    let relocated = relocate(&resolved);
                     let mut destination =
                         paths::markdown_destination(&note_destination, &relocated);
                     if let Some((_, fragment)) = url.split_once('#') {
@@ -368,15 +733,7 @@ impl Vault {
             }
             rewrites.push(Rewrite { document, changes });
         }
-        Ok(RenamePlan {
-            from: from.to_owned(),
-            to: to.to_owned(),
-            source,
-            kind,
-            metadata,
-            entries,
-            rewrites,
-        })
+        Ok(rewrites)
     }
 
     pub fn rename_note(&mut self, plan: RenamePlan) -> Result<RenameOutcome> {
@@ -431,14 +788,8 @@ impl Vault {
             } else {
                 self.safe_path(&plan.to, true)?
             };
-            rustix::fs::renameat_with(
-                rustix::fs::CWD,
-                &original,
-                rustix::fs::CWD,
-                &destination,
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(|error| format!("Cannot rename file or folder: {error}"))?;
+            rename_noreplace(&original, &destination)
+                .map_err(|error| format!("Cannot rename file or folder: {error}"))?;
         }
         #[cfg(not(target_os = "linux"))]
         return Err("Guarded renaming is currently available on Linux.".into());
@@ -539,6 +890,18 @@ impl Vault {
 
 // Find the label boundary before looking for a destination. Titles can contain
 // the same delimiters, and inline code can contain brackets inside the label.
+#[cfg(target_os = "linux")]
+fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        from,
+        rustix::fs::CWD,
+        to,
+        rustix::fs::RenameFlags::NOREPLACE,
+    )
+    .map_err(std::io::Error::from)
+}
+
 fn same_move_source(expected: &std::fs::Metadata, current: &std::fs::Metadata) -> bool {
     let same = current.is_file()
         && !current.file_type().is_symlink()
@@ -561,7 +924,7 @@ fn folder_entries(root: &Path) -> Result<Vec<(PathBuf, bool)>> {
         let entry = entry.map_err(|error| format!("Cannot inspect folder: {error}"))?;
         let kind = entry.file_type();
         if !kind.is_dir() && !kind.is_file() {
-            return Err("Folders containing linked or special files cannot be moved.".into());
+            return Err("Choose a folder without linked or special files.".into());
         }
         let relative = entry
             .path()

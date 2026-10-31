@@ -33,6 +33,49 @@ pub struct Note {
     folded: std::sync::OnceLock<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct LinkedMention {
+    pub path: PathBuf,
+    pub range: std::ops::Range<usize>,
+    pub line: usize,
+    pub before: String,
+    pub link: String,
+    pub after: String,
+}
+
+impl LinkedMention {
+    /// Visible link text, while `link` and `range` retain the exact source for navigation.
+    pub fn label(&self) -> String {
+        let raw = self.link.strip_prefix('!').unwrap_or(&self.link);
+        if let Some(wiki) = raw
+            .strip_prefix("[[")
+            .and_then(|link| link.strip_suffix("]]"))
+        {
+            return wiki.split_once('|').map_or(wiki, |(_, label)| label).into();
+        }
+        use pulldown_cmark::{Event, Options, Parser};
+        // Reference-style links need their label even when their definition is elsewhere.
+        let mut reference = |_link: pulldown_cmark::BrokenLink<'_>| Some(("".into(), "".into()));
+        let mut label = String::new();
+        for event in Parser::new_with_broken_link_callback(
+            &self.link,
+            Options::empty(),
+            Some(&mut reference),
+        ) {
+            match event {
+                Event::Text(text) | Event::Code(text) => label.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => label.push(' '),
+                _ => {}
+            }
+        }
+        if label.is_empty() {
+            self.link.clone()
+        } else {
+            label
+        }
+    }
+}
+
 impl Note {
     pub(crate) fn new(path: PathBuf, text: String) -> Self {
         let metadata = crate::metadata::analyze(&text);
@@ -142,6 +185,10 @@ pub struct Vault {
 
 impl Vault {
     pub fn open(root: &Path) -> Result<Self> {
+        Self::open_cancellable(root, || false)
+    }
+
+    pub fn open_cancellable(root: &Path, cancelled: impl Fn() -> bool) -> Result<Self> {
         let root = root
             .canonicalize()
             .map_err(|e| format!("Cannot open vault: {e}"))?;
@@ -159,7 +206,7 @@ impl Vault {
             names: HashMap::new(),
             incoming: std::sync::OnceLock::new(),
         };
-        vault.refresh()?;
+        vault.refresh_cancellable(cancelled)?;
         Ok(vault)
     }
 
@@ -171,7 +218,7 @@ impl Vault {
             .into_owned()
     }
 
-    pub fn refresh(&mut self) -> Result<()> {
+    fn refresh_cancellable(&mut self, cancelled: impl Fn() -> bool) -> Result<()> {
         if !self.root.is_dir() {
             return Err("The vault folder is no longer available.".into());
         }
@@ -187,6 +234,9 @@ impl Vault {
                 entry.depth() == 0 || !is_ignored_path(Path::new(entry.file_name()))
             });
         for entry in entries {
+            if cancelled() {
+                return Err("Opening cancelled.".into());
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -319,24 +369,78 @@ impl Vault {
         })
     }
 
+    /// Import the current HTML buffer beside its source without replacing either
+    /// the source file or an existing Markdown note. Relative links keep their base.
+    pub fn import_html(&mut self, source: &Document) -> Result<Document> {
+        if !crate::html_import::is_html(&source.path) || source.is_image() {
+            return Err("Choose an HTML file to convert to Markdown.".into());
+        }
+        self.safe_file_path(&source.path, false)?;
+        let text = crate::html_import::convert(&source.text)?;
+        let stem = source
+            .path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or("Invalid HTML file name.")?;
+        let parent = source.path.parent().unwrap_or(Path::new(""));
+        for number in 0..u64::MAX {
+            let name = if number == 0 {
+                format!("{stem}.md")
+            } else {
+                format!("{stem} {number}.md")
+            };
+            let path = parent.join(name);
+            let absolute = self.root.join(&path);
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+            let mut document = Document::new(path);
+            document.text.clone_from(&text);
+            match self.save(&mut document) {
+                Ok(()) => return Ok(document),
+                Err(_) if fs::symlink_metadata(&absolute).is_ok() => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err("Cannot find an unused Markdown note name.".into())
+    }
+
     /// Create an empty note without asking for a name or replacing an existing file.
     pub fn create_untitled(&mut self) -> Result<Document> {
+        self.create_untitled_in(Path::new(""))
+    }
+
+    pub fn create_untitled_in(&mut self, folder: &Path) -> Result<Document> {
+        let absolute = if folder.as_os_str().is_empty() {
+            self.root.clone()
+        } else {
+            self.folder_path(folder)?
+        };
+        let metadata = fs::symlink_metadata(&absolute)
+            .map_err(|error| format!("Cannot create a note in this folder: {error}"))?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err("Choose an existing folder inside this vault.".into());
+        }
         for number in 0..u64::MAX {
             let name = if number == 0 {
                 "Untitled.md".to_owned()
             } else {
                 format!("Untitled {number}.md")
             };
-            let path = PathBuf::from(name);
+            let path = folder.join(name);
             let absolute = self.root.join(&path);
-            if absolute.try_exists().map_err(|error| error.to_string())? {
-                continue;
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
             }
             let mut document = Document::new(path);
             match self.save(&mut document) {
                 Ok(()) => return Ok(document),
                 // Another window may have created this name. save uses noclobber.
-                Err(_) if absolute.try_exists().unwrap_or(false) => continue,
+                Err(_) if fs::symlink_metadata(&absolute).is_ok() => continue,
                 Err(error) => return Err(error),
             }
         }
@@ -347,46 +451,47 @@ impl Vault {
         if document.is_image() {
             return Err("Images cannot be edited as Markdown.".into());
         }
-        let absolute = self.safe_path(&document.path, document.original.is_none())?;
-        let permissions = if let Some(original) = &document.original {
-            let current = fs::read_to_string(&absolute).map_err(|e| {
-                format!("Note was removed or cannot be read. Your changes are still open: {e}")
-            })?;
-            if &current != original {
-                return Err("This note changed outside Rustidian. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
-            }
-            Some(
-                fs::metadata(&absolute)
-                    .map_err(|e| e.to_string())?
-                    .permissions(),
-            )
-        } else {
-            if absolute.exists() {
-                return Err("A note already exists at this path. Choose a different name.".into());
-            }
-            None
-        };
-        let temporary = prepare_file(&absolute, document.text.as_bytes(), permissions)?;
-        if document.original.is_none() {
-            temporary
-                .persist_noclobber(&absolute)
-                .map_err(|e| format!("Cannot create note: {}", e.error))?;
-        } else {
-            // Recheck after writing the temporary file to catch changes during a long write.
-            if fs::read_to_string(&absolute).ok().as_ref() != document.original.as_ref() {
-                return Err(
-                    "This note changed outside Rustidian during save. Nothing was overwritten."
-                        .into(),
-                );
-            }
-            temporary
-                .persist(&absolute)
-                .map_err(|e| format!("Cannot finish save: {}", e.error))?;
+        if document.original.is_some() {
+            let pending = self.prepare_save(document)?;
+            pending.write()?;
+            self.commit_save(document, pending.text);
+            return Ok(());
         }
-        document.original = Some(document.text.clone());
-        document.saved_revision = Document::next_revision();
-        self.index_note(document.path.clone(), document.text.clone());
+        let absolute = self.safe_path(&document.path, true)?;
+        if absolute.exists() {
+            return Err("A note already exists at this path. Choose a different name.".into());
+        }
+        prepare_file(&absolute, document.text.as_bytes(), None)?
+            .persist_noclobber(&absolute)
+            .map_err(|e| format!("Cannot create note: {}", e.error))?;
+        self.commit_save(document, document.text.clone());
         Ok(())
+    }
+
+    /// The checks and bytes for saving a note that is already on disk. Its
+    /// `write` borrows nothing from the vault, so autosave runs it off the UI thread.
+    pub fn prepare_save(&self, document: &Document) -> Result<PendingSave> {
+        if document.is_image() {
+            return Err("Images cannot be edited as Markdown.".into());
+        }
+        let original = document
+            .original
+            .clone()
+            .ok_or("This note is not on disk yet.")?;
+        Ok(PendingSave {
+            absolute: self.safe_path(&document.path, false)?,
+            path: document.path.clone(),
+            text: document.text.clone(),
+            original,
+        })
+    }
+
+    /// Record that `text`, written by `save` or `PendingSave::write`, is now the
+    /// document's saved state.
+    pub fn commit_save(&mut self, document: &mut Document, text: String) {
+        document.original = Some(text.clone());
+        document.saved_revision = Document::next_revision();
+        self.index_note(document.path.clone(), text);
     }
 
     fn index_note(&mut self, path: PathBuf, text: String) {
@@ -433,7 +538,7 @@ impl Vault {
         let extension = from
             .extension()
             .and_then(|value| value.to_str())
-            .ok_or("Invalid file extension.")?;
+            .ok_or("Add a filename extension before copying this file.")?;
         let parent = from.parent().unwrap_or(Path::new(""));
         for counter in 1_u64.. {
             let path = parent.join(format!("{stem} {counter}.{extension}"));
@@ -461,10 +566,6 @@ impl Vault {
         Err("Cannot find an available copy name.".into())
     }
 
-    pub fn search(&self, query: &str) -> Vec<&Note> {
-        self.query(query).unwrap_or_default()
-    }
-
     pub(crate) fn rebuild_lookup(&mut self) {
         self.paths.clear();
         self.names.clear();
@@ -475,6 +576,49 @@ impl Vault {
             }
         }
         self.incoming.take();
+    }
+
+    /// Save a new image without replacing an existing vault entry.
+    pub fn import_attachment(&mut self, name: &Path, bytes: &[u8]) -> Result<PathBuf> {
+        if name.components().count() != 1
+            || !matches!(name.components().next(), Some(Component::Normal(_)))
+            || is_ignored_path(name)
+            || !crate::assets::is_image(name)
+        {
+            return Err("Choose a supported image file.".into());
+        }
+        let stem = name
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid image name.")?;
+        let extension = name
+            .extension()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid image extension.")?;
+        for number in 0.. {
+            let relative = if number == 0 {
+                name.to_path_buf()
+            } else {
+                PathBuf::from(format!("{stem} {number}.{extension}"))
+            };
+            let absolute = self.root.join(&relative);
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("Cannot access attachment: {error}")),
+            }
+            let absolute = self.safe_file_path(&relative, false)?;
+            let temporary = prepare_file(&absolute, bytes, None)?;
+            match temporary.persist_noclobber(&absolute) {
+                Ok(_) => {
+                    self.index_note(relative.clone(), String::new());
+                    return Ok(relative);
+                }
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("Cannot save attachment: {error}")),
+            }
+        }
+        Err("Cannot find an available image name.".into())
     }
 
     pub fn query(&self, query: &str) -> Result<Vec<&Note>> {
@@ -613,24 +757,77 @@ impl Vault {
         Ok(document)
     }
 
+    /// Each actual linked mention, using open drafts instead of their saved copies.
+    pub fn backlink_mentions(&self, path: &Path, open: &[(&Path, &str)]) -> Vec<LinkedMention> {
+        let mut sources: HashMap<PathBuf, &str> = self
+            .backlinks(path)
+            .into_iter()
+            .map(|note| (note.path.clone(), note.text.as_str()))
+            .collect();
+        for &(from, text) in open {
+            if from != path && !from.as_os_str().is_empty() {
+                sources.insert(from.to_owned(), text);
+            }
+        }
+        let mut mentions = Vec::new();
+        for (from, text) in sources {
+            if from == path {
+                continue;
+            }
+            for (range, target) in reference_spans(text) {
+                if self.resolve_destination(&from, &target).as_deref() != Some(path) {
+                    continue;
+                }
+                let line_start = text[..range.start].rfind('\n').map_or(0, |start| start + 1);
+                let line_end = text[range.end..]
+                    .find('\n')
+                    .map_or(text.len(), |end| range.end + end);
+                let prefix = &text[line_start..range.start];
+                let suffix = text[range.end..line_end].trim_end_matches('\r');
+                let mut before: String = prefix
+                    .chars()
+                    .rev()
+                    .take(50)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                if prefix.chars().count() > 50 {
+                    before.insert(0, '…');
+                }
+                let mut after: String = suffix.chars().take(70).collect();
+                if suffix.chars().count() > 70 {
+                    after.push('…');
+                }
+                mentions.push(LinkedMention {
+                    path: from.clone(),
+                    line: text[..range.start]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1,
+                    link: text[range.clone()].into(),
+                    range,
+                    before,
+                    after,
+                });
+            }
+        }
+        mentions.sort_by(|a, b| {
+            a.path
+                .cmp(&b.path)
+                .then_with(|| a.range.start.cmp(&b.range.start))
+        });
+        mentions
+    }
+
     pub fn backlinks(&self, path: &Path) -> Vec<&Note> {
         let incoming = self.incoming.get_or_init(|| {
             let mut incoming: HashMap<PathBuf, Vec<usize>> = HashMap::new();
             for (index, note) in self.notes.iter().enumerate() {
                 let mut targets = std::collections::HashSet::new();
-                for link in wiki_links(&note.text) {
+                for (_, link) in reference_spans(&note.text) {
                     if let Some(target) = self.resolve_destination(&note.path, &link)
-                        && target != note.path
-                    {
-                        targets.insert(target);
-                    }
-                }
-                for event in pulldown_cmark::Parser::new(&note.text) {
-                    if let pulldown_cmark::Event::Start(
-                        pulldown_cmark::Tag::Link { dest_url, .. }
-                        | pulldown_cmark::Tag::Image { dest_url, .. },
-                    ) = event
-                        && let Some(target) = self.resolve_destination(&note.path, &dest_url)
                         && target != note.path
                     {
                         targets.insert(target);
@@ -648,6 +845,46 @@ impl Vault {
             .flatten()
             .map(|&index| &self.notes[index])
             .collect()
+    }
+}
+
+/// A save of an existing note: `Vault::prepare_save`, `write`, then `Vault::commit_save`.
+pub struct PendingSave {
+    pub path: PathBuf,
+    pub text: String,
+    absolute: PathBuf,
+    original: String,
+}
+
+impl PendingSave {
+    /// The saved text the write expects to replace.
+    pub fn original(&self) -> &str {
+        &self.original
+    }
+
+    /// Atomically replaces the note, keeping its permissions, unless it no longer
+    /// holds the text it was loaded or last saved with.
+    pub fn write(&self) -> Result<()> {
+        let current = fs::read_to_string(&self.absolute).map_err(|e| {
+            format!("Note was removed or cannot be read. Your changes are still open: {e}")
+        })?;
+        if current != self.original {
+            return Err("This note changed outside Rustidian. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
+        }
+        let permissions = fs::metadata(&self.absolute)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        let temporary = prepare_file(&self.absolute, self.text.as_bytes(), Some(permissions))?;
+        // Recheck after writing the temporary file to catch changes during a long write.
+        if fs::read_to_string(&self.absolute).ok().as_ref() != Some(&self.original) {
+            return Err(
+                "This note changed outside Rustidian during save. Nothing was overwritten.".into(),
+            );
+        }
+        temporary
+            .persist(&self.absolute)
+            .map_err(|e| format!("Cannot finish save: {}", e.error))?;
+        Ok(())
     }
 }
 
@@ -821,7 +1058,48 @@ fn prose_lines(text: &str) -> impl Iterator<Item = &str> {
     })
 }
 
+fn reference_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+    let maths = crate::math::spans(text);
+    let mut links = wiki_spans_outside(text, &maths);
+    let wiki_ranges: Vec<_> = links.iter().map(|(range, _)| range.clone()).collect();
+    let body = crate::metadata::frontmatter(text)
+        .ok()
+        .flatten()
+        .map_or(0, |properties| properties.range.end);
+    for (event, range) in Parser::new_ext(
+        &text[body..],
+        Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_FOOTNOTES,
+    )
+    .into_offset_iter()
+    {
+        if let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event {
+            let range = body + range.start..body + range.end;
+            if maths
+                .iter()
+                .any(|math| math.range.start < range.end && math.range.end > range.start)
+                || wiki_ranges
+                    .iter()
+                    .any(|wiki| wiki.start < range.end && wiki.end > range.start)
+            {
+                continue;
+            }
+            links.push((range, dest_url.into_string()));
+        }
+    }
+    links.sort_by_key(|(range, _)| (range.start, range.end));
+    links
+}
+
 pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    wiki_spans_outside(text, &crate::math::spans(text))
+}
+
+/// `wiki_spans` for a caller that already parsed `text`'s math.
+pub fn wiki_spans_outside(
+    text: &str,
+    maths: &[crate::math::Span],
+) -> Vec<(std::ops::Range<usize>, String)> {
     let mut links = Vec::new();
     for line in prose_lines(text) {
         let offset = line.as_ptr() as usize - text.as_ptr() as usize;
@@ -850,7 +1128,11 @@ pub fn wiki_spans(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
             {
                 let end = cursor + 2 + end;
                 let target = line[cursor + 2..end].trim();
-                if !target.is_empty() {
+                if !target.is_empty()
+                    && !maths.iter().any(|math| {
+                        math.range.start < offset + end + 2 && math.range.end > offset + cursor
+                    })
+                {
                     // Markdown tables escape the alias separator: [[Note\|Label]].
                     links.push((
                         offset + cursor..offset + end + 2,
@@ -870,12 +1152,5 @@ pub fn wiki_links(text: &str) -> Vec<String> {
     wiki_spans(text)
         .into_iter()
         .map(|(_, target)| target)
-        .collect()
-}
-
-pub fn headings(text: &str) -> Vec<(usize, String)> {
-    crate::structure::outline(text)
-        .into_iter()
-        .map(|heading| (heading.level, heading.title))
         .collect()
 }

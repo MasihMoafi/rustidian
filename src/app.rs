@@ -15,7 +15,11 @@ use rustidian::tab::{ClosedTab, Tab, View};
 use rustidian::vault::{Document, Vault, wiki_links};
 use std::{
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+    },
     time::{Duration, Instant},
 };
 
@@ -37,7 +41,10 @@ enum Dialog {
 enum Pending {
     CloseTab(usize),
     CloseOtherTabs(u64),
+    CloseTabsToRight(u64),
     Quit,
+    /// Ctrl+Q's "Quit Rustidian?" question, asked when nothing is unsaved.
+    ConfirmQuit,
     ChangeVault,
     OpenVault(PathBuf, Option<PathBuf>),
     LoadWorkspace(String),
@@ -45,6 +52,38 @@ enum Pending {
 }
 
 struct DraggedTab(u64);
+
+struct PreparedVault {
+    vault: Vault,
+    tree: Tree,
+    files: rustidian::search::FileMatcher,
+    /// A new watcher, or `None` when the current one was updated in place.
+    monitoring: Option<Monitoring>,
+    /// Folders gained watches after the scan.
+    watched: bool,
+    watch_warning: Option<String>,
+}
+
+const ATTENTION_DELAY: Duration = Duration::from_millis(1500);
+
+type SharedWatch = Arc<Mutex<rustidian::watcher::Watch>>;
+
+struct Monitoring {
+    watcher: Option<SharedWatch>,
+    events: Receiver<notify::Result<notify::Event>>,
+    overflow: Arc<AtomicBool>,
+}
+
+struct Loading {
+    receiver: Receiver<Result<PreparedVault, String>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for Loading {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+}
 
 pub struct NotesApp {
     pub(crate) vault: Option<Vault>,
@@ -59,6 +98,10 @@ pub struct NotesApp {
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
+    agent: crate::terminal_ui::Panel,
+    page_pan: crate::page_pan::PagePan,
+    pub(crate) appearance: theme::Appearance,
+    system_theme: theme::SystemTheme,
     pub(crate) palette: theme::palette::Palette,
     pub(crate) confirm_trash: bool,
     dialog_skip_trash: bool,
@@ -78,10 +121,28 @@ pub struct NotesApp {
     first_frame: bool,
     window_title: String,
     pub(crate) ctx: egui::Context,
-    loading: Option<Receiver<Result<Vault, String>>>,
-    watcher: Option<Box<dyn notify::Watcher>>,
+    loading: Option<Loading>,
+    /// Files and folders from later launches; see `instance`.
+    #[cfg(unix)]
+    pub(crate) launches: Option<Receiver<crate::instance::Request>>,
+    /// Launches that wait to hear this window has the focus; see
+    /// `instance::Instance::serve`.
+    #[cfg(unix)]
+    showing: Vec<mpsc::Sender<()>>,
+    /// When to check that a window just opened has focus. GNOME may leave it
+    /// behind the window being typed in; it then asks for attention, so
+    /// "Rustidian is ready" appears instead of nothing.
+    attention_check: Option<Instant>,
+    watcher: Option<SharedWatch>,
     watch_events: Option<Receiver<notify::Result<notify::Event>>>,
+    watch_overflow: Arc<AtomicBool>,
     refresh_due: Option<Instant>,
+    /// Files the watcher reported since the last refresh. Rustidian's own
+    /// saves are among them; the refresh re-indexes only if one holds
+    /// something the vault does not already have.
+    refresh_paths: std::collections::HashSet<PathBuf>,
+    /// Events were lost or folders gained watches: the refresh must re-index.
+    refresh_required: bool,
     loading_root: Option<PathBuf>,
     startup_document: Option<PathBuf>,
     find: crate::editor_ui::Find,
@@ -93,16 +154,23 @@ pub struct NotesApp {
     pub(crate) sort_descending: bool,
     collapse_epoch: u64,
     reveal_folder: Option<PathBuf>,
+    /// The active note the explorer last scrolled to; a new one is revealed once.
+    revealed_note: Option<PathBuf>,
     reset_tree_scroll: bool,
     pub(crate) bookmarks: rustidian::bookmarks::Bookmarks,
     pub(crate) show_bookmarks: bool,
     pub(crate) right_tab: u8,
     pub(crate) ui_zoom: f32,
     pub(crate) document_font_size: u8,
+    pub(crate) fonts: theme::fonts::Fonts,
+    /// Chosen font names that are not installed, shown under the font settings.
+    pub(crate) missing_fonts: Vec<String>,
     pub(crate) editor_preferences: settings_ui::EditorPreferences,
     pub(crate) autosave_enabled: bool,
+    autosave: rustidian::autosave::Writer,
     vault_manager: crate::vault_manager::Manager,
     open_picker: rustidian::native_picker::Picker,
+    reveal_result: Option<Receiver<Result<(), String>>>,
     pub(crate) note_aids: rustidian::note_aids::Config,
     template_source: Option<(u64, String)>,
     template_choices: Result<rustidian::search::FileMatcher, String>,
@@ -130,9 +198,11 @@ impl NotesApp {
         started: Instant,
         startup_document: Option<PathBuf>,
     ) -> Self {
-        theme::apply(&cc.egui_ctx, true);
+        theme::apply_appearance(&cc.egui_ctx, theme::Appearance::System);
+        crate::window::disable_builtin_quit(&cc.egui_ctx);
         theme::install_fonts(&cc.egui_ctx);
         theme::install_icons(&cc.egui_ctx);
+        crate::syntax::prepare();
         let mut app = Self {
             vault: None,
             tree: Tree::default(),
@@ -145,7 +215,11 @@ impl NotesApp {
             search_focus: false,
             show_left: true,
             show_right: false,
-            dark: true,
+            dark: cc.egui_ctx.theme() == egui::Theme::Dark,
+            agent: Default::default(),
+            page_pan: Default::default(),
+            appearance: Default::default(),
+            system_theme: Default::default(),
             palette: Default::default(),
             cache: CommonMarkCache::default(),
             dialog: None,
@@ -166,9 +240,17 @@ impl NotesApp {
             window_title: String::new(),
             ctx: cc.egui_ctx.clone(),
             loading: None,
+            #[cfg(unix)]
+            launches: None,
+            #[cfg(unix)]
+            showing: Vec::new(),
+            attention_check: Some(Instant::now() + ATTENTION_DELAY),
             watcher: None,
             watch_events: None,
+            watch_overflow: Arc::default(),
             refresh_due: None,
+            refresh_paths: Default::default(),
+            refresh_required: false,
             loading_root: None,
             startup_document,
             find: Default::default(),
@@ -180,16 +262,21 @@ impl NotesApp {
             sort_descending: false,
             collapse_epoch: 0,
             reveal_folder: None,
+            revealed_note: None,
             reset_tree_scroll: false,
             bookmarks: Default::default(),
             show_bookmarks: false,
             right_tab: 0,
             ui_zoom: 1.0,
             document_font_size: theme::DEFAULT_DOCUMENT_FONT_SIZE,
+            fonts: Default::default(),
+            missing_fonts: Vec::new(),
             editor_preferences: Default::default(),
             autosave_enabled: true,
+            autosave: Default::default(),
             vault_manager: Default::default(),
             open_picker: Default::default(),
+            reveal_result: None,
             note_aids: Default::default(),
             template_source: None,
             template_choices: Err(String::new()),
@@ -220,6 +307,15 @@ impl NotesApp {
     }
 
     fn set_view(&mut self, view: View) {
+        if matches!(view, View::Live | View::Read | View::Split)
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| rustidian::html_import::is_html(&tab.document.path))
+            && !self.edit_html_as_markdown()
+        {
+            return;
+        }
         if let Some(tab) = self.tabs.get_mut(self.active) {
             tab.set_view(view);
         }
@@ -235,14 +331,103 @@ impl NotesApp {
         self.ctx.request_repaint();
     }
 
+    fn show_view_mode(&mut self, ui: &mut egui::Ui) {
+        let current = self.view();
+        let label = match current {
+            View::Read => "Reading",
+            View::Live => "Live preview",
+            View::Source => "Source mode",
+            View::Split => "Split view",
+            View::Graph => "Graph",
+        };
+        let text = RichText::new(label).color(theme::accent(ui)).size(11.0);
+        let mut requested = None;
+        let plain_text = self.tabs.get(self.active).is_some_and(|tab| {
+            tab.document.is_plain_text() && !rustidian::html_import::is_html(&tab.document.path)
+        });
+        let response = if current == View::Graph || plain_text {
+            ui.label(text)
+        } else {
+            ui.menu_button(text, |ui| {
+                theme::menu_style(ui);
+                for (name, view) in [
+                    ("Reading", View::Read),
+                    ("Source mode", View::Source),
+                    ("Live Preview", View::Live),
+                ] {
+                    let choice = ui.selectable_label(current == view, name);
+                    if crate::ui_probe::enabled() {
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("view-choice:{name}"),
+                            choice.rect,
+                        );
+                    }
+                    if choice.clicked() {
+                        requested = Some(view);
+                        ui.close();
+                    }
+                }
+            })
+            .response
+        };
+        if crate::ui_probe::enabled() {
+            crate::ui_probe::record(ui.ctx(), format!("view-mode:{label}"), response.rect);
+        }
+        if let Some(view) = requested {
+            self.set_view(view);
+        }
+    }
+
     fn toggle_reading(&mut self) {
+        if self
+            .tabs
+            .get(self.active)
+            .is_some_and(|tab| rustidian::html_import::is_html(&tab.document.path))
+        {
+            self.set_view(View::Read);
+            return;
+        }
         if let Some(tab) = self.tabs.get_mut(self.active) {
             tab.toggle_reading();
         }
         self.focus_editor();
     }
 
+    fn edit_html_as_markdown(&mut self) -> bool {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return false;
+        };
+        let Some(vault) = &mut self.vault else {
+            return false;
+        };
+        match vault.import_html(&tab.document) {
+            Ok(document) => {
+                let path = document.path.clone();
+                self.error = None;
+                self.open_note_at(&path, true);
+                let Some(tab) = self
+                    .tabs
+                    .get_mut(self.active)
+                    .filter(|tab| tab.document.path == path)
+                else {
+                    return false;
+                };
+                tab.set_view(View::Live);
+                self.status = format!("Created {} from HTML", path.display());
+                true
+            }
+            Err(error) => {
+                self.error = Some(error);
+                false
+            }
+        }
+    }
+
     fn load_vault(&mut self, root: &Path) {
+        self.settle_saves();
+        self.agent = Default::default();
+        self.page_pan = Default::default();
         self.persist_session();
         self.loading_root = Some(root.to_owned());
         self.queue_index(root.to_owned());
@@ -253,17 +438,147 @@ impl NotesApp {
         self.recovery_index_paths
             .extend(self.recovery_changed_paths.drain());
         let (sender, receiver) = mpsc::channel();
-        self.loading = Some(receiver);
-        let ctx = self.ctx.clone();
-        std::thread::spawn(move || {
-            let _ = sender.send(Vault::open(&root));
-            ctx.request_repaint();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.loading = Some(Loading {
+            receiver,
+            cancelled: cancelled.clone(),
         });
+        let ctx = self.ctx.clone();
+        let document = self
+            .loading_root
+            .is_some()
+            .then(|| self.startup_document.clone())
+            .flatten();
+        let current_watch = self
+            .loading_root
+            .is_none()
+            .then(|| self.watcher.clone())
+            .flatten()
+            .filter(|_| self.vault.as_ref().is_some_and(|vault| vault.root == root));
+        let spawned = std::thread::Builder::new()
+            .name("rustidian-index".into())
+            .spawn(move || {
+                let prepare = || -> Result<_, String> {
+                    let vault =
+                        Vault::open_cancellable(&root, || cancelled.load(Ordering::Relaxed))?;
+                    if let Some(path) = &document {
+                        vault.open_document(path)?;
+                    }
+                    let tree = Tree::from_vault(&vault);
+                    let files = rustidian::search::FileMatcher::from_vault(&vault);
+                    let update = |watch: &mut rustidian::watcher::Watch| {
+                        watch.update(&vault.folders, || cancelled.load(Ordering::Relaxed))
+                    };
+                    if let Some(watch) = current_watch {
+                        let update =
+                            update(&mut watch.lock().unwrap_or_else(PoisonError::into_inner));
+                        return Ok(PreparedVault {
+                            watched: matches!(update, Ok(true)),
+                            watch_warning: update
+                                .err()
+                                .map(|error| rustidian::watcher::describe(&error)),
+                            vault,
+                            tree,
+                            files,
+                            monitoring: None,
+                        });
+                    }
+                    let (events_sender, events) = mpsc::sync_channel(256);
+                    let overflow = Arc::new(AtomicBool::new(false));
+                    let handler_overflow = overflow.clone();
+                    let handler_ctx = ctx.clone();
+                    let watch_root = vault.root.clone();
+                    let watcher = rustidian::watcher::Watch::new(
+                        &vault.root,
+                        move |event: notify::Result<notify::Event>| {
+                            if let Ok(event) = &event {
+                                if !(event.kind.is_modify()
+                                    || event.kind.is_create()
+                                    || event.kind.is_remove())
+                                    || !event.paths.iter().any(|path| {
+                                        path.strip_prefix(&watch_root).is_ok_and(|relative| {
+                                            !rustidian::vault::is_ignored_path(relative)
+                                        })
+                                    })
+                                {
+                                    return;
+                                }
+                            }
+                            if matches!(
+                                events_sender.try_send(event),
+                                Err(mpsc::TrySendError::Full(_))
+                            ) {
+                                handler_overflow.store(true, Ordering::Relaxed);
+                            }
+                            handler_ctx.request_repaint();
+                        },
+                    );
+                    let (watcher, update) = match watcher {
+                        Ok(mut watch) => {
+                            let update = update(&mut watch);
+                            (Some(Arc::new(Mutex::new(watch))), update)
+                        }
+                        Err(error) => (None, Err(error)),
+                    };
+                    Ok(PreparedVault {
+                        watched: matches!(update, Ok(true)),
+                        watch_warning: update
+                            .err()
+                            .map(|error| rustidian::watcher::describe(&error)),
+                        vault,
+                        tree,
+                        files,
+                        monitoring: Some(Monitoring {
+                            watcher,
+                            events,
+                            overflow,
+                        }),
+                    })
+                };
+                match prepare() {
+                    Ok(prepared) => {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let _ = sender.send(Ok(prepared));
+                        ctx.request_repaint();
+                    }
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        ctx.request_repaint();
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            self.loading = None;
+            self.loading_root = None;
+            self.error = Some(format!("Cannot start vault indexing: {error}"));
+        }
     }
 
     fn background(&mut self, ctx: &egui::Context) {
+        crate::ui_probe::metric(
+            ctx,
+            "vault-loading",
+            f32::from(u8::from(self.loading_root.is_some())),
+        );
+        crate::ui_probe::metric(
+            ctx,
+            "vault-indexing",
+            f32::from(u8::from(self.loading.is_some())),
+        );
+        let finished = self.autosave.finished();
+        self.commit_saves(finished);
+        if self.watch_overflow.swap(false, Ordering::Relaxed) {
+            self.refresh_required = true;
+            self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
+        }
+        let mut renamed = Vec::new();
         if let Some(events) = &self.watch_events {
-            while let Ok(event) = events.try_recv() {
+            for _ in 0..256 {
+                let Ok(event) = events.try_recv() else {
+                    break;
+                };
                 match event {
                     Ok(event)
                         if (event.kind.is_modify()
@@ -289,6 +604,24 @@ impl NotesApp {
                             })) =>
                     {
                         if let Some(vault) = &self.vault {
+                            if matches!(
+                                event.kind,
+                                notify::EventKind::Modify(notify::event::ModifyKind::Name(
+                                    notify::event::RenameMode::Both
+                                ))
+                            ) && let [from, to] = event.paths.as_slice()
+                                && let (Ok(from), Ok(to)) =
+                                    (from.strip_prefix(&vault.root), to.strip_prefix(&vault.root))
+                                && from != to
+                                && !rustidian::vault::is_ignored_path(from)
+                                && !rustidian::vault::is_ignored_path(to)
+                                && from
+                                    .components()
+                                    .chain(to.components())
+                                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+                            {
+                                renamed.push((from.to_owned(), to.to_owned()));
+                            }
                             for path in &event.paths {
                                 if let Ok(relative) = path.strip_prefix(&vault.root)
                                     && rustidian::vault::is_markdown(relative)
@@ -305,36 +638,65 @@ impl NotesApp {
                         {
                             ctx.forget_image(&format!("file://{}", path.display()));
                         }
+                        self.refresh_paths.extend(event.paths);
                         self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
                     }
-                    Err(error) => self.error = Some(format!("File watcher: {error}")),
+                    Err(error) => self.error = Some(rustidian::watcher::describe(&error)),
                     _ => {}
                 }
             }
         }
+        if !renamed.is_empty() {
+            for (source, destination) in renamed {
+                self.relocate_tabs(&source, &destination);
+            }
+            self.persist_session();
+        }
         if self.loading.is_none() && self.refresh_due.is_some_and(|due| Instant::now() >= due) {
             self.refresh_due = None;
-            if let Some(vault) = &self.vault {
-                self.queue_index(vault.root.clone());
+            let paths = std::mem::take(&mut self.refresh_paths);
+            let required = std::mem::take(&mut self.refresh_required);
+            if let Some(root) = self.vault.as_ref().map(|vault| vault.root.clone())
+                && (required || !paths.iter().all(|path| self.holds_known_text(path)))
+            {
+                self.queue_index(root);
             }
         }
         let result = self
             .loading
             .as_ref()
-            .and_then(|loading| loading.try_recv().ok());
+            .and_then(|loading| match loading.receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                    "Vault indexing stopped. Try opening the folder again.".into(),
+                )),
+            });
         if let Some(result) = result {
             self.loading = None;
-            let result = result.and_then(|vault| {
-                // Reject unreadable/invalid documents before replacing the old workspace.
-                if self.loading_root.is_some()
-                    && let Some(path) = &self.startup_document
-                {
-                    vault.open_document(path)?;
-                }
-                Ok(vault)
-            });
             match result {
-                Ok(vault) => {
+                Ok(prepared) => {
+                    let PreparedVault {
+                        vault,
+                        tree,
+                        files,
+                        monitoring,
+                        watched,
+                        watch_warning,
+                    } = prepared;
+                    if let Some(Monitoring {
+                        watcher,
+                        events,
+                        overflow,
+                    }) = monitoring
+                    {
+                        self.watcher = watcher;
+                        self.watch_events = Some(events);
+                        self.watch_overflow = overflow;
+                    }
+                    if let Some(warning) = watch_warning {
+                        self.error = Some(warning);
+                    }
                     let opening = self.loading_root.take().is_some();
                     if opening {
                         self.graph.reset();
@@ -377,20 +739,21 @@ impl NotesApp {
                         self.bookmarks = Default::default();
                         self.right_tab = 0;
                         self.ui_zoom = 1.0;
-                        self.document_font_size = rustidian::paths::read_obsidian::<
-                            serde_json::Value,
-                        >(
-                            &vault.root, "appearance.json"
+                        let appearance = rustidian::paths::read_obsidian::<serde_json::Value>(
+                            &vault.root,
+                            "appearance.json",
                         )
                         .unwrap_or_else(|error| {
                             self.error = Some(error);
                             Default::default()
-                        })
-                        .get("baseFontSize")
-                        .and_then(serde_json::Value::as_u64)
-                        .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
-                            size.clamp(10, 30) as u8
                         });
+                        self.fonts = theme::fonts::Fonts::from_obsidian(&appearance);
+                        self.document_font_size = appearance
+                            .get("baseFontSize")
+                            .and_then(serde_json::Value::as_u64)
+                            .map_or(theme::DEFAULT_DOCUMENT_FONT_SIZE, |size| {
+                                size.clamp(10, 30) as u8
+                            });
                         self.editor_preferences = Default::default();
                         self.autosave_enabled = true;
                         ctx.set_zoom_factor(1.0);
@@ -414,24 +777,11 @@ impl NotesApp {
                         self.tabs.clear();
                         self.active = 0;
                         self.search.clear();
-                        let (sender, receiver) = mpsc::channel();
-                        let watcher_ctx = ctx.clone();
-                        self.watcher = None;
-                        self.watch_events = None;
-                        match rustidian::watcher::watch(&vault.root, move |event| {
-                            let _ = sender.send(event);
-                            watcher_ctx.request_repaint();
-                        }) {
-                            Ok(watcher) => {
-                                self.watcher = Some(watcher);
-                                self.watch_events = Some(receiver);
-                            }
-                            Err(error) => {
-                                self.error = Some(format!("Cannot start file watcher: {error}"))
-                            }
-                        }
-                        self.tree = Tree::from_vault(&vault);
-                        self.files = rustidian::search::FileMatcher::from_vault(&vault);
+                        self.refresh_due = None;
+                        self.refresh_paths.clear();
+                        self.refresh_required = false;
+                        self.tree = tree;
+                        self.files = files;
                         self.search_cache.invalidate();
                         eprintln!(
                             "vault={} notes={} index_us={} warnings={}",
@@ -445,9 +795,9 @@ impl NotesApp {
                         }
                         self.vault = Some(vault);
                         self.vault_manager.close();
-                        if !self.restore_session(ctx)
-                            && let Some(path) = first
-                        {
+                        let restored = self.restore_session(ctx);
+                        self.missing_fonts = theme::set_fonts(ctx, &self.fonts);
+                        if !restored && let Some(path) = first {
                             self.open_note(&path);
                         }
                         if let Some(path) = self.startup_document.take() {
@@ -474,8 +824,8 @@ impl NotesApp {
                                 }
                             }
                         }
-                        self.tree = Tree::from_vault(&vault);
-                        self.files = rustidian::search::FileMatcher::from_vault(&vault);
+                        self.tree = tree;
+                        self.files = files;
                         self.search_cache.invalidate();
                         self.vault = Some(vault);
                     }
@@ -487,6 +837,12 @@ impl NotesApp {
                                 vault.warnings.join("; ")
                             ));
                         }
+                    }
+                    if watched {
+                        // Catch changes between the scan and completed registration once;
+                        // the follow-up scan reuses these watches.
+                        self.refresh_required = true;
+                        self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
                     }
                     self.cache = CommonMarkCache::default();
                 }
@@ -509,6 +865,7 @@ impl NotesApp {
                 && !self.open_picker.active()
                 && tab.document.dirty()
                 && !tab.autosave_failed
+                && !self.autosave.busy(tab.id())
                 && let Some(edited) = tab.edited_at
             {
                 let remaining = Duration::from_millis(600).saturating_sub(edited.elapsed());
@@ -520,12 +877,42 @@ impl NotesApp {
             }
         }
         for index in saves {
-            self.save(index);
+            self.autosave(index);
         }
-        if let Some(due) = self.refresh_due {
+        // A running index wakes the window when it ends; repainting until then
+        // would redraw an unchanged window every frame.
+        if let Some(due) = self.refresh_due
+            && self.loading.is_none()
+        {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
         }
         self.capture_recovery(ctx);
+    }
+
+    /// Whether a file the watcher reported holds what Rustidian already has
+    /// for it, as after its own save; anything else needs a re-index.
+    fn holds_known_text(&self, path: &Path) -> bool {
+        let Some(vault) = &self.vault else {
+            return false;
+        };
+        let Ok(relative) = path.strip_prefix(&vault.root) else {
+            return false;
+        };
+        if rustidian::vault::is_ignored_path(relative) {
+            return true;
+        }
+        let known = vault
+            .notes
+            .iter()
+            .find(|note| note.path == relative)
+            .map(|note| note.text.as_str())
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|tab| tab.document.path == relative)
+                    .and_then(|tab| tab.document.saved_text())
+            });
+        known.is_some_and(|text| std::fs::read(path).is_ok_and(|bytes| bytes == text.as_bytes()))
     }
 
     fn capture_recovery(&mut self, ctx: &egui::Context) {
@@ -620,6 +1007,7 @@ impl NotesApp {
     }
 
     fn restore_snapshot(&mut self, request: crate::recovery_ui::Restore) {
+        self.settle_saves();
         let result = match (&self.recovery_history, &mut self.vault) {
             (Some(history), Some(vault)) => history.restore(
                 vault,
@@ -849,6 +1237,7 @@ impl NotesApp {
     }
 
     fn save(&mut self, index: usize) -> bool {
+        self.settle_saves();
         if self
             .tabs
             .get(index)
@@ -874,14 +1263,7 @@ impl NotesApp {
         if let (Some(vault), Some(tab)) = (&mut self.vault, self.tabs.get_mut(index)) {
             match vault.save(&mut tab.document) {
                 Ok(()) => {
-                    self.status = format!("Saved {}", tab.document.path.display());
-                    tab.edited_at = None;
-                    tab.autosave_failed = false;
-                    self.error = None;
-                    self.tree = Tree::from_vault(vault);
-                    self.files = rustidian::search::FileMatcher::from_vault(vault);
-                    self.search_cache.invalidate();
-                    self.graph.invalidate();
+                    self.saved(index);
                     return true;
                 }
                 Err(error) => {
@@ -893,7 +1275,84 @@ impl NotesApp {
         false
     }
 
-    fn dirty(&self) -> bool {
+    /// Autosave writes notes that exist on disk on a background thread; a blank
+    /// tab or new note takes `save`, which creates its file.
+    fn autosave(&mut self, index: usize) {
+        let Some(tab) = self.tabs.get(index) else {
+            return;
+        };
+        if tab.document.is_blank() || tab.document.saved_text().is_none() {
+            self.save(index);
+            return;
+        }
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        match vault.prepare_save(&tab.document) {
+            Ok(save) => {
+                let wake = self.ctx.clone();
+                self.autosave
+                    .submit(tab.id(), save, move || wake.request_repaint());
+            }
+            Err(error) => {
+                self.tabs[index].autosave_failed = true;
+                self.error = Some(error);
+            }
+        }
+    }
+
+    /// Finishes running autosaves. Anything that writes, moves or deletes notes,
+    /// or asks whether edits are unsaved, calls this first.
+    fn settle_saves(&mut self) {
+        let finished = self.autosave.wait();
+        self.commit_saves(finished);
+    }
+
+    fn commit_saves(&mut self, finished: Vec<rustidian::autosave::Done>) {
+        for done in finished {
+            // A tab that has since closed, moved or reloaded keeps its own saved
+            // state; the file watcher re-indexes the written note.
+            let Some(index) = self.tabs.iter().position(|tab| {
+                tab.id() == done.tab
+                    && tab.document.path == done.save.path
+                    && tab.document.saved_text() == Some(done.save.original())
+            }) else {
+                continue;
+            };
+            match (done.result, &mut self.vault) {
+                (Ok(()), Some(vault)) => {
+                    vault.commit_save(&mut self.tabs[index].document, done.save.text);
+                    self.saved(index);
+                }
+                (Ok(()), None) => {}
+                (Err(error), _) => {
+                    self.tabs[index].autosave_failed = true;
+                    self.error = Some(error);
+                }
+            }
+        }
+    }
+
+    /// What follows a note's bytes reaching the disk.
+    fn saved(&mut self, index: usize) {
+        let tab = &mut self.tabs[index];
+        self.status = format!("Saved {}", tab.document.path.display());
+        // Text typed while an autosave was writing still needs its own save.
+        if !tab.document.dirty() {
+            tab.edited_at = None;
+        }
+        tab.autosave_failed = false;
+        self.error = None;
+        if let Some(vault) = &self.vault {
+            self.tree = Tree::from_vault(vault);
+            self.files = rustidian::search::FileMatcher::from_vault(vault);
+        }
+        self.search_cache.invalidate();
+        self.graph.invalidate();
+    }
+
+    fn dirty(&mut self) -> bool {
+        self.settle_saves();
         self.tabs.iter().any(|tab| tab.document.dirty())
     }
 
@@ -1027,6 +1486,7 @@ impl NotesApp {
     }
 
     fn save_all(&mut self) -> bool {
+        self.settle_saves();
         for index in 0..self.tabs.len() {
             if self.tabs[index].document.dirty() && !self.save(index) {
                 return false;
@@ -1062,6 +1522,10 @@ impl NotesApp {
         let Some(keep) = self.tabs.get(self.active).map(Tab::id) else {
             return;
         };
+        self.request_close_other_tabs_for(keep);
+    }
+
+    fn request_close_other_tabs_for(&mut self, keep: u64) {
         let indices = rustidian::tab::other_tab_indices(&self.tabs, keep);
         if indices
             .into_iter()
@@ -1076,9 +1540,34 @@ impl NotesApp {
     fn close_other_tabs(&mut self, keep: u64) {
         // Reference closes in visual order, so Undo restores the rightmost first.
         let indices = rustidian::tab::other_tab_indices(&self.tabs, keep);
+        self.close_tab_group(indices, keep);
+    }
+
+    fn request_close_tabs_to_right(&mut self, keep: u64) {
+        let indices = rustidian::tab::right_tab_indices(&self.tabs, keep);
+        if indices
+            .into_iter()
+            .all(|index| !self.tabs[index].document.dirty() || self.save(index))
+        {
+            self.close_tabs_to_right(keep);
+        } else {
+            self.pending = Some(Pending::CloseTabsToRight(keep));
+        }
+    }
+
+    fn close_tabs_to_right(&mut self, keep: u64) {
+        let indices = rustidian::tab::right_tab_indices(&self.tabs, keep);
+        self.close_tab_group(indices, keep);
+    }
+
+    fn close_tab_group(&mut self, indices: Vec<usize>, keep: u64) {
         for (removed, index) in indices.into_iter().enumerate() {
             self.close_tab(index - removed);
         }
+        if let Some(index) = self.tabs.iter().position(|tab| tab.id() == keep) {
+            self.active = index;
+        }
+        self.focus_editor();
     }
 
     fn undo_close_tab(&mut self) {
@@ -1166,11 +1655,8 @@ impl NotesApp {
         match pending {
             Pending::CloseTab(index) => self.close_tab(index),
             Pending::CloseOtherTabs(keep) => self.close_other_tabs(keep),
-            Pending::Quit => {
-                self.persist_session();
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+            Pending::CloseTabsToRight(keep) => self.close_tabs_to_right(keep),
+            Pending::Quit | Pending::ConfirmQuit => self.quit(ctx, "unsaved-changes dialog"),
             Pending::ChangeVault => self.ask(Dialog::OpenVault),
             Pending::OpenVault(root, document) => {
                 self.startup_document = document;
@@ -1181,17 +1667,33 @@ impl NotesApp {
         }
     }
 
-    fn shortcuts(&mut self, ctx: &egui::Context) {
-        if ctx.input(|input| input.viewport().close_requested()) {
-            self.open_picker.cancel();
-        }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.dirty() {
+    /// Close now, unsaved edits included: the user chose that in the
+    /// unsaved-changes dialog, or a signal asked.
+    fn quit(&mut self, ctx: &egui::Context, source: &'static str) {
+        self.persist_session();
+        self.allow_close = true;
+        crate::window::close(ctx, source);
+    }
+
+    /// A close request from any source: the quit dialog, the title bar, the
+    /// window manager or a signal. Unsaved edits first ask; a close that goes
+    /// ahead prints `close: <source>`.
+    fn on_close_request(&mut self, ctx: &egui::Context) {
+        let source = crate::window::take_close_source(ctx);
+        self.open_picker.cancel();
+        let dirty = self.dirty();
+        if !dirty {
             self.persist_session();
         }
-        if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.dirty() {
+        if dirty && !self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
+        } else {
+            eprintln!("close: {source}");
         }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
         if self.pending.is_some() {
             return;
         }
@@ -1205,6 +1707,19 @@ impl NotesApp {
             return;
         }
         if self.dialog.is_none() {
+            if ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::A)
+            }) {
+                if self.show_right
+                    && self.right_tab == 3
+                    && ctx.memory(|memory| memory.has_focus(crate::terminal_ui::focus_id()))
+                {
+                    self.show_right = false;
+                    self.focus_editor();
+                } else {
+                    self.open_agent();
+                }
+            }
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Comma)) {
                 self.ask(Dialog::Settings);
             }
@@ -1256,8 +1771,11 @@ impl NotesApp {
                 self.step_tab(false);
             }
         }
-        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Q)) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        if let Some(question) = crate::window::quit_question(ctx, || self.dirty()) {
+            self.pending = Some(match question {
+                crate::window::QuitQuestion::Quit => Pending::ConfirmQuit,
+                crate::window::QuitQuestion::UnsavedChanges => Pending::Quit,
+            });
         }
         if ctx
             .input_mut(|i| i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::T))
@@ -1494,7 +2012,23 @@ impl NotesApp {
         self.ctx.request_repaint();
     }
 
-    fn bookmark_list(&mut self, ui: &mut egui::Ui) {
+    fn open_sidebar_note(&mut self, path: &Path, new_tab: bool) {
+        self.open_note_at(path, new_tab);
+        self.editor.focus = false;
+        self.ctx.memory_mut(|memory| {
+            let id = crate::file_tree::note_list_id();
+            if !memory.has_focus(id) {
+                memory.request_focus(id);
+            }
+        });
+        self.ctx.request_repaint();
+    }
+
+    fn bookmark_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        visible_files: &mut Option<Vec<PathBuf>>,
+    ) -> Option<PathBuf> {
         ui.add_space(12.0);
         ui.label(RichText::new("Bookmarks").size(12.0).strong().weak());
         ui.add_space(8.0);
@@ -1535,6 +2069,9 @@ impl NotesApp {
                         vault.notes.iter().any(|note| note.path == item.path)
                             || vault.attachments.contains(&item.path)
                     });
+                    if exists && let Some(paths) = visible_files.as_mut() {
+                        paths.push(item.path.clone());
+                    }
                     let label = if exists {
                         item.label()
                     } else {
@@ -1547,6 +2084,7 @@ impl NotesApp {
                         format!("bookmark:{}", item.path.display()),
                         response.rect,
                     );
+                    crate::file_tree::reveal_note_row(ui, &item.path, response.rect);
                     response.context_menu(|ui| {
                         theme::menu_style(ui);
                         for (name, label, enabled) in [
@@ -1572,10 +2110,6 @@ impl NotesApp {
                     }
                 }
             });
-        if let Some(path) = open {
-            self.open_note_at(&path, ui.ctx().input(|input| input.modifiers.command));
-            self.ctx.request_repaint();
-        }
         if let Some((path, action)) = action {
             if action == "title" {
                 let title = self
@@ -1599,6 +2133,7 @@ impl NotesApp {
                 self.save_bookmarks(before);
             }
         }
+        open
     }
 
     pub(crate) fn workspace_layout(&self) -> rustidian::workspaces::Layout {
@@ -1682,7 +2217,7 @@ impl NotesApp {
                 self.active = restored.active;
                 self.show_left = layout.left;
                 self.show_right = layout.right;
-                self.right_tab = layout.right_tab.min(2);
+                self.right_tab = layout.right_tab.min(3);
                 self.sidebar_widths = [
                     layout.left_width.clamp(180.0, 450.0),
                     layout.right_width.clamp(170.0, 420.0),
@@ -1734,9 +2269,34 @@ impl NotesApp {
         if !self.show_left {
             return;
         }
+        // The explorer follows the active note when it changes (open, tab switch,
+        // link) and never otherwise, so the user's own scrolling stays put.
+        let active = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.document.path.clone());
+        if active != self.revealed_note {
+            if !self.searching
+                && !self.show_bookmarks
+                && let Some(path) = &active
+            {
+                crate::file_tree::reveal(ui.ctx(), path);
+            }
+            self.revealed_note = active;
+        }
         let mut selected = None;
+        let navigation_enabled = ui.is_enabled() && !self.interaction_blocked();
+        let collect_paths = navigation_enabled
+            && ui.memory(|memory| memory.has_focus(crate::file_tree::note_list_id()))
+            && ui.input(|input| {
+                input.modifiers.is_none()
+                    && [Key::ArrowUp, Key::ArrowDown, Key::Home, Key::End]
+                        .iter()
+                        .any(|key| input.key_pressed(*key))
+            });
+        let mut visible_files = collect_paths.then(Vec::new);
         self.prepare_sidebar(ui, "explorer", 0);
-        egui::Panel::left("explorer")
+        let pane = egui::Panel::left("explorer")
             .default_size(300.0)
             .min_size(180.0)
             .max_size(450.0)
@@ -1804,7 +2364,9 @@ impl NotesApp {
                         |ui| {
                             ui.set_min_height(40.0);
                             ui.spacing_mut().item_spacing.x = 2.0;
-                            ui.add_space(74.0);
+                            // Keep all four controls inside even the minimum-width pane.
+                            let controls_width = 4.0 * 30.0 + 3.0 * 2.0;
+                            ui.add_space((ui.available_width() - controls_width).max(0.0));
                             if theme::icon_toggle(ui, Icon::NewNote, "New note · Ctrl+N", false)
                                 .clicked()
                             {
@@ -1853,7 +2415,9 @@ impl NotesApp {
                 }
 
                 if self.show_bookmarks {
-                    self.bookmark_list(ui);
+                    selected = self
+                        .bookmark_list(ui, &mut visible_files)
+                        .map(FileAction::Open);
                 } else if self.searching {
                     let input = ui.add(
                         TextEdit::singleline(&mut self.search)
@@ -1870,6 +2434,9 @@ impl NotesApp {
                     if let Some(vault) = &self.vault {
                         self.search_cache.update(&self.search, vault);
                         let results = &self.search_cache.paths;
+                        if let Some(paths) = visible_files.as_mut() {
+                            paths.clone_from(results);
+                        }
                         if let Some(error) = &self.search_cache.error {
                             ui.colored_label(
                                 Color32::from_rgb(220, 135, 110),
@@ -1881,15 +2448,30 @@ impl NotesApp {
                                 .small()
                                 .weak(),
                         );
-                        let scroll = theme::sidebar_scroll()
-                            .id_salt("search-results")
+                        let target = crate::file_tree::pending_reveal(ui.ctx());
+                        let mut search_scroll = theme::sidebar_scroll().id_salt("search-results");
+                        if let Some(index) = target
+                            .as_ref()
+                            .and_then(|path| results.iter().position(|item| item == path))
+                        {
+                            search_scroll = search_scroll.vertical_scroll_offset(
+                                (index as f32 * 52.0).min(
+                                    (results.len() as f32 * 52.0
+                                        - (ui.available_height() - 64.0).max(0.0))
+                                    .max(0.0),
+                                ),
+                            );
+                        }
+                        let scroll = search_scroll
                             .max_height((ui.available_height() - 64.0).max(0.0))
                             .show_rows(ui, 52.0, results.len(), |ui, rows| {
                                 for note in &results[rows] {
-                                    ui.allocate_ui_with_layout(
+                                    let row = ui.allocate_ui_with_layout(
                                         egui::vec2(ui.available_width(), 52.0),
                                         egui::Layout::top_down(egui::Align::Min),
                                         |ui| {
+                                            // Keep rendered rows aligned with show_rows' virtual stride.
+                                            ui.set_min_height(52.0);
                                             let result = ui.add(
                                                 egui::Button::new(
                                                     RichText::new(
@@ -1899,7 +2481,8 @@ impl NotesApp {
                                                     )
                                                     .size(14.0),
                                                 )
-                                                .frame_when_inactive(false),
+                                                .frame_when_inactive(false)
+                                                .truncate(),
                                             );
                                             crate::ui_probe::record(
                                                 ui.ctx(),
@@ -1919,12 +2502,22 @@ impl NotesApp {
                                             );
                                         },
                                     );
+                                    if target.as_ref() == Some(note) {
+                                        crate::file_tree::reveal_note_row(
+                                            ui,
+                                            note,
+                                            row.response.rect,
+                                        );
+                                    }
                                 }
                             });
                         crate::ui_probe::record(ui.ctx(), "search-viewport", scroll.inner_rect);
                     }
                 } else {
-                    ui.label(
+                    // The vault name and the tree outside every folder take a drop into
+                    // the vault root; its highlight is painted behind both.
+                    let root_drop = ui.painter().add(egui::Shape::Noop);
+                    let root = ui.label(
                         RichText::new(
                             self.vault
                                 .as_ref()
@@ -1935,6 +2528,8 @@ impl NotesApp {
                         .strong()
                         .weak(),
                     );
+                    crate::ui_probe::record(ui.ctx(), "file-tree-root", root.rect);
+                    let root = root.interact(egui::Sense::click());
                     ui.add_space(8.0);
                     let mut tree_scroll = theme::sidebar_scroll()
                         .id_salt("file-tree")
@@ -1943,7 +2538,8 @@ impl NotesApp {
                         tree_scroll = tree_scroll.vertical_scroll_offset(0.0);
                         self.reset_tree_scroll = false;
                     }
-                    tree_scroll.show(ui, |ui| {
+                    let mut drop_folder = None;
+                    let scroll = tree_scroll.show(ui, |ui| {
                         let (action, revealed) = self.tree.show(
                             ui,
                             "",
@@ -1953,12 +2549,48 @@ impl NotesApp {
                             self.sort_descending,
                             self.collapse_epoch,
                             self.reveal_folder.as_deref(),
+                            &mut visible_files,
+                            &mut drop_folder,
                         );
                         selected = action;
                         if revealed {
                             self.reveal_folder = None;
                         }
+                        crate::file_tree::drag_scroll(ui);
                     });
+                    if self.vault.is_some() {
+                        root.context_menu(|ui| {
+                            theme::menu_style(ui);
+                            crate::file_tree::creation_menu(ui, Path::new(""), &mut selected);
+                            crate::file_tree::reveal_menu(ui, Path::new(""), &mut selected);
+                        });
+                    }
+                    if let Some(action) = crate::file_tree::finish_drag(
+                        ui,
+                        drop_folder,
+                        root.rect.union(scroll.inner_rect),
+                        root_drop,
+                    ) {
+                        selected = Some(action);
+                    }
+                    crate::ui_probe::record(ui.ctx(), "file-tree-viewport", scroll.inner_rect);
+                    crate::ui_probe::metric(
+                        ui.ctx(),
+                        "file-tree-offset",
+                        scroll.state.clamped_offset().y,
+                    );
+                    // Scrolling the tree by hand drops a reveal still waiting for its row.
+                    if ui.rect_contains_pointer(scroll.inner_rect.expand2(egui::vec2(8.0, 0.0)))
+                        && ui.input(|input| {
+                            input.pointer.any_down()
+                                || input
+                                    .events
+                                    .iter()
+                                    .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+                        })
+                    {
+                        crate::file_tree::cancel_reveal(ui.ctx());
+                    }
                 }
                 ui.allocate_ui_with_layout(
                     ui.available_size(),
@@ -2010,17 +2642,68 @@ impl NotesApp {
                 );
             });
         self.capture_sidebar(ui, "explorer", 0);
+        let list = ui.interact(
+            pane.response.rect,
+            crate::file_tree::note_list_id(),
+            egui::Sense::focusable_noninteractive(),
+        );
+        let visible_files = visible_files.as_deref().unwrap_or_default();
+        if list.has_focus()
+            && navigation_enabled
+            && let Some(key) = crate::file_tree::note_list_key(ui)
+        {
+            if key == Key::Enter {
+                list.surrender_focus();
+                self.focus_editor();
+            } else if !visible_files.is_empty() {
+                let current = self.tabs.get(self.active).and_then(|tab| {
+                    visible_files
+                        .iter()
+                        .position(|path| *path == tab.document.path)
+                });
+                let last = visible_files.len() - 1;
+                let index = match key {
+                    Key::Home => 0,
+                    Key::End => last,
+                    Key::ArrowUp => current.map_or(last, |index| index.saturating_sub(1)),
+                    _ => current.map_or(0, |index| (index + 1).min(last)),
+                };
+                let path = visible_files[index].clone();
+                crate::file_tree::reveal(ui.ctx(), &path);
+                selected = Some(FileAction::Open(path));
+            }
+        }
         if let Some(action) = selected {
             match action {
-                FileAction::Open(path) => self.open_note_at(
+                FileAction::Open(path) => self.open_sidebar_note(
                     &path,
                     self.new_tab_gesture || ui.ctx().input(|i| i.modifiers.command),
                 ),
+                FileAction::NewNote(folder) => self.create_note_in(&folder),
+                FileAction::NewFolder(folder) => {
+                    self.ask(Dialog::NewFolder);
+                    self.dialog_path = Some(folder);
+                    self.dialog_input = "Untitled".into();
+                }
                 FileAction::OpenInNewTab(path) => self.open_note_at(&path, true),
                 FileAction::Copy(path) => {
                     self.duplicate_file(&path);
                 }
                 FileAction::Move(path) => self.ask_move_file(path),
+                FileAction::MoveMany(paths) => {
+                    if let Some(vault) = &self.vault {
+                        self.file_move.open_many(vault, paths);
+                        self.editor.focus = false;
+                    }
+                }
+                FileAction::TrashMany(paths) => {
+                    self.file_move.ask_trash(paths);
+                    self.editor.focus = false;
+                }
+                FileAction::MoveManyInto { sources, folder } => {
+                    self.move_entries(&sources, &folder, false)
+                }
+                FileAction::Reveal(path) => self.reveal_in_file_manager(path),
                 FileAction::CopyPath(path) => {
                     if let Some(vault) = &self.vault {
                         ui.ctx()
@@ -2030,38 +2713,53 @@ impl NotesApp {
                 FileAction::Rename(path) => self.ask_file(Dialog::RenameNote, path),
                 FileAction::Trash(path) => self.ask_file(Dialog::TrashNote, path),
                 FileAction::Bookmark(path) => self.add_bookmark(&path),
+                FileAction::MoveInto { source, folder } => self.drop_into(&source, &folder),
             }
         }
     }
 
     fn details(&mut self, ui: &mut egui::Ui) {
-        if !self.show_right || ui.available_width() < 700.0 || self.view() == View::Graph {
+        let agent_tab = self.right_tab == 3;
+        // The user opened the Agent on purpose; it stays until the editor would lose its minimum.
+        let minimum = if agent_tab { 480.0 } else { 700.0 };
+        if !self.show_right || ui.available_width() < minimum || self.view() == View::Graph {
             return;
         }
-        let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document) else {
+        let document = self.tabs.get(self.active).map(|tab| &tab.document);
+        if document.is_none() && !agent_tab {
             return;
-        };
-        let outline = rustidian::structure::outline(&document.text);
-        let outgoing = wiki_links(&document.text);
-        let backlinks: Vec<_> = self
-            .vault
-            .as_ref()
-            .map(|vault| {
-                vault
-                    .backlinks(&document.path)
+        }
+        let outline = document
+            .filter(|_| self.right_tab == 0)
+            .map(|document| rustidian::structure::outline(&document.text))
+            .unwrap_or_default();
+        let outgoing = document
+            .filter(|_| self.right_tab == 2)
+            .map(|document| wiki_links(&document.text))
+            .unwrap_or_default();
+        let backlinks = document
+            .filter(|_| self.right_tab == 1)
+            .zip(self.vault.as_ref())
+            .map(|(document, vault)| {
+                let open: Vec<_> = self
+                    .tabs
                     .iter()
-                    .map(|note| (note.path.clone(), note.title()))
-                    .collect()
+                    .map(|tab| (tab.document.path.as_path(), tab.document.text.as_str()))
+                    .collect();
+                vault.backlink_mentions(&document.path, &open)
             })
             .unwrap_or_default();
-        let mut selected = None;
+        let root = agent_tab
+            .then(|| self.vault.as_ref().map(|vault| vault.root.clone()))
+            .flatten();
+        let mut selected_backlink = None;
         let mut follow = None;
         let mut jump = None;
         self.prepare_sidebar(ui, "details", 1);
         egui::Panel::right("details")
             .default_size(234.0)
             .min_size(170.0)
-            .max_size(420.0)
+            .max_size((ui.available_width() - 300.0).clamp(170.0, 640.0))
             .frame(
                 egui::Frame::NONE
                     .fill(ui.visuals().panel_fill)
@@ -2074,6 +2772,7 @@ impl NotesApp {
                         (0, "Outline", "outline"),
                         (1, "Backlinks", "backlinks"),
                         (2, "Outgoing", "outgoing"),
+                        (3, "Agent", "agent"),
                     ] {
                         let response = ui.selectable_value(
                             &mut self.right_tab,
@@ -2084,6 +2783,24 @@ impl NotesApp {
                     }
                 });
                 ui.add_space(10.0);
+                if agent_tab {
+                    match &root {
+                        Some(root) => {
+                            // The editor's code font.
+                            let font = ui
+                                .scope(|ui| {
+                                    theme::document_style(ui, self.document_font_size);
+                                    egui::TextStyle::Monospace.resolve(ui.style())
+                                })
+                                .inner;
+                            self.agent.show(ui, root, &font);
+                        }
+                        None => {
+                            ui.label(RichText::new("Open a vault to use the agent").weak());
+                        }
+                    }
+                    return;
+                }
                 theme::sidebar_scroll().show(ui, |ui| {
                     if self.right_tab == 0 {
                         ui.horizontal(|ui| {
@@ -2116,27 +2833,79 @@ impl NotesApp {
                     if self.right_tab == 1 {
                         ui.label(RichText::new("Backlinks").size(14.0).strong());
                         ui.add_space(6.0);
-                        ui.label(
+                        let count = ui.label(
                             RichText::new(format!("{} linked mentions", backlinks.len()))
                                 .size(12.0)
                                 .weak(),
                         );
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("backlink-count:{}", backlinks.len()),
+                            count.rect,
+                        );
                         ui.add_space(9.0);
-                        for (path, title) in backlinks {
-                            let row = ui.add(
-                                egui::Button::new(
-                                    RichText::new(title).size(13.0).color(theme::accent(ui)),
-                                )
-                                .frame_when_inactive(false),
+                        let mut previous_source = None;
+                        for mention in backlinks {
+                            let first = previous_source.as_ref() != Some(&mention.path);
+                            if first {
+                                ui.add_space(6.0);
+                                ui.label(
+                                    RichText::new(rustidian::paths::display_path(&mention.path))
+                                        .size(13.0)
+                                        .strong(),
+                                );
+                                previous_source = Some(mention.path.clone());
+                            }
+                            let format = egui::TextFormat {
+                                font_id: egui::FontId::proportional(12.0),
+                                color: ui.visuals().text_color(),
+                                ..Default::default()
+                            };
+                            let label = mention.label().replace(['\r', '\n'], " ");
+                            let mut job = egui::text::LayoutJob::default();
+                            job.wrap.max_width = (ui.available_width() - 12.0).max(24.0);
+                            job.append(
+                                &format!("{}: {}", mention.line, mention.before),
+                                0.0,
+                                format.clone(),
+                            );
+                            job.append(
+                                &label,
+                                0.0,
+                                egui::TextFormat {
+                                    color: theme::accent(ui),
+                                    ..format.clone()
+                                },
+                            );
+                            job.append(&mention.after, 0.0, format);
+                            let row = ui
+                                .add(egui::Button::new(job).frame_when_inactive(false))
+                                .on_hover_text(mention.path.display().to_string());
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("backlink-label:{label}"),
+                                row.rect,
                             );
                             crate::ui_probe::record(
                                 ui.ctx(),
-                                format!("backlink:{}", path.display()),
+                                format!(
+                                    "backlink-mention:{}:{}",
+                                    mention.path.display(),
+                                    mention.range.start
+                                ),
                                 row.rect,
                             );
-                            if row.clicked() {
-                                selected = Some(path);
+                            if first {
+                                crate::ui_probe::record(
+                                    ui.ctx(),
+                                    format!("backlink:{}", mention.path.display()),
+                                    row.rect,
+                                );
                             }
+                            if theme::link_clicked(&row) {
+                                selected_backlink = Some(mention);
+                            }
+                            ui.add_space(3.0);
                         }
                     }
                     if self.right_tab == 2 {
@@ -2176,12 +2945,40 @@ impl NotesApp {
         if let Some(fragment) = jump {
             self.jump_to_anchor(&fragment);
         }
-        if let Some(path) = selected {
-            self.open_note(&path);
+        if let Some(mention) = selected_backlink {
+            self.open_linked_mention(mention);
         }
         if let Some(target) = follow {
             self.follow_link(&target);
         }
+    }
+
+    fn open_linked_mention(&mut self, mention: rustidian::vault::LinkedMention) {
+        let new_tab = self.new_tab_gesture
+            || self.ctx.input(|input| {
+                input.modifiers.command || input.pointer.button_clicked(egui::PointerButton::Middle)
+            });
+        self.open_note_at(&mention.path, new_tab);
+        let Some(tab) = self
+            .tabs
+            .get_mut(self.active)
+            .filter(|tab| tab.document.path == mention.path)
+        else {
+            return;
+        };
+        if tab.document.text.get(mention.range.clone()) != Some(mention.link.as_str()) {
+            self.error = Some(
+                "The linked mention changed. Select it again to open its current location.".into(),
+            );
+            return;
+        }
+        if matches!(tab.view, View::Read | View::Graph) {
+            tab.set_view(tab.editing_view());
+        }
+        let start = tab.document.text[..mention.range.start].chars().count();
+        let end = start + mention.link.chars().count();
+        self.editor.reveal = Some((tab.id(), start..end));
+        self.focus_editor();
     }
 
     fn open_global_graph(&mut self) {
@@ -2439,9 +3236,9 @@ impl NotesApp {
                                     ui,
                                     if reading { Icon::Edit } else { Icon::Reading },
                                     if reading {
-                                        "Editing view · Ctrl+E"
+                                        "Current view: reading\nClick to edit · Ctrl+E"
                                     } else {
-                                        "Reading view · Ctrl+E"
+                                        "Current view: editing\nClick to read · Ctrl+E"
                                     },
                                 )
                                 .clicked()
@@ -2523,9 +3320,16 @@ impl NotesApp {
         if view == View::Graph {
             return;
         }
-        let Some(tab) = self.tabs.get_mut(self.active) else {
+        if self.active >= self.tabs.len() {
             return;
-        };
+        }
+        let (before, after) = self.tabs.split_at_mut(self.active);
+        let (tab, after) = after.split_first_mut().expect("active tab was checked");
+        let open_notes: Vec<_> = before
+            .iter()
+            .chain(after.iter())
+            .map(|tab| (tab.document.path.as_path(), tab.document.text.as_str()))
+            .collect();
         if tab.document.is_image() {
             self.pending_anchor = None;
             if let Some(vault) = &self.vault {
@@ -2577,89 +3381,93 @@ impl NotesApp {
         let mut add_property = false;
         let mut renamed_title = None;
         let title = tab.document.title();
-        let scroll = ScrollArea::vertical()
+        let area = ScrollArea::vertical()
             .id_salt(("document", tab.id(), tab.editor_path()))
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                theme::document_style(ui, self.document_font_size);
-                let width = ui.available_width();
-                let content_width = if self.editor_preferences.readable_line_length {
-                    width.min(920.0)
-                } else {
-                    width
-                }
-                .min((width - 48.0).max(100.0));
-                crate::ui_probe::metric(ui.ctx(), "document-content-width", content_width);
-                let margin = ((width - content_width) / 2.0).max(0.0);
-                if view == View::Split {
-                    ui.columns(2, |columns| {
-                        follow = self.editor.show(
-                            &mut columns[0],
-                            tab,
-                            id,
-                            &mut self.find,
-                            &mut self.files,
-                            self.vault.as_ref(),
-                        );
-                        let preview_link = preview::show(
-                            &mut columns[1],
-                            &mut self.cache,
-                            tab,
-                            anchor.as_deref(),
-                            self.vault.as_ref(),
-                        );
-                        follow = follow.take().or(preview_link);
-                    });
-                } else {
-                    ui.horizontal_top(|ui| {
-                        ui.add_space(margin);
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(content_width, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(content_width);
-                                ui.add_space(32.0);
-                                if self.editor_preferences.inline_title
-                                    && let Some(name) =
-                                        self.title.show(ui, &tab.document.path, &title)
-                                {
-                                    renamed_title = Some((tab.document.path.clone(), name));
-                                }
-                                if self.title.take_body_focus() {
-                                    self.editor.focus = true;
-                                }
-                                if self.editor_preferences.inline_title {
-                                    ui.add_space(16.218);
-                                }
-                                if matches!(view, View::Live | View::Read) {
-                                    add_property = self.properties.show(ui, tab);
-                                }
-                                if view == View::Read {
-                                    follow = preview::show(
-                                        ui,
-                                        &mut self.cache,
-                                        tab,
-                                        anchor.as_deref(),
-                                        self.vault.as_ref(),
-                                    );
-                                } else {
-                                    follow = self.editor.show(
-                                        ui,
-                                        tab,
-                                        id,
-                                        &mut self.find,
-                                        &mut self.files,
-                                        self.vault.as_ref(),
-                                    );
-                                }
-                                ui.add_space(ui.available_height().max(80.0));
-                            },
-                        );
-                    });
-                }
-            });
+            .auto_shrink([false, false]);
+        let scroll_id =
+            ui.make_persistent_id(egui::IdSalt::new(("document", tab.id(), tab.editor_path())));
+        let scroll = self.page_pan.scroll_area(scroll_id, area).show(ui, |ui| {
+            theme::document_style(ui, self.document_font_size);
+            let width = ui.available_width();
+            let content_width = if self.editor_preferences.readable_line_length {
+                width.min(920.0)
+            } else {
+                width
+            }
+            .min((width - 48.0).max(100.0));
+            crate::ui_probe::metric(ui.ctx(), "document-content-width", content_width);
+            let margin = ((width - content_width) / 2.0).max(0.0);
+            if view == View::Split {
+                ui.columns(2, |columns| {
+                    follow = self.editor.show(
+                        &mut columns[0],
+                        tab,
+                        id,
+                        &mut self.find,
+                        &mut self.files,
+                        self.vault.as_mut(),
+                        &open_notes,
+                    );
+                    let preview_link = preview::show(
+                        &mut columns[1],
+                        &mut self.cache,
+                        tab,
+                        anchor.as_deref(),
+                        self.vault.as_ref(),
+                    );
+                    follow = follow.take().or(preview_link);
+                });
+            } else {
+                ui.horizontal_top(|ui| {
+                    ui.add_space(margin);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(content_width, 0.0),
+                        Layout::top_down(Align::Min),
+                        |ui| {
+                            ui.set_width(content_width);
+                            ui.add_space(32.0);
+                            if self.editor_preferences.inline_title
+                                && let Some(name) = self.title.show(ui, &tab.document.path, &title)
+                            {
+                                renamed_title = Some((tab.document.path.clone(), name));
+                            }
+                            if self.title.take_body_focus() {
+                                self.editor.focus = true;
+                            }
+                            if self.editor_preferences.inline_title {
+                                ui.add_space(16.218);
+                            }
+                            if matches!(view, View::Live | View::Read) {
+                                add_property = self.properties.show(ui, tab);
+                            }
+                            if view == View::Read {
+                                follow = preview::show(
+                                    ui,
+                                    &mut self.cache,
+                                    tab,
+                                    anchor.as_deref(),
+                                    self.vault.as_ref(),
+                                );
+                            } else {
+                                follow = self.editor.show(
+                                    ui,
+                                    tab,
+                                    id,
+                                    &mut self.find,
+                                    &mut self.files,
+                                    self.vault.as_mut(),
+                                    &open_notes,
+                                );
+                            }
+                            ui.add_space(ui.available_height().max(80.0));
+                        },
+                    );
+                });
+            }
+        });
         crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
+        self.page_pan.viewport(&scroll);
         crate::ui_probe::metric(
             ui.ctx(),
             "document-scroll-y",
@@ -2689,20 +3497,139 @@ impl NotesApp {
         if add_property {
             self.ask(Dialog::AddProperty);
         }
+        if let Some(request) = self.editor.block_completion.take() {
+            if let Err(error) = self.complete_block_link(ui.ctx(), request) {
+                self.error = Some(error);
+                self.focus_editor();
+            }
+        }
+        for action in std::mem::take(&mut self.editor.embed_actions) {
+            self.apply_preview_action(ui.ctx(), Some(action));
+        }
         if let Some(target) = follow {
             self.follow_link(&target);
         }
     }
 
+    fn complete_block_link(
+        &mut self,
+        ctx: &egui::Context,
+        request: crate::editor_ui::BlockCompletion,
+    ) -> Result<(), String> {
+        self.settle_saves();
+        let source_index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id() == request.tab)
+            .ok_or("The source tab is no longer open.")?;
+        let source = self.tabs[source_index].document.clone();
+        let query = format!("[[{}", request.completion.query);
+        let typed = source
+            .text
+            .get(request.completion.range.clone())
+            .ok_or("The link changed. Choose the block again.")?;
+        if typed != query && typed != format!("{query}]]") {
+            return Err("The link changed. Choose the block again.".into());
+        }
+        let target_indices: Vec<_> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| (tab.document.path == request.path).then_some(index))
+            .collect();
+        let target = if let Some(&index) = target_indices.first() {
+            self.tabs[index].document.clone()
+        } else {
+            self.vault
+                .as_ref()
+                .ok_or("No vault is open.")?
+                .read(&request.path)?
+        };
+        if target.text.get(request.block.range.clone()) != Some(request.block.text.as_str())
+            || target_indices
+                .iter()
+                .any(|&index| self.tabs[index].document.text != target.text)
+            || self
+                .tabs
+                .iter()
+                .any(|tab| tab.document.path == source.path && tab.document.text != source.text)
+        {
+            return Err("The block or an open draft changed. Choose the block again; nothing was overwritten.".into());
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let mut id = format!("r{stamp:x}");
+        while rustidian::structure::find_anchor(&target.text, &format!("^{id}")).is_some() {
+            id.push('a');
+        }
+        let (position, insertion) = request.block.id_edit(&id);
+        let mut changed = target.clone();
+        if position > changed.text.len() || !changed.text.is_char_boundary(position) {
+            return Err("The block changed. Choose it again.".into());
+        }
+        changed.text.insert_str(position, &insertion);
+        let mut completion = request.completion;
+        let destination = format!("{}{id}", request.prefix);
+        let mut caret = None;
+        if source.path == target.path {
+            if position <= completion.range.start {
+                completion.range.start += insertion.len();
+                completion.range.end += insertion.len();
+            }
+            caret = Some(rustidian::editor::complete_link(
+                &mut changed.text,
+                &completion,
+                &destination,
+            ));
+        }
+        // A failed target write leaves both drafts and the link untouched.
+        self.vault
+            .as_mut()
+            .ok_or("No vault is open.")?
+            .save(&mut changed)?;
+        let root = self.vault.as_ref().expect("vault was checked").root.clone();
+        crate::editor_ui::record_document_edit(ctx, &root, &target, &changed);
+        for &index in &target_indices {
+            self.tabs[index].replace(changed.clone());
+        }
+        if source.path != target.path {
+            let mut after = source.clone();
+            caret = Some(rustidian::editor::complete_link(
+                &mut after.text,
+                &completion,
+                &destination,
+            ));
+            crate::editor_ui::record_document_edit(ctx, &root, &source, &after);
+            for tab in &mut self.tabs {
+                if tab.document.path == source.path {
+                    tab.document.text.clone_from(&after.text);
+                    tab.edited();
+                }
+            }
+        }
+        self.editor.jump = caret;
+        self.active = source_index;
+        self.focus_editor();
+        self.refresh_file_views();
+        self.error = None;
+        self.status = "Block reference inserted".into();
+        Ok(())
+    }
+
     fn tab_strip(&mut self, ui: &mut egui::Ui) {
         crate::ui_probe::metric(ui.ctx(), "tab-count", self.tabs.len() as f32);
         let mut close = None;
+        let mut close_others = None;
+        let mut close_right = None;
         let mut pin = None;
         let mut moved = None;
-        egui::Frame::NONE
+        let strip = egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
             .inner_margin(Margin::symmetric(10, 0))
             .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
                 ui.horizontal(|ui| {
                     let count = self.tabs.len().max(1) as f32;
@@ -2710,7 +3637,7 @@ impl NotesApp {
                     let width = if self.tabs.is_empty() {
                         0.0
                     } else {
-                        (ui.available_width() - 88.0)
+                        (ui.available_width() - 148.0)
                             .max(80.0)
                             .min(200.0 * count + 4.0 * (count - 1.0))
                     };
@@ -2786,17 +3713,16 @@ impl NotesApp {
                                                 );
                                             }
                                             if rect.intersects(ui.clip_rect()) {
+                                                let probe_path =
+                                                    tab.document.path.display().to_string();
                                                 crate::ui_probe::record(
                                                     ui.ctx(),
-                                                    format!("tab:{}", tab.document.path.display()),
+                                                    format!("tab:{probe_path}"),
                                                     rect.intersect(ui.clip_rect()),
                                                 );
                                                 crate::ui_probe::record(
                                                     ui.ctx(),
-                                                    format!(
-                                                        "tab-full:{}",
-                                                        tab.document.path.display()
-                                                    ),
+                                                    format!("tab-full:{probe_path}"),
                                                     rect,
                                                 );
                                             }
@@ -2963,6 +3889,56 @@ impl NotesApp {
                                                     close = Some(index);
                                                     ui.close();
                                                 }
+                                                let action = ui
+                                                    .add_enabled_ui(
+                                                        !rustidian::tab::other_tab_indices(
+                                                            &self.tabs,
+                                                            tab.id(),
+                                                        )
+                                                        .is_empty(),
+                                                        |ui| {
+                                                            theme::menu_item(
+                                                                ui,
+                                                                Icon::Close,
+                                                                "Close others",
+                                                            )
+                                                        },
+                                                    )
+                                                    .inner;
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-close-others",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    close_others = Some(tab.id());
+                                                    ui.close();
+                                                }
+                                                let action = ui
+                                                    .add_enabled_ui(
+                                                        !rustidian::tab::right_tab_indices(
+                                                            &self.tabs,
+                                                            tab.id(),
+                                                        )
+                                                        .is_empty(),
+                                                        |ui| {
+                                                            theme::menu_item(
+                                                                ui,
+                                                                Icon::Close,
+                                                                "Close tabs to the right",
+                                                            )
+                                                        },
+                                                    )
+                                                    .inner;
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-close-right",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    close_right = Some(tab.id());
+                                                    ui.close();
+                                                }
                                                 ui.separator();
                                                 let action = theme::menu_item(
                                                     ui,
@@ -3043,12 +4019,32 @@ impl NotesApp {
                     if new_tab.clicked() {
                         self.new_tab();
                     }
-                    ui.add_space((ui.available_width() - 42.0).max(0.0));
-                    if icon_button(ui, Icon::SidebarRight, "Toggle right sidebar").clicked() {
-                        self.show_right = !self.show_right;
-                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let toggle = icon_button(ui, Icon::SidebarRight, "Toggle right sidebar");
+                        crate::ui_probe::record(ui.ctx(), "toggle-right-sidebar", toggle.rect);
+                        if toggle.clicked() {
+                            self.show_right = !self.show_right;
+                        }
+                        let showing = self.show_right && self.right_tab == 3;
+                        let agent = ui
+                            .add_enabled_ui(self.vault.is_some(), |ui| {
+                                ui.selectable_label(showing, RichText::new("Agent").size(13.0))
+                                    .on_hover_text("Agent terminal")
+                                    .on_disabled_hover_text("Open a vault first.")
+                            })
+                            .inner;
+                        crate::ui_probe::record(ui.ctx(), "toggle-agent", agent.rect);
+                        if agent.clicked() {
+                            if showing {
+                                self.show_right = false;
+                            } else {
+                                self.open_agent();
+                            }
+                        }
+                    });
                 });
             });
+        crate::ui_probe::record(ui.ctx(), "tab-strip-background", strip.response.rect);
         if let Some((id, slot)) = moved
             && let Some(from) = self.tabs.iter().position(|tab| tab.id() == id)
         {
@@ -3062,6 +4058,12 @@ impl NotesApp {
         }
         if let Some(index) = close {
             self.request_close_tab(index);
+        }
+        if let Some(keep) = close_others {
+            self.request_close_other_tabs_for(keep);
+        }
+        if let Some(keep) = close_right {
+            self.request_close_tabs_to_right(keep);
         }
         if let Some(index) = pin {
             self.toggle_pin(index);
@@ -3108,6 +4110,15 @@ impl NotesApp {
             }
             return;
         }
+        if matches!(self.pending, Some(Pending::ConfirmQuit)) {
+            if crate::window::quit_dialog(ctx).is_some() {
+                self.pending = None;
+            }
+            if self.pending.is_none() && self.dialog.is_none() && !self.allow_close {
+                self.focus_editor();
+            }
+            return;
+        }
         if let Some(pending) = self.pending.clone() {
             let response = egui::Modal::new(egui::Id::unique("unsaved-changes"))
             .frame(theme::dialog_frame(ctx)).show(ctx, |ui| {
@@ -3123,6 +4134,8 @@ impl NotesApp {
                         let indices: Vec<usize> = match &pending {
                             Pending::CloseTab(index) => vec![*index],
                             Pending::CloseOtherTabs(keep) => rustidian::tab::other_tab_indices(&self.tabs, *keep)
+                                .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
+                            Pending::CloseTabsToRight(keep) => rustidian::tab::right_tab_indices(&self.tabs, *keep)
                                 .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
                             _ => self.tabs.iter().enumerate().filter(|(_, tab)| tab.document.dirty()).map(|(i, _)| i).collect(),
                         };
@@ -3173,12 +4186,22 @@ impl NotesApp {
             if let Some(action) = self.file_move.show(ctx) {
                 match action {
                     crate::file_move_ui::Action::Move {
-                        source,
+                        sources,
                         folder,
                         create,
                     } => {
-                        self.move_file(&source, &folder, create);
+                        if sources.len() == 1
+                            && self
+                                .vault
+                                .as_ref()
+                                .is_some_and(|vault| !vault.folders.contains(&sources[0]))
+                        {
+                            self.move_file(&sources[0], &folder, create);
+                        } else {
+                            self.move_entries(&sources, &folder, create);
+                        }
                     }
+                    crate::file_move_ui::Action::Trash(paths) => self.trash_entries(ctx, &paths),
                     crate::file_move_ui::Action::Update { updates, always } => {
                         if always {
                             self.always_update_links = true;
@@ -3273,6 +4296,7 @@ impl NotesApp {
         ) && ctx
             .input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
         let mut select = None;
+        let mut create_note = false;
         let mut run_command = None;
         let mut recovery_action = None;
         let mut configure_templates = false;
@@ -3296,9 +4320,19 @@ impl NotesApp {
                 close |= theme::dialog_header(ui, title, "Close dialog").clicked();
                 ui.add_space(8.0);
             }
+            if dialog == Dialog::NewFolder && let Some(parent) = &self.dialog_path {
+                let location = if parent.as_os_str().is_empty() {
+                    "Vault root".to_owned()
+                } else {
+                    parent.display().to_string()
+                };
+                let label = ui.label(RichText::new(format!("Location: {location}")).weak());
+                crate::ui_probe::record(ui.ctx(), format!("folder-create-location:{}", parent.display()), label.rect);
+            }
             let hint = match dialog {
                 Dialog::QuickOpen => "Find a file…",
                 Dialog::SaveCopy => "Folder/Note.md",
+                Dialog::NewFolder if self.dialog_path.is_some() => "New folder",
                 Dialog::NewFolder => "Folder/New folder",
                 Dialog::OpenVault => "/path/to/your/vault",
                 Dialog::Commands => "Select a command…",
@@ -3420,9 +4454,18 @@ impl NotesApp {
                     });
                     if matches.is_empty() {
                         ui.label("No matching files");
+                        if !self.dialog_input.trim().is_empty() {
+                            let create = ui.button("Create note");
+                            crate::ui_probe::record(ui.ctx(), "quick-create", create.rect);
+                            create_note = create.clicked() || enter;
+                        }
                     }
                     ui.label(
-                        RichText::new("↑ ↓ to navigate · Enter to open · Ctrl+Enter for a new tab")
+                        RichText::new(if matches.is_empty() && !self.dialog_input.trim().is_empty() {
+                            "Enter to create · Ctrl+Enter for a new tab"
+                        } else {
+                            "↑ ↓ to navigate · Enter to open · Ctrl+Enter for a new tab"
+                        })
                             .size(11.0)
                             .weak(),
                     );
@@ -3652,6 +4695,11 @@ impl NotesApp {
             self.command(command, ctx);
             return;
         }
+        if create_note {
+            let name = self.dialog_input.clone();
+            close = self
+                .create_quick_note(&name, open_in_new_tab || ctx.input(|i| i.modifiers.command));
+        }
         if let Some(path) = select {
             if dialog == Dialog::InsertTemplate {
                 if !self.insert_template(&path) {
@@ -3678,6 +4726,7 @@ impl NotesApp {
     }
 
     fn relocate_tabs(&mut self, source: &Path, destination: &Path) {
+        crate::explorer_selection::moved(&self.ctx, source, destination);
         self.page_preview.close();
         if let Some(vault) = &self.vault {
             crate::editor_ui::relocate_histories(&self.ctx, &vault.root, source, destination);
@@ -3692,6 +4741,7 @@ impl NotesApp {
                 rustidian::paths::moved_path(&tab.document.path, source, destination, true);
             if let Some(vault) = &self.vault
                 && !tab.document.is_blank()
+                && !tab.document.dirty()
                 && let Ok(document) = vault.open_document(&tab.document.path)
             {
                 tab.replace(document);
@@ -3712,14 +4762,23 @@ impl NotesApp {
 
     fn show_page_preview(&mut self, ctx: &egui::Context) {
         let blocked = self.interaction_blocked() || self.view() == View::Graph;
-        match self.page_preview.show(
+        let action = self.page_preview.show(
             ctx,
             self.vault.as_ref(),
             &self.tabs,
             self.active,
             blocked,
             self.document_font_size,
-        ) {
+        );
+        self.apply_preview_action(ctx, action);
+    }
+
+    fn apply_preview_action(
+        &mut self,
+        ctx: &egui::Context,
+        action: Option<crate::page_preview::Action>,
+    ) {
+        match action {
             Some(crate::page_preview::Action::Open { from, target }) => {
                 self.follow_link_from(&from, &target)
             }
@@ -3773,6 +4832,125 @@ impl NotesApp {
         }
     }
 
+    fn move_entries(&mut self, sources: &[PathBuf], folder: &Path, create: bool) {
+        if !self.save_all() {
+            self.move_failed(
+                self.error
+                    .clone()
+                    .unwrap_or_else(|| "Save your changes before moving files.".into()),
+            );
+            return;
+        }
+        let result = self
+            .vault
+            .as_mut()
+            .ok_or_else(|| "Open a vault first.".to_owned())
+            .and_then(|vault| vault.begin_move_entries(sources, folder, create));
+        match result {
+            Ok(Some(moved)) => {
+                let count = moved.paths.len();
+                for (from, to) in &moved.paths {
+                    self.relocate_tabs(from, to);
+                }
+                self.reveal_folder = Some(folder.to_owned());
+                if self.always_update_links || moved.updates.counts().0 == 0 {
+                    self.file_move.moved(None);
+                    self.apply_move_links(moved.updates);
+                } else {
+                    self.file_move.moved(Some(moved.updates));
+                }
+                self.status = format!(
+                    "Moved {count} items to {}",
+                    if folder.as_os_str().is_empty() {
+                        "/".into()
+                    } else {
+                        folder.display().to_string()
+                    }
+                );
+                self.refresh_file_views();
+            }
+            Ok(None) => self.file_move.moved(None),
+            Err(error) => {
+                self.move_failed(error);
+                self.refresh_file_views();
+            }
+        }
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+    }
+
+    fn trash_entries(&mut self, ctx: &egui::Context, sources: &[PathBuf]) {
+        let paths = match self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "Open a vault first.".to_owned())
+            .and_then(|vault| vault.selected_entries(sources))
+        {
+            Ok(paths) => paths,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
+        if !self.save_all() {
+            return;
+        }
+        let active = self.tabs.get(self.active).map(Tab::id);
+        let mut removed = Vec::new();
+        let mut failures = Vec::new();
+        if let Some(vault) = &mut self.vault {
+            for path in paths {
+                match vault.trash_entry(&path) {
+                    Ok(()) => removed.push(path),
+                    Err(error) => failures.push(format!("{}: {error}", path.display())),
+                }
+            }
+        }
+        self.tabs.retain(|tab| {
+            !removed
+                .iter()
+                .any(|path| tab.document.path.starts_with(path))
+        });
+        if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id()) == active) {
+            self.active = index;
+        } else {
+            self.new_tab();
+        }
+        self.status = format!("Moved {} items to system Trash", removed.len());
+        self.error = (!failures.is_empty())
+            .then(|| format!("Some items were not deleted: {}", failures.join("; ")));
+        self.refresh_file_views();
+        crate::explorer_selection::reset(ctx);
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+    }
+
+    fn reveal_in_file_manager(&mut self, relative: PathBuf) {
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        let path = vault.root.join(&relative);
+        if relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            || !path.exists()
+        {
+            self.error = Some("This file or folder is no longer in the vault.".into());
+            return;
+        }
+        let (sender, result) = mpsc::channel();
+        self.reveal_result = Some(result);
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(rustidian::native_picker::reveal(&path));
+            ctx.request_repaint();
+        });
+        self.error = None;
+        self.status = "Opening system file manager…".into();
+    }
+
     fn ask_move_file(&mut self, source: PathBuf) {
         if let Some(vault) = &self.vault {
             self.file_move.open(vault, source);
@@ -3810,11 +4988,11 @@ impl NotesApp {
 
     fn move_file(&mut self, source: &Path, folder: &Path, create: bool) {
         if !self.save_all() {
-            self.file_move.error(
-                self.error
-                    .clone()
-                    .unwrap_or_else(|| "Save your changes before moving the file.".into()),
-            );
+            let error = self
+                .error
+                .clone()
+                .unwrap_or_else(|| "Save your changes before moving the file.".into());
+            self.move_failed(error);
             return;
         }
         let result = self
@@ -3838,11 +5016,51 @@ impl NotesApp {
                 self.refresh_file_views();
             }
             Ok(None) => self.file_move.moved(None),
-            Err(error) => self.file_move.error(error),
+            Err(error) => self.move_failed(error),
         }
         if let Err(error) = self.write_session() {
             self.error = Some(error);
         }
+    }
+
+    /// The Move picker shows a failed move; a drag in the explorer has no picker.
+    fn move_failed(&mut self, error: String) {
+        if self.file_move.active() {
+            self.file_move.error(error);
+        } else {
+            self.error = Some(error);
+        }
+    }
+
+    /// A drag in the explorer let go of `source` over `folder` ("" is the vault root).
+    /// A file takes the Move dialog's operation, a folder the folder rename, with a
+    /// number after a taken folder name as Obsidian does. The tree stays where it is.
+    fn drop_into(&mut self, source: &Path, folder: &Path) {
+        let Some(vault) = &self.vault else {
+            return;
+        };
+        if vault.folders.iter().any(|path| path == source) {
+            let name = source
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let mut target = folder.join(&name);
+            let mut counter = 0;
+            while std::fs::symlink_metadata(vault.root.join(&target)).is_ok() {
+                counter += 1;
+                target = folder.join(format!("{name} {counter}"));
+            }
+            let previous = self.dialog_path.replace(source.to_owned());
+            let previous_input =
+                std::mem::replace(&mut self.dialog_input, target.display().to_string());
+            self.submit_dialog(Dialog::RenameNote);
+            self.dialog_path = previous;
+            self.dialog_input = previous_input;
+        } else {
+            self.move_file(source, folder, false);
+        }
+        self.reveal_folder = None;
     }
 
     fn submit_dialog(&mut self, dialog: Dialog) -> bool {
@@ -3856,18 +5074,26 @@ impl NotesApp {
             return self.save_bookmarks(before);
         }
         if dialog == Dialog::NewFolder {
+            if input.is_empty() {
+                self.error = Some("Enter a folder name.".into());
+                return false;
+            }
+            let path = self
+                .dialog_path
+                .as_ref()
+                .map_or_else(|| PathBuf::from(&input), |parent| parent.join(&input));
             let result = self
                 .vault
                 .as_mut()
                 .ok_or("Open a vault first.".to_owned())
-                .and_then(|vault| vault.create_folder(Path::new(&input)));
+                .and_then(|vault| vault.create_folder(&path));
             return match result {
                 Ok(()) => {
                     self.tree = Tree::from_vault(self.vault.as_ref().unwrap());
-                    self.reveal_folder = Some(PathBuf::from(&input));
+                    self.reveal_folder = Some(path.clone());
                     self.searching = false;
                     self.show_bookmarks = false;
-                    self.status = format!("Created folder {input}");
+                    self.status = format!("Created folder {}", path.display());
                     self.error = None;
                     true
                 }
@@ -4096,6 +5322,7 @@ impl NotesApp {
             return;
         }
         match command {
+            rustidian::commands::OPEN_AGENT => self.open_agent(),
             rustidian::commands::OPEN_GRAPH => self.open_global_graph(),
             rustidian::commands::OPEN_LOCAL_GRAPH if self.local_graph_available() => {
                 self.graph.local_open = true;
@@ -4257,6 +5484,7 @@ impl NotesApp {
             "Toggle right sidebar" => self.show_right = !self.show_right,
             "Switch appearance" => {
                 self.dark = !self.dark;
+                self.appearance = theme::Appearance::from_dark(self.dark);
                 theme::apply(ctx, self.dark);
             }
             "Refresh vault" => {
@@ -4269,22 +5497,48 @@ impl NotesApp {
     }
 
     fn duplicate_file(&mut self, path: &Path) {
-        if let Some(index) = self
+        let folder = self
+            .vault
+            .as_ref()
+            .is_some_and(|vault| vault.folders.iter().any(|entry| entry == path));
+        let drafts: Vec<_> = self
             .tabs
             .iter()
-            .position(|tab| tab.document.path == path && tab.document.dirty())
-            && !self.save(index)
-        {
-            return;
+            .enumerate()
+            .filter(|(_, tab)| {
+                tab.document.dirty()
+                    && if folder {
+                        tab.document.path.starts_with(path)
+                    } else {
+                        tab.document.path == path
+                    }
+            })
+            .map(|(index, _)| index)
+            .collect();
+        for index in drafts {
+            if !self.save(index) {
+                return;
+            }
         }
-        let Some(vault) = &mut self.vault else { return };
-        match vault.duplicate_file(path) {
+        let Some(vault) = &mut self.vault else {
+            return;
+        };
+        let copied = if folder {
+            vault.duplicate_folder(path)
+        } else {
+            vault.duplicate_file(path)
+        };
+        match copied {
             Ok(copy) => {
-                self.tree = Tree::from_vault(vault);
-                self.files = rustidian::search::FileMatcher::from_vault(vault);
-                self.search_cache.invalidate();
+                self.refresh_file_views();
                 self.error = None;
-                self.open_note_at(&copy, true);
+                if folder {
+                    self.status = format!("Copied folder to {}", copy.display());
+                    self.reveal_folder = Some(copy.clone());
+                    crate::explorer_selection::select(&self.ctx, &copy);
+                } else {
+                    self.open_note_at(&copy, true);
+                }
             }
             Err(error) => self.error = Some(error),
         }
@@ -4307,12 +5561,57 @@ impl NotesApp {
         })
     }
 
+    fn create_quick_note(&mut self, name: &str, new_tab: bool) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let path = rustidian::paths::markdown_name(Path::new(name));
+        if path
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+            || rustidian::vault::is_ignored_path(&path)
+        {
+            self.error = Some("Choose a visible note path inside this vault.".into());
+            return false;
+        }
+        let new_tab = new_tab || self.tabs.get(self.active).is_some_and(|tab| tab.pinned);
+        if !new_tab
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.document.dirty())
+            && !self.save(self.active)
+        {
+            return false;
+        }
+        let Some(vault) = &mut self.vault else {
+            self.error = Some("Open a vault before creating a note.".into());
+            return false;
+        };
+        let mut document = Document::new(path.clone());
+        if let Err(error) = vault.save(&mut document) {
+            self.error = Some(error);
+            return false;
+        }
+        self.refresh_file_views();
+        self.error = None;
+        self.open_note_at(&path, new_tab);
+        self.set_view(View::Live);
+        self.status = format!("Created {}", path.display());
+        true
+    }
+
     fn create_note(&mut self) {
+        self.create_note_in(Path::new(""));
+    }
+
+    fn create_note_in(&mut self, folder: &Path) {
         let Some(vault) = &mut self.vault else {
             self.error = Some("Open a vault before creating a note.".into());
             return;
         };
-        match vault.create_untitled() {
+        match vault.create_untitled_in(folder) {
             Ok(document) => {
                 let path = document.path.clone();
                 let title = document.title();
@@ -4412,16 +5711,113 @@ impl NotesApp {
 
 impl eframe::App for NotesApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
-        let live_tab = self
+        self.agent.raw_input(ctx, raw);
+        self.system_theme.update(ctx, raw, self.appearance);
+        self.page_pan.raw_input(
+            ctx,
+            raw,
+            !self.interaction_blocked() && self.view() != View::Graph,
+        );
+        let editing_tab = self
             .tabs
             .get(self.active)
-            .filter(|tab| tab.view == View::Live && !tab.document.is_image())
+            .filter(|tab| {
+                matches!(tab.view, View::Live | View::Source | View::Split)
+                    && !tab.document.is_image()
+            })
             .map(Tab::id);
-        self.editor.raw_input(ctx, raw, live_tab);
+        self.editor
+            .raw_input(ctx, raw, editing_tab, self.view() == View::Live);
+    }
+
+    /// Runs before every `ui` pass and alone while the window is hidden, so
+    /// hand-offs, signals and close requests never wait for a drawn frame.
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let result = self
+            .reveal_result
+            .as_ref()
+            .and_then(|receiver| match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                    "The file-manager request was interrupted. Try again.".into(),
+                )),
+            });
+        if let Some(result) = result {
+            self.reveal_result = None;
+            match result {
+                Ok(()) => self.status = "Revealed in system file manager".into(),
+                Err(error) => {
+                    self.status.clear();
+                    eprintln!("File-manager request failed: {error}");
+                    self.error = Some(
+                        "Could not reveal this item in the system file manager. Try again.".into(),
+                    );
+                }
+            }
+        }
+        #[cfg(unix)]
+        let launches: Vec<_> = self
+            .launches
+            .as_ref()
+            .map(|launches| launches.try_iter().collect())
+            .unwrap_or_default();
+        #[cfg(unix)]
+        for crate::instance::Request { path, token, shown } in launches {
+            crate::window::bring_forward(ctx, frame, token.as_deref());
+            self.showing.push(shown);
+            if let Some(path) = path {
+                let kind = if path.is_dir() {
+                    rustidian::native_picker::Kind::Folder
+                } else {
+                    rustidian::native_picker::Kind::File
+                };
+                self.open_system_selection(kind, path);
+            }
+        }
+        // A launch exits once this window has the focus. One that waits in
+        // vain opens a window of its own instead; see `instance`.
+        #[cfg(unix)]
+        if !self.showing.is_empty() && ctx.input(|input| input.viewport().focused) == Some(true) {
+            for shown in self.showing.drain(..) {
+                let _ = shown.send(());
+            }
+        }
+        if let Some(signal) = crate::window::take_signal() {
+            self.quit(ctx, signal);
+        }
+        if ctx.input(|input| input.viewport().close_requested()) {
+            self.on_close_request(ctx);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let frame_started = Instant::now();
         let ctx = ui.ctx().clone();
+        if let Some(due) = self.attention_check {
+            let now = Instant::now();
+            if now < due {
+                ctx.request_repaint_after(due - now);
+            } else {
+                self.attention_check = None;
+                if ctx.input(|input| input.viewport().focused) != Some(true) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ));
+                }
+            }
+        }
+        self.dark = ctx.theme() == egui::Theme::Dark;
+        crate::ui_probe::metric(
+            &ctx,
+            "appearance-system",
+            if self.appearance == theme::Appearance::System {
+                1.0
+            } else {
+                0.0
+            },
+        );
+        crate::ui_probe::metric(&ctx, "appearance-dark", if self.dark { 1.0 } else { 0.0 });
         let local_graph_open = self.graph.local_open;
         // Event modifiers retain the gesture even if Control was released in
         // this frame. The editor consumes Ctrl+Enter before following its link.
@@ -4490,24 +5886,8 @@ impl eframe::App for NotesApp {
                             ui.label(RichText::new("Image").size(11.0).weak());
                             return;
                         }
-                        let mode = match self.view() {
-                            View::Read => "Reading",
-                            View::Live => "Live preview",
-                            View::Source => "Source mode",
-                            View::Split => "Split view",
-                            View::Graph => "Graph",
-                        };
                         if self.editor_preferences.show_mode {
-                            let response = ui.add(egui::Label::new(
-                                RichText::new(mode).size(11.0).color(theme::accent(ui)),
-                            ));
-                            if crate::ui_probe::enabled() {
-                                crate::ui_probe::record(
-                                    &ctx,
-                                    format!("view-mode:{mode}"),
-                                    response.rect,
-                                );
-                            }
+                            self.show_view_mode(ui);
                         }
                         if let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document)
                             && self.view() != View::Graph
@@ -4534,36 +5914,57 @@ impl eframe::App for NotesApp {
         if self.dialog.is_none()
             && let Some(error) = self.error.clone()
         {
-            egui::Panel::top("error").show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    let message = ui.colored_label(
-                        Color32::from_rgb(235, 157, 132),
-                        RichText::new(error).size(13.0),
-                    );
-                    crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
-                    let dismiss = ui.button("Dismiss");
-                    crate::ui_probe::record(ui.ctx(), "error-dismiss", dismiss.rect);
-                    if dismiss.clicked() {
-                        self.error = None;
-                    }
-                    if self
-                        .tabs
-                        .get(self.active)
-                        .is_some_and(|tab| tab.document.dirty())
-                    {
-                        let copy = ui.button("Save a copy…");
-                        crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
-                        if copy.clicked() {
-                            self.ask(Dialog::SaveCopy);
-                        }
-                    }
+            egui::Area::new(egui::Id::new("error"))
+                .order(egui::Order::Foreground)
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 44.0))
+                .show(&ctx, |ui| {
+                    theme::notice_frame(&ctx).show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.add(
+                                theme::icon_image(
+                                    theme::Icon::CalloutWarning,
+                                    ui.visuals().warn_fg_color,
+                                )
+                                .fit_to_exact_size(egui::vec2(16.0, 16.0)),
+                            );
+                            ui.vertical(|ui| {
+                                ui.set_max_width(320.0);
+                                let message = ui
+                                    .add(egui::Label::new(RichText::new(error).size(13.0)).wrap());
+                                crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
+                                if self
+                                    .tabs
+                                    .get(self.active)
+                                    .is_some_and(|tab| tab.document.dirty())
+                                {
+                                    let copy = ui.button("Save a copy…");
+                                    crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
+                                    if copy.clicked() {
+                                        self.ask(Dialog::SaveCopy);
+                                    }
+                                }
+                            });
+                            let dismiss = theme::icon_button(ui, theme::Icon::Close, "Dismiss");
+                            crate::ui_probe::record(ui.ctx(), "error-dismiss", dismiss.rect);
+                            if dismiss.clicked() {
+                                self.error = None;
+                            }
+                        });
+                    });
                 });
-            });
         }
         self.ribbon(ui);
         self.sidebar(ui);
         self.details(ui);
         self.content(ui);
+        if let Some(query) = self.editor.search_request.take() {
+            self.search = query;
+            self.show_left = true;
+            self.searching = true;
+            self.show_bookmarks = false;
+            self.search_focus = true;
+            self.editor.focus = false;
+        }
         if !ctx.input(|input| input.pointer.any_down())
             && (self.graph.take_changed() || local_graph_open != self.graph.local_open)
             && let Err(error) = self.write_session()
@@ -4588,6 +5989,7 @@ impl eframe::App for NotesApp {
         {
             self.save(self.active);
         }
+        crate::ui_probe::frame_time(&ctx, frame_started);
         crate::ui_probe::flush(&ctx);
         if self.first_frame {
             eprintln!(
@@ -4596,5 +5998,25 @@ impl eframe::App for NotesApp {
             );
             self.first_frame = false;
         }
+    }
+}
+
+impl NotesApp {
+    /// The Agent terminal lives in the right sidebar beside the open note.
+    fn open_agent(&mut self) {
+        if self.vault.is_none() {
+            self.error = Some("Open a vault before using the agent.".into());
+            return;
+        }
+        self.show_right = true;
+        self.right_tab = 3;
+        if self.sidebar_widths[1] < 360.0 {
+            self.sidebar_widths[1] = 380.0;
+            self.restore_sidebars[1] = true;
+        }
+        self.agent.focus();
+        self.editor.focus = false;
+        self.page_preview.close();
+        self.ctx.request_repaint();
     }
 }

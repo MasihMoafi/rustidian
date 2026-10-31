@@ -33,6 +33,7 @@ pub struct Style {
     pub italic: bool,
     pub strike: bool,
     pub code: bool,
+    pub math: bool,
     pub link: bool,
     pub hidden: bool,
     pub quote: bool,
@@ -49,9 +50,10 @@ pub struct Style {
     pub block_code: bool,
     pub fence: bool,
     pub callout_header: bool,
+    pub html_break: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Span {
     pub range: Range<usize>,
     pub style: Style,
@@ -69,6 +71,7 @@ pub struct Markdown {
     pub callouts: Vec<crate::callouts::Callout>,
     pub tasks: Vec<Task>,
     pub highlights: Vec<Range<usize>>,
+    pub maths: Vec<crate::math::Span>,
 }
 
 #[derive(Clone, Debug)]
@@ -210,7 +213,8 @@ pub fn complete_link(text: &mut String, completion: &LinkCompletion, target: &st
 
 impl Markdown {
     pub fn parse(text: &str) -> Self {
-        let mut styles = vec![Style::default(); text.len()];
+        let mut all_maths = Vec::new();
+        let mut styles = Styles::new(text.len());
         let mut heading_starts = Vec::new();
         let mut item_starts = Vec::new();
         let mut setext_markers = Vec::new();
@@ -225,10 +229,14 @@ impl Markdown {
         let mut table = None;
         for (event, range) in Parser::new_ext(
             text,
-            Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS,
+            Options::ENABLE_STRIKETHROUGH
+                | Options::ENABLE_TABLES
+                | Options::ENABLE_TASKLISTS
+                | Options::ENABLE_MATH,
         )
         .into_offset_iter()
         {
+            all_maths.extend(crate::math::span(text, &event, range.clone()));
             match event {
                 Event::Start(Tag::Table(alignments)) => {
                     table = Some((range, alignments, Vec::new()));
@@ -248,7 +256,7 @@ impl Markdown {
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     heading_starts.push(text[..range.start].rfind('\n').map_or(0, |i| i + 1));
-                    patch(&mut styles, range.clone(), |s| {
+                    styles.patch(range.clone(), |s| {
                         s.heading = level as u8;
                         s.strong = true;
                     });
@@ -257,14 +265,14 @@ impl Markdown {
                         let prefix = heading.bytes().take_while(|b| *b == b'#').count();
                         let space = usize::from(heading.as_bytes().get(prefix) == Some(&b' '));
                         let markers = range.start..range.start + prefix + space;
-                        hide(&mut styles, markers.clone());
-                        patch(&mut styles, markers, |style| style.marker = true);
+                        styles.hide(markers.clone());
+                        styles.patch(markers, |style| style.marker = true);
                     } else {
                         let trimmed = heading.trim_end();
                         if let Some(underline) = trimmed.rfind('\n') {
                             let markers = range.start + underline + 1..range.start + trimmed.len();
                             setext_markers.push(markers.clone());
-                            patch(&mut styles, markers, |style| {
+                            styles.patch(markers, |style| {
                                 *style = Style {
                                     marker: true,
                                     ..Default::default()
@@ -274,37 +282,37 @@ impl Markdown {
                     }
                 }
                 Event::Start(Tag::Strong) => {
-                    patch(&mut styles, range.clone(), |s| s.strong = true);
-                    delimit(&mut styles, range, 2);
+                    styles.patch(range.clone(), |s| s.strong = true);
+                    styles.delimit(range, 2);
                 }
                 Event::Start(Tag::Emphasis) => {
-                    patch(&mut styles, range.clone(), |s| s.italic = true);
-                    delimit(&mut styles, range, 1);
+                    styles.patch(range.clone(), |s| s.italic = true);
+                    styles.delimit(range, 1);
                 }
                 Event::Start(Tag::Strikethrough) => {
-                    patch(&mut styles, range.clone(), |s| s.strike = true);
-                    delimit(&mut styles, range, 2);
+                    styles.patch(range.clone(), |s| s.strike = true);
+                    styles.delimit(range, 2);
                 }
                 Event::Start(Tag::Link { .. }) => {
-                    patch(&mut styles, range.clone(), |s| s.link = true);
+                    styles.patch(range.clone(), |s| s.link = true);
                     if let Some(end_label) = text[range.clone()].find("](") {
-                        hide(&mut styles, range.start..range.start + 1);
-                        hide(&mut styles, range.start + end_label..range.end);
+                        styles.hide(range.start..range.start + 1);
+                        styles.hide(range.start + end_label..range.end);
                     }
                 }
                 Event::Code(_) => {
-                    patch(&mut styles, range.clone(), |s| s.code = true);
+                    styles.patch(range.clone(), |s| s.code = true);
                     let ticks = text[range.clone()]
                         .bytes()
                         .take_while(|b| *b == b'`')
                         .count();
-                    delimit(&mut styles, range, ticks);
+                    styles.delimit(range, ticks);
                 }
                 Event::Start(Tag::CodeBlock(kind)) => {
                     let line_start = text[..range.start].rfind('\n').map_or(0, |i| i + 1);
                     let root = text[line_start..range.start].trim().is_empty()
                         && !styles[range.start].quote;
-                    patch(&mut styles, range.clone(), |s| {
+                    styles.patch(range.clone(), |s| {
                         *s = Style {
                             code: true,
                             block_code: true,
@@ -316,11 +324,9 @@ impl Markdown {
                         && root
                     {
                         let block = CodeBlock::fenced(text, range, language.into_string());
-                        patch(&mut styles, block.opening.clone(), |style| {
-                            style.fence = true
-                        });
+                        styles.patch(block.opening.clone(), |style| style.fence = true);
                         if let Some(closing) = &block.closing {
-                            patch(&mut styles, closing.clone(), |style| style.fence = true);
+                            styles.patch(closing.clone(), |style| style.fence = true);
                         }
                         code_blocks.push(block);
                     }
@@ -330,21 +336,17 @@ impl Markdown {
                     {
                         callouts.push(callout);
                     }
-                    patch(&mut styles, range, |s| s.quote = true);
+                    styles.patch(range, |s| s.quote = true);
                 }
                 Event::TaskListMarker(checked) => {
                     let start = current_item;
                     let prefix = start..range.end;
-                    patch(&mut styles, prefix.clone(), |style| {
-                        style.task_marker = true
-                    });
+                    styles.patch(prefix.clone(), |style| style.task_marker = true);
                     if checked {
                         let end = text[range.end..]
                             .find('\n')
                             .map_or(text.len(), |offset| range.end + offset);
-                        patch(&mut styles, range.end..end, |style| {
-                            style.task_checked = true
-                        });
+                        styles.patch(range.end..end, |style| style.task_checked = true);
                     }
                     while task_positions
                         .peek()
@@ -364,11 +366,27 @@ impl Markdown {
                     item_starts.push(text[..range.start].rfind('\n').map_or(0, |i| i + 1));
                     let item = &text[range.clone()];
                     if item.starts_with("- ") || item.starts_with("* ") || item.starts_with("+ ") {
-                        patch(&mut styles, range.start..range.start + 1, |s| {
+                        styles.patch(range.start..range.start + 1, |s| {
                             s.bullet = true;
                             s.marker = true;
                         });
                     }
+                }
+                Event::InlineHtml(tag) | Event::Html(tag)
+                    if crate::inline_style::is_line_break(&tag) =>
+                {
+                    let start = range.start + tag.find('<').unwrap();
+                    let end = range.start + tag.rfind('>').unwrap() + 1;
+                    let end = if text[end..].starts_with('\n') {
+                        end + 1
+                    } else {
+                        end
+                    };
+                    styles.patch(start..end, |style| {
+                        style.hidden = true;
+                        style.marker = true;
+                        style.html_break = true;
+                    });
                 }
                 Event::InlineHtml(tag) => match crate::inline_style::parse(&tag) {
                     Some(crate::inline_style::Tag::Open(element, style)) => {
@@ -387,7 +405,9 @@ impl Markdown {
                 _ => {}
             }
         }
+        let mut maths = all_maths.clone();
         if let Ok(Some(properties)) = crate::metadata::frontmatter(text) {
+            maths.retain(|math| !properties.range.contains(&math.range.start));
             heading_starts.retain(|start| !properties.range.contains(start));
             item_starts.retain(|start| !properties.range.contains(start));
             setext_markers.retain(|range| !properties.range.contains(&range.start));
@@ -395,7 +415,7 @@ impl Markdown {
             tables.retain(|table| !properties.range.contains(&table.range.start));
             callouts.retain(|callout| !properties.range.contains(&callout.range.start));
             tasks.retain(|task| !properties.range.contains(&task.prefix.start));
-            patch(&mut styles, properties.range, |style| {
+            styles.patch(properties.range, |style| {
                 *style = Style {
                     property: true,
                     ..Default::default()
@@ -423,7 +443,11 @@ impl Markdown {
                 continue;
             }
             for index in (run..next).step_by(2) {
-                if styles[index].code || styles[index].hidden || styles[index].property {
+                if styles[index].code
+                    || styles[index].hidden
+                    || styles[index].property
+                    || maths.iter().any(|math| math.range.contains(&index))
+                {
                     continue;
                 }
                 if let Some(start) = opening.take() {
@@ -435,15 +459,15 @@ impl Markdown {
                         && !content.contains("\n\n")
                         && !content.contains("\r\n\r\n")
                     {
-                        patch(&mut styles, marker_end..index, |style| {
+                        styles.patch(marker_end..index, |style| {
                             style.native_highlight = native.map(|(color, _)| color);
                             style.highlight = native
                                 .is_none()
                                 .then_some(crate::highlight::Color::Yellow.rgba());
                         });
                         for marker in [start..marker_end, index..index + 2] {
-                            hide(&mut styles, marker.clone());
-                            patch(&mut styles, marker, |style| style.marker = true);
+                            styles.hide(marker.clone());
+                            styles.patch(marker, |style| style.marker = true);
                         }
                         highlights.push(start..index + 2);
                     } else {
@@ -459,40 +483,47 @@ impl Markdown {
             if styles[opening.start].property || styles[closing.start].property {
                 continue;
             }
-            patch(&mut styles, opening.end..closing.start, |style| {
+            styles.patch(opening.end..closing.start, |style| {
                 style.html.overlay(html);
                 if let Some(background) = html.background {
                     style.highlight = Some(background);
                 }
             });
             for marker in [opening, closing] {
-                hide(&mut styles, marker.clone());
-                patch(&mut styles, marker, |style| style.marker = true);
+                styles.hide(marker.clone());
+                styles.patch(marker, |style| style.marker = true);
             }
         }
         for callout in &callouts {
-            patch(&mut styles, callout.header.clone(), |style| {
+            styles.patch(callout.header.clone(), |style| {
                 style.callout_header = true;
             });
         }
-        for (range, _) in crate::vault::wiki_spans(text) {
-            patch(&mut styles, range.clone(), |s| s.link = true);
+        for (range, _) in crate::vault::wiki_spans_outside(text, &all_maths) {
+            if maths
+                .iter()
+                .any(|math| math.range.start < range.end && math.range.end > range.start)
+            {
+                continue;
+            }
+            styles.patch(range.clone(), |s| s.link = true);
             let prefix = text[range.start + 2..range.end - 2]
                 .find('|')
                 .map(|i| i + 3)
                 .unwrap_or(2);
-            hide(&mut styles, range.start..range.start + prefix);
-            hide(&mut styles, range.end - 2..range.end);
-            patch(&mut styles, range.start..range.start + 2, |style| {
-                style.marker = true
-            });
-            patch(&mut styles, range.end - 2..range.end, |style| {
-                style.marker = true
-            });
+            styles.hide(range.start..range.start + prefix);
+            styles.hide(range.end - 2..range.end);
+            styles.patch(range.start..range.start + 2, |style| style.marker = true);
+            styles.patch(range.end - 2..range.end, |style| style.marker = true);
         }
         if text.contains("![") {
             for image in crate::assets::embedded_images(text) {
-                patch(&mut styles, image.range, |style| style.image = true);
+                if maths.iter().any(|math| {
+                    math.range.start < image.range.end && math.range.end > image.range.start
+                }) {
+                    continue;
+                }
+                styles.patch(image.range, |style| style.image = true);
             }
         }
         let mut quotes = Vec::new();
@@ -533,7 +564,7 @@ impl Markdown {
             }
             if depth > 0 {
                 let range = offset + start..offset + cursor;
-                patch(&mut styles, range.clone(), |style| {
+                styles.patch(range.clone(), |style| {
                     style.quote_marker = true;
                     style.marker = true;
                     style.code = false;
@@ -544,25 +575,16 @@ impl Markdown {
         }
         heading_starts.dedup();
         item_starts.dedup();
-        let mut spans = Vec::new();
-        let mut start = 0;
-        for (index, _) in text.char_indices().skip(1) {
-            if styles[index] != styles[start] {
-                spans.push(Span {
-                    range: start..index,
-                    style: styles[start],
-                });
-                start = index;
-            }
-        }
-        if start < text.len() {
-            spans.push(Span {
-                range: start..text.len(),
-                style: styles[start],
+        for math in &maths {
+            styles.patch(math.range.clone(), |style| {
+                style.math = true;
+                style.code = false;
+                style.marker = false;
+                style.hidden = false;
             });
         }
         Self {
-            spans,
+            spans: styles.spans(text, &maths),
             heading_starts,
             item_starts,
             quotes,
@@ -572,30 +594,134 @@ impl Markdown {
             callouts,
             tasks,
             highlights,
+            maths,
         }
     }
 }
 
-fn patch(styles: &mut [Style], range: Range<usize>, mut f: impl FnMut(&mut Style)) {
-    for style in &mut styles[range] {
-        f(style);
+/// One style per byte, plus every offset where a patch began or ended: a span
+/// can only change there, so building spans compares styles at those offsets
+/// instead of at every character.
+struct Styles {
+    bytes: Vec<Style>,
+    edge: Vec<bool>,
+}
+
+impl Styles {
+    fn new(len: usize) -> Self {
+        Self {
+            bytes: vec![Style::default(); len],
+            edge: vec![false; len + 1],
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<&Style> {
+        self.bytes.get(index)
+    }
+
+    fn patch(&mut self, range: Range<usize>, mut f: impl FnMut(&mut Style)) {
+        self.edge[range.start] = true;
+        self.edge[range.end] = true;
+        for style in &mut self.bytes[range] {
+            f(style);
+        }
+    }
+
+    fn hide(&mut self, range: Range<usize>) {
+        self.patch(range, |s| s.hidden = true);
+    }
+
+    fn delimit(&mut self, range: Range<usize>, size: usize) {
+        if range.len() >= size * 2 {
+            self.hide(range.start..range.start + size);
+            self.hide(range.end - size..range.end);
+        }
+    }
+
+    /// Maximal runs of one style, also split at math boundaries. Identical to
+    /// comparing every character (`spans_per_char`): between two edges no patch
+    /// touched any byte, so the style is constant there.
+    fn spans(&self, text: &str, maths: &[crate::math::Span]) -> Vec<Span> {
+        let mut spans = Vec::new();
+        let mut start = 0;
+        let mut math_boundaries = maths
+            .iter()
+            .flat_map(|math| [math.range.start, math.range.end])
+            .peekable();
+        let mut pending = false;
+        for index in 1..text.len() {
+            pending |= self.edge[index];
+            if !pending || !text.is_char_boundary(index) {
+                continue;
+            }
+            pending = false;
+            while math_boundaries
+                .peek()
+                .is_some_and(|boundary| *boundary < index)
+            {
+                math_boundaries.next();
+            }
+            if self.bytes[index] != self.bytes[start] || math_boundaries.peek() == Some(&index) {
+                spans.push(Span {
+                    range: start..index,
+                    style: self.bytes[start],
+                });
+                start = index;
+            }
+        }
+        if start < text.len() {
+            spans.push(Span {
+                range: start..text.len(),
+                style: self.bytes[start],
+            });
+        }
+        #[cfg(test)]
+        assert_eq!(spans, self.spans_per_char(text, maths));
+        spans
+    }
+
+    /// The original per-character span builder, kept as the oracle for `spans`.
+    #[cfg(test)]
+    fn spans_per_char(&self, text: &str, maths: &[crate::math::Span]) -> Vec<Span> {
+        let mut spans = Vec::new();
+        let mut start = 0;
+        let mut math_boundaries = maths
+            .iter()
+            .flat_map(|math| [math.range.start, math.range.end])
+            .peekable();
+        for (index, _) in text.char_indices().skip(1) {
+            while math_boundaries
+                .peek()
+                .is_some_and(|boundary| *boundary < index)
+            {
+                math_boundaries.next();
+            }
+            if self.bytes[index] != self.bytes[start] || math_boundaries.peek() == Some(&index) {
+                spans.push(Span {
+                    range: start..index,
+                    style: self.bytes[start],
+                });
+                start = index;
+            }
+        }
+        if start < text.len() {
+            spans.push(Span {
+                range: start..text.len(),
+                style: self.bytes[start],
+            });
+        }
+        spans
     }
 }
-fn hide(styles: &mut [Style], range: Range<usize>) {
-    patch(styles, range, |s| s.hidden = true);
-}
-fn delimit(styles: &mut [Style], range: Range<usize>, size: usize) {
-    if range.len() >= size * 2 {
-        hide(styles, range.start..range.start + size);
-        hide(styles, range.end - size..range.end);
+
+impl std::ops::Index<usize> for Styles {
+    type Output = Style;
+    fn index(&self, index: usize) -> &Style {
+        &self.bytes[index]
     }
 }
 
 /// Both input and output selections use Unicode scalar indices, as egui does.
-pub fn surround(text: &mut String, selection: Range<usize>, marker: &str) -> Range<usize> {
-    wrap(text, selection, marker, marker)
-}
-
 pub fn wrap(
     text: &mut String,
     selection: Range<usize>,
@@ -611,7 +737,19 @@ pub fn wrap(
         return selection;
     };
     let size = opening.chars().count();
-    if text[..start].ends_with(opening) && text[end..].starts_with(closing) {
+    // A bold delimiter also starts and ends with `*`. Italic needs an odd
+    // number of adjacent stars, so toggling it preserves any bold wrapper.
+    let italic = opening == "*" && closing == "*";
+    let italic_present = !italic
+        || (text[..start]
+            .bytes()
+            .rev()
+            .take_while(|b| *b == b'*')
+            .count()
+            % 2
+            == 1
+            && text[end..].bytes().take_while(|b| *b == b'*').count() % 2 == 1);
+    if text[..start].ends_with(opening) && text[end..].starts_with(closing) && italic_present {
         text.replace_range(end..end + closing.len(), "");
         text.replace_range(start - opening.len()..start, "");
         selection.start - size..selection.end - size
@@ -644,6 +782,82 @@ pub fn toggle_task(text: &mut String, ordinal: usize) -> bool {
     let position = body + range.start + 1;
     text.replace_range(position..position + 1, if checked { " " } else { "x" });
     true
+}
+
+/// Indent touched lines without replacing their contents. Selections use characters.
+/// A plain caret keeps TextEdit's literal Tab, except inside a Markdown list.
+pub fn markdown_indent(
+    text: &mut String,
+    selection: Range<usize>,
+    outdent: bool,
+) -> Option<Range<usize>> {
+    let byte = |character| {
+        text.char_indices()
+            .map(|(index, _)| index)
+            .chain([text.len()])
+            .nth(character)
+    };
+    let (start, end) = (byte(selection.start)?, byte(selection.end)?);
+    if start > end {
+        return None;
+    }
+    let first = text[..start].rfind('\n').map_or(0, |index| index + 1);
+    let markdown = Markdown::parse(text);
+    if selection.is_empty() && !outdent && !markdown.item_starts.contains(&first) {
+        return None;
+    }
+    // A selection ending at the next line's start does not include that line.
+    let end = if end > start && text.as_bytes()[end - 1] == b'\n' {
+        end - 1
+    } else {
+        end
+    };
+    let last = text[end..]
+        .find('\n')
+        .map_or(text.len(), |index| end + index);
+    let mut edits = Vec::new();
+    let mut line_start = first;
+    let mut quotes = markdown.quotes.iter().peekable();
+    for line in text[first..last].split_inclusive('\n') {
+        // Real quote prefixes stay outside the indent; > inside code is ordinary text.
+        while quotes
+            .peek()
+            .is_some_and(|quote| quote.range.start < line_start)
+        {
+            quotes.next();
+        }
+        let prefix = quotes
+            .peek()
+            .filter(|quote| quote.range.start < line_start + line.len())
+            .map_or(0, |quote| quote.range.end - line_start);
+        let remove = if !outdent {
+            0
+        } else if line.as_bytes().get(prefix) == Some(&b'\t') {
+            1
+        } else {
+            line[prefix..]
+                .bytes()
+                .take(4)
+                .take_while(|byte| *byte == b' ')
+                .count()
+        };
+        if !outdent || remove > 0 {
+            edits.push((line_start + prefix, remove));
+        }
+        line_start += line.len();
+    }
+    let mut result = selection;
+    for (position, remove) in edits.into_iter().rev() {
+        let character = text[..position].chars().count();
+        for end in [&mut result.start, &mut result.end] {
+            if *end >= character {
+                *end =
+                    character + (*end - character).saturating_sub(remove) + usize::from(!outdent);
+            }
+        }
+        text.replace_range(position..position + remove, if outdent { "" } else { "\t" });
+    }
+    Some(result)
 }
 
 /// Continue Markdown structure on Enter. Character ranges match the native editor.
@@ -728,15 +942,109 @@ pub fn find_matches(text: &str, needle: &str) -> Vec<Range<usize>> {
     if needle.len() > haystack.len() {
         return Vec::new();
     }
-    haystack
-        .windows(needle.len())
-        .enumerate()
-        .filter_map(|(i, window)| {
-            window
-                .iter()
-                .zip(&needle)
-                .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
-                .then_some(i..i + needle.len())
-        })
-        .collect()
+    let mut matches = Vec::new();
+    let mut start = 0;
+    while start + needle.len() <= haystack.len() {
+        let hit = haystack[start..start + needle.len()]
+            .iter()
+            .zip(&needle)
+            .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()));
+        if hit {
+            matches.push(start..start + needle.len());
+            start += needle.len();
+        } else {
+            start += 1;
+        }
+    }
+    matches
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+
+    /// Random notes built from every construct the parser decorates, then
+    /// damaged by random single-byte edits; `Styles::spans` checks itself
+    /// against the per-character builder on each parse.
+    #[test]
+    fn edge_spans_match_per_character_spans_on_random_notes() {
+        let fragments = [
+            "# Heading π\n",
+            "## Second **bold** _italic_ ~~gone~~\n",
+            "Setext\n===\n",
+            "- item [[Note|alias]] and [link](http://x.y)\n",
+            "- [x] done `code` and ==mark== and ==red text==\n",
+            "* [ ] open <b>html</b> <span style=\"color:#ff0000\">red</span>\n",
+            "> quote > nested\n> > deeper\n",
+            "> [!note]- Title\n> body\n",
+            "```rust\nfn main() { let **not** = \"[[x]]\"; }\n```\n",
+            "~~~\nplain\n~~~\n",
+            "Inline $a^2 + ==b==$ math and $$\n\\sum_i x_i\n$$\n",
+            "![alt](image.png) ![[embed.png|200]]\n",
+            "| a | b |\n| - | - |\n| 1 | **2** |\n",
+            "متن فارسی با *تاکید* و [[پیوند]]\n",
+            "\n",
+            "plain line with trailing spaces  \n",
+            "line with a \\== escaped marker\n",
+        ];
+        let mut rng = fastrand::Rng::with_seed(20261027);
+        let alphabet: Vec<char> = "ab*_`~=[]()<>|#-$\\!\n π".chars().collect();
+        for round in 0..200 {
+            let mut text = String::new();
+            if round % 3 == 0 {
+                text.push_str("---\ntitle: x\ntags: [a, b]\n---\n");
+            }
+            for _ in 0..rng.usize(1..12) {
+                text.push_str(fragments[rng.usize(..fragments.len())]);
+            }
+            for _ in 0..rng.usize(0..6) {
+                let offsets: Vec<_> = text.char_indices().map(|(i, _)| i).collect();
+                if offsets.is_empty() {
+                    break;
+                }
+                let at = offsets[rng.usize(..offsets.len())];
+                if rng.bool() {
+                    text.insert(at, alphabet[rng.usize(..alphabet.len())]);
+                } else {
+                    let end = text[at..].chars().next().map_or(at, |c| at + c.len_utf8());
+                    text.replace_range(at..end, "");
+                }
+            }
+            let spans = Markdown::parse(&text).spans;
+            let mut expected_start = 0;
+            for span in &spans {
+                assert_eq!(span.range.start, expected_start, "{text:?}");
+                assert!(text.is_char_boundary(span.range.end), "{text:?}");
+                expected_start = span.range.end;
+            }
+            assert_eq!(expected_start, text.len(), "{text:?}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod math_decoration_tests {
+    use super::*;
+
+    #[test]
+    fn formula_contents_do_not_become_markdown_controls_or_hidden_properties() {
+        let source =
+            "---\nvalue: '$private$'\n---\n\n$![x](sample.png) [[note]] a==b$\n\n==outside==";
+        let parsed = Markdown::parse(source);
+        assert_eq!(parsed.maths.len(), 1);
+        let math = &parsed.maths[0];
+        assert!(source[math.range.clone()].starts_with("$![x]"));
+        for span in parsed
+            .spans
+            .iter()
+            .filter(|span| math.range.contains(&span.range.start))
+        {
+            assert!(span.style.math);
+            assert!(
+                !span.style.image && !span.style.link && !span.style.marker && !span.style.hidden
+            );
+        }
+        assert_eq!(parsed.highlights.len(), 1);
+        assert_eq!(&source[parsed.highlights[0].clone()], "==outside==");
+    }
 }

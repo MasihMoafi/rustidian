@@ -400,7 +400,7 @@ fn empty_folders_are_indexed_created_and_refreshed_without_overwriting_entries()
         "# Home\n"
     );
     assert!(!root.path().join("Missing").exists());
-    vault.refresh().unwrap();
+    vault = Vault::open(root.path()).unwrap();
     assert!(
         vault
             .folders
@@ -420,4 +420,36 @@ fn folder_creation_refuses_linked_parents_and_linked_targets() {
     assert!(vault.create_folder(Path::new("Linked/Child")).is_err());
     assert!(vault.create_folder(Path::new("Linked")).is_err());
     assert!(!outside.path().join("Child").exists());
+}
+
+#[test]
+fn text_attachments_change_extension_on_rename_but_images_and_hidden_targets_are_refused() {
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("Notes.txt"), "plain\n").unwrap();
+    fs::write(root.path().join("photo.png"), [0x89, b'P', b'N', b'G']).unwrap();
+    fs::write(root.path().join("LICENSE"), "MIT\n").unwrap();
+    let mut vault = Vault::open(root.path()).unwrap();
+    let plan = vault
+        .plan_rename(Path::new("Notes.txt"), Path::new("Notes.md"))
+        .unwrap();
+    vault.rename_note(plan).unwrap();
+    assert_eq!(
+        fs::read_to_string(root.path().join("Notes.md")).unwrap(),
+        "plain\n"
+    );
+    assert!(!root.path().join("Notes.txt").exists());
+    assert!(
+        vault
+            .plan_rename(Path::new("photo.png"), Path::new("photo.jpg"))
+            .is_err()
+    );
+    assert!(
+        vault
+            .plan_rename(Path::new("Notes.md"), Path::new(".archive/Notes.md"))
+            .is_err()
+    );
+    assert!(!root.path().join(".archive").exists());
+    let error = vault.duplicate_file(Path::new("LICENSE")).unwrap_err();
+    assert!(error.contains("extension"), "{error}");
+    assert!(!root.path().join("LICENSE 1").exists());
 }
