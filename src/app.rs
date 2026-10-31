@@ -2766,6 +2766,7 @@ impl NotesApp {
                                 color: ui.visuals().text_color(),
                                 ..Default::default()
                             };
+                            let label = mention.label().replace(['\r', '\n'], " ");
                             let mut job = egui::text::LayoutJob::default();
                             job.wrap.max_width = (ui.available_width() - 12.0).max(24.0);
                             job.append(
@@ -2774,7 +2775,7 @@ impl NotesApp {
                                 format.clone(),
                             );
                             job.append(
-                                &mention.link.replace(['\r', '\n'], " "),
+                                &label,
                                 0.0,
                                 egui::TextFormat {
                                     color: theme::accent(ui),
@@ -2785,6 +2786,7 @@ impl NotesApp {
                             let row = ui
                                 .add(egui::Button::new(job).frame_when_inactive(false))
                                 .on_hover_text(mention.path.display().to_string());
+                            crate::ui_probe::record(ui.ctx(), format!("backlink-label:{label}"), row.rect);
                             crate::ui_probe::record(
                                 ui.ctx(),
                                 format!(

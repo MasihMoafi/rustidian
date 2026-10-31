@@ -8169,6 +8169,8 @@ def main():
                     duplicate_caret=None
                     for path,offset,raw in expected:
                         open_target(mode); name='backlink-mention:'+path+':'+str(offset); control_bounds(name)
+                        label={alias:'alias',same:'Backlink Target',markdown:'markdown alias',embed:'Backlink Target#^id',image:'note image',other_link:'other alias',windows_link:'reference label'}[raw]
+                        control_bounds('backlink-label:'+label)
                         if raw==alias and mode=='Live preview': capture('native-backlinks-context-list.png')
                         click_control(name); title_contains(Path(path).stem); caret=selected(raw)
                         if path=='Backlink Sources/Context.md' and raw==same:

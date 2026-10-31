@@ -43,6 +43,36 @@ pub struct LinkedMention {
     pub after: String,
 }
 
+impl LinkedMention {
+    /// Visible link text, while `link` and `range` retain the exact source for navigation.
+    pub fn label(&self) -> String {
+        let raw = self.link.strip_prefix('!').unwrap_or(&self.link);
+        if let Some(wiki) = raw.strip_prefix("[[").and_then(|link| link.strip_suffix("]]")) {
+            return wiki.split_once('|').map_or(wiki, |(_, label)| label).into();
+        }
+        use pulldown_cmark::{Event, Options, Parser};
+        // Reference-style links need their label even when their definition is elsewhere.
+        let mut reference = |_link: pulldown_cmark::BrokenLink<'_>| Some(("".into(), "".into()));
+        let mut label = String::new();
+        for event in Parser::new_with_broken_link_callback(
+            &self.link,
+            Options::empty(),
+            Some(&mut reference),
+        ) {
+            match event {
+                Event::Text(text) | Event::Code(text) => label.push_str(&text),
+                Event::SoftBreak | Event::HardBreak => label.push(' '),
+                _ => {}
+            }
+        }
+        if label.is_empty() {
+            self.link.clone()
+        } else {
+            label
+        }
+    }
+}
+
 impl Note {
     pub(crate) fn new(path: PathBuf, text: String) -> Self {
         let metadata = crate::metadata::analyze(&text);

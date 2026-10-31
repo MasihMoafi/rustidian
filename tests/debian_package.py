@@ -6,11 +6,16 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 
 
 def run(*command, **kwargs):
-    return subprocess.run(command, check=True, capture_output=True, text=True, **kwargs)
+    try:
+        return subprocess.run(command, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        print(error.stdout, error.stderr, file=sys.stderr)
+        raise
 
 
 def main():
@@ -60,7 +65,7 @@ def main():
         assert 'notes=1' in run(str(launcher), '--check-vault', str(vault), env=environment).stdout
         if args.system:
             try:
-                run('sudo', 'dpkg', '--install', str(package))
+                run('sudo', 'apt-get', '-o', 'Acquire::http::Proxy=DIRECT', '-o', 'Acquire::https::Proxy=DIRECT', 'install', '-y', '--no-install-recommends', str(package))
                 assert run('/usr/bin/rustidian', '--version').stdout.startswith('Rustidian ')
                 upgraded = base / 'rustidian-upgrade.deb'
                 run('python3', str(root/'scripts/package-deb.py'), '--binary', str(args.binary), '--notices', str(args.notices), '--output', str(upgraded), '--revision', '2')
