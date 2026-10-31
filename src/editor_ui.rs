@@ -1603,6 +1603,7 @@ impl Editor {
         }
         if action_ready
             && !action_handled
+            && !tab.document.is_plain_text()
             && ui.memory(|memory| memory.has_focus(id))
             && ui.input(|input| {
                 action_matches(input, egui::Modifiers::NONE, &[Key::Enter]).is_some()
