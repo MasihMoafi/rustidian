@@ -7125,7 +7125,7 @@ def main():
                 close_tabs()
                 words = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November".split()
                 tags = ["<br>", "<br/>", "<br />", "</br>", "<BR>"]
-                text = "# Narrow Markdown\n\n" + "\n\n".join(f"[Before](before-{i}){tag}[After](after-{i})" for i, tag in enumerate(tags))
+                text = "# Narrow Markdown\n\n" + "\n\n".join(f"[Before](before-{i}){tag}Editable [After](after-{i})" for i, tag in enumerate(tags))
                 text += "\n\n> " + " ".join(f"[{word}](quote-{i})" for i, word in enumerate(words)) + "\n\nEnd.\n"
                 note = fixture / "Narrow Markdown.md"; note.write_text(text)
                 command("Refresh vault"); pause(); open_note("Narrow Markdown")
@@ -7154,11 +7154,15 @@ def main():
                     assert abs(after[1] - before[1]) < 2, "Source mode must retain literal tags on the original source line"
                 assert note.read_text() == text
                 results.append("Source editing retains literal break syntax and the note remains byte-identical")
-                command("Live preview"); click_control("editor-link:after-0"); type_text("EDIT_MARK"); key("ctrl+s")
+                command("Live preview")
+                after = control_bounds("editor-link:after-0")
+                xdo("mousemove", "--sync", str(round(after[0] - 20)), str(round((after[1] + after[3]) / 2)), "click", "1"); pause()
+                type_text("EDIT_MARK"); key("ctrl+s")
                 edited = note.read_text()
+                assert "EDIT_MARK" in edited, "The real editing action must insert text"
                 assert edited.replace("EDIT_MARK", "") == text, "Typing after a rendered break must preserve every other source character"
-                start = text.index("[After](after-0)") + 1
-                assert start <= edited.index("EDIT_MARK") <= start + len("After"), "The visible caret must edit the visible word after the break"
+                start = text.index("Editable [After](after-0)")
+                assert start <= edited.index("EDIT_MARK") <= start + len("Editable"), "The visible caret must edit the visible word after the break"
                 key("ctrl+z"); key("ctrl+s"); assert note.read_text() == text
                 key("ctrl+y"); key("ctrl+s"); assert note.read_text() == edited
                 capture("native-narrow-html-editing.png")
