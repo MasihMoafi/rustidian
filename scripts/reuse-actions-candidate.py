@@ -9,7 +9,7 @@ import subprocess
 
 ALLOWED = {
     "tests/gui_smoke.py", "scripts/obsidian-reference.py",
-    "scripts/reuse-actions-candidate.py", ".github/workflows/native.yml",
+    "scripts/reuse-actions-candidate.py", ".github/workflows/native.yml", ".github/workflows/ux.yml",
     "scripts/compare-editors.py", "assets/icons/README.md",
     "scripts/record-keyboard.py", "scripts/native_input.py",
     "ES.md", "VISION.md", "README.md",
@@ -37,12 +37,19 @@ def main():
         return
     assert args.artifact_dir and args.run_metadata
     source = args.artifact_dir
+    raw_binary = source / "target/release/rustidian"
+    if (source / "reports").is_dir():
+        source = source / "reports"
     run = json.loads(args.run_metadata.read_text())
     assert run["headSha"] == args.source_commit, "Source run and requested commit differ"
     marker = source / "binary-source-commit.txt"
     built = marker.read_text().strip() if marker.exists() else args.source_commit
+    source_marker = source / "source-commit.txt"
+    if source_marker.exists():
+        assert source_marker.read_text().strip() == args.source_commit
     unchanged(built)
-    build_log = (source / "candidate-build.log").read_text()
+    build_path = source / ("build.log" if raw_binary.is_file() else "candidate-build.log")
+    build_log = build_path.read_text()
     assert "[optimized]" in build_log and "release" in build_log, "Only optimized Actions candidates may be reused"
     reports = Path("reports")
     shutil.copytree(source, reports, dirs_exist_ok=True)
@@ -51,21 +58,25 @@ def main():
     output = Path("target/release")
     bundle = source.parent / "reused-app"
     import tarfile
-    with tarfile.open(reports / "rustidian-candidate-linux-x86_64.tar.gz") as archive:
-        for member in archive.getmembers():
-            path = Path(member.name)
-            assert not path.is_absolute() and ".." not in path.parts
-            assert member.isfile() or member.isdir()
-            assert path.parts[0] in ("rustidian", "demo-vault") or (
-                member.isfile() and len(path.parts) == 3 and path.parts[:2] == ("assets", "fonts")
-                and path.name.startswith("LICENSE-") and path.suffix == ".txt"
-            )
-        archive.extractall(bundle, filter="data")
-    binary = bundle / "rustidian"
-    assert hashlib.sha256(binary.read_bytes()).hexdigest() == (reports / "candidate.sha256").read_text().split()[0]
-    for file in (bundle / "demo-vault").rglob("*"):
-        if file.is_file():
-            assert file.read_bytes() == (Path("demo-vault") / file.relative_to(bundle / "demo-vault")).read_bytes()
+    if raw_binary.is_file():
+        binary = raw_binary
+        assert hashlib.sha256(binary.read_bytes()).hexdigest() == (reports / "binary.sha256").read_text().split()[0]
+    else:
+        with tarfile.open(reports / "rustidian-candidate-linux-x86_64.tar.gz") as archive:
+            for member in archive.getmembers():
+                path = Path(member.name)
+                assert not path.is_absolute() and ".." not in path.parts
+                assert member.isfile() or member.isdir()
+                assert path.parts[0] in ("rustidian", "demo-vault") or (
+                    member.isfile() and len(path.parts) == 3 and path.parts[:2] == ("assets", "fonts")
+                    and path.name.startswith("LICENSE-") and path.suffix == ".txt"
+                )
+            archive.extractall(bundle, filter="data")
+        binary = bundle / "rustidian"
+        assert hashlib.sha256(binary.read_bytes()).hexdigest() == (reports / "candidate.sha256").read_text().split()[0]
+        for file in (bundle / "demo-vault").rglob("*"):
+            if file.is_file():
+                assert file.read_bytes() == (Path("demo-vault") / file.relative_to(bundle / "demo-vault")).read_bytes()
     output.mkdir(parents=True, exist_ok=True)
     shutil.copy2(binary, output / "rustidian")
     (output / "rustidian").chmod(0o755)

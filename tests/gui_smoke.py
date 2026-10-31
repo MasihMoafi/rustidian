@@ -9350,6 +9350,7 @@ def main():
 
             def recovery_checks():
                 nonlocal app, window
+                set_theme(True)
                 close_tabs()
                 originals = {p.relative_to(fixture).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in fixture.rglob("*.md")}
                 target = fixture / "Recovery target.md"
