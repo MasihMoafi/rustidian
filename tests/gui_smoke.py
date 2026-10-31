@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -2400,6 +2400,48 @@ def main():
                 command("Source editing");editor_end();key("ctrl+a");paste_text(target_original);key("ctrl+s")
                 assert target.read_text()==target_original and source.read_text()==original
                 results.append("Editing a preview of a graph-backed note saved the actual file; Save and closing the graph could not discard that change")
+
+            def view_modes_checks():
+                source=fixture/"Notes/View modes.md"
+                original="# View modes\n\nEditable paragraph.\n"
+                source.write_text(original);time.sleep(.6)
+                open_note("View modes",title="View modes")
+                for command_name,mode in (("Live preview","Live preview"),("Source editing","Source mode")):
+                    command(command_name);control_bounds("view-mode:"+mode)
+                    click_control("editor");key("ctrl+End");type_text("EDIT_CONFIRMED");key("ctrl+s");time.sleep(.2)
+                    assert "EDIT_CONFIRMED" in source.read_text(), mode+" must accept and save typing"
+                    key("ctrl+z");key("ctrl+s");time.sleep(.2);assert source.read_text()==original
+                    command("Reading view");control_bounds("view-mode:Reading")
+                    x1,y1,x2,y2=control_bounds("reading-block:1");xdo("mousemove",str(round(x1+12)),str(round((y1+y2)/2)),"click","1");pause()
+                    type_text("READ_MUST_NOT_EDIT");key("ctrl+s");time.sleep(.2)
+                    assert source.read_text()==original, "Reading view must reject typing"
+                    key("ctrl+e");time.sleep(.2);control_bounds("view-mode:"+mode)
+                results.append("Live Preview and Source accept edits; Reading rejects typing; Ctrl+E restores the chosen editing mode")
+                preferred = "Source mode"
+                for choice,mode in (("Reading","Reading"),("Source mode","Source mode"),("Live Preview","Live preview")):
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    current=next(k for k in probe if k.startswith("view-mode:"))
+                    click_control(current);time.sleep(.2)
+                    for label in ("Reading","Source mode","Live Preview"):
+                        control_bounds("view-choice:"+label)
+                    capture("native-view-menu")
+                    click_control("view-choice:"+choice);time.sleep(.2);control_bounds("view-mode:"+mode)
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    expected="Current view: reading" if mode=="Reading" else "Current view: editing"
+                    assert any(k.startswith("button:"+expected) for k in probe), "The toolbar must state the actual view before its switch action"
+                    if mode != "Reading":
+                        preferred = mode
+                    toggle = next(k for k in probe if k.startswith("button:"+expected))
+                    click_control(toggle)
+                    after = preferred if mode == "Reading" else "Reading"
+                    control_bounds("view-mode:"+after)
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    opposite="Current view: editing" if after != "Reading" else "Current view: reading"
+                    click_control(next(k for k in probe if k.startswith("button:"+opposite)))
+                    control_bounds("view-mode:"+mode)
+                assert source.read_text()==original
+                capture("native-view-modes")
+                results.append("Status mode menu matches Obsidian's Reading, Source mode and Live Preview choices; toolbar names current view and action")
 
             def navigation_checks():
                 note = fixture / "Notes/Navigation UI.md"
@@ -11158,6 +11200,13 @@ def main():
                 print(json.dumps({"status":"passed","checks":len(results),"section":"page-preview"}))
                 return
 
+            if args.section in ("view-modes", "all"):
+                view_modes_checks()
+                if args.section != "all":
+                    (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                    print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                    return
+                open_note("Home", title="Home")
             if args.section == "navigation":
                 navigation_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")

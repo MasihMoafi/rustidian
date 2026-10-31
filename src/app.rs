@@ -331,6 +331,54 @@ impl NotesApp {
         self.ctx.request_repaint();
     }
 
+    fn show_view_mode(&mut self, ui: &mut egui::Ui) {
+        let current = self.view();
+        let label = match current {
+            View::Read => "Reading",
+            View::Live => "Live preview",
+            View::Source => "Source mode",
+            View::Split => "Split view",
+            View::Graph => "Graph",
+        };
+        let text = RichText::new(label).color(theme::accent(ui)).size(11.0);
+        let mut requested = None;
+        let plain_text = self.tabs.get(self.active).is_some_and(|tab| {
+            tab.document.is_plain_text() && !rustidian::html_import::is_html(&tab.document.path)
+        });
+        let response = if current == View::Graph || plain_text {
+            ui.label(text)
+        } else {
+            ui.menu_button(text, |ui| {
+                theme::menu_style(ui);
+                for (name, view) in [
+                    ("Reading", View::Read),
+                    ("Source mode", View::Source),
+                    ("Live Preview", View::Live),
+                ] {
+                    let choice = ui.selectable_label(current == view, name);
+                    if crate::ui_probe::enabled() {
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("view-choice:{name}"),
+                            choice.rect,
+                        );
+                    }
+                    if choice.clicked() {
+                        requested = Some(view);
+                        ui.close();
+                    }
+                }
+            })
+            .response
+        };
+        if crate::ui_probe::enabled() {
+            crate::ui_probe::record(ui.ctx(), format!("view-mode:{label}"), response.rect);
+        }
+        if let Some(view) = requested {
+            self.set_view(view);
+        }
+    }
+
     fn toggle_reading(&mut self) {
         if self
             .tabs
@@ -3188,9 +3236,9 @@ impl NotesApp {
                                     ui,
                                     if reading { Icon::Edit } else { Icon::Reading },
                                     if reading {
-                                        "Editing view · Ctrl+E"
+                                        "Current view: reading\nClick to edit · Ctrl+E"
                                     } else {
-                                        "Reading view · Ctrl+E"
+                                        "Current view: editing\nClick to read · Ctrl+E"
                                     },
                                 )
                                 .clicked()
@@ -5838,24 +5886,8 @@ impl eframe::App for NotesApp {
                             ui.label(RichText::new("Image").size(11.0).weak());
                             return;
                         }
-                        let mode = match self.view() {
-                            View::Read => "Reading",
-                            View::Live => "Live preview",
-                            View::Source => "Source mode",
-                            View::Split => "Split view",
-                            View::Graph => "Graph",
-                        };
                         if self.editor_preferences.show_mode {
-                            let response = ui.add(egui::Label::new(
-                                RichText::new(mode).size(11.0).color(theme::accent(ui)),
-                            ));
-                            if crate::ui_probe::enabled() {
-                                crate::ui_probe::record(
-                                    &ctx,
-                                    format!("view-mode:{mode}"),
-                                    response.rect,
-                                );
-                            }
+                            self.show_view_mode(ui);
                         }
                         if let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document)
                             && self.view() != View::Graph
