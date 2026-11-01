@@ -291,11 +291,13 @@ def run(scope):
     shows("MOUSE OFF")
     h.results.append("With mouse reports on, as in Elpis, a plain drag still selected text")
 
-    # 5c. Text keeps the shared 8 px inset from the pane's right edge.
+    # 5c. Column 0 lines up with the header text (pane inset 12 + button padding 12), and
+    # the right edge keeps the same inset (Masih, 1 Nov: "the lack of horizontal alignment").
     pane = h.control_bounds("sidebar:details")
     terminal = h.control_bounds("agent-terminal")
-    assert pane[2] - terminal[2] >= 12 + 8 - 1, ("Terminal text needs an inset from the pane edge", pane, terminal)
-    h.results.append("The terminal keeps an inset from the pane's right edge")
+    assert abs(terminal[0] - pane[0] - 24) <= 1, ("Terminal column 0 must align with the header text", pane, terminal)
+    assert pane[2] - terminal[2] >= 24 - 1, ("Terminal text needs the same inset on the right", pane, terminal)
+    h.results.append("Terminal text aligns with the header text and keeps the same inset on the right")
 
     # 6. Ctrl+V pastes text from the clipboard, as does Ctrl+Shift+V.
     focus_terminal()

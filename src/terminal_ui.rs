@@ -235,10 +235,11 @@ impl Panel {
         ui.add_space(crate::theme::space::XS);
         let cell =
             ui.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(font, 'M'), fonts.row_height(font)));
-        // Text keeps the shared inset from both edges instead of running into the pane border.
+        // Column 0 lines up with the header's text (the backend picker and the tabs above
+        // are buttons padded by `M`), and the right edge keeps the same inset.
         let area = ui
             .available_rect_before_wrap()
-            .shrink2(egui::vec2(crate::theme::space::S, 0.0));
+            .shrink2(egui::vec2(crate::theme::space::M, 0.0));
         let size = (
             (area.height() / cell.y).floor().clamp(1.0, 500.0) as u16,
             (area.width() / cell.x).floor().clamp(2.0, 1000.0) as u16,
