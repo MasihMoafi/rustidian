@@ -245,3 +245,56 @@ fn a_caret_inside_the_source_maps_to_the_cell_it_is_in() {
     assert_eq!(model.cell_at(at("Total", 0)), (2, 0));
     assert_eq!(model.cell_at(source.len() - 2), (2, 2));
 }
+
+#[test]
+fn range_selection_clears_deletes_and_copies_whole_rows_and_columns() {
+    let source = "Before\n\n| A | B | C |\n| :- | -: | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |\n\nAfter\n";
+    let run = |action| {
+        let mut text = source.to_owned();
+        table(&text).apply(&mut text, action).unwrap();
+        text
+    };
+    let cleared = run(Action::Clear {
+        rows: 1..3,
+        columns: 1..3,
+    });
+    let model = table(&cleared);
+    assert_eq!(
+        (0..4)
+            .map(|r| (0..3)
+                .map(|c| model.cell(&cleared, r, c))
+                .collect::<Vec<_>>()
+                .join(","))
+            .collect::<Vec<_>>(),
+        ["A,B,C", "1,,", "4,,", "7,8,9"]
+    );
+    assert!(cleared.starts_with("Before\n\n") && cleared.ends_with("\n\nAfter\n"));
+
+    let rows = run(Action::RemoveRows(1..3));
+    assert_eq!(table(&rows).rows.len(), 2);
+    assert_eq!(table(&rows).cell(&rows, 1, 0), "7");
+
+    let columns = run(Action::RemoveColumns(0..2));
+    let model = table(&columns);
+    assert_eq!(model.alignments, [Alignment::None]);
+    assert_eq!(model.cell(&columns, 0, 0), "C");
+
+    let mut text = source.to_owned();
+    let model = table(&text);
+    for refused in [
+        Action::RemoveRows(0..2),
+        Action::RemoveColumns(0..3),
+        Action::Clear {
+            rows: 0..9,
+            columns: 0..1,
+        },
+    ] {
+        assert!(model.apply(&mut text, refused).is_err());
+        assert_eq!(text, source);
+    }
+    assert_eq!(
+        model.copy(&text, 1..3, 1..3),
+        "| 2 | 3 |\n| --- | --- |\n| 5 | 6 |\n"
+    );
+    assert_eq!(model.copy(&text, 0..1, 0..1), "| A |\n| --- |\n");
+}

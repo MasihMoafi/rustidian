@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -321,6 +321,15 @@ def main():
                         "File recovery" if name.startswith("settings-recovery-") else None)
                 if page and control_bounds("settings-page:"+page, required=False):
                     click_control("settings-page:"+page)
+            if name.startswith("settings-") and not name.startswith("settings-page:"):
+                # Scroll a settings row into view as a user would.
+                for _ in range(20):
+                    view, bounds = control_bounds("settings-viewport", required=False), control_bounds(name, required=False)
+                    if not view or not bounds or (bounds[1] >= view[1] and bounds[3] <= view[3]):
+                        break
+                    xdo("mousemove", "--sync", str(round((view[0] + view[2]) / 2)), str(round((view[1] + view[3]) / 2)))
+                    xdo("click", "5" if bounds[3] > view[3] else "4")
+                    time.sleep(.1)
             left, top, right, bottom = control_bounds(name)
             x, y = round((left + right) / 2), round((top + bottom) / 2)
             pointer = ("mousemove", "--sync", str(x), str(y))
@@ -1360,12 +1369,12 @@ def main():
                 assert (fixture / "Menu renamed.md").read_bytes() == originals["Home.md"]
                 file_menu("Menu renamed.md")
                 click_control("menu:D  Delete")
-                control_bounds("dialog-input")
+                control_bounds("trash-target")  # Trash shows the file name, not an input
                 key("Escape")
                 assert (fixture / "Menu renamed.md").exists(), "Cancel must preserve the note"
                 file_menu("Menu renamed.md")
                 click_control("menu:D  Delete")
-                control_bounds("dialog-input")
+                control_bounds("trash-target")  # Trash shows the file name, not an input
                 key("Return")
                 title_contains("New tab")
                 assert control_bounds("tab-full:Home.md")
@@ -2401,6 +2410,48 @@ def main():
                 assert target.read_text()==target_original and source.read_text()==original
                 results.append("Editing a preview of a graph-backed note saved the actual file; Save and closing the graph could not discard that change")
 
+            def view_modes_checks():
+                source=fixture/"Notes/View modes.md"
+                original="# View modes\n\nEditable paragraph.\n"
+                source.write_text(original);time.sleep(.6)
+                open_note("View modes",title="View modes")
+                for command_name,mode in (("Live preview","Live preview"),("Source editing","Source mode")):
+                    command(command_name);control_bounds("view-mode:"+mode)
+                    click_control("editor");key("ctrl+End");type_text("EDIT_CONFIRMED");key("ctrl+s");time.sleep(.2)
+                    assert "EDIT_CONFIRMED" in source.read_text(), mode+" must accept and save typing"
+                    key("ctrl+z");key("ctrl+s");time.sleep(.2);assert source.read_text()==original
+                    command("Reading view");control_bounds("view-mode:Reading")
+                    x1,y1,x2,y2=control_bounds("reading-block:1");xdo("mousemove",str(round(x1+12)),str(round((y1+y2)/2)),"click","1");pause()
+                    type_text("READ_MUST_NOT_EDIT");key("ctrl+s");time.sleep(.2)
+                    assert source.read_text()==original, "Reading view must reject typing"
+                    key("ctrl+e");time.sleep(.2);control_bounds("view-mode:"+mode)
+                results.append("Live Preview and Source accept edits; Reading rejects typing; Ctrl+E restores the chosen editing mode")
+                preferred = "Source mode"
+                for choice,mode in (("Reading","Reading"),("Source mode","Source mode"),("Live Preview","Live preview")):
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    current=next(k for k in probe if k.startswith("view-mode:"))
+                    click_control(current);time.sleep(.2)
+                    for label in ("Reading","Source mode","Live Preview"):
+                        control_bounds("view-choice:"+label)
+                    capture("native-view-menu.png")
+                    click_control("view-choice:"+choice);time.sleep(.2);control_bounds("view-mode:"+mode)
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    expected="Current view: reading" if mode=="Reading" else "Current view: editing"
+                    assert any(k.startswith("button:"+expected) for k in probe), "The toolbar must state the actual view before its switch action"
+                    if mode != "Reading":
+                        preferred = mode
+                    toggle = next(k for k in probe if k.startswith("button:"+expected))
+                    click_control(toggle)
+                    after = preferred if mode == "Reading" else "Reading"
+                    control_bounds("view-mode:"+after)
+                    probe=json.loads(Path(environment["RUSTIDIAN_UI_PROBE"]).read_text())
+                    opposite="Current view: editing" if after != "Reading" else "Current view: reading"
+                    click_control(next(k for k in probe if k.startswith("button:"+opposite)))
+                    control_bounds("view-mode:"+mode)
+                assert source.read_text()==original
+                capture("native-view-modes.png")
+                results.append("Status mode menu matches Obsidian's Reading, Source mode and Live Preview choices; toolbar names current view and action")
+
             def navigation_checks():
                 note = fixture / "Notes/Navigation UI.md"
                 target = fixture / "Notes/Linked target.md"
@@ -3399,6 +3450,107 @@ def main():
                 assert note.read_text() == source
                 results.append("Table widths survive a real restart in workspace state while the Markdown remains byte-for-byte unchanged")
 
+            def chrome_spacing_checks():
+                # One spacing scale: bars share inset and control height; rows share a text edge.
+                for dark in (False, True):
+                    label = "dark" if dark else "light"
+                    set_theme(dark)
+                    open_note("First steps")
+                    key("ctrl+f"); type_text("the")
+                    bar = control_bounds("find-bar")
+                    parts = {name: control_bounds(name) for name in ("find-label", "find-input", "find-previous")}
+                    centres = {name: (b[1] + b[3]) / 2 for name, b in parts.items()}
+                    heights = {name: b[3] - b[1] for name, b in parts.items()}
+                    assert max(centres.values()) - min(centres.values()) <= 1, ("Find bar items must share a centre line", centres)
+                    assert abs(heights["find-input"] - heights["find-previous"]) <= 1, ("Field and buttons share one height", heights)
+                    back = control_bounds("button:Navigate back · Alt+Left")
+                    assert abs(parts["find-label"][0] - back[0]) <= 1, ("Find bar inset must match the note header", parts["find-label"], back)
+                    capture(f"native-find-bar-{label}.png")
+                    key("Escape")
+                    key("ctrl+shift+f"); key("ctrl+a"); type_text("First steps")
+                    title = control_bounds("search-title:Notes/First steps.md")
+                    path = control_bounds("search-path:Notes/First steps.md")
+                    field = control_bounds("search-input")
+                    assert abs(title[0] - path[0]) <= 1, ("Result title and path share a left edge", title, path)
+                    assert abs(title[0] - (field[0] + 8)) <= 1, ("Result text starts where the field's text starts", title, field)
+                    assert field[3] - field[1] >= 31 and abs((field[3] - field[1]) - heights["find-input"]) <= 1, ("Both search fields share the control height", field, heights)
+                    capture(f"native-search-results-{label}.png")
+                    key("Escape")
+                    results.append({"check": f"find bar and search rows follow the spacing scale ({label})", "status": "passed"})
+
+            def table_select_checks():
+                # Obsidian-style range selection: drag across cells, row/column handles, Shift+click.
+                def clipboard():
+                    result = subprocess.run(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+                        env=environment, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=2)
+                    return result.stdout.decode() if result.returncode == 0 else None
+
+                def centre(name):
+                    a, b, c, d = control_bounds(name)
+                    return round((a + c) / 2), round((b + d) / 2)
+
+                def saved(note, expected, label):
+                    key("ctrl+s")
+                    deadline = time.monotonic() + 3
+                    while note.read_text() != expected and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert note.read_text() == expected, (label, note.read_text())
+                    results.append({"check": label, "status": "passed"})
+
+                def grip(kind, index, hover_cell, extra=()):
+                    xdo("mousemove", "--sync", *map(str, centre(hover_cell))); pause()
+                    xdo("mousemove", "--sync", *map(str, centre(f"edit-table-{kind}-grip:0:{index}"))); pause()
+                    xdo(*extra, "click", "1") if extra else xdo("click", "1")
+                    pause()
+
+                def menu(label):
+                    xdo("click", "3"); pause()
+                    xdo("mousemove", "--sync", *map(str, centre(f"table-action:{label}"))); pause()
+                    xdo("click", "1"); pause()
+
+                head = "# Table select\n\nBefore\n\n"
+                tail = "\nAfter\n"
+                source = head + "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |\n" + tail
+                note = fixture / "Notes/Table select.md"
+                note.write_text(source); time.sleep(.6)
+                open_note("Table select"); command("Live preview")
+
+                click_control("edit-table-cell:0:1:0")
+                start, end = centre("edit-table-cell:0:1:0"), centre("edit-table-cell:0:2:1")
+                xdo("mousemove", "--sync", *map(str, start)); xdo("mousedown", "1")
+                for step in range(1, 6):
+                    xdo("mousemove", "--sync", str(start[0] + (end[0] - start[0]) * step // 5), str(start[1] + (end[1] - start[1]) * step // 5))
+                    time.sleep(.05)
+                xdo("mouseup", "1"); pause()
+                assert control_bounds("edit-table-selection:0"), "Dragging across cells must select a range"
+                capture("native-table-select-drag.png")
+                key("ctrl+c")
+                deadline = time.monotonic() + 3
+                expected_copy = "| 1 | 2 |\n| --- | --- |\n| 4 | 5 |\n"
+                while clipboard() != expected_copy and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert clipboard() == expected_copy, clipboard()
+                results.append({"check": "drag selection copies a Markdown table", "status": "passed"})
+                key("Delete")
+                source = head + "| A | B | C |\n| --- | --- | --- |\n|  |  | 3 |\n|  |  | 6 |\n| 7 | 8 | 9 |\n" + tail
+                saved(note, source, "Delete clears the selected cells only")
+
+                grip("column", 2, "edit-table-cell:0:1:2")
+                assert control_bounds("edit-table-selection:0"), "A column handle must select its column"
+                capture("native-table-select-column.png")
+                menu("Delete column")
+                source = head + "| A | B |\n| --- | --- |\n|  |  |\n|  |  |\n| 7 | 8 |\n" + tail
+                saved(note, source, "Column handle menu deletes the column")
+
+                grip("row", 1, "edit-table-cell:0:1:0")
+                grip("row", 2, "edit-table-cell:0:2:0", extra=("keydown", "shift"))
+                xdo("keyup", "shift"); pause()
+                capture("native-table-select-rows.png")
+                menu("Delete rows")
+                source = head + "| A | B |\n| --- | --- |\n| 7 | 8 |\n" + tail
+                saved(note, source, "Shift+click row handles then Delete rows")
+                assert app.poll() is None, "The app must survive range selection"
+
             def table_edge_checks():
                 observations = []
 
@@ -3831,7 +3983,8 @@ def main():
                 titlebar_height = 34 if control_bounds("window-title-drag", required=False) else 0
                 assert abs(table[2] - table[0] - 303.171875) < 3, table
                 assert abs(table[3] - table[1] - 130.640625) < 1, table
-                assert abs(table[1] - titlebar_height - 241.84375) < 1, table
+                # Obsidian's offset plus 1.625 px: the note header is 40 px on the shared scale, not 38.375.
+                assert abs(table[1] - titlebar_height - 243.46875) < 1, table
                 middle = control_bounds("table-cell:0:1:1")
                 centered = control_bounds("table-text:0:1:1")
                 assert abs(middle[0] + middle[2] - centered[0] - centered[2]) < 1, (middle, centered)
@@ -3839,7 +3992,7 @@ def main():
                 number = control_bounds("table-text:0:1:2")
                 assert abs(right[2] - number[2] - 8.5) < 1, (right, number)
                 code_panel = control_bounds("code-block:0")
-                assert abs(code_panel[1] - titlebar_height - 491.1875) < 1, code_panel
+                assert abs(code_panel[1] - titlebar_height - 492.8125) < 1, code_panel
                 assert control_bounds("table-cell:0:3:1")
                 capture("native-reading-table-dark.png")
                 click_control("fold:0")
@@ -4392,8 +4545,9 @@ def main():
                 click_control("search:Long search/" + long_name + ".md")
                 key("Down"); title_contains("B short")
                 key("Up"); title_contains(long_name)
-                bounds = control_bounds("search:Long search/" + long_name + ".md")
-                assert bounds[3] - bounds[1] <= 34, bounds
+                # A long title truncates to one line instead of wrapping the row.
+                bounds = control_bounds("search-title:Long search/" + long_name + ".md")
+                assert bounds[3] - bounds[1] <= 24, bounds
                 capture("native-sidebar-long-title.png")
                 assert all(path.read_text() == source for path, source in sources.items())
                 results.append("At the minimum sidebar width, a long Search title stays on one line and adjacent-note arrows preserve every source byte")
@@ -6229,7 +6383,7 @@ def main():
                     assert abs(box[2]-box[0]-560)<=3 and 140<=box[3]-box[1]<=260,box
                     assert 28<=heading[3]-heading[1]<=34,heading
                     buttons=[control_bounds("move-links-"+name) for name in ("always","once","no")]
-                    assert all(36<=bounds[3]-bounds[1]<=38 for bounds in buttons),buttons
+                    assert all(31<=bounds[3]-bounds[1]<=33 for bounds in buttons),("Dialog choices use the shared 32 px control height",buttons)
                     assert max(bounds[1] for bounds in buttons)-min(bounds[1] for bounds in buttons)<=1,("Choices fit on one row",buttons)
                     assert buttons[0][0]<buttons[1][0]<buttons[2][0] and 23<=box[2]-buttons[2][2]<=27,(box,buttons)
                     control_bounds("move-links-always-focused");control_bounds("move-links-close")
@@ -7120,6 +7274,53 @@ def main():
                 assert (fixture / "Projects/Drag folder/Inner.md").read_bytes() == inner_bytes
                 assert all((fixture / name).read_bytes() == data for name, data in untouched.items())
                 results.append("Taken names got a number, as the Move dialog and Obsidian do: Notes/Drag source 1.md and Projects/Drag folder 1; the occupied note and the demo notes kept their bytes")
+
+            def narrow_html_checks():
+                close_tabs()
+                words = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November".split()
+                tags = ["<br>", "<br/>", "<br />", "</br>", "<BR>"]
+                text = "# Narrow Markdown\n\n" + "\n\n".join(f"[Before](before-{i}){tag}Editable [After](after-{i})" for i, tag in enumerate(tags))
+                text += "\n\n> " + " ".join(f"[{word}](quote-{i})" for i, word in enumerate(words)) + "\n\nEnd.\n"
+                note = fixture / "Narrow Markdown.md"; note.write_text(text)
+                command("Refresh vault"); pause(); open_note("Narrow Markdown")
+                failures = []; observations = []
+                for width in (1440, 960):
+                    xdo("windowsize", window, str(width), "960"); pause()
+                    command("Live preview"); pause()
+                    quote = control_bounds("quote:0")
+                    words_bounds = {word: control_bounds(f"editor-link:quote-{i}") for i, word in enumerate(words)}
+                    crossed = [word for word, box in words_bounds.items() if box[0] < quote[0] + 12]
+                    if crossed: failures.append(f"{width}: quote border crosses wrapped words {crossed}")
+                    breaks = []
+                    for i, tag in enumerate(tags):
+                        before = control_bounds(f"editor-link:before-{i}"); after = control_bounds(f"editor-link:after-{i}")
+                        breaks.append({"tag": tag, "before": before, "after": after})
+                        if after[1] < before[3] - 1: failures.append(f"{width}: {tag} must put After below Before")
+                    observations.append({"width": width, "quote": quote, "words": words_bounds, "breaks": breaks})
+                    capture(f"native-narrow-html-{width}.png")
+                    assert note.read_text() == text, "Rendering and resizing must not rewrite Markdown"
+                (reports / "narrow-html-layout.json").write_text(json.dumps(observations, indent=2) + "\n")
+                assert not failures, "\n".join(failures)
+                results.append("Wide and narrow Live Preview keep wrapped quote text inside the border and render all five HTML break forms without changing the source")
+                command("Source editing")
+                for i, tag in enumerate(tags):
+                    before = control_bounds(f"editor-link:before-{i}"); after = control_bounds(f"editor-link:after-{i}")
+                    assert abs(after[1] - before[1]) < 2, "Source mode must retain literal tags on the original source line"
+                assert note.read_text() == text
+                results.append("Source editing retains literal break syntax and the note remains byte-identical")
+                command("Live preview")
+                after = control_bounds("editor-link:after-0")
+                xdo("mousemove", "--sync", str(round(after[0] - 20)), str(round((after[1] + after[3]) / 2)), "click", "1"); pause()
+                type_text("EDIT_MARK"); key("ctrl+s")
+                edited = note.read_text()
+                assert "EDIT_MARK" in edited, "The real editing action must insert text"
+                assert edited.replace("EDIT_MARK", "") == text, "Typing after a rendered break must preserve every other source character"
+                start = text.index("Editable [After](after-0)")
+                assert start <= edited.index("EDIT_MARK") <= start + len("Editable"), "The visible caret must edit the visible word after the break"
+                key("ctrl+z"); key("ctrl+s"); assert note.read_text() == text
+                key("ctrl+y"); key("ctrl+s"); assert note.read_text() == edited
+                capture("native-narrow-html-editing.png")
+                results.append("A real click after a rendered HTML break edits the intended word; Save, Undo and Redo retain every break tag and source character")
 
             def html_import_checks():
                 close_tabs()
@@ -10782,6 +10983,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"section": "folder-copy", "checks": len(results), "status": "passed"}))
                 return
+            if args.section == "narrow-html":
+                narrow_html_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "html-import":
                 html_import_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -10880,6 +11086,16 @@ def main():
                 table_edge_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "table-edges"}))
+                return
+            if args.section == "chrome-spacing":
+                chrome_spacing_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "chrome-spacing"}))
+                return
+            if args.section == "table-select":
+                table_select_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "table-select"}))
                 return
             if args.section == "table-links":
                 table_link_checks()
@@ -11106,6 +11322,13 @@ def main():
                 print(json.dumps({"status":"passed","checks":len(results),"section":"page-preview"}))
                 return
 
+            if args.section in ("view-modes", "all"):
+                view_modes_checks()
+                if args.section != "all":
+                    (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                    print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                    return
+                open_note("Home", title="Home")
             if args.section == "navigation":
                 navigation_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -11407,6 +11630,7 @@ def main():
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,
+                narrow_html_checks,
                 html_import_checks,
                 file_copy_checks,
                 file_move_checks,

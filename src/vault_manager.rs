@@ -166,7 +166,10 @@ impl Manager {
             let body = ScrollArea::vertical()
                 .id_salt("vault-manager-body")
                 .max_height(body_height)
-                .content_margin(egui::Margin::same(1))
+                .content_margin(crate::theme::space::margin(
+                    crate::theme::space::HAIRLINE,
+                    crate::theme::space::HAIRLINE,
+                ))
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.add_enabled_ui(!busy, |ui| {
@@ -176,7 +179,7 @@ impl Manager {
                             .max_height(208.0)
                             .show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
-                                ui.spacing_mut().item_spacing.y = 4.0;
+                                ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                                 if let Ok(list) = &self.list {
                                     if list.roots().is_empty() {
                                         ui.label(
@@ -275,9 +278,12 @@ impl Manager {
                         ui.separator();
                         match self.page {
                             Page::Home => {
-                                let card = egui::Frame::group(ui.style()).inner_margin(12).show(
-                                    ui,
-                                    |ui| {
+                                let card = egui::Frame::group(ui.style())
+                                    .inner_margin(crate::theme::space::margin(
+                                        crate::theme::space::M,
+                                        crate::theme::space::M,
+                                    ))
+                                    .show(ui, |ui| {
                                         if action_row(
                                             ui,
                                             "Open a folder",
@@ -306,8 +312,7 @@ impl Manager {
                                                 });
                                             self.focus = true;
                                         }
-                                    },
-                                );
+                                    });
                                 ui_probe::record(ctx, "vault-actions-card", card.response.rect);
                                 ui_probe::record(ctx, "vault-actions-clip", ui.clip_rect());
                             }
@@ -331,8 +336,10 @@ impl Manager {
                                     egui::vec2(ui.available_width(), 32.0),
                                     Layout::right_to_left(Align::Center),
                                     |ui| {
-                                        let browse = ui
-                                            .add_sized([96.0, 32.0], egui::Button::new("Browse…"));
+                                        let browse = ui.add_sized(
+                                            [96.0, crate::theme::space::CONTROL],
+                                            egui::Button::new("Browse…"),
+                                        );
                                         ui_probe::record(ctx, "vault-browse", browse.rect);
                                         if browse.clicked() {
                                             self.browse();
@@ -365,7 +372,7 @@ impl Manager {
                                 }
                                 ui.horizontal(|ui| {
                                     let confirm = ui.add_sized(
-                                        [96.0, 32.0],
+                                        [96.0, crate::theme::space::CONTROL],
                                         egui::Button::new(if creating { "Create" } else { "Open" }),
                                     );
                                     ui_probe::record(ctx, "vault-confirm", confirm.rect);
@@ -387,8 +394,10 @@ impl Manager {
                                             Err(error) => self.error = Some(error),
                                         }
                                     }
-                                    let back =
-                                        ui.add_sized([96.0, 32.0], egui::Button::new("Back"));
+                                    let back = ui.add_sized(
+                                        [96.0, crate::theme::space::CONTROL],
+                                        egui::Button::new("Back"),
+                                    );
                                     ui_probe::record(ctx, "vault-back", back.rect);
                                     if back.clicked() {
                                         self.page = Page::Home;
@@ -410,7 +419,10 @@ impl Manager {
                     egui::vec2(ui.available_width(), 32.0),
                     Layout::right_to_left(Align::Center),
                     |ui| {
-                        let cancel = ui.add_sized([96.0, 32.0], egui::Button::new("Cancel"));
+                        let cancel = ui.add_sized(
+                            [96.0, crate::theme::space::CONTROL],
+                            egui::Button::new("Cancel"),
+                        );
                         ui_probe::record(ctx, "vault-cancel", cancel.rect);
                         close |= cancel.clicked();
                         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -475,10 +487,13 @@ fn action_row(ui: &mut egui::Ui, title: &str, detail: &str, caption: &str, probe
         egui::vec2(ui.available_width(), 48.0),
         Layout::right_to_left(Align::Center),
         |ui| {
-            let button = ui.add_sized([96.0, 32.0], egui::Button::new(caption));
+            let button = ui.add_sized(
+                [96.0, crate::theme::space::CONTROL],
+                egui::Button::new(caption),
+            );
             ui_probe::record(ui.ctx(), probe, button.rect);
             ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                 ui.label(RichText::new(title).strong());
                 ui.label(RichText::new(detail).small().weak());
             });

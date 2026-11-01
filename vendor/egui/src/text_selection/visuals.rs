@@ -78,8 +78,11 @@ pub fn paint_text_selection(
                 .get(last_glyph_index)
                 .map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
 
-            for vi in first_vertex_index..last_vertex_index {
-                mesh.vertices[vi].color = text_color;
+            // Rows can carry glyphs while their mesh is empty (e.g. rows rebuilt
+            // without tessellated visuals); indexing would panic and close the app.
+            let end = last_vertex_index.min(mesh.vertices.len());
+            for vertex in mesh.vertices.iter_mut().take(end).skip(first_vertex_index) {
+                vertex.color = text_color;
             }
         }
 
@@ -301,5 +304,29 @@ pub fn paint_text_cursor(
         ui.request_repaint_after_secs(wake_in);
     } else {
         paint_cursor_end(painter, ui.visuals(), primary_cursor_rect);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Color32, Context, FontId, RawInput};
+
+    // Rustidian closed with "index out of bounds: the len is 0" here when a
+    // selected row had glyphs but no tessellated vertices.
+    #[test]
+    fn selecting_text_in_a_row_without_vertices_does_not_panic() {
+        let ctx = Context::default();
+        ctx.run_ui(RawInput::default(), |_| {}).textures_delta.clear();
+        let mut galley = ctx.fonts_mut(|fonts| {
+            fonts.layout_no_wrap("selected text".into(), FontId::default(), Color32::WHITE)
+        });
+        for row in &mut Arc::make_mut(&mut galley).rows {
+            let row = Arc::make_mut(&mut row.row);
+            row.visuals.mesh.vertices.clear();
+            row.visuals.mesh.indices.clear();
+        }
+        let range = CCursorRange::two(CCursor::new(2), CCursor::new(9));
+        paint_text_selection(&mut galley, &Visuals::dark(), &range, None);
     }
 }

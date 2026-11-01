@@ -52,6 +52,58 @@ pub const LIGHT_MUTED: Color32 = Color32::from_rgb(101, 112, 113);
 pub const DARK_FAINT: Color32 = Color32::from_rgb(104, 115, 117);
 pub const DEFAULT_DOCUMENT_FONT_SIZE: u8 = 18;
 
+/// The one spacing scale for the app chrome: every gap, margin and padding is one of
+/// these. Note text keeps Obsidian's em-based typography (`preview.rs`), not this scale.
+/// `tests/spacing_scale.rs` fails on a raw spacing number outside this module.
+pub mod space {
+    pub const XS: f32 = 4.0;
+    pub const S: f32 = 8.0;
+    pub const M: f32 = 12.0;
+    pub const L: f32 = 16.0;
+    pub const XL: f32 = 24.0;
+    pub const XXL: f32 = 32.0;
+    /// Keeps content inside a 1 px border.
+    pub const HAIRLINE: f32 = 1.0;
+    /// Left and right inset of every pane, sidebar and bar.
+    pub const INSET: f32 = M;
+    /// Height of a navigation or list item in a sidebar.
+    pub const ROW: f32 = 28.0;
+    /// Height of every button, text field and toggle in a row of controls.
+    pub const CONTROL: f32 = 32.0;
+
+    pub fn margin(horizontal: f32, vertical: f32) -> eframe::egui::Margin {
+        eframe::egui::Margin::symmetric(horizontal as i8, vertical as i8)
+    }
+}
+
+/// A horizontal bar of controls: shared height, inset and gap, everything centred on one line.
+pub fn control_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Frame::NONE
+        .inner_margin(space::margin(space::INSET, space::XS))
+        .show(ui, |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), space::CONTROL),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.spacing_mut().interact_size.y = space::CONTROL;
+                    ui.spacing_mut().item_spacing.x = space::S;
+                    add(ui)
+                },
+            )
+            .inner
+        })
+        .inner
+}
+
+/// A single-line field at the shared control height and inset.
+pub fn text_field(field: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
+    field
+        .margin(space::margin(space::S, space::XS))
+        .min_size(egui::vec2(0.0, space::CONTROL))
+        .vertical_align(egui::Align::Center)
+        .font(FontId::proportional(14.0))
+}
+
 pub fn sidebar_scroll() -> egui::ScrollArea {
     egui::ScrollArea::vertical().auto_shrink([false, false])
 }
@@ -80,8 +132,8 @@ pub fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>) -> egui::Response {
     ui.scope(|ui| {
         let dark = ui.visuals().dark_mode;
         let style = ui.style_mut();
-        style.spacing.interact_size.y = 16.0;
-        style.spacing.button_padding = egui::vec2(4.0, 2.0);
+        style.spacing.interact_size.y = space::L;
+        style.spacing.button_padding = egui::vec2(space::XS, 0.0);
         style.spacing.slider_rail_height = 4.0;
         style
             .text_styles
@@ -320,9 +372,9 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
         style.animation_time = 0.12;
         style.scroll_animation = egui::style::ScrollAnimation::none();
         interface_fonts(style);
-        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        style.spacing.button_padding = egui::vec2(10.0, 7.0);
-        style.spacing.window_margin = egui::Margin::same(22);
+        style.spacing.item_spacing = egui::vec2(space::S, space::S);
+        style.spacing.button_padding = egui::vec2(space::M, space::S);
+        style.spacing.window_margin = space::margin(space::XL, space::XL);
         style.spacing.scroll = egui::style::ScrollStyle {
             bar_width: 6.0,
             floating_width: 6.0,
@@ -862,20 +914,21 @@ pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool) -> egui::Response {
 
 pub fn dialog_style(ui: &mut egui::Ui) {
     interface_style(ui);
-    ui.spacing_mut().item_spacing = egui::vec2(8.0, 12.0);
-    ui.spacing_mut().button_padding = egui::vec2(14.0, 8.0);
+    ui.spacing_mut().item_spacing = egui::vec2(space::S, space::M);
+    ui.spacing_mut().button_padding = egui::vec2(space::L, space::XS);
+    ui.spacing_mut().interact_size.y = space::CONTROL;
 }
 
 pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::popup(&ctx.global_style())
-        .inner_margin(egui::Margin::same(24))
+        .inner_margin(space::margin(space::XL, space::XL))
         .corner_radius(10)
 }
 
 /// A small floating card, like Obsidian's notices.
 pub fn notice_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::popup(&ctx.global_style())
-        .inner_margin(egui::Margin::same(12))
+        .inner_margin(space::margin(space::M, space::M))
         .corner_radius(8)
 }
 
@@ -915,14 +968,14 @@ pub fn dialog_actions(
                     .fill(background)
                     .stroke(egui::Stroke::NONE)
                     .corner_radius(6)
-                    .min_size(egui::vec2(0.0, 36.0)),
+                    .min_size(egui::vec2(0.0, space::CONTROL)),
             );
             let cancel = ui.add(
                 egui::Button::new("Cancel")
                     .fill(ui.visuals().window_fill)
                     .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
                     .corner_radius(6)
-                    .min_size(egui::vec2(0.0, 36.0)),
+                    .min_size(egui::vec2(0.0, space::CONTROL)),
             );
             crate::ui_probe::record(ui.ctx(), "dialog-submit", submit.rect);
             crate::ui_probe::record(ui.ctx(), "dialog-cancel", cancel.rect);
@@ -939,8 +992,8 @@ pub fn menu_style(ui: &mut egui::Ui) {
             .text_styles
             .insert(style, egui::FontId::proportional(13.0));
     }
-    ui.spacing_mut().item_spacing.y = 1.0;
-    ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.spacing_mut().button_padding = egui::vec2(space::S, space::XS);
 }
 
 pub fn delete_menu_item(ui: &mut egui::Ui, label: &str) -> (egui::Response, bool) {
@@ -969,7 +1022,7 @@ pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
     let image = icon_image(icon, color).fit_to_exact_size(egui::vec2(16.0, 16.0));
     let response = ui.add(
         egui::Button::image_and_text(image, egui::RichText::new(label).size(13.0).color(color))
-            .min_size(egui::vec2(210.0, 26.0))
+            .min_size(egui::vec2(210.0, space::ROW))
             .frame_when_inactive(false)
             .corner_radius(4.0),
     );
@@ -1010,7 +1063,8 @@ fn toolbar_button(
     selected: bool,
     paint: impl FnOnce(&egui::Ui, egui::Rect, Color32),
 ) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+    let (rect, response) =
+        ui.allocate_exact_size(egui::Vec2::splat(space::CONTROL), egui::Sense::click());
     crate::ui_probe::record(ui.ctx(), format!("button:{tooltip}"), rect);
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, tooltip)

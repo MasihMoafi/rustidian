@@ -77,7 +77,7 @@ def main():
         for license in (root / 'assets/fonts').glob('LICENSE-*.txt'):
             shutil.copy2(license, documents / license.name)
         desktop = package / 'usr/share/applications/rustidian.desktop'
-        desktop.write_text('[Desktop Entry]\nType=Application\nName=Rustidian\nComment=Local Markdown notes and source code\nExec=rustidian %f\nIcon=rustidian\nTerminal=false\nCategories=Office;TextEditor;\nKeywords=Markdown;Notes;Code;\nStartupWMClass=rustidian\nMimeType=' + mime_types + '\n')
+        desktop.write_text('[Desktop Entry]\nType=Application\nName=Rustidian\nComment=Local Markdown notes and source code\nExec=rustidian %f\nIcon=rustidian\nTerminal=false\nCategories=Office;TextEditor;\nKeywords=Markdown;Notes;Code;\nStartupWMClass=rustidian\nStartupNotify=true\nMimeType=' + mime_types + '\n')
         subprocess.run(['desktop-file-validate', str(desktop)], check=True)
         size = sum(path.stat().st_size for path in (package / 'usr').rglob('*') if path.is_file())
         dependencies = 'libc6 (>= ' + glibc + '), libstdc++6, libgcc-s1, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, libxinerama1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-egl1, libegl1, libgl1, libglib2.0-bin, dbus-bin, gsettings-desktop-schemas, python3, zenity'

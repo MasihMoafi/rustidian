@@ -1,7 +1,5 @@
 use crate::theme::{self, Icon};
-use eframe::egui::{
-    self, Align, Color32, FontId, Layout, Margin, PointerButton, Sense, ViewportCommand,
-};
+use eframe::egui::{self, Align, Color32, FontId, Layout, PointerButton, Sense, ViewportCommand};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 /// Leave Rustidian's exact Ctrl+Q as the only quit key. egui's built-in one
@@ -63,7 +61,7 @@ pub fn quit_dialog(ctx: &egui::Context) -> Option<bool> {
             theme::dialog_style(ui);
             ui.set_width(440.0);
             ui.heading(format!("Quit {}?", rustidian::APP_NAME));
-            ui.add_space(16.0);
+            ui.add_space(crate::theme::space::L);
             ui.horizontal(|ui| {
                 let quit = ui.button("Quit");
                 crate::ui_probe::record(ctx, "quit-confirm", quit.rect);
@@ -328,7 +326,10 @@ pub fn title_bar(
         .frame(
             egui::Frame::NONE
                 .fill(ui.visuals().panel_fill)
-                .inner_margin(Margin::symmetric(6, 3)),
+                .inner_margin(crate::theme::space::margin(
+                    crate::theme::space::S,
+                    crate::theme::space::XS,
+                )),
         )
         .show(ui, |ui| {
             theme::menu_style(ui);

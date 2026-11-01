@@ -71,7 +71,7 @@ impl Manager {
                 let button = theme::dialog_header(ui, "Manage workspace layouts", "Close");
                 ui_probe::record(ctx, "workspace-close", button.rect);
                 close = button.clicked();
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::space::M);
             }
             ui.horizontal(|ui| {
                 let input = ui.add(
@@ -97,7 +97,8 @@ impl Manager {
                 if !self.load_only {
                     let button = ui.add_enabled(
                         self.list.is_ok() && !self.input.trim().is_empty(),
-                        egui::Button::new("Save").min_size(egui::vec2(54.0, 30.0)),
+                        egui::Button::new("Save")
+                            .min_size(egui::vec2(54.0, crate::theme::space::CONTROL)),
                     );
                     ui_probe::record(ctx, "workspace-save", button.rect);
                     save = button.clicked()
@@ -108,7 +109,7 @@ impl Manager {
                             && !self.input.trim().is_empty());
                 }
             });
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::space::M);
             match &self.list {
                 Err(error) => {
                     let response = ui.colored_label(ui.visuals().error_fg_color, error);
@@ -181,7 +182,10 @@ impl Manager {
                                     };
                                     let row = ui.add(
                                         button
-                                            .min_size(egui::vec2(ui.available_width(), 32.0))
+                                            .min_size(egui::vec2(
+                                                ui.available_width(),
+                                                crate::theme::space::CONTROL,
+                                            ))
                                             .corner_radius(4),
                                     );
                                     ui_probe::record(

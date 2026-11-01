@@ -1,0 +1,9 @@
+:root { color-scheme: dark; font: 16px system-ui, sans-serif; }
+body { margin: 0; color: #e5e7eb; background: #172126; }
+main { max-width: 680px; padding: 32px; }
+h1 { font-size: 24px; margin-top: 0; }
+button, input { font: inherit; padding: 8px 12px; border: 1px solid #6a858e; border-radius: 6px; }
+button { background: #285c60; color: white; cursor: pointer; }
+input { display: block; background: #10191e; color: inherit; }
+img { vertical-align: middle; background: #b1d5d6; border-radius: 6px; padding: 8px; margin-right: 12px; }
+section { padding-top: 800px; }

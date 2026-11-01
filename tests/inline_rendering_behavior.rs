@@ -1,6 +1,42 @@
 use rustidian::{editor::Markdown, inline_style::Style};
 
 #[test]
+fn html_break_tokens_are_hidden_decorations_but_code_and_yaml_remain_literal() {
+    for tag in [
+        "<br>",
+        "<br/>",
+        "<br />",
+        "</br>",
+        "<BR>",
+        "<br class='spacing'>",
+    ] {
+        let source = format!("Before{tag}After");
+        let parsed = Markdown::parse(&source);
+        let start = source.find('<').unwrap();
+        assert!(
+            parsed.spans.iter().any(|span| span.range.contains(&start)
+                && span.style.hidden
+                && span.style.html_break),
+            "{source}"
+        );
+        for literal in [
+            format!("`{tag}`"),
+            format!("```html\n{tag}\n```"),
+            format!("---\nvalue: \"{tag}\"\n---\n"),
+        ] {
+            assert!(
+                Markdown::parse(&literal)
+                    .spans
+                    .iter()
+                    .all(|span| !span.style.html_break),
+                "{literal}"
+            );
+        }
+    }
+    assert!(!rustidian::inline_style::is_line_break("<broken>"));
+}
+
+#[test]
 fn document_table_and_callout_content_share_compound_inline_styles() {
     let source = include_str!("fixtures/inline-styles.md");
     let parsed = Markdown::parse(source);

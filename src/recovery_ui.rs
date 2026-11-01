@@ -298,7 +298,7 @@ impl Manager {
                                 self.choosing_file = true;
                                 self.selected_file = 0;
                             }
-                            ui.add_space(8.0);
+                            ui.add_space(crate::theme::space::S);
                             let scroll = ScrollArea::vertical()
                                 .id_salt(("recovery-versions", &self.path, self.choosing_file))
                                 .auto_shrink([false, false])
@@ -327,7 +327,10 @@ impl Manager {
                                                 self.selected == Some(version.id),
                                                 RichText::new(format!("{time}\n{size}")).size(13.0),
                                             )
-                                            .min_size(egui::vec2(ui.available_width(), 46.0))
+                                            .min_size(egui::vec2(
+                                                ui.available_width(),
+                                                2.0 * crate::theme::space::XL,
+                                            ))
                                             .wrap(),
                                         );
                                         ui_probe::record(
@@ -384,7 +387,10 @@ impl Manager {
                                                     index == self.selected_file,
                                                     path.display().to_string(),
                                                 )
-                                                .min_size(egui::vec2(ui.available_width(), 32.0))
+                                                .min_size(egui::vec2(
+                                                    ui.available_width(),
+                                                    crate::theme::space::CONTROL,
+                                                ))
                                                 .wrap(),
                                             );
                                             ui_probe::record(

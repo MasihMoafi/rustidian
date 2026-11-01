@@ -27,6 +27,75 @@ struct Draft {
     cell: CellDraft,
 }
 
+/// A rectangular cell range, chosen by dragging, Shift+click or a row/column handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Selection {
+    table: usize,
+    anchor: (usize, usize),
+    head: (usize, usize),
+}
+
+impl Selection {
+    fn ranges(&self, rows: usize, columns: usize) -> (Range<usize>, Range<usize>) {
+        let span =
+            |a: usize, b: usize, limit: usize| a.min(b).min(limit)..(a.max(b) + 1).min(limit);
+        (
+            span(self.anchor.0, self.head.0, rows),
+            span(self.anchor.1, self.head.1, columns),
+        )
+    }
+}
+
+fn cell_under(
+    outer: egui::Rect,
+    widths: &[f32],
+    heights: &[f32],
+    pos: egui::Pos2,
+) -> (usize, usize) {
+    let locate = |sizes: &[f32], offset: f32| {
+        let mut edge = 0.0;
+        sizes
+            .iter()
+            .position(|size| {
+                edge += size;
+                offset < edge
+            })
+            .unwrap_or(sizes.len().saturating_sub(1))
+    };
+    (
+        locate(heights, pos.y - outer.top()),
+        locate(widths, pos.x - outer.left()),
+    )
+}
+
+/// A small handle on a row's left edge or a column's top edge; clicking it selects the line.
+fn grip(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    visible: bool,
+    selected: bool,
+    probe: String,
+) -> Option<egui::Response> {
+    let rect = rect.intersect(ui.clip_rect());
+    if !rect.is_positive() {
+        return None;
+    }
+    let response = ui
+        .interact(rect, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if visible || selected || response.hovered() {
+        let color = if selected || response.hovered() {
+            crate::theme::accent(ui)
+        } else {
+            ui.visuals().weak_text_color()
+        };
+        ui.painter().rect_filled(rect.shrink(1.0), 3, color);
+        crate::ui_probe::record(ui.ctx(), probe, rect);
+    }
+    Some(response)
+}
+
 #[derive(Default)]
 pub struct Tables {
     owner: Option<egui::Id>,
@@ -38,6 +107,8 @@ pub struct Tables {
     deferred: Vec<egui::Event>,
     raw_deferred: Vec<egui::Event>,
     exit: Option<usize>,
+    selection: Option<Selection>,
+    drag: Option<CellKey>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,6 +492,7 @@ impl Tables {
         self.tab = Some(tab.id());
         if !live {
             self.focus = None;
+            self.selection = None;
             self.deferred.clear();
             self.draft = None;
             return;
@@ -577,6 +649,12 @@ impl Tables {
         let mut menu_focus = None;
         let mut exit = None;
         let pending_focus = self.focus.take();
+        let previous = self.focused_cell(ui.ctx(), id).or(pending_focus);
+        if previous.is_some() {
+            self.selection_keys(ui, tab);
+        }
+        let mut clear_selection = false;
+        let mut table_areas = Vec::new();
         for (placement, origin) in placements.iter().zip(origins) {
             let table = placement.ordinal;
             let view = &mut self.views[table];
@@ -609,6 +687,7 @@ impl Tables {
                         );
                         let border = ui.visuals().widgets.noninteractive.bg_stroke;
                         ui.painter().rect_filled(outer, 0, ui.visuals().window_fill);
+                        let row_count = view.cells.len();
                         let mut y = outer.top() + 0.5;
                         for (row, cells) in view.cells.iter_mut().enumerate() {
                             let mut x = outer.left() + 0.5;
@@ -779,10 +858,65 @@ impl Tables {
                                 if let Some(direction) = nav {
                                     navigation = Some((key, direction));
                                 }
+                                let (shift, pressed) = ui.input(|input| {
+                                    (input.modifiers.shift, input.pointer.primary_pressed())
+                                });
+                                if pressed && response.contains_pointer() {
+                                    let anchor = self
+                                        .selection
+                                        .filter(|selection| selection.table == table)
+                                        .map(|selection| selection.anchor)
+                                        .or(previous
+                                            .filter(|cell| cell.0 == table)
+                                            .map(|cell| (cell.1, cell.2)));
+                                    match anchor.filter(|_| shift) {
+                                        Some(anchor) => {
+                                            self.selection = Some(Selection {
+                                                table,
+                                                anchor,
+                                                head: (row, column),
+                                            })
+                                        }
+                                        None => {
+                                            self.selection = None;
+                                            self.drag = Some(key);
+                                        }
+                                    }
+                                }
+                                let selected = self.selection.filter(|selection| {
+                                    let (rows, columns) =
+                                        selection.ranges(row_count, view.model.alignments.len());
+                                    selection.table == table
+                                        && rows.contains(&row)
+                                        && columns.contains(&column)
+                                });
                                 response.context_menu(|ui| {
                                     crate::theme::menu_style(ui);
                                     let columns = view.model.alignments.len();
                                     let count = view.model.rows.len();
+                                    if let Some(selection) = selected {
+                                        let (rows, chosen) = selection.ranges(count, columns);
+                                        if ui.button("Copy selection").clicked() {
+                                            ui.ctx().copy_text(view.model.copy(
+                                                &tab.document.text,
+                                                rows.clone(),
+                                                chosen.clone(),
+                                            ));
+                                            ui.close();
+                                        }
+                                        if ui.button("Clear selection").clicked() {
+                                            edit = Some((
+                                                table,
+                                                Action::Clear {
+                                                    rows,
+                                                    columns: chosen,
+                                                },
+                                            ));
+                                            menu_focus = Some(key);
+                                            ui.close();
+                                        }
+                                        ui.separator();
+                                    }
                                     let mut action =
                                         |ui: &mut egui::Ui,
                                          label: &str,
@@ -914,6 +1048,295 @@ impl Tables {
                             }
                             y += placement.heights[row];
                         }
+                        let (rows, columns) = (view.cells.len(), view.model.alignments.len());
+                        table_areas.push(outer.expand(8.0).intersect(ui.clip_rect()));
+                        if let Some(origin) = self.drag.filter(|cell| cell.0 == table) {
+                            let (down, pointer) = ui.input(|input| {
+                                (input.pointer.primary_down(), input.pointer.interact_pos())
+                            });
+                            if !down {
+                                self.drag = None;
+                            } else if let Some(pointer) = pointer {
+                                let head = cell_under(
+                                    outer,
+                                    &placement.widths,
+                                    &placement.heights,
+                                    pointer,
+                                );
+                                if head != (origin.1, origin.2) || self.selection.is_some() {
+                                    self.selection = Some(Selection {
+                                        table,
+                                        anchor: (origin.1, origin.2),
+                                        head,
+                                    });
+                                    ui.ctx().request_repaint();
+                                }
+                            }
+                        }
+                        let chosen = self.selection.filter(|selection| selection.table == table);
+                        let ranges = chosen.map(|selection| selection.ranges(rows, columns));
+                        if let Some((selected_rows, selected_columns)) = ranges.clone()
+                            && !selected_rows.is_empty()
+                            && !selected_columns.is_empty()
+                        {
+                            let left = outer.left()
+                                + 0.5
+                                + placement.widths[..selected_columns.start]
+                                    .iter()
+                                    .sum::<f32>();
+                            let top = outer.top()
+                                + 0.5
+                                + placement.heights[..selected_rows.start].iter().sum::<f32>();
+                            let area = egui::Rect::from_min_size(
+                                egui::pos2(left, top),
+                                egui::vec2(
+                                    placement.widths[selected_columns].iter().sum(),
+                                    placement.heights[selected_rows].iter().sum(),
+                                ),
+                            );
+                            let accent = crate::theme::accent(ui);
+                            ui.painter()
+                                .rect_filled(area, 0, accent.gamma_multiply(0.15));
+                            ui.painter().rect_stroke(
+                                area,
+                                0,
+                                egui::Stroke::new(2.0, accent),
+                                egui::StrokeKind::Inside,
+                            );
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("edit-table-selection:{table}"),
+                                area.intersect(ui.clip_rect()),
+                            );
+                        }
+                        let hovered = ui
+                            .input(|input| input.pointer.hover_pos())
+                            .filter(|pointer| outer.expand(6.0).contains(*pointer))
+                            .map(|pointer| {
+                                cell_under(outer, &placement.widths, &placement.heights, pointer)
+                            });
+                        let mut picked: Option<(bool, usize, bool, egui::Response)> = None;
+                        let mut edge = outer.left();
+                        for column in 0..columns {
+                            let width = placement.widths[column];
+                            let rect = egui::Rect::from_center_size(
+                                egui::pos2(edge + width / 2.0, outer.top() + 4.0),
+                                egui::vec2(28.0, 7.0),
+                            );
+                            edge += width;
+                            let whole = ranges
+                                .as_ref()
+                                .is_some_and(|(r, c)| r.len() == rows && c.contains(&column));
+                            if let Some(response) = grip(
+                                ui,
+                                id.with(("table-column-grip", table, column)),
+                                rect,
+                                hovered.is_some_and(|cell| cell.1 == column),
+                                whole,
+                                format!("edit-table-column-grip:{table}:{column}"),
+                            ) {
+                                let response = response.on_hover_text("Select column");
+                                if response.clicked() || response.secondary_clicked() && !whole {
+                                    picked = Some((true, column, true, response));
+                                } else if response.context_menu_opened()
+                                    || response.secondary_clicked()
+                                {
+                                    picked = picked.or(Some((true, column, false, response)));
+                                }
+                            }
+                        }
+                        let mut edge = outer.top();
+                        for row in 0..rows {
+                            let height = placement.heights[row];
+                            let rect = egui::Rect::from_center_size(
+                                egui::pos2(outer.left() + 4.0, edge + height / 2.0),
+                                egui::vec2(7.0, 22.0),
+                            );
+                            edge += height;
+                            let whole = ranges
+                                .as_ref()
+                                .is_some_and(|(r, c)| c.len() == columns && r.contains(&row));
+                            if let Some(response) = grip(
+                                ui,
+                                id.with(("table-row-grip", table, row)),
+                                rect,
+                                hovered.is_some_and(|cell| cell.0 == row),
+                                whole,
+                                format!("edit-table-row-grip:{table}:{row}"),
+                            ) {
+                                let response = response.on_hover_text("Select row");
+                                if response.clicked() || response.secondary_clicked() && !whole {
+                                    picked = Some((false, row, true, response));
+                                } else if response.context_menu_opened()
+                                    || response.secondary_clicked()
+                                {
+                                    picked = picked.or(Some((false, row, false, response)));
+                                }
+                            }
+                        }
+                        if let Some((column_grip, line, select, response)) = picked {
+                            if select {
+                                let shift = ui.input(|input| input.modifiers.shift);
+                                let anchor = chosen
+                                    .filter(|_| shift)
+                                    .map(|selection| selection.anchor)
+                                    .unwrap_or(if column_grip { (0, line) } else { (line, 0) });
+                                self.selection = Some(Selection {
+                                    table,
+                                    anchor: if column_grip {
+                                        (0, anchor.1)
+                                    } else {
+                                        (anchor.0, 0)
+                                    },
+                                    head: if column_grip {
+                                        (rows - 1, line)
+                                    } else {
+                                        (line, columns - 1)
+                                    },
+                                });
+                                self.drag = None;
+                                menu_focus = Some(if column_grip {
+                                    (table, 0, line)
+                                } else {
+                                    (table, line, 0)
+                                });
+                            }
+                            let current =
+                                self.selection.filter(|selection| selection.table == table);
+                            response.context_menu(|ui| {
+                                crate::theme::menu_style(ui);
+                                let Some(selection) = current else {
+                                    return;
+                                };
+                                let (chosen_rows, chosen_columns) = selection.ranges(rows, columns);
+                                let mut pick =
+                                    |ui: &mut egui::Ui,
+                                     label: &str,
+                                     enabled: bool,
+                                     value: Option<Action>| {
+                                        let response =
+                                            ui.add_enabled(enabled, egui::Button::new(label));
+                                        crate::ui_probe::record(
+                                            ui.ctx(),
+                                            format!("table-action:{label}"),
+                                            response.rect,
+                                        );
+                                        if response.clicked() {
+                                            match value {
+                                                Some(value) => {
+                                                    let keep =
+                                                        matches!(value, Action::Clear { .. });
+                                                    edit = Some((table, value));
+                                                    clear_selection |= !keep;
+                                                }
+                                                None => ui.ctx().copy_text(view.model.copy(
+                                                    &tab.document.text,
+                                                    chosen_rows.clone(),
+                                                    chosen_columns.clone(),
+                                                )),
+                                            }
+                                            menu_focus = Some((
+                                                table,
+                                                chosen_rows.start,
+                                                chosen_columns.start,
+                                            ));
+                                            ui.close();
+                                        }
+                                    };
+                                pick(ui, "Copy", true, None);
+                                pick(
+                                    ui,
+                                    "Clear contents",
+                                    true,
+                                    Some(Action::Clear {
+                                        rows: chosen_rows.clone(),
+                                        columns: chosen_columns.clone(),
+                                    }),
+                                );
+                                ui.separator();
+                                if column_grip {
+                                    pick(
+                                        ui,
+                                        "Insert column left",
+                                        true,
+                                        Some(Action::InsertColumn(chosen_columns.start)),
+                                    );
+                                    pick(
+                                        ui,
+                                        "Insert column right",
+                                        true,
+                                        Some(Action::InsertColumn(chosen_columns.end)),
+                                    );
+                                    pick(
+                                        ui,
+                                        if chosen_columns.len() > 1 {
+                                            "Delete columns"
+                                        } else {
+                                            "Delete column"
+                                        },
+                                        chosen_columns.len() < columns,
+                                        Some(Action::RemoveColumns(chosen_columns.clone())),
+                                    );
+                                    ui.separator();
+                                    for (label, alignment) in [
+                                        ("Align left", pulldown_cmark::Alignment::Left),
+                                        ("Align center", pulldown_cmark::Alignment::Center),
+                                        ("Align right", pulldown_cmark::Alignment::Right),
+                                    ] {
+                                        pick(
+                                            ui,
+                                            label,
+                                            chosen_columns.len() == 1,
+                                            Some(Action::Align {
+                                                column: chosen_columns.start,
+                                                alignment,
+                                            }),
+                                        );
+                                    }
+                                    pick(
+                                        ui,
+                                        "Sort ascending",
+                                        chosen_columns.len() == 1,
+                                        Some(Action::Sort {
+                                            column: chosen_columns.start,
+                                            descending: false,
+                                        }),
+                                    );
+                                    pick(
+                                        ui,
+                                        "Sort descending",
+                                        chosen_columns.len() == 1,
+                                        Some(Action::Sort {
+                                            column: chosen_columns.start,
+                                            descending: true,
+                                        }),
+                                    );
+                                } else {
+                                    pick(
+                                        ui,
+                                        "Insert row above",
+                                        chosen_rows.start > 0,
+                                        Some(Action::InsertRow(chosen_rows.start)),
+                                    );
+                                    pick(
+                                        ui,
+                                        "Insert row below",
+                                        true,
+                                        Some(Action::InsertRow(chosen_rows.end)),
+                                    );
+                                    pick(
+                                        ui,
+                                        if chosen_rows.len() > 1 {
+                                            "Delete rows"
+                                        } else {
+                                            "Delete row"
+                                        },
+                                        chosen_rows.start > 0,
+                                        Some(Action::RemoveRows(chosen_rows.clone())),
+                                    );
+                                }
+                            });
+                        }
                         crate::table_layout::handles(
                             ui,
                             &tab.document.path,
@@ -955,6 +1378,17 @@ impl Tables {
                         }
                     });
             });
+        }
+        // A press outside every table ends the range; handles and menus keep it.
+        let outside = ui.input(|input| {
+            input.pointer.any_pressed()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pointer| !table_areas.iter().any(|area| area.contains(pointer)))
+        });
+        if clear_selection || outside && !egui::Popup::is_any_open(ui.ctx()) {
+            self.selection = None;
         }
         if let Some((table, action)) = edit {
             self.apply(ui, tab, id, table, action);
@@ -1026,6 +1460,77 @@ impl Tables {
             ui.colored_label(ui.visuals().error_fg_color, error);
         }
         follow
+    }
+
+    /// While a cell range is selected, copy, cut, Delete/Backspace and Escape act on the range.
+    fn selection_keys(&mut self, ui: &egui::Ui, tab: &mut Tab) {
+        let Some(selection) = self.selection else {
+            return;
+        };
+        let Some(view) = self.views.get(selection.table) else {
+            self.selection = None;
+            return;
+        };
+        let (rows, columns) = selection.ranges(view.cells.len(), view.model.alignments.len());
+        let (mut copy, mut clear, mut cancel) = (false, false, false);
+        ui.input_mut(|input| {
+            input.events.retain(|event| match event {
+                egui::Event::Copy => {
+                    copy = true;
+                    false
+                }
+                egui::Event::Cut => {
+                    (copy, clear) = (true, true);
+                    false
+                }
+                egui::Event::Key {
+                    key: Key::Backspace | Key::Delete,
+                    pressed: true,
+                    ..
+                } => {
+                    clear = true;
+                    false
+                }
+                egui::Event::Key {
+                    key: Key::Escape,
+                    pressed: true,
+                    ..
+                } => {
+                    cancel = true;
+                    false
+                }
+                egui::Event::Text(_) | egui::Event::Paste(_) => {
+                    cancel = true;
+                    true
+                }
+                _ => true,
+            })
+        });
+        if copy {
+            ui.ctx().copy_text(
+                view.model
+                    .copy(&tab.document.text, rows.clone(), columns.clone()),
+            );
+        }
+        if clear
+            && let Some(model) = rustidian::editor::Markdown::parse(&tab.document.text)
+                .tables
+                .get(selection.table)
+        {
+            self.views[selection.table].model = model.clone();
+            self.draft = None;
+            let id = self.owner.unwrap_or(egui::Id::NULL);
+            self.apply(
+                ui,
+                tab,
+                id,
+                selection.table,
+                Action::Clear { rows, columns },
+            );
+        }
+        if cancel {
+            self.selection = None;
+        }
     }
 
     fn apply(&mut self, ui: &egui::Ui, tab: &mut Tab, id: egui::Id, table: usize, action: Action) {

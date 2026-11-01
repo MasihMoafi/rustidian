@@ -128,9 +128,9 @@ impl NotesApp {
                 &mut self.editor_preferences.show_mode,
             );
         });
-        ui.add_space(20.0);
+        ui.add_space(crate::theme::space::XL);
         ui.strong("Display");
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::space::S);
         group(ui, |ui| {
             changed |= toggle(
                 ui,
@@ -148,9 +148,9 @@ impl NotesApp {
                 &mut self.editor_preferences.readable_line_length,
             );
         });
-        ui.add_space(20.0);
+        ui.add_space(crate::theme::space::XL);
         ui.strong("Saving");
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::space::S);
         group(ui, |ui| {
             changed |= toggle(
                 ui,
@@ -202,11 +202,11 @@ impl NotesApp {
                 } else {
                     Color32::from_rgb(246, 246, 246)
                 })
-                .inner_margin(12)
+                .inner_margin(crate::theme::space::margin(crate::theme::space::M, crate::theme::space::M))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.set_width(if width < 600.0 { 152.0 } else { 188.0 });
-                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                         ui.set_min_height(height - 24.0);
                         let input = ui.add(
                             TextEdit::singleline(&mut self.dialog_input)
@@ -229,7 +229,7 @@ impl NotesApp {
                         {
                             self.settings_page = page;
                         }
-                        ui.add_space(14.0);
+                        ui.add_space(crate::theme::space::M);
                         ScrollArea::vertical()
                             .id_salt("settings-navigation")
                             .max_height(height - 60.0)
@@ -237,12 +237,12 @@ impl NotesApp {
                                 for page in Page::ALL {
                                     if page == Page::Appearance {
                                         ui.weak("Options");
-                                        ui.add_space(4.0);
+                                        ui.add_space(crate::theme::space::XS);
                                     }
                                     if page == Page::Daily {
-                                        ui.add_space(12.0);
+                                        ui.add_space(crate::theme::space::M);
                                         ui.weak("Core plugins");
-                                        ui.add_space(4.0);
+                                        ui.add_space(crate::theme::space::XS);
                                     }
                                     if page.matches(&query) {
                                         let response =
@@ -260,21 +260,22 @@ impl NotesApp {
                             });
                     });
                 });
-            ui.add_space(16.0);
+            ui.add_space(crate::theme::space::L);
             ui.vertical(|ui| {
                 ui.set_width((ui.available_width() - 24.0).max(140.0));
                 ui.set_min_height(height);
-                ui.add_space(24.0);
+                ui.add_space(crate::theme::space::XL);
                 let button = theme::dialog_header(ui, "Settings", "Close settings");
                 crate::ui_probe::record(ctx, "settings-close", button.rect);
                 *close |= button.clicked();
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::space::M);
                 let query = self.dialog_input.to_lowercase();
                 if !self.settings_page.matches(&query) {
                     ui.weak("No settings found.");
                     return;
                 }
-                ScrollArea::vertical()
+                ctx.data_mut(|data| data.insert_temp(egui::Id::new("settings-query"), query.clone()));
+                let content = ScrollArea::vertical()
                     .id_salt(("settings-content", self.settings_page as u8))
                     .max_height(height - 100.0)
                     .show(ui, |ui| {
@@ -585,12 +586,13 @@ impl NotesApp {
                             }
                         });
                         if self.settings_page == Page::Hotkeys {
-                            ui.add_space(12.0);
+                            ui.add_space(crate::theme::space::M);
                             ui.weak("Shortcut customization is not available yet.");
                         }
                     });
+                crate::ui_probe::record(ctx, "settings-viewport", content.inner_rect);
                 if let Some(error) = &self.error {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::space::M);
                     ui.colored_label(ui.visuals().error_fg_color, error);
                     crate::ui_probe::record(ctx, "dialog-error", ui.min_rect());
                 }
@@ -637,27 +639,47 @@ fn row(
     description: &str,
     control: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::space::M);
     let label_width = (ui.available_width() - 180.0).max(100.0);
-    let changed = ui
-        .horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(label_width, 0.0),
-                Layout::top_down(Align::LEFT),
-                |ui| {
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.label(title);
-                    if !description.is_empty() {
-                        ui.label(RichText::new(description).size(13.0).weak());
-                    }
-                },
-            );
-            ui.with_layout(Layout::right_to_left(Align::Center), control)
-                .inner
-        })
-        .inner;
-    ui.add_space(12.0);
-    changed
+    let changed = ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 0.0),
+            Layout::top_down(Align::LEFT),
+            |ui| {
+                ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
+                ui.label(title);
+                if !description.is_empty() {
+                    ui.label(RichText::new(description).size(13.0).weak());
+                }
+            },
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), control)
+            .inner
+    });
+    reveal_match(ui, title, changed.response.rect);
+    ui.add_space(crate::theme::space::M);
+    changed.inner
+}
+
+/// Searching settings scrolls the first matching row into view, once per query.
+fn reveal_match(ui: &egui::Ui, title: &str, rect: egui::Rect) {
+    let (query, shown): (String, Option<String>) = ui.ctx().data(|data| {
+        (
+            data.get_temp(egui::Id::new("settings-query"))
+                .unwrap_or_default(),
+            data.get_temp(egui::Id::new("settings-query-shown")),
+        )
+    });
+    let title = title.to_lowercase();
+    if query.is_empty()
+        || shown.as_deref() == Some(query.as_str())
+        || !query.split_whitespace().all(|word| title.contains(word))
+    {
+        return;
+    }
+    ui.scroll_to_rect(rect, Some(Align::Center));
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::new("settings-query-shown"), query));
 }
 
 /// An installed font family, or the default (empty), with a search field.
@@ -859,7 +881,7 @@ fn group<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
         .corner_radius(12)
-        .inner_margin(egui::Margin::symmetric(20, 0))
+        .inner_margin(crate::theme::space::margin(crate::theme::space::XL, 0.0))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             contents(ui)

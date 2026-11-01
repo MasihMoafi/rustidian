@@ -143,7 +143,7 @@ fn sync_launcher_icon(palette: Palette) -> std::io::Result<()> {
 pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
     let before = *selected;
     ui.strong("Palette");
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::space::S);
     egui::ScrollArea::horizontal()
         .id_salt("theme-cards")
         .show(ui, |ui| {
@@ -238,6 +238,6 @@ pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
                 }
             });
         });
-    ui.add_space(14.0);
+    ui.add_space(crate::theme::space::M);
     before != *selected
 }

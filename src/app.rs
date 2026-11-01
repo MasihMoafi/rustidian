@@ -7,7 +7,7 @@ use crate::{
     theme::{self, Icon, icon_button},
 };
 use eframe::egui::{
-    self, Align, Color32, FontId, Key, Layout, Margin, RichText, ScrollArea, Stroke, TextEdit,
+    self, Align, Color32, FontId, Key, Layout, RichText, ScrollArea, Stroke, TextEdit,
 };
 use egui_commonmark::CommonMarkCache;
 use rustidian::commands::Scope;
@@ -329,6 +329,54 @@ impl NotesApp {
                 && !tab.document.is_image()
         });
         self.ctx.request_repaint();
+    }
+
+    fn show_view_mode(&mut self, ui: &mut egui::Ui) {
+        let current = self.view();
+        let label = match current {
+            View::Read => "Reading",
+            View::Live => "Live preview",
+            View::Source => "Source mode",
+            View::Split => "Split view",
+            View::Graph => "Graph",
+        };
+        let text = RichText::new(label).color(theme::accent(ui)).size(11.0);
+        let mut requested = None;
+        let plain_text = self.tabs.get(self.active).is_some_and(|tab| {
+            tab.document.is_plain_text() && !rustidian::html_import::is_html(&tab.document.path)
+        });
+        let response = if current == View::Graph || plain_text {
+            ui.label(text)
+        } else {
+            ui.menu_button(text, |ui| {
+                theme::menu_style(ui);
+                for (name, view) in [
+                    ("Reading", View::Read),
+                    ("Source mode", View::Source),
+                    ("Live Preview", View::Live),
+                ] {
+                    let choice = ui.selectable_label(current == view, name);
+                    if crate::ui_probe::enabled() {
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("view-choice:{name}"),
+                            choice.rect,
+                        );
+                    }
+                    if choice.clicked() {
+                        requested = Some(view);
+                        ui.close();
+                    }
+                }
+            })
+            .response
+        };
+        if crate::ui_probe::enabled() {
+            crate::ui_probe::record(ui.ctx(), format!("view-mode:{label}"), response.rect);
+        }
+        if let Some(view) = requested {
+            self.set_view(view);
+        }
     }
 
     fn toggle_reading(&mut self) {
@@ -1769,12 +1817,12 @@ impl NotesApp {
 
     fn ribbon(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("ribbon")
-            .exact_size(44.0)
+            .exact_size(theme::space::CONTROL + 2.0 * theme::space::S)
             .resizable(false)
             .frame(
                 egui::Frame::NONE
                     .fill(ui.visuals().panel_fill)
-                    .inner_margin(Margin::symmetric(7, 5)),
+                    .inner_margin(theme::space::margin(theme::space::S, theme::space::XS)),
             )
             .show(ui, |ui| {
                 if icon_button(ui, Icon::SidebarLeft, "Toggle left sidebar").clicked() {
@@ -1981,9 +2029,9 @@ impl NotesApp {
         ui: &mut egui::Ui,
         visible_files: &mut Option<Vec<PathBuf>>,
     ) -> Option<PathBuf> {
-        ui.add_space(12.0);
+        ui.add_space(theme::space::M);
         ui.label(RichText::new("Bookmarks").size(12.0).strong().weak());
-        ui.add_space(8.0);
+        ui.add_space(theme::space::S);
         let can_add = self
             .tabs
             .get(self.active)
@@ -2002,7 +2050,7 @@ impl NotesApp {
         {
             self.add_bookmark(&path);
         }
-        ui.add_space(8.0);
+        ui.add_space(theme::space::S);
         if self.bookmarks.items.is_empty() {
             ui.label(RichText::new("No bookmarks yet").small().weak());
         }
@@ -2255,7 +2303,7 @@ impl NotesApp {
             .frame(
                 egui::Frame::NONE
                     .fill(ui.visuals().panel_fill)
-                    .inner_margin(Margin::symmetric(12, 0)),
+                    .inner_margin(theme::space::margin(theme::space::M, 0.0)),
             )
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -2315,9 +2363,10 @@ impl NotesApp {
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             ui.set_min_height(40.0);
-                            ui.spacing_mut().item_spacing.x = 2.0;
+                            ui.spacing_mut().item_spacing.x = theme::space::XS;
                             // Keep all four controls inside even the minimum-width pane.
-                            let controls_width = 4.0 * 30.0 + 3.0 * 2.0;
+                            let controls_width =
+                                4.0 * theme::space::CONTROL + 3.0 * theme::space::XS;
                             ui.add_space((ui.available_width() - controls_width).max(0.0));
                             if theme::icon_toggle(ui, Icon::NewNote, "New note · Ctrl+N", false)
                                 .clicked()
@@ -2363,7 +2412,7 @@ impl NotesApp {
                             }
                         },
                     );
-                    ui.add_space(8.0);
+                    ui.add_space(theme::space::S);
                 }
 
                 if self.show_bookmarks {
@@ -2371,18 +2420,17 @@ impl NotesApp {
                         .bookmark_list(ui, &mut visible_files)
                         .map(FileAction::Open);
                 } else if self.searching {
-                    let input = ui.add(
+                    let input = ui.add(theme::text_field(
                         TextEdit::singleline(&mut self.search)
                             .hint_text("Search your notes…")
-                            .desired_width(f32::INFINITY)
-                            .font(FontId::proportional(14.0)),
-                    );
+                            .desired_width(f32::INFINITY),
+                    ));
                     crate::ui_probe::record(ui.ctx(), "search-input", input.rect);
                     if self.search_focus {
                         input.request_focus();
                         self.search_focus = false;
                     }
-                    ui.add_space(10.0);
+                    ui.add_space(theme::space::S);
                     if let Some(vault) = &self.vault {
                         self.search_cache.update(&self.search, vault);
                         let results = &self.search_cache.paths;
@@ -2396,9 +2444,12 @@ impl NotesApp {
                             );
                         }
                         ui.label(
-                            RichText::new(format!("{} results", results.len()))
-                                .small()
-                                .weak(),
+                            RichText::new(match results.len() {
+                                1 => "1 result".to_owned(),
+                                count => format!("{count} results"),
+                            })
+                            .small()
+                            .weak(),
                         );
                         let target = crate::file_tree::pending_reveal(ui.ctx());
                         let mut search_scroll = theme::sidebar_scroll().id_salt("search-results");
@@ -2424,8 +2475,39 @@ impl NotesApp {
                                         |ui| {
                                             // Keep rendered rows aligned with show_rows' virtual stride.
                                             ui.set_min_height(52.0);
-                                            let result = ui.add(
-                                                egui::Button::new(
+                                            // One clickable row; title and path share its inset.
+                                            let (rect, _) = ui.allocate_exact_size(
+                                                egui::vec2(
+                                                    ui.available_width(),
+                                                    52.0 - theme::space::XS,
+                                                ),
+                                                egui::Sense::hover(),
+                                            );
+                                            let result = ui.interact(
+                                                rect,
+                                                ui.id().with(("search-result", note)),
+                                                egui::Sense::click(),
+                                            );
+                                            if result.hovered() || result.has_focus() {
+                                                ui.painter().rect_filled(
+                                                    rect,
+                                                    4,
+                                                    theme::hover_fill(ui),
+                                                );
+                                            }
+                                            let mut text = ui.new_child(
+                                                egui::UiBuilder::new()
+                                                    .max_rect(rect.shrink2(egui::vec2(
+                                                        theme::space::S,
+                                                        theme::space::S,
+                                                    )))
+                                                    .layout(egui::Layout::top_down(
+                                                        egui::Align::Min,
+                                                    )),
+                                            );
+                                            text.spacing_mut().item_spacing.y = 0.0;
+                                            let title = text.add(
+                                                egui::Label::new(
                                                     RichText::new(
                                                         note.file_stem()
                                                             .unwrap_or_default()
@@ -2433,8 +2515,27 @@ impl NotesApp {
                                                     )
                                                     .size(14.0),
                                                 )
-                                                .frame_when_inactive(false)
+                                                .selectable(false)
                                                 .truncate(),
+                                            );
+                                            let path = text.add(
+                                                egui::Label::new(
+                                                    RichText::new(note.display().to_string())
+                                                        .size(11.0)
+                                                        .weak(),
+                                                )
+                                                .selectable(false)
+                                                .truncate(),
+                                            );
+                                            crate::ui_probe::record(
+                                                ui.ctx(),
+                                                format!("search-title:{}", note.display()),
+                                                title.rect,
+                                            );
+                                            crate::ui_probe::record(
+                                                ui.ctx(),
+                                                format!("search-path:{}", note.display()),
+                                                path.rect,
                                             );
                                             crate::ui_probe::record(
                                                 ui.ctx(),
@@ -2444,14 +2545,6 @@ impl NotesApp {
                                             if result.clicked() {
                                                 selected = Some(FileAction::Open(note.clone()));
                                             }
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(note.display().to_string())
-                                                        .size(11.0)
-                                                        .weak(),
-                                                )
-                                                .truncate(),
-                                            );
                                         },
                                     );
                                     if target.as_ref() == Some(note) {
@@ -2482,7 +2575,7 @@ impl NotesApp {
                     );
                     crate::ui_probe::record(ui.ctx(), "file-tree-root", root.rect);
                     let root = root.interact(egui::Sense::click());
-                    ui.add_space(8.0);
+                    ui.add_space(theme::space::S);
                     let mut tree_scroll = theme::sidebar_scroll()
                         .id_salt("file-tree")
                         .max_height((ui.available_height() - 64.0).max(0.0));
@@ -2553,16 +2646,19 @@ impl NotesApp {
                             .as_ref()
                             .map(Vault::name)
                             .unwrap_or_else(|| "Open vault…".into());
-                        // A row as tall as its 30 px controls, clear of the status bar: a plain
+                        // A row as tall as its controls, clear of the status bar: a plain
                         // `horizontal` row is shorter, and the controls spilled under the bar.
-                        ui.add_space(4.0);
+                        ui.add_space(theme::space::XS);
                         ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), 30.0),
+                            egui::vec2(ui.available_width(), theme::space::CONTROL),
                             Layout::left_to_right(Align::Center),
                             |ui| {
-                                let width = (ui.available_width() - 38.0).max(40.0);
+                                let width = (ui.available_width()
+                                    - theme::space::CONTROL
+                                    - theme::space::S)
+                                    .max(40.0);
                                 let vault = ui.add_sized(
-                                    [width, 30.0],
+                                    [width, theme::space::CONTROL],
                                     egui::Button::new((
                                         theme::icon_image(
                                             Icon::Disclosure,
@@ -2715,7 +2811,7 @@ impl NotesApp {
             .frame(
                 egui::Frame::NONE
                     .fill(ui.visuals().panel_fill)
-                    .inner_margin(Margin::symmetric(17, 18)),
+                    .inner_margin(theme::space::margin(theme::space::INSET, theme::space::M)),
             )
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -2734,7 +2830,7 @@ impl NotesApp {
                         crate::ui_probe::record(ui.ctx(), format!("panel:{key}"), response.rect);
                     }
                 });
-                ui.add_space(10.0);
+                ui.add_space(theme::space::S);
                 if agent_tab {
                     match &root {
                         Some(root) => {
@@ -2762,7 +2858,7 @@ impl NotesApp {
                             ));
                             ui.label(RichText::new("Outline").size(14.0).strong());
                         });
-                        ui.add_space(9.0);
+                        ui.add_space(theme::space::S);
                         if outline.is_empty() {
                             ui.label(RichText::new("No headings yet").size(13.0).weak());
                         }
@@ -2784,7 +2880,7 @@ impl NotesApp {
                     }
                     if self.right_tab == 1 {
                         ui.label(RichText::new("Backlinks").size(14.0).strong());
-                        ui.add_space(6.0);
+                        ui.add_space(theme::space::S);
                         let count = ui.label(
                             RichText::new(format!("{} linked mentions", backlinks.len()))
                                 .size(12.0)
@@ -2795,12 +2891,12 @@ impl NotesApp {
                             format!("backlink-count:{}", backlinks.len()),
                             count.rect,
                         );
-                        ui.add_space(9.0);
+                        ui.add_space(theme::space::S);
                         let mut previous_source = None;
                         for mention in backlinks {
                             let first = previous_source.as_ref() != Some(&mention.path);
                             if first {
-                                ui.add_space(6.0);
+                                ui.add_space(theme::space::S);
                                 ui.label(
                                     RichText::new(rustidian::paths::display_path(&mention.path))
                                         .size(13.0)
@@ -2857,12 +2953,12 @@ impl NotesApp {
                             if theme::link_clicked(&row) {
                                 selected_backlink = Some(mention);
                             }
-                            ui.add_space(3.0);
+                            ui.add_space(theme::space::XS);
                         }
                     }
                     if self.right_tab == 2 {
                         ui.label(RichText::new("Outgoing links").size(14.0).strong());
-                        ui.add_space(9.0);
+                        ui.add_space(theme::space::S);
                         if outgoing.is_empty() {
                             ui.label(
                                 RichText::new("Connect a note with [[links]]")
@@ -3026,7 +3122,7 @@ impl NotesApp {
                 self.tab_strip(ui);
                 if self.view() == View::Graph {
                     egui::Frame::NONE
-                        .inner_margin(12)
+                        .inner_margin(theme::space::margin(theme::space::M, theme::space::M))
                         .show(ui, |ui| self.graph_view(ui, false));
                     return;
                 }
@@ -3045,7 +3141,7 @@ impl NotesApp {
                             })
                             .size(24.0),
                         );
-                        ui.add_space(22.0);
+                        ui.add_space(theme::space::XL);
                         if ui.link("Create new note (Ctrl+N)").clicked() {
                             self.create_note();
                         }
@@ -3064,18 +3160,23 @@ impl NotesApp {
                         .default_size(440.0)
                         .size_range(160.0..=maximum)
                         .resizable(true)
+                        .frame(
+                            egui::Frame::side_top_panel(ui.style())
+                                .inner_margin(theme::space::margin(theme::space::INSET, 0.0)),
+                        )
                         .show(ui, |ui| {
                             crate::ui_probe::record(ui.ctx(), "local-graph-pane", ui.max_rect());
-                            egui::Frame::NONE
-                                .inner_margin(10)
-                                .show(ui, |ui| self.graph_view(ui, true));
+                            self.graph_view(ui, true);
                         });
                 }
                 egui::Frame::NONE
-                    .inner_margin(Margin::symmetric(12, 0))
+                    .inner_margin(theme::space::margin(theme::space::M, 0.0))
                     .show(ui, |ui| {
                         ui.allocate_ui_with_layout(
-                            egui::vec2(ui.available_width(), 38.375),
+                            egui::vec2(
+                                ui.available_width(),
+                                theme::space::CONTROL + 2.0 * theme::space::XS,
+                            ),
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 if ui
@@ -3111,18 +3212,28 @@ impl NotesApp {
                                 )
                                 .replace('/', " / ");
                                 let available = ui.available_width();
-                                let actions_width = if self.tabs[self.active].document.is_image() {
-                                    144.0
+                                // Icon buttons on the right: two, or four for images.
+                                let icons = if self.tabs[self.active].document.is_image() {
+                                    4.0
                                 } else {
-                                    76.0
+                                    2.0
                                 };
+                                let actions_width = icons * theme::space::CONTROL
+                                    + (icons - 1.0) * theme::space::S
+                                    + theme::space::S;
                                 ui.allocate_ui_with_layout(
-                                    egui::vec2((available - actions_width).max(20.0), 30.0),
+                                    egui::vec2(
+                                        (available - actions_width).max(20.0),
+                                        theme::space::CONTROL,
+                                    ),
                                     Layout::left_to_right(Align::Center)
                                         .with_main_align(Align::Center),
                                     |ui| {
                                         let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2((available - 76.0).max(20.0), 30.0),
+                                            egui::vec2(
+                                                (available - actions_width).max(20.0),
+                                                theme::space::CONTROL,
+                                            ),
                                             egui::Sense::hover(),
                                         );
                                         let galley = egui::WidgetText::from(
@@ -3188,9 +3299,9 @@ impl NotesApp {
                                     ui,
                                     if reading { Icon::Edit } else { Icon::Reading },
                                     if reading {
-                                        "Editing view · Ctrl+E"
+                                        "Current view: reading\nClick to edit · Ctrl+E"
                                     } else {
-                                        "Reading view · Ctrl+E"
+                                        "Current view: editing\nClick to read · Ctrl+E"
                                     },
                                 )
                                 .clicked()
@@ -3378,7 +3489,7 @@ impl NotesApp {
                         Layout::top_down(Align::Min),
                         |ui| {
                             ui.set_width(content_width);
-                            ui.add_space(32.0);
+                            ui.add_space(32.0); // obsidian metric: document top
                             if self.editor_preferences.inline_title
                                 && let Some(name) = self.title.show(ui, &tab.document.path, &title)
                             {
@@ -3388,7 +3499,7 @@ impl NotesApp {
                                 self.editor.focus = true;
                             }
                             if self.editor_preferences.inline_title {
-                                ui.add_space(16.218);
+                                ui.add_space(16.218); // obsidian metric: inline title gap
                             }
                             if matches!(view, View::Live | View::Read) {
                                 add_property = self.properties.show(ui, tab);
@@ -3579,10 +3690,10 @@ impl NotesApp {
         let mut moved = None;
         let strip = egui::Frame::NONE
             .fill(ui.visuals().panel_fill)
-            .inner_margin(Margin::symmetric(10, 0))
+            .inner_margin(theme::space::margin(theme::space::S, 0.0))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.spacing_mut().item_spacing = egui::vec2(4.0, 0.0);
+                ui.spacing_mut().item_spacing = egui::vec2(theme::space::XS, 0.0);
                 ui.horizontal(|ui| {
                     let count = self.tabs.len().max(1) as f32;
                     // With no tabs the strip takes no room, so New tab sits at the left as in Obsidian.
@@ -3611,10 +3722,13 @@ impl NotesApp {
                         changed
                     });
                     ui.allocate_ui_with_layout(
-                        egui::vec2(width, 40.0),
+                        egui::vec2(width, theme::space::CONTROL + 2.0 * theme::space::XS),
                         Layout::top_down(Align::Min),
                         |ui| {
-                            ui.set_min_size(egui::vec2(width, 40.0));
+                            ui.set_min_size(egui::vec2(
+                                width,
+                                theme::space::CONTROL + 2.0 * theme::space::XS,
+                            ));
                             ScrollArea::horizontal()
                                 .id_salt("tab-strip")
                                 .max_height(40.0)
@@ -3622,7 +3736,7 @@ impl NotesApp {
                                     egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                                 )
                                 .show(ui, |ui| {
-                                    ui.add_space(7.0);
+                                    ui.add_space(theme::space::S);
                                     ui.horizontal(|ui| {
                                         for (index, tab) in self.tabs.iter().enumerate() {
                                             let (_, rect) =
@@ -4047,7 +4161,7 @@ impl NotesApp {
                             rustidian::native_picker::Kind::Folder => "Open folder",
                         });
                         ui.label("Choose an existing item in the file browser.");
-                        ui.add_space(16.0);
+                        ui.add_space(theme::space::L);
                         let button = ui.button("Cancel");
                         crate::ui_probe::record(ctx, "system-open-cancel", button.rect);
                         crate::ui_probe::record(ctx, "system-open-picker", ui.max_rect());
@@ -4078,7 +4192,7 @@ impl NotesApp {
                 ui.set_width(440.0);
                 ui.heading("Keep your changes?");
                 ui.label("You have unsaved edits. Save them before continuing, or discard them explicitly.");
-                ui.add_space(16.0);
+                ui.add_space(theme::space::L);
                 ui.horizontal(|ui| {
                     let save = ui.button("Save & continue");
                     crate::ui_probe::record(ctx, "pending-save", save.rect);
@@ -4270,7 +4384,7 @@ impl NotesApp {
             });
             if dialog != Dialog::Commands {
                 close |= theme::dialog_header(ui, title, "Close dialog").clicked();
-                ui.add_space(8.0);
+                ui.add_space(theme::space::S);
             }
             if dialog == Dialog::NewFolder && let Some(parent) = &self.dialog_path {
                 let location = if parent.as_os_str().is_empty() {
@@ -4348,7 +4462,7 @@ impl NotesApp {
                 crate::ui_probe::record(ui.ctx(), "dialog-input-focused", input.rect);
             }
             let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
-            ui.add_space(12.0);
+            ui.add_space(theme::space::M);
             if let Some(error) = &self.error {
                 let label = ui.label(
                     RichText::new(error)
@@ -4382,7 +4496,7 @@ impl NotesApp {
                                 egui::Button::new(rustidian::paths::display_path(path))
                                     .selected(index == self.dialog_selected)
                                     .frame_when_inactive(false)
-                                    .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                    .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
                             );
                             if crate::ui_probe::enabled() {
                                 crate::ui_probe::record(
@@ -4455,7 +4569,7 @@ impl NotesApp {
                                         egui::Button::new(label)
                                             .selected(index == self.dialog_selected)
                                             .frame_when_inactive(false)
-                                            .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                            .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
                                     );
                                     crate::ui_probe::record(
                                         ctx,
@@ -4542,7 +4656,7 @@ impl NotesApp {
                                     .shortcut_text(command.shortcut)
                                     .selected(index == self.dialog_selected)
                                     .frame_when_inactive(false)
-                                    .min_size(egui::vec2(ui.available_width(), 34.0)),
+                                    .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
                             );
                             crate::ui_probe::record(
                                 ctx,
@@ -5826,10 +5940,10 @@ impl eframe::App for NotesApp {
             .resizable(false)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(10.0);
+                    ui.add_space(theme::space::S);
                     ui.label(RichText::new(&self.status).size(11.0).weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(12.0);
+                        ui.add_space(theme::space::M);
                         if self
                             .tabs
                             .get(self.active)
@@ -5838,24 +5952,8 @@ impl eframe::App for NotesApp {
                             ui.label(RichText::new("Image").size(11.0).weak());
                             return;
                         }
-                        let mode = match self.view() {
-                            View::Read => "Reading",
-                            View::Live => "Live preview",
-                            View::Source => "Source mode",
-                            View::Split => "Split view",
-                            View::Graph => "Graph",
-                        };
                         if self.editor_preferences.show_mode {
-                            let response = ui.add(egui::Label::new(
-                                RichText::new(mode).size(11.0).color(theme::accent(ui)),
-                            ));
-                            if crate::ui_probe::enabled() {
-                                crate::ui_probe::record(
-                                    &ctx,
-                                    format!("view-mode:{mode}"),
-                                    response.rect,
-                                );
-                            }
+                            self.show_view_mode(ui);
                         }
                         if let Some(document) = self.tabs.get(self.active).map(|tab| &tab.document)
                             && self.view() != View::Graph

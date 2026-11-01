@@ -1,5 +1,5 @@
 use crate::{preview, theme, ui_probe};
-use eframe::egui::{self, Margin, Rect};
+use eframe::egui::{self, Rect};
 use egui_commonmark::CommonMarkCache;
 use rustidian::{
     tab::Tab,
@@ -216,7 +216,10 @@ impl Manager {
             .constrain(true)
             .show(ctx, |ui| {
                 let frame = egui::Frame::popup(ui.style())
-                    .inner_margin(Margin::same(32))
+                    .inner_margin(crate::theme::space::margin(
+                        crate::theme::space::XXL,
+                        crate::theme::space::XXL,
+                    ))
                     .corner_radius(12);
                 // Area remembers the previous card's size. Let a longer note grow
                 // before ScrollArea clamps its viewport to that old height.

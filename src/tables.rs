@@ -63,6 +63,15 @@ pub enum Action {
         column: usize,
         descending: bool,
     },
+    /// Empty every cell in a rectangular selection; the header row may be included.
+    Clear {
+        rows: Range<usize>,
+        columns: Range<usize>,
+    },
+    /// Body rows only: the header row stays.
+    RemoveRows(Range<usize>),
+    /// At least one column must remain.
+    RemoveColumns(Range<usize>),
 }
 
 impl Table {
@@ -197,6 +206,24 @@ impl Table {
         })
     }
 
+    /// The selected cells as a standalone Markdown table; its first row becomes the header.
+    pub fn copy(&self, source: &str, rows: Range<usize>, columns: Range<usize>) -> String {
+        let mut output = String::new();
+        for (index, row) in rows.clone().enumerate() {
+            write_row(
+                &mut output,
+                "",
+                columns.clone().map(|column| self.cell(source, row, column)),
+            );
+            output.push('\n');
+            if index == 0 {
+                write_row(&mut output, "", columns.clone().map(|_| "---"));
+                output.push('\n');
+            }
+        }
+        output
+    }
+
     pub fn apply(&self, source: &mut String, action: Action) -> Result<(), &'static str> {
         if let Action::Cell { row, column, text } = action {
             return self.edit_cell(source, row, column, text, None).map(|_| ());
@@ -248,6 +275,37 @@ impl Table {
                 }
                 let alignment = alignments.remove(from);
                 alignments.insert(to, alignment);
+            }
+            Action::Clear {
+                rows: ref selected,
+                columns: ref chosen,
+            } if !selected.is_empty()
+                && !chosen.is_empty()
+                && selected.end <= rows.len()
+                && chosen.end <= columns =>
+            {
+                for row in &mut rows[selected.clone()] {
+                    for cell in &mut row[chosen.clone()] {
+                        cell.clear();
+                    }
+                }
+            }
+            Action::RemoveRows(ref selected)
+                if selected.start > 0
+                    && selected.start < selected.end
+                    && selected.end <= rows.len() =>
+            {
+                rows.drain(selected.clone());
+            }
+            Action::RemoveColumns(ref selected)
+                if selected.start < selected.end
+                    && selected.end <= columns
+                    && selected.len() < columns =>
+            {
+                for row in &mut rows {
+                    row.drain(selected.clone());
+                }
+                alignments.drain(selected.clone());
             }
             Action::Align { column, alignment } if column < columns => {
                 // Alignment changes need not reformat any content row.

@@ -50,6 +50,7 @@ pub struct Style {
     pub block_code: bool,
     pub fence: bool,
     pub callout_header: bool,
+    pub html_break: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -370,6 +371,22 @@ impl Markdown {
                             s.marker = true;
                         });
                     }
+                }
+                Event::InlineHtml(tag) | Event::Html(tag)
+                    if crate::inline_style::is_line_break(&tag) =>
+                {
+                    let start = range.start + tag.find('<').unwrap();
+                    let end = range.start + tag.rfind('>').unwrap() + 1;
+                    let end = if text[end..].starts_with('\n') {
+                        end + 1
+                    } else {
+                        end
+                    };
+                    styles.patch(start..end, |style| {
+                        style.hidden = true;
+                        style.marker = true;
+                        style.html_break = true;
+                    });
                 }
                 Event::InlineHtml(tag) => match crate::inline_style::parse(&tag) {
                     Some(crate::inline_style::Tag::Open(element, style)) => {

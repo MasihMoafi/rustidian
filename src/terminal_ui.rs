@@ -232,10 +232,13 @@ impl Panel {
             self.focus = true;
             ui.ctx().request_repaint();
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::XS);
         let cell =
             ui.fonts_mut(|fonts| egui::vec2(fonts.glyph_width(font, 'M'), fonts.row_height(font)));
-        let area = ui.available_rect_before_wrap();
+        // Text keeps the shared inset from both edges instead of running into the pane border.
+        let area = ui
+            .available_rect_before_wrap()
+            .shrink2(egui::vec2(crate::theme::space::S, 0.0));
         let size = (
             (area.height() / cell.y).floor().clamp(1.0, 500.0) as u16,
             (area.width() / cell.x).floor().clamp(2.0, 1000.0) as u16,
@@ -280,15 +283,11 @@ impl Panel {
                 let mut parser = session.lock();
                 parser.callbacks_mut().colors = [colors.foreground, colors.background].map(rgb);
                 let screen_size = parser.screen().size();
-                // A drag selects text, unless the agent asked for mouse reports;
-                // Shift selects anyway.
-                let reporting =
-                    parser.screen().mouse_protocol_mode() != vt100::MouseProtocolMode::None;
+                // A drag always selects text. Only the wheel is reported to the agent, so
+                // an agent asking for mouse reports (Elpis does) must not disable selection.
                 if let Some(pointer) = response.interact_pointer_pos() {
                     let at = |point| cell_at(point, area, cell, screen_size);
-                    if response.drag_started()
-                        && (!reporting || ui.input(|input| input.modifiers.shift))
-                    {
+                    if response.drag_started() {
                         // egui starts a drag once the pointer has moved: anchor where it was pressed.
                         let origin = ui.input(|input| input.pointer.press_origin());
                         self.selection = Some(Selection {

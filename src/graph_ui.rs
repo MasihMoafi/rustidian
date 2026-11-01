@@ -326,7 +326,13 @@ impl Manager {
         }
         let mut action = None;
         ui.add_enabled_ui(!blocked, |ui| {
-            ui.horizontal(|ui| {
+            // Same height and centre line as the note header beside it.
+            let header = egui::vec2(
+                ui.available_width(),
+                theme::space::CONTROL + 2.0 * theme::space::XS,
+            );
+            ui.allocate_ui_with_layout(header, Layout::left_to_right(Align::Center), |ui| {
+                ui.set_min_height(header.y);
                 let title = root.as_deref().map_or_else(
                     || "Graph view".to_owned(),
                     |path| format!("Graph of {}", rustidian::vault::file_title(path)),
@@ -376,7 +382,10 @@ impl Manager {
                     egui::Frame::popup(ui.style())
                         .fill(ui.visuals().panel_fill)
                         .corner_radius(8)
-                        .inner_margin(egui::Margin::symmetric(12, 6))
+                        .inner_margin(crate::theme::space::margin(
+                            crate::theme::space::M,
+                            crate::theme::space::S,
+                        ))
                         .show(ui, |ui| {
                             ui.set_width((panel_width - 24.0).max(76.0));
                             ui.set_max_height(panel_height);
@@ -655,7 +664,7 @@ fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
 }
 
 fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
-    ui.spacing_mut().item_spacing = egui::vec2(6.0, 8.0);
+    ui.spacing_mut().item_spacing = egui::vec2(crate::theme::space::S, crate::theme::space::S);
     ui.spacing_mut().slider_width = (ui.available_width() - 46.0).clamp(36.0, 170.0);
     ui.style_mut()
         .text_styles
@@ -714,7 +723,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
                 "orphans",
             );
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::XS);
     }
     if section(ui, &mut pane.preferences.sections[1], "Groups") {
         let mut remove = None;
@@ -777,7 +786,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
                 color: [224, 82, 82, 255],
             });
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::XS);
     }
     if section(ui, &mut pane.preferences.sections[2], "Display") {
         ui.label("Color by");
@@ -854,7 +863,7 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
             };
             ui.ctx().request_repaint();
         }
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::space::XS);
     }
     if section(ui, &mut pane.preferences.sections[3], "Forces") {
         for (label, value, range, probe) in [

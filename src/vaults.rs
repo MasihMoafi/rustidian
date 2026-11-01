@@ -45,13 +45,23 @@ pub fn resolve_input(
             "Choose a vault folder or a supported Markdown, text or source-code file.".into(),
         );
     }
+    let default_vault = default_vault.and_then(|vault| vault.canonicalize().ok());
+    // A registered vault that encloses the default vault (Masih's ~/Desktop around
+    // ~/Desktop/o) is too broad to claim documents: a file outside the default vault
+    // opens with its own folder instead of loading everything above it.
+    let encloses_default = |vault: &PathBuf| {
+        default_vault
+            .as_deref()
+            .is_some_and(|default| default != vault.as_path() && default.starts_with(vault))
+    };
     let root = default_vault
-        .and_then(|vault| vault.canonicalize().ok())
+        .clone()
         .into_iter()
         .chain(
             registered_vaults
                 .iter()
-                .filter_map(|vault| vault.canonicalize().ok()),
+                .filter_map(|vault| vault.canonicalize().ok())
+                .filter(|vault| !encloses_default(vault)),
         )
         .filter(|vault| absolute.starts_with(vault) && vault.is_dir())
         .max_by_key(|vault| vault.components().count())

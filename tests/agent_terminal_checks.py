@@ -37,6 +37,8 @@ while :; do
     lines) for ((i = 1; i <= 1200; i++)); do printf 'line %s\n' "$i"; done ;;
     ticks) (for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.3; printf 'tick %s\n' "$i"; done) & ;;
     flood) head -c 50000000 /dev/zero | tr '\0' 'x' | fold -w 100; printf 'flood done\n' ;;
+    mouse) printf '\033[?1000h\033[?1006hMOUSE ON\n' ;;
+    nomouse) printf '\033[?1000l\033[?1006lMOUSE OFF\n' ;;
     alt) printf '\033[?1049h\033[?1007h\033[HALT SCREEN\n' ;;
     main) printf '\033[?1007l\033[?1049lMAIN SCREEN\n' ;;
     colors) printf '\033[1mbold\033[0m \033[3mitalic\033[0m \033[4munderline\033[0m \033[7minverse\033[0m \033[31mred\033[0m \033[32mgreen\033[0m \033[34mblue\033[0m \033[38;5;208morange\033[0m \033[38;2;0;160;255mtruecolor\033[0m \033[30;47mblack-on-white\033[0m\n' ;;
@@ -266,6 +268,34 @@ def run(scope):
                                          capture_output=True, text=True, timeout=5).stdout, "Nothing was copied")
     assert copied == "FAKE", copied
     h.results.append("A drag selected the banner's first word and Ctrl+Shift+C copied it")
+
+    # 5b. Elpis asks for mouse reports; a plain drag must still select (Masih, 1 Nov:
+    # "the rustidian's elpis text is unselectable").
+    focus_terminal()
+    enter("mouse")
+    shows("MOUSE ON")
+    first = next(bounds for name, bounds in sorted(controls().items()) if name.startswith("terminal-row:00:"))
+    y = str(round((first[1] + first[3]) / 2))
+    h.xdo("mousemove", "--sync", str(round(terminal[0] + cell / 2)), y, "mousedown", "1")
+    h.pause()
+    h.xdo("mousemove", "--sync", str(round(terminal[0] + cell * 2)), y)
+    h.pause()
+    h.xdo("mousemove", "--sync", str(round(terminal[0] + cell * 3.5)), y)
+    h.pause()
+    h.xdo("mouseup", "1")
+    h.pause()
+    wait(lambda: metric("terminal-selected") == 1, "With mouse reports on, a plain drag did not select")
+    h.key("ctrl+shift+c")
+    focus_terminal()
+    enter("nomouse")  # later steps scroll with the wheel, which reports would send to the agent
+    shows("MOUSE OFF")
+    h.results.append("With mouse reports on, as in Elpis, a plain drag still selected text")
+
+    # 5c. Text keeps the shared 8 px inset from the pane's right edge.
+    pane = h.control_bounds("sidebar:details")
+    terminal = h.control_bounds("agent-terminal")
+    assert pane[2] - terminal[2] >= 12 + 8 - 1, ("Terminal text needs an inset from the pane edge", pane, terminal)
+    h.results.append("The terminal keeps an inset from the pane's right edge")
 
     # 6. Ctrl+V pastes text from the clipboard, as does Ctrl+Shift+V.
     focus_terminal()

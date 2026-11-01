@@ -144,7 +144,7 @@ impl Manager {
                         if links == 1 { "link" } else { "links" },
                         if files == 1 { "file" } else { "files" },
                     ));
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::space::S);
                     ui.horizontal_wrapped(|ui| {
                         let choices = [
                             ("Always update", "move-links-always", Some(true)),
@@ -168,8 +168,10 @@ impl Manager {
                             + 16.0;
                         ui.add_space((ui.available_width() - required).max(0.0));
                         for (label, name, value) in choices {
-                            let button =
-                                ui.add(egui::Button::new(label).min_size(egui::vec2(0.0, 36.0)));
+                            let button = ui.add(
+                                egui::Button::new(label)
+                                    .min_size(egui::vec2(0.0, crate::theme::space::CONTROL)),
+                            );
                             if focus && value == Some(true) {
                                 button.request_focus();
                             }
@@ -337,7 +339,7 @@ impl Manager {
                             create: true,
                         });
                     }
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::space::M);
                     ui.vertical_centered(|ui| {
                         ui.weak("No existing folders found.");
                     });
@@ -345,7 +347,7 @@ impl Manager {
                 if let Some(error) = &self.error {
                     ui.colored_label(ui.visuals().error_fg_color, error);
                 }
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::space::S);
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space((ui.available_width() - 380.0).max(0.0) / 2.0);
                     ui.label(
