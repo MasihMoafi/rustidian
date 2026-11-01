@@ -262,20 +262,30 @@ impl Properties {
                     }
                     match field.kind {
                         Kind::Text | Kind::Number => {
-                            let input = ui.add(
-                                TextEdit::singleline(&mut field.text)
-                                    .id_salt((&tab.document.path, &field.name))
-                                    .font(FontId::proportional(crate::theme::document_size(
-                                        ui, 18.0,
-                                    )))
-                                    .frame(egui::Frame::NONE)
-                                    .desired_width(value_width)
-                                    .hint_text(if field.kind == Kind::Number {
-                                        "Number"
-                                    } else {
-                                        "Empty"
-                                    }),
-                            );
+                            // The same fixed, centred cell as the name, so both share one line.
+                            let input = ui
+                                .allocate_ui_with_layout(
+                                    egui::vec2(value_width, 33.5),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.add(
+                                            TextEdit::singleline(&mut field.text)
+                                                .id_salt((&tab.document.path, &field.name))
+                                                .font(FontId::proportional(
+                                                    crate::theme::document_size(ui, 18.0),
+                                                ))
+                                                .frame(egui::Frame::NONE)
+                                                .desired_width(value_width)
+                                                .margin(egui::Margin::symmetric(4, 0))
+                                                .hint_text(if field.kind == Kind::Number {
+                                                    "Number"
+                                                } else {
+                                                    "Empty"
+                                                }),
+                                        )
+                                    },
+                                )
+                                .inner;
                             crate::ui_probe::record(
                                 ui.ctx(),
                                 format!("property:{}:value", field.name),
@@ -317,7 +327,9 @@ impl Properties {
                                         })
                                         .sum()
                                 });
-                                chips + 148.0 <= value_width
+                                // The add field shrinks to the room left (at least 48 px) rather than
+                                // pushing a fitting row into the taller wrapped layout.
+                                chips + 56.0 <= value_width
                             };
                             let mut row = |ui: &mut egui::Ui| {
                                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -337,45 +349,73 @@ impl Properties {
                                             egui::Margin::ZERO
                                         })
                                         .show(ui, |ui| {
-                                            let width = ui
-                                                .fonts_mut(|fonts| {
-                                                    fonts
-                                                        .layout_no_wrap(
-                                                            value.clone(),
-                                                            FontId::proportional(
-                                                                crate::theme::document_size(
-                                                                    ui, 18.0,
-                                                                ),
-                                                            ),
-                                                            ui.visuals().text_color(),
+                                            ui.with_layout(
+                                                egui::Layout::left_to_right(egui::Align::Center),
+                                                |ui| {
+                                                    let width = ui
+                                                        .fonts_mut(|fonts| {
+                                                            fonts
+                                                                .layout_no_wrap(
+                                                                    value.clone(),
+                                                                    FontId::proportional(
+                                                                        crate::theme::document_size(
+                                                                            ui, 18.0,
+                                                                        ),
+                                                                    ),
+                                                                    ui.visuals().text_color(),
+                                                                )
+                                                                .size()
+                                                                .x
+                                                                + 4.0
+                                                        })
+                                                        .clamp(24.0, value_width.max(24.0));
+                                                    let mut input = TextEdit::singleline(value)
+                                                        .id_salt((
+                                                            &tab.document.path,
+                                                            &field.name,
+                                                            index,
+                                                        ))
+                                                        .font(FontId::proportional(
+                                                            crate::theme::document_size(ui, 18.0),
+                                                        ))
+                                                        .frame(egui::Frame::NONE)
+                                                        .margin(egui::Margin::symmetric(2, 0))
+                                                        .desired_width(width);
+                                                    if tags {
+                                                        input = input
+                                                            .text_color(crate::theme::accent(ui));
+                                                    }
+                                                    let text = ui.add(input);
+                                                    edited |= text.changed();
+                                                    ui.spacing_mut().button_padding =
+                                                        egui::vec2(2.0, 0.0);
+                                                    let cross = ui.add(
+                                                        egui::Button::new(
+                                                            RichText::new("×").size(14.0).weak(),
                                                         )
-                                                        .size()
-                                                        .x
-                                                        + 4.0
-                                                })
-                                                .clamp(24.0, value_width.max(24.0));
-                                            let mut input = TextEdit::singleline(value)
-                                                .id_salt((&tab.document.path, &field.name, index))
-                                                .font(FontId::proportional(
-                                                    crate::theme::document_size(ui, 18.0),
-                                                ))
-                                                .frame(egui::Frame::NONE)
-                                                .desired_width(width);
-                                            if tags {
-                                                input = input.text_color(crate::theme::accent(ui));
-                                            }
-                                            edited |= ui.add(input).changed();
-                                            if ui
-                                                .add(
-                                                    egui::Button::new(
-                                                        RichText::new("×").size(14.0).weak(),
-                                                    )
-                                                    .frame_when_inactive(false),
-                                                )
-                                                .clicked()
-                                            {
-                                                remove = Some(index);
-                                            }
+                                                        .frame_when_inactive(false),
+                                                    );
+                                                    crate::ui_probe::record(
+                                                        ui.ctx(),
+                                                        format!(
+                                                            "property:{}:item:{index}:text",
+                                                            field.name
+                                                        ),
+                                                        text.rect,
+                                                    );
+                                                    crate::ui_probe::record(
+                                                        ui.ctx(),
+                                                        format!(
+                                                            "property:{}:item:{index}:remove",
+                                                            field.name
+                                                        ),
+                                                        cross.rect,
+                                                    );
+                                                    if cross.clicked() {
+                                                        remove = Some(index);
+                                                    }
+                                                },
+                                            );
                                         });
                                     crate::ui_probe::record(
                                         ui.ctx(),
@@ -394,7 +434,10 @@ impl Properties {
                                             ui, 18.0,
                                         )))
                                         .frame(egui::Frame::NONE)
-                                        .desired_width(140.0)
+                                        .margin(egui::Margin::symmetric(4, 0))
+                                        .desired_width(
+                                            (ui.available_width() - 4.0).clamp(48.0, 140.0),
+                                        )
                                         .hint_text(if field.items.is_empty() {
                                             "Empty"
                                         } else {

@@ -859,6 +859,20 @@ def main():
                     centres[part] = (top + bottom) / 2
                 assert max(centres.values()) - min(centres.values()) <= 2, f"Tags row centres differ by more than 2 px: {centres}"
                 results.append(f"The tags row's type icon, name and first chip share one centre line: {centres}")
+                # 1 Nov (Masih: "the lack of horizontal alignment on the text"): every row's name,
+                # value, chip text and × share one centre line, and rows keep one pitch.
+                def centre(name):
+                    left, top, right, bottom = control_bounds(name)
+                    return (top + bottom) / 2
+                off = {}
+                for field, part in (("score", "value"), ("aliases", "item:0:text"), ("aliases", "item:0:remove"),
+                                    ("tags", "item:0:text"), ("tags", "item:0:remove"), ("tags", "item:1:text")):
+                    off[f"{field}:{part}"] = round(centre(f"property:{field}:{part}") - centre(f"property:{field}:name"), 1)
+                assert all(abs(d) <= 1 for d in off.values()), ("Row items must share the name's centre line", off)
+                tops = [control_bounds(f"property:{f}:name")[1] for f in ("aliases", "tags", "done", "score")]
+                pitches = [round(b - a, 1) for a, b in zip(tops, tops[1:])]
+                assert max(pitches) - min(pitches) <= 1, ("Property rows need one height", pitches)
+                results.append(f"Property names, values, chips and × share one line; rows keep one pitch {pitches}")
                 key("ctrl+o")
                 type_text("Notebook alias")
                 key("Return")
