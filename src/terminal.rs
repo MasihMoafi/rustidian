@@ -54,6 +54,43 @@ impl Backend {
     }
 }
 
+/// Where Rustidian tells the agent which note Masih has open; kept current as he moves.
+pub fn context_file(root: &Path) -> PathBuf {
+    root.join(".rustidian").join("agent-context.md")
+}
+
+/// The standing instruction each agent gets at launch, so "this note" means the open one.
+pub fn context_instruction(root: &Path) -> String {
+    format!(
+        "You are running inside Rustidian, Masih's Markdown notes app; your working folder is \
+         his vault at {}. The file {} always names the note he has open, the line his cursor \
+         is on and any text he has selected; Rustidian updates it as he moves. When he says \
+         \"this note\", \"this file\", \"this article\" or asks about what he is reading, read that \
+         file first and then the note it names.",
+        root.display(),
+        context_file(root).display()
+    )
+}
+
+impl Backend {
+    /// Launch arguments that hand the agent `context_instruction`.
+    pub fn context_args(self, root: &Path) -> Vec<std::ffi::OsString> {
+        let text = context_instruction(root);
+        match self {
+            // Elpis and Codex read TOML overrides; a basic string escapes `\` and `"`.
+            Self::Elpis | Self::Codex => vec![
+                "-c".into(),
+                format!(
+                    "developer_instructions=\"{}\"",
+                    text.replace('\\', "\\\\").replace('"', "\\\"")
+                )
+                .into(),
+            ],
+            Self::Claude => vec!["--append-system-prompt".into(), text.into()],
+        }
+    }
+}
+
 /// The first executable file called `name` in `path` (a `PATH` value);
 /// relative folders are skipped.
 fn find(name: &str, path: &OsStr) -> Option<PathBuf> {
@@ -216,6 +253,7 @@ impl Session {
     /// Other threads call `repaint` whenever the screen changes or the program ends.
     pub fn start(
         program: &Path,
+        args: &[std::ffi::OsString],
         folder: &Path,
         size: (u16, u16),
         repaint: impl Fn() + Send + Sync + 'static,
@@ -258,6 +296,7 @@ impl Session {
             }
             None => CommandBuilder::new(program),
         };
+        command.args(args);
         command.cwd(folder);
         command.env_clear();
         for (name, value) in child_env(std::env::vars_os()) {
@@ -452,6 +491,34 @@ fn read(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn each_agent_is_told_where_the_open_note_is_recorded() {
+        let root = Path::new("/home/masih/Desktop/o");
+        let claude = Backend::Claude.context_args(root);
+        assert_eq!(claude[0], "--append-system-prompt");
+        assert!(
+            claude[1]
+                .to_string_lossy()
+                .contains("/home/masih/Desktop/o/.rustidian/agent-context.md")
+        );
+        for backend in [Backend::Elpis, Backend::Codex] {
+            let args = backend.context_args(root);
+            assert_eq!(args[0], "-c");
+            let value = args[1].to_string_lossy();
+            let quoted = value.strip_prefix("developer_instructions=").unwrap();
+            // A TOML basic string: quoted, and every inner quote or backslash escaped.
+            assert!(quoted.starts_with('"') && quoted.ends_with('"'), "{quoted}");
+            let inner = &quoted[1..quoted.len() - 1];
+            let mut chars = inner.chars();
+            let mut decoded = String::new();
+            while let Some(c) = chars.next() {
+                assert_ne!(c, '"', "unescaped quote in {inner}");
+                decoded.push(if c == '\\' { chars.next().unwrap() } else { c });
+            }
+            assert_eq!(decoded, context_instruction(root));
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -581,7 +648,7 @@ mod tests {
             folder.path(),
             "printf 'in %s as %s at %s\\n' \"$(pwd)\" \"$TERM\" \"$(stty size)\"\nread line\necho \"got $line\"\nexit 3\n",
         );
-        let mut session = Session::start(&program, folder.path(), (12, 100), || {}).unwrap();
+        let mut session = Session::start(&program, &[], folder.path(), (12, 100), || {}).unwrap();
         let contents = |session: &Session| session.lock().screen().contents();
         let greeting = format!("in {} as xterm-256color at 12 100", folder.path().display());
         wait_until("the greeting", || contents(&session).contains(&greeting));
@@ -599,7 +666,7 @@ mod tests {
             folder.path(),
             "trap '' HUP TERM\necho ready\nwhile :; do sleep 1; done\n",
         );
-        let session = Session::start(&program, folder.path(), (10, 40), || {}).unwrap();
+        let session = Session::start(&program, &[], folder.path(), (10, 40), || {}).unwrap();
         wait_until("the agent", || {
             session.lock().screen().contents().contains("ready")
         });

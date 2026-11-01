@@ -3414,6 +3414,13 @@ impl NotesApp {
             let mut state =
                 egui::widgets::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
             state.share_undoer_with(&shared);
+            crate::terminal_ui::note_context(
+                ui.ctx(),
+                &vault.root,
+                &tab.document.path,
+                &tab.document.text,
+                state.cursor.char_range(),
+            );
             let history_key =
                 ui.input(|input| input.key_pressed(Key::Z) || input.key_pressed(Key::Y));
             let shortcuts = history_key
@@ -5860,6 +5867,9 @@ impl eframe::App for NotesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let frame_started = Instant::now();
         let ctx = ui.ctx().clone();
+        if let Some(vault) = &self.vault {
+            crate::terminal_ui::write_note_context(&ctx, &vault.root);
+        }
         if let Some(due) = self.attention_check {
             let now = Instant::now();
             if now < due {

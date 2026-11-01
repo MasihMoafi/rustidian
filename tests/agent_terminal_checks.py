@@ -22,6 +22,7 @@ from types import SimpleNamespace
 AGENT = r'''#!/bin/bash
 # A stand-in for the Agent terminal checks: no model, no network.
 name=${0##*/}
+launch_args="$*"
 printf 'FAKE %s ready pid %s\n' "$name" "$$"
 trap 'printf "interrupted\n"' INT
 trap '' HUP
@@ -37,6 +38,7 @@ while :; do
     lines) for ((i = 1; i <= 1200; i++)); do printf 'line %s\n' "$i"; done ;;
     ticks) (for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.3; printf 'tick %s\n' "$i"; done) & ;;
     flood) head -c 50000000 /dev/zero | tr '\0' 'x' | fold -w 100; printf 'flood done\n' ;;
+    args) case $launch_args in *agent-context.md*) printf 'ARGS NAME THE CONTEXT FILE\n' ;; *) printf 'ARGS MISSING CONTEXT\n' ;; esac ;;
     mouse) printf '\033[?1000h\033[?1006hMOUSE ON\n' ;;
     nomouse) printf '\033[?1000l\033[?1006lMOUSE OFF\n' ;;
     alt) printf '\033[?1049h\033[?1007h\033[HALT SCREEN\n' ;;
@@ -268,6 +270,14 @@ def run(scope):
                                          capture_output=True, text=True, timeout=5).stdout, "Nothing was copied")
     assert copied == "FAKE", copied
     h.results.append("A drag selected the banner's first word and Ctrl+Shift+C copied it")
+
+    # 5a. The agent knows which note is open (Masih, 1 Nov: "it can't see the file I have open").
+    focus_terminal()
+    enter("args")
+    shows("ARGS NAME THE CONTEXT FILE")
+    context = Path(h.fixture) / ".rustidian" / "agent-context.md"
+    wait(lambda: context.exists() and "note: Home.md" in context.read_text(), "The open note was not recorded for the agent")
+    h.results.append("The agent is launched with the context instruction and the open note is recorded for it")
 
     # 5b. Elpis asks for mouse reports; a plain drag must still select (Masih, 1 Nov:
     # "the rustidian's elpis text is unselectable").

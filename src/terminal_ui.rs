@@ -251,7 +251,8 @@ impl Panel {
                     ctx.request_repaint();
                 }
             };
-            match Session::start(&program, root, size, repaint) {
+            let args = backend.context_args(root);
+            match Session::start(&program, &args, root, size, repaint) {
                 Ok(session) => self.session = Some(session),
                 Err(error) => {
                     self.error = Some(format!("Couldn’t start {}: {error}", backend.label()));
@@ -1280,5 +1281,62 @@ mod tests {
         .unwrap();
         assert_eq!(saved, br#"{"backend":"codex"}"#);
         assert!(serde_json::from_slice::<Saved>(br#"{"backend":"gemini"}"#).is_err());
+    }
+}
+
+/// Record the open note for the agent (called where the note is drawn, each frame).
+pub fn note_context(
+    ctx: &egui::Context,
+    root: &Path,
+    path: &Path,
+    text: &str,
+    cursor: Option<egui::text::CCursorRange>,
+) {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut body = format!(
+        "# Open in Rustidian\n\nnote: {}\npath: {}\n",
+        relative.display(),
+        path.display()
+    );
+    if let Some(range) = cursor {
+        let (start, end) = {
+            let (a, b) = (range.primary.index.0, range.secondary.index.0);
+            (a.min(b), a.max(b))
+        };
+        let line = text.chars().take(start).filter(|c| *c == '\n').count() + 1;
+        body.push_str(&format!("cursor line: {line}\n"));
+        if end > start {
+            let selected: String = text
+                .chars()
+                .skip(start)
+                .take((end - start).min(4000))
+                .collect();
+            body.push_str(&format!("\n## Selected text\n\n{selected}\n"));
+        }
+    }
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("agent-note-context"), body));
+}
+
+/// Write the recorded context when it changed, atomically, so the agent never reads half a file.
+pub fn write_note_context(ctx: &egui::Context, root: &Path) {
+    let id = egui::Id::new("agent-note-context");
+    let written = id.with("written");
+    let (current, last): (Option<String>, Option<String>) =
+        ctx.data(|data| (data.get_temp(id), data.get_temp(written)));
+    let Some(current) = current else { return };
+    if last.as_deref() == Some(current.as_str()) {
+        return;
+    }
+    let file = rustidian::terminal::context_file(root);
+    let saved = file
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| {
+            let temporary = file.with_extension("md.tmp");
+            std::fs::write(&temporary, &current)?;
+            std::fs::rename(&temporary, &file)
+        });
+    if saved.is_ok() {
+        ctx.data_mut(|data| data.insert_temp(written, current));
     }
 }
