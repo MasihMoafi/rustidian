@@ -70,7 +70,7 @@ def main():
         launcher.write_text(LAUNCHER)
         launcher.chmod(0o755)
         shutil.copytree(root / 'demo-vault', package / 'usr/share/rustidian/demo-vault')
-        shutil.copy2(root / 'docs/brand/rustidian.png', package / 'usr/share/icons/hicolor/256x256/apps/rustidian.png')
+        shutil.copy2(root / 'docs/brand/store-icon.png', package / 'usr/share/icons/hicolor/256x256/apps/rustidian.png')
         documents = package / 'usr/share/doc/rustidian'
         shutil.copy2(root / 'LICENSE', documents / 'copyright')
         shutil.copy2(args.notices, documents / 'THIRD_PARTY_NOTICES.txt')

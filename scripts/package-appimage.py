@@ -56,7 +56,7 @@ def main():
         for license in (root / 'assets/fonts').glob('LICENSE-*.txt'):
             shutil.copy2(license, documents / license.name)
         shutil.copy2(root / 'packaging/rustidian.metainfo.xml', appdir / 'usr/share/metainfo/io.github.masihmoafi.rustidian.appdata.xml')
-        shutil.copy2(root / 'docs/brand/rustidian.png', appdir / 'rustidian.png')
+        shutil.copy2(root / 'docs/brand/store-icon.png', appdir / 'rustidian.png')
         (appdir / 'rustidian.desktop').write_text(DESKTOP)
         (appdir / 'AppRun').write_text(APPRUN)
         (appdir / 'AppRun').chmod(0o755)

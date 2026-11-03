@@ -25,7 +25,7 @@ def main():
         bundle = Path(temporary)
         shutil.copy2(args.binary, bundle / 'rustidian')
         shutil.copy2(root / 'scripts/install-linux.py', bundle / 'install.py')
-        shutil.copy2(root / 'docs/brand/rustidian.png', bundle / 'rustidian.png')
+        shutil.copy2(root / 'docs/brand/store-icon.png', bundle / 'rustidian.png')
         shutil.copy2(root / 'LICENSE', bundle / 'LICENSE')
         if args.notices:
             shutil.copy2(args.notices, bundle / 'THIRD_PARTY_NOTICES.txt')
