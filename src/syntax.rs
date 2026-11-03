@@ -318,7 +318,7 @@ pub fn highlights(ui: &egui::Ui, source: &str, parsed: &Markdown) -> Vec<Token> 
     let dark = ui.visuals().dark_mode;
     let pass = ui.ctx().cumulative_pass_nr();
     // `BUDGET` spans every layout of one frame of this context.
-    let spent_id = egui::Id::new("highlight-budget");
+    let spent_id = egui::Id::unique("highlight-budget");
     let budget = ui.ctx().data_mut(|data| {
         let spent = data.get_temp_mut_or_default::<(u64, Duration)>(spent_id);
         if spent.0 != pass {

@@ -100,7 +100,7 @@ pub fn quit_dialog(ctx: &egui::Context) -> Option<bool> {
 }
 
 fn close_source_id() -> egui::Id {
-    egui::Id::new("rustidian-close-source")
+    egui::Id::unique("rustidian-close-source")
 }
 
 /// Close the window because of `source`. The close handler prints

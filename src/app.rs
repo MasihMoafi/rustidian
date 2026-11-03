@@ -491,18 +491,17 @@ impl NotesApp {
                     let watcher = rustidian::watcher::Watch::new(
                         &vault.root,
                         move |event: notify::Result<notify::Event>| {
-                            if let Ok(event) = &event {
-                                if !(event.kind.is_modify()
+                            if let Ok(event) = &event
+                                && (!(event.kind.is_modify()
                                     || event.kind.is_create()
                                     || event.kind.is_remove())
                                     || !event.paths.iter().any(|path| {
                                         path.strip_prefix(&watch_root).is_ok_and(|relative| {
                                             !rustidian::vault::is_ignored_path(relative)
                                         })
-                                    })
-                                {
-                                    return;
-                                }
+                                    }))
+                            {
+                                return;
                             }
                             if matches!(
                                 events_sender.try_send(event),
@@ -2485,7 +2484,7 @@ impl NotesApp {
                                             );
                                             let result = ui.interact(
                                                 rect,
-                                                ui.id().with(("search-result", note)),
+                                                ui.scope_id().with(("search-result", note)),
                                                 egui::Sense::click(),
                                             );
                                             if result.hovered() || result.has_focus() {
@@ -3567,11 +3566,11 @@ impl NotesApp {
         if add_property {
             self.ask(Dialog::AddProperty);
         }
-        if let Some(request) = self.editor.block_completion.take() {
-            if let Err(error) = self.complete_block_link(ui.ctx(), request) {
-                self.error = Some(error);
-                self.focus_editor();
-            }
+        if let Some(request) = self.editor.block_completion.take()
+            && let Err(error) = self.complete_block_link(ui.ctx(), request)
+        {
+            self.error = Some(error);
+            self.focus_editor();
         }
         for action in std::mem::take(&mut self.editor.embed_actions) {
             self.apply_preview_action(ui.ctx(), Some(action));
@@ -4789,10 +4788,11 @@ impl NotesApp {
         if close {
             self.dialog = None;
             self.template_source = None;
-            if matches!(dialog, Dialog::RenameNote | Dialog::TrashNote) {
-                if !submit && self.tabs.iter().all(|tab| !tab.document.dirty()) {
-                    self.error = None;
-                }
+            if matches!(dialog, Dialog::RenameNote | Dialog::TrashNote)
+                && !submit
+                && self.tabs.iter().all(|tab| !tab.document.dirty())
+            {
+                self.error = None;
             }
             self.focus_editor();
         }
@@ -5990,7 +5990,7 @@ impl eframe::App for NotesApp {
         if self.dialog.is_none()
             && let Some(error) = self.error.clone()
         {
-            egui::Area::new(egui::Id::new("error"))
+            egui::Area::new(egui::Id::unique("error"))
                 .order(egui::Order::Foreground)
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 44.0))
                 .show(&ctx, |ui| {

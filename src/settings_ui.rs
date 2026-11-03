@@ -274,7 +274,7 @@ impl NotesApp {
                     ui.weak("No settings found.");
                     return;
                 }
-                ctx.data_mut(|data| data.insert_temp(egui::Id::new("settings-query"), query.clone()));
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique("settings-query"), query.clone()));
                 let content = ScrollArea::vertical()
                     .id_salt(("settings-content", self.settings_page as u8))
                     .max_height(height - 100.0)
@@ -665,9 +665,9 @@ fn row(
 fn reveal_match(ui: &egui::Ui, title: &str, rect: egui::Rect) {
     let (query, shown): (String, Option<String>) = ui.ctx().data(|data| {
         (
-            data.get_temp(egui::Id::new("settings-query"))
+            data.get_temp(egui::Id::unique("settings-query"))
                 .unwrap_or_default(),
-            data.get_temp(egui::Id::new("settings-query-shown")),
+            data.get_temp(egui::Id::unique("settings-query-shown")),
         )
     });
     let title = title.to_lowercase();
@@ -679,13 +679,13 @@ fn reveal_match(ui: &egui::Ui, title: &str, rect: egui::Rect) {
     }
     ui.scroll_to_rect(rect, Some(Align::Center));
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new("settings-query-shown"), query));
+        .data_mut(|data| data.insert_temp(egui::Id::unique("settings-query-shown"), query));
 }
 
 /// An installed font family, or the default (empty), with a search field.
 fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> bool {
     let before = value.clone();
-    let search_id = egui::Id::new(id).with("search");
+    let search_id = egui::Id::unique(id).with("search");
     let response = egui::ComboBox::from_id_salt(id)
         .icon(theme::combo_chevron)
         .width(180.0)
