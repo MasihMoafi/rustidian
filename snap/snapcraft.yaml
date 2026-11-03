@@ -27,17 +27,19 @@ apps:
 
 parts:
   rustidian:
-    plugin: rust
+    plugin: nil
     source: .
-    rust-channel: stable
-    rust-features: [desktop]
-    build-packages: [pkg-config, python3, libx11-dev, libxkbcommon-dev, libwayland-dev, libgl1-mesa-dev]
+    build-packages: [curl, gcc, pkg-config, python3, libx11-dev, libxkbcommon-dev, libwayland-dev, libgl1-mesa-dev]
     stage-packages: [libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libwayland-client0, libwayland-egl1, libegl1, libgl1, fontconfig, libglib2.0-bin, dbus, zenity]
     override-pull: |
       craftctl default
       craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
     override-build: |
-      craftctl default
+      # Cargo.toml pins rust-version 1.95; the archive's rustc is older, so install it with rustup.
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.95.0
+      . "$HOME/.cargo/env"
+      cargo build --release --locked
+      install -Dm755 target/release/rustidian "$CRAFT_PART_INSTALL/bin/rustidian"
       install -Dm644 LICENSE "$CRAFT_PART_INSTALL/share/doc/rustidian/copyright"
       install -Dm644 THIRD_PARTY_NOTICES.txt "$CRAFT_PART_INSTALL/share/doc/rustidian/THIRD_PARTY_NOTICES.txt"
       for f in assets/fonts/LICENSE-*.txt; do install -Dm644 "$f" "$CRAFT_PART_INSTALL/share/doc/rustidian/$(basename "$f")"; done

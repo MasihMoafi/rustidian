@@ -9,7 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get install -y --no-install-recommends desktop-file-utils appstream python3-yaml
+      - run: python3 scripts/lint-packaging.py
   snap:
+    needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -33,6 +41,7 @@ jobs:
             rustidian_amd64.snap.sha256
           retention-days: 1
   appimage:
+    needs: lint
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
