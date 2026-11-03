@@ -33,7 +33,10 @@ TARGET = "x86_64-unknown-linux-gnu"
 BASELINE_NOTICES_SHA256 = "f63a6a19f1cca09c4b21dd8276953cd1a91ec979e1c67f3e98cab93ee1fde969"
 COVERED = re.compile(r"^([\w.-]+) ([0-9][^\s]*) — ", re.M)
 LICENSE_FILE = re.compile(r"(licen[cs]e|copying|copyright|notice|unlicense)", re.I)
-FALLBACK = {"ratex-": ROOT / "assets/fonts/LICENSE-RaTeX.txt"}
+FALLBACK = {"ratex-": ROOT / "assets/fonts/LICENSE-RaTeX.txt",
+            "gl_generator": ROOT / "vendor/LICENSE-APACHE", "khronos_api": ROOT / "vendor/LICENSE-APACHE"}
+# Crates whose font licence texts sit in a subfolder, not at the crate root.
+LICENSE_DIRS = {"epaint_default_fonts": "fonts/"}
 GRAMMARS = ("two-face", "0.5.1")
 SEPARATOR = "=" * 70
 
@@ -127,6 +130,7 @@ def crate_notice(name, version, data):
 
         manifest = tomllib.loads(read("Cargo.toml").decode("utf-8"))["package"]
         names = sorted(path for path in files if "/" not in path and LICENSE_FILE.match(path))
+        names += sorted(path for path in files if path.startswith(LICENSE_DIRS.get(name, "\0")) and path.endswith(".txt"))
         if manifest.get("license-file") in files and manifest["license-file"] not in names:
             names.append(manifest["license-file"])
         texts = [(path, read(path).decode("utf-8").rstrip()) for path in names]
@@ -161,7 +165,8 @@ def main():
     text = baseline.decode("utf-8")
     if text.startswith("Rustidian alpha: "):
         text = "Rustidian: " + text.removeprefix("Rustidian alpha: ")
-    covered = set(COVERED.findall(text))
+    # The baseline lists the font crates without their licence texts; add them again below.
+    covered = {crate for crate in COVERED.findall(text) if crate[0] not in LICENSE_DIRS}
     locked = {(package["name"], package["version"]): package.get("checksum")
               for package in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]}
     crates = build_crates()

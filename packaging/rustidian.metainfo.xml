@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.masihmoafi.rustidian</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Rustidian</name>
+  <summary>Native Markdown notebook for local vaults</summary>
+  <description>
+    <p>Rustidian is a fast, native Markdown notebook for Linux. Your notes stay as plain files in ordinary folders; no account is needed.</p>
+    <p>It opens Obsidian-format vaults. It is an independent project and is not affiliated with Obsidian.</p>
+    <ul>
+      <li>Live, source and reading modes</li>
+      <li>Wiki links, backlinks and search</li>
+      <li>Tasks, tables, callouts and Mermaid diagrams</li>
+      <li>Daily notes, templates, bookmarks and graph views</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">rustidian.desktop</launchable>
+  <url type="homepage">https://github.com/MasihMoafi/rustidian</url>
+  <url type="bugtracker">https://github.com/MasihMoafi/rustidian/issues</url>
+  <developer id="io.github.masihmoafi"><name>Masih Moafi</name></developer>
+  <categories><category>Office</category><category>TextEditor</category></categories>
+  <provides><binary>rustidian</binary></provides>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.3" date="2026-11-03"/></releases>
+</component>

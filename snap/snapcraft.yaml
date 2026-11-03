@@ -1,0 +1,45 @@
+name: rustidian
+title: Rustidian
+summary: Native Markdown notebook for local vaults
+description: |
+  Rustidian is a fast, native Markdown notebook for Linux. Notes stay as plain
+  files in ordinary folders; no account is needed. It opens Obsidian-format
+  vaults. Independent project, not affiliated with Obsidian.
+adopt-info: rustidian
+icon: snap/gui/rustidian.png
+license: MIT
+base: core24
+grade: stable
+confinement: strict
+contact: https://github.com/MasihMoafi/rustidian/issues
+issues: https://github.com/MasihMoafi/rustidian/issues
+source-code: https://github.com/MasihMoafi/rustidian
+website: https://github.com/MasihMoafi/rustidian
+compression: lzo
+platforms:
+  amd64:
+
+apps:
+  rustidian:
+    command: bin/rustidian
+    extensions: [gnome]
+    plugs: [home, removable-media, network, opengl, desktop, desktop-legacy, wayland, x11, gsettings]
+
+parts:
+  rustidian:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    rust-features: [desktop]
+    build-packages: [pkg-config, python3, libx11-dev, libxkbcommon-dev, libwayland-dev, libgl1-mesa-dev]
+    stage-packages: [libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libwayland-client0, libwayland-egl1, libegl1, libgl1, fontconfig, libglib2.0-bin, dbus, zenity]
+    override-pull: |
+      craftctl default
+      craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+    override-build: |
+      craftctl default
+      install -Dm644 LICENSE "$CRAFT_PART_INSTALL/share/doc/rustidian/copyright"
+      install -Dm644 THIRD_PARTY_NOTICES.txt "$CRAFT_PART_INSTALL/share/doc/rustidian/THIRD_PARTY_NOTICES.txt"
+      for f in assets/fonts/LICENSE-*.txt; do install -Dm644 "$f" "$CRAFT_PART_INSTALL/share/doc/rustidian/$(basename "$f")"; done
+      cp -r demo-vault "$CRAFT_PART_INSTALL/share/rustidian-demo-vault"
+      install -Dm644 packaging/rustidian.metainfo.xml "$CRAFT_PART_INSTALL/share/metainfo/rustidian.metainfo.xml"

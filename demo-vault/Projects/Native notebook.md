@@ -1,6 +1,6 @@
 # Native notebook
 
-An Obsidian-like notebook with a Rust interface, Rust editor, and Rust Markdown renderer.
+A native notebook with a Rust interface, Rust editor, and Rust Markdown renderer.
 
 ## First milestone
 

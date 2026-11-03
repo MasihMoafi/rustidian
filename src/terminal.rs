@@ -493,13 +493,13 @@ fn read(
 mod tests {
     #[test]
     fn each_agent_is_told_where_the_open_note_is_recorded() {
-        let root = Path::new("/home/masih/Desktop/o");
+        let root = Path::new("/vault");
         let claude = Backend::Claude.context_args(root);
         assert_eq!(claude[0], "--append-system-prompt");
         assert!(
             claude[1]
                 .to_string_lossy()
-                .contains("/home/masih/Desktop/o/.rustidian/agent-context.md")
+                .contains("/vault/.rustidian/agent-context.md")
         );
         for backend in [Backend::Elpis, Backend::Codex] {
             let args = backend.context_args(root);

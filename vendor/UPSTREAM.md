@@ -6,7 +6,8 @@ Their published `.cargo_vcs_info.json` identifies egui commit
 The other egui ecosystem crates retain their registry versions.
 
 The initial bidi changes come from the draft upstream
-[PR 8577](https://github.com/emilk/egui/pull/8577), commits
+[PR 8577](https://github.com/emilk/egui/pull/8577) by Abdu Benayad
+(`abdu-benayad`; egui is MIT OR Apache-2.0, see `LICENSE-MIT` and `LICENSE-APACHE`), commits
 `c55da0337f67616ee7be4bfb06b73fdd71ef7f91` and
 `c93e8863e958507056415e2a6dace56e23ba5f3a`.
 The original downloaded patch and separate source patches are in `patches/`.

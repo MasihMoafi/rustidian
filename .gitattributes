@@ -1,2 +1,8 @@
 # Preserve the measured CSV's standard CRLF bytes.
 docs/performance/startup-2026-10-22/raw.csv whitespace=cr-at-eol
+
+# Keep source tarballs (store and AUR builds) free of proofs, generation artwork and experiments.
+assets/icons/artwork export-ignore
+assets/icons/proof export-ignore
+docs/performance export-ignore
+experiments export-ignore

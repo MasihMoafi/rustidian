@@ -1,0 +1,37 @@
+# Maintainer: Masih Moafi
+pkgname=rustidian-bin
+_name=rustidian
+pkgver=0.1.3
+pkgrel=1
+pkgdesc='Native Markdown notebook for local vaults (opens Obsidian-format vaults; not affiliated with Obsidian)'
+arch=('x86_64')
+url='https://github.com/MasihMoafi/rustidian'
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'libxkbcommon' 'libxkbcommon-x11' 'libx11' 'libxcursor' 'libxi' 'libxrandr' 'wayland' 'libglvnd' 'fontconfig' 'glib2' 'zenity')
+provides=('rustidian')
+conflicts=('rustidian')
+source=("rustidian-${pkgver}-linux-x86_64.tar.gz::${url}/releases/download/v${pkgver}/rustidian-linux-x86_64.tar.gz")
+sha256sums=('SKIP')  # replace with the value in rustidian-linux-x86_64.tar.gz.sha256 at release
+
+package() {
+  cd "$srcdir"
+  install -Dm755 rustidian "$pkgdir/usr/lib/rustidian/rustidian"
+  install -d "$pkgdir/usr/bin"
+  ln -s /usr/lib/rustidian/rustidian "$pkgdir/usr/bin/rustidian"
+  install -Dm644 rustidian.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/rustidian.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 THIRD_PARTY_NOTICES.txt "$pkgdir/usr/share/licenses/$pkgname/THIRD_PARTY_NOTICES.txt"
+  for f in LICENSE-*.txt; do install -Dm644 "$f" "$pkgdir/usr/share/licenses/$pkgname/$f"; done
+  cp -r demo-vault "$pkgdir/usr/share/rustidian-demo-vault" 2>/dev/null || true
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/applications/rustidian.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Rustidian
+Comment=Local Markdown notes and source code
+Exec=rustidian %f
+Icon=rustidian
+Terminal=false
+Categories=Office;TextEditor;
+StartupWMClass=rustidian
+DESKTOP
+}

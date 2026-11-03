@@ -1,6 +1,6 @@
 <div align="center">
 
-# Rustidian: Obsidian but fast.
+# Rustidian
 
 <table>
   <tr>
@@ -21,7 +21,7 @@ Linux desktop · Plain files · Native Rust
 
 </div>
 
-I built Rustidian for myself because every note editor I tried felt too slow, especially Obsidian. **Speed and stability** guide the project: ordinary Markdown folders, native editing, linked notes and graphs.
+I built Rustidian for myself because every note editor I tried felt too slow. **Speed and stability** guide the project: ordinary Markdown folders, native editing, linked notes and graphs.
 
 **Try Rustidian for Linux. Contributors are welcome.**
 
@@ -60,7 +60,7 @@ The bundled demo opens immediately. To add Rustidian to your applications menu, 
 ./rustidian --version
 ```
 
-**Coming from Obsidian?** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases and other gaps are listed below. Keep Obsidian available for other workflows.
+**Opens Obsidian-format vaults.** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases and other gaps are listed below. Keep Obsidian available for other workflows.
 
 **Why don't Obsidian plugins work?** Rustidian's interface is native Rust with egui/eframe. Obsidian plugins require Obsidian's JavaScript API and often its browser DOM and CSS. Running them needs a compatibility runtime or individual feature ports; copying plugin folders is insufficient.
 
@@ -88,7 +88,7 @@ Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If anot
 
 ## Development status
 
-Rustidian is a work in progress toward a complete, fast Obsidian-style app. The current build covers a subset of that goal.
+Rustidian is a work in progress toward full support for Obsidian-format vaults. The current build covers a subset of that goal.
 
 | Area | Current state |
 | --- | --- |
@@ -123,4 +123,4 @@ Try one useful workflow: open a copied vault, edit and save a note, follow a lin
 
 Rust/egui contributors can start with Markdown rendering, keyboard access or Linux/Wayland testing. [CONTRIBUTING.md](CONTRIBUTING.md) explains setup and checks; the [coverage ledger](docs/PARITY.md) records remaining work. If Rustidian is useful to you, a [GitHub star](https://github.com/MasihMoafi/rustidian) helps others discover it.
 
-[MIT license](LICENSE) · Independent project, unaffiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.
+[MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.txt) · Independent, not affiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.

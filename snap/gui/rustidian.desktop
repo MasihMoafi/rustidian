@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Rustidian
+Comment=Local Markdown notes and source code
+Exec=rustidian %f
+Icon=${SNAP}/meta/gui/rustidian.png
+Terminal=false
+Categories=Office;TextEditor;
+Keywords=Markdown;Notes;Code;
+StartupWMClass=rustidian

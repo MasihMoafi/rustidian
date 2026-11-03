@@ -15,7 +15,7 @@ This is a working notebook built in Rust. Open a note from the sidebar, follow a
 
 > The best tool leaves enough room for the thought.
 
-The charcoal palette and teal accents come from your existing Obsidian theme. This notebook keeps that familiar shape while its interface and editor run natively in Rust.
+A charcoal palette and teal accents set the tone. The interface and editor run natively in Rust.
 
 Start with [[Notes/First steps]], or take a look at the [[Projects/Native notebook|project notebook]].
 
