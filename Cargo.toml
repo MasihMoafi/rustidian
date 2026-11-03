@@ -2,6 +2,8 @@
 name = "rustidian"
 version = "0.1.4"
 edition = "2024"
+# examples/*_benchmark.rs no longer match the current API (ES.md "Broken"); cargo test must not build them.
+autoexamples = false
 rust-version = "1.95"
 description = "Rustidian — a native Markdown notebook for local vaults"
 repository = "https://github.com/MasihMoafi/rustidian"
