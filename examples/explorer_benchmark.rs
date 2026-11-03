@@ -1,15 +1,15 @@
 //! CPU UI/layout measurement; run the release executable without other workloads.
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/explorer_selection.rs"]
 mod explorer_selection;
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/file_tree.rs"]
 mod file_tree;
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/theme.rs"]
 mod theme;
+#[allow(dead_code, unused_imports)]
 #[path = "../src/ui_probe.rs"]
-#[allow(dead_code)]
 mod ui_probe;
 
 use eframe::egui;
