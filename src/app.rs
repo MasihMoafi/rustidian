@@ -5867,7 +5867,12 @@ impl eframe::App for NotesApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let frame_started = Instant::now();
         let ctx = ui.ctx().clone();
-        if let Some(vault) = &self.vault {
+        // Only an agent reads the context file, so a vault without one gets no
+        // `.rustidian` folder (on 3 Nov it appeared in ~/Desktop and changed notes
+        // the GUI checks protect).
+        if let Some(vault) = &self.vault
+            && self.agent.running()
+        {
             crate::terminal_ui::write_note_context(&ctx, &vault.root);
         }
         if let Some(due) = self.attention_check {

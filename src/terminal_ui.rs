@@ -83,6 +83,11 @@ pub struct Panel {
 }
 
 impl Panel {
+    /// Whether an agent runs in the panel.
+    pub fn running(&self) -> bool {
+        self.session.is_some()
+    }
+
     /// Give the terminal keyboard focus at the next show.
     pub fn focus(&mut self) {
         self.focus = true;
