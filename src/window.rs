@@ -125,11 +125,15 @@ pub fn take_close_source(ctx: &egui::Context) -> &'static str {
 /// The focus request raises the window on X11. On Wayland winit sends none,
 /// and GNOME would ignore one from a window that is not active; there the
 /// window activates its own surface with the launch's token, as GTK
-/// applications do. A window that gets no focus within a second gives the
-/// launch the socket, and the launch opens a window of its own (`instance`).
+/// applications do. Where the compositor refuses the raise, the attention
+/// request makes GNOME show "Rustidian is ready" instead of nothing; the
+/// window never hands its launches to a second one (`instance`).
 pub fn bring_forward(ctx: &egui::Context, frame: &eframe::Frame, token: Option<&str>) {
     ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
     ctx.send_viewport_cmd(ViewportCommand::Focus);
+    ctx.send_viewport_cmd(ViewportCommand::RequestUserAttention(
+        egui::UserAttentionType::Informational,
+    ));
     let Some(token) = token else {
         eprintln!("hand-off: no token");
         return;

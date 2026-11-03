@@ -1,8 +1,9 @@
 //! One process per profile, as in Obsidian: a later launch hands its file or
 //! folder to the running window and exits instead of opening another window.
-//! A running window that cannot be seen still gets the request but gives up
-//! the socket: the launch then opens its own window, so a launch always
-//! shows one.
+//! A running window that gets no focus (busy, or GNOME refused the raise)
+//! keeps the request and asks for attention; only a process that does not
+//! answer at all is replaced. On 3 Nov a busy window gave its socket away and
+//! Masih saw three Rustidians for one note.
 use std::{
     ffi::OsStr,
     io::{BufRead, BufReader, ErrorKind, Read, Write},
@@ -62,12 +63,10 @@ const SHOWN_WITHIN: Duration = if cfg!(test) {
     Duration::from_secs(1)
 };
 
-/// The window's answer once it has the focus. Windows from before 29 Oct
-/// give it at once.
+/// The window's answer once it has the request: at once while it opens, else
+/// when it has the focus or after `SHOWN_WITHIN`. Windows from 29 Oct to
+/// 3 Nov answer 2 when they got no focus; that too is a hand-off.
 const SHOWN: u8 = 1;
-/// The window's answer when it got no focus within `SHOWN_WITHIN`; it has
-/// stopped serving launches.
-const HIDDEN: u8 = 2;
 
 fn socket() -> Option<PathBuf> {
     rustidian::vaults::location().map(|catalog| catalog.with_file_name("instance.sock"))
@@ -75,11 +74,10 @@ fn socket() -> Option<PathBuf> {
 
 /// What a launch does.
 pub enum Launch {
-    /// The running window took the file or folder and has the focus; this
-    /// launch exits.
+    /// The running window took the file or folder; this launch exits.
     HandedOff,
     /// This launch opens the window and serves later launches from the
-    /// profile's socket: no window ran, or the running one cannot be seen.
+    /// profile's socket: no window ran, or the running one does not answer.
     Serve(Instance),
     /// The profile's socket cannot be bound: this launch opens its own window
     /// and serves nothing.
@@ -89,10 +87,8 @@ pub enum Launch {
 /// What the running window answered a launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Answer {
-    /// It took the request and has the focus.
+    /// It took the request.
     Shown,
-    /// It took the request, got no focus and stopped serving.
-    Hidden,
     /// Nothing within `ANSWER_WITHIN`: it is stopped or stuck.
     Silent,
 }
@@ -113,15 +109,10 @@ fn launch_at(path: &Path, input: Option<&Path>, token: Option<&str>) -> Launch {
                 eprintln!("hand-off: shown");
                 return Launch::HandedOff;
             }
-            Some(answer) => {
-                // Nothing would show. This launch opens a window where it was
-                // made and takes the socket, so later launches reach that one.
-                let why = if answer == Answer::Hidden {
-                    "hidden"
-                } else {
-                    "no answer"
-                };
-                eprintln!("hand-off: {why}, opening a window");
+            Some(Answer::Silent) => {
+                // The running process is stopped or stuck. This launch opens a
+                // window and takes the socket, so later launches reach it.
+                eprintln!("hand-off: no answer, opening a window");
                 return Instance::take_over(path).map_or(Launch::Alone, Launch::Serve);
             }
             None => {}
@@ -143,8 +134,7 @@ fn hand_off(path: &Path, input: Option<&Path>, token: Option<&str>) -> Option<An
         .write_all(&message(input, token))
         .and_then(|()| stream.read_exact(&mut reply))
     {
-        Ok(()) if reply == [SHOWN] => Some(Answer::Shown),
-        Ok(()) => Some(Answer::Hidden),
+        Ok(()) => Some(Answer::Shown),
         // The window stopped listening as this launch connected: it closed,
         // or it gave its socket up to an earlier launch. The socket is free.
         Err(error)
@@ -228,11 +218,10 @@ impl Instance {
     /// Answer later launches from a thread. Each request goes to the returned
     /// receiver and `wake` runs, so the window takes it on its next pass; the
     /// launch exits once the window says through `Request::shown` that it has
-    /// the focus. A window that gets none within `SHOWN_WITHIN`, busy or out
-    /// of sight, answers `HIDDEN` and stops serving: the launch opens its own
-    /// window and takes the socket. `wake` returns false while the window
-    /// does not exist yet; a window still opening will be seen, so it answers
-    /// `SHOWN` at once and takes the request on its first pass.
+    /// the focus, or after `SHOWN_WITHIN` when it gets none (busy, or out of
+    /// sight); it keeps serving either way, so there is one window. `wake`
+    /// returns false while the window does not exist yet; it answers at once
+    /// and takes the request on its first pass.
     pub fn serve(self, wake: impl Fn() -> bool + Send + 'static) -> Receiver<Request> {
         let (sender, receiver) = mpsc::channel();
         let listener = self.listener;
@@ -265,17 +254,10 @@ impl Instance {
                         drop(listener);
                         return;
                     }
-                    let opening = !wake();
-                    if opening || focused.recv_timeout(SHOWN_WITHIN).is_ok() {
-                        let _ = (&stream).write_all(&[SHOWN]);
-                        continue;
+                    if wake() {
+                        let _ = focused.recv_timeout(SHOWN_WITHIN);
                     }
-                    // Nobody sees this window. Stop listening first, so a
-                    // launch that comes meanwhile finds the socket abandoned
-                    // instead of waiting here; then this launch takes it.
-                    drop(listener);
-                    let _ = (&stream).write_all(&[HIDDEN]);
-                    return;
+                    let _ = (&stream).write_all(&[SHOWN]);
                 }
             });
         receiver
@@ -337,39 +319,39 @@ mod tests {
     }
 
     #[test]
-    fn a_window_that_gets_no_focus_gives_the_launch_its_socket() {
+    fn a_window_that_gets_no_focus_keeps_the_launch_and_stays_the_only_one() {
         let folder = tempfile::tempdir().unwrap();
         let path = folder.path().join("instance.sock");
         let instance = first_window(&path);
         let before = inode(&path);
-        // Out of sight, on another workspace, or busy: nothing reads the
-        // requests, so the window never says it has the focus.
+        // Busy or out of sight: nothing reads the requests, so the window
+        // never says it has the focus.
         let unseen = instance.serve(|| true);
         let note = Path::new("/vault/Note.md");
-        let Launch::Serve(second) = launch_at(&path, Some(note), Some("token-1")) else {
-            panic!(
-                "A launch whose window got no focus must open its own window and own the socket"
+        for token in [Some("token-1"), None] {
+            assert!(
+                matches!(launch_at(&path, Some(note), token), Launch::HandedOff),
+                "A launch beside a window without focus opened a second window"
             );
-        };
-        assert_eq!(
-            unseen.try_recv().unwrap().path.as_deref(),
-            Some(note),
-            "The window that got no focus must still get the request"
-        );
-        assert_ne!(inode(&path), before, "The new window must own the socket");
-        let received = focused_window(second.serve(|| true));
-        assert!(
-            matches!(launch_at(&path, None, Some("token-2")), Launch::HandedOff),
-            "A later launch must reach the new window"
-        );
-        assert_eq!(
-            received.recv_timeout(Duration::from_secs(5)).unwrap(),
-            (None, Some("token-2".to_owned()))
-        );
-        assert!(
-            unseen.try_recv().is_err(),
-            "The window that got no focus kept serving"
-        );
+            assert_eq!(unseen.try_recv().unwrap().path.as_deref(), Some(note));
+        }
+        assert_eq!(inode(&path), before, "The window gave its socket away");
+    }
+
+    #[test]
+    fn a_reply_from_an_older_window_without_focus_is_a_hand_off() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("instance.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+        // A window from 29 Oct to 3 Nov answers 2 when it got no focus.
+        let window = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(&stream);
+            let _ = field(&mut reader);
+            (&stream).write_all(&[2]).unwrap();
+        });
+        assert!(matches!(launch_at(&path, None, None), Launch::HandedOff));
+        window.join().unwrap();
     }
 
     #[test]

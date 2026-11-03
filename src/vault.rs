@@ -178,6 +178,10 @@ pub struct Vault {
     pub index_time: Duration,
     pub attachments: Vec<PathBuf>,
     pub folders: Vec<PathBuf>,
+    /// A folder around the default vault (Masih's ~/Desktop around ~/Desktop/o)
+    /// holds every project below it: 12,249 notes and 1 GB on 3 Nov. Such a
+    /// folder loads only its own files, not its subfolders.
+    loose: bool,
     paths: HashMap<PathBuf, usize>,
     names: HashMap<String, Vec<usize>>,
     incoming: std::sync::OnceLock<HashMap<PathBuf, Vec<usize>>>,
@@ -189,6 +193,16 @@ impl Vault {
     }
 
     pub fn open_cancellable(root: &Path, cancelled: impl Fn() -> bool) -> Result<Self> {
+        let default = crate::vaults::default_vault().and_then(|vault| vault.canonicalize().ok());
+        Self::open_beside(root, default.as_deref(), cancelled)
+    }
+
+    /// Open `root` where `default` is the default vault.
+    pub fn open_beside(
+        root: &Path,
+        default: Option<&Path>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self> {
         let root = root
             .canonicalize()
             .map_err(|e| format!("Cannot open vault: {e}"))?;
@@ -196,6 +210,7 @@ impl Vault {
             return Err("Choose a folder for your vault.".into());
         }
         let mut vault = Self {
+            loose: crate::vaults::encloses(&root, default),
             root,
             notes: Vec::new(),
             warnings: Vec::new(),
@@ -228,6 +243,7 @@ impl Vault {
         let mut folders = Vec::new();
         let mut warnings = Vec::new();
         let entries = WalkDir::new(&self.root)
+            .max_depth(if self.loose { 1 } else { usize::MAX })
             .follow_links(false)
             .into_iter()
             .filter_entry(|entry| {
@@ -244,7 +260,7 @@ impl Vault {
                     continue;
                 }
             };
-            if entry.file_type().is_dir() && entry.depth() > 0 {
+            if entry.file_type().is_dir() && entry.depth() > 0 && !self.loose {
                 folders.push(entry.path().strip_prefix(&self.root).unwrap().into());
             }
             if !entry.file_type().is_file() {
