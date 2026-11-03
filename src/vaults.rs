@@ -49,11 +49,6 @@ pub fn resolve_input(
     // A registered vault that encloses the default vault (Masih's ~/Desktop around
     // ~/Desktop/o) is too broad to claim documents: a file outside the default vault
     // opens with its own folder instead of loading everything above it.
-    let encloses_default = |vault: &PathBuf| {
-        default_vault
-            .as_deref()
-            .is_some_and(|default| default != vault.as_path() && default.starts_with(vault))
-    };
     let root = default_vault
         .clone()
         .into_iter()
@@ -61,7 +56,7 @@ pub fn resolve_input(
             registered_vaults
                 .iter()
                 .filter_map(|vault| vault.canonicalize().ok())
-                .filter(|vault| !encloses_default(vault)),
+                .filter(|vault| !encloses(vault, default_vault.as_deref())),
         )
         .filter(|vault| absolute.starts_with(vault) && vault.is_dir())
         .max_by_key(|vault| vault.components().count())
@@ -72,6 +67,11 @@ pub fn resolve_input(
         .map_err(|error| error.to_string())?
         .to_owned();
     Ok((root, Some(document)))
+}
+
+/// Whether `vault` is a folder around the default vault rather than the vault.
+pub fn encloses(vault: &Path, default: Option<&Path>) -> bool {
+    default.is_some_and(|default| default != vault && default.starts_with(vault))
 }
 
 pub fn folder(path: &Path) -> Result<PathBuf, String> {
@@ -295,5 +295,36 @@ mod tests {
             fs::read_to_string(root.join("Keep.md")).unwrap(),
             "original"
         );
+    }
+
+    #[test]
+    fn a_loose_file_beside_the_default_vault_loads_only_its_own_folder() {
+        // Masih's ~/Desktop/info.md: ~/Desktop holds the default vault `o` and
+        // every project, so it must not load its subfolders.
+        let desktop = tempfile::tempdir().unwrap();
+        let desktop = desktop.path().canonicalize().unwrap();
+        let default = desktop.join("o");
+        fs::create_dir_all(default.join("deep")).unwrap();
+        fs::create_dir_all(desktop.join("p/repo")).unwrap();
+        fs::write(desktop.join("info.md"), "# info").unwrap();
+        fs::write(default.join("deep/Vault note.md"), "x").unwrap();
+        fs::write(desktop.join("p/repo/README.md"), "x").unwrap();
+        let (root, document) =
+            resolve_input(&desktop.join("info.md"), Some(&default), &[desktop.clone()]).unwrap();
+        assert_eq!(
+            (root.as_path(), document.as_deref()),
+            (desktop.as_path(), Some(Path::new("info.md")))
+        );
+        let vault = crate::vault::Vault::open_beside(&root, Some(&default), || false).unwrap();
+        let notes = vault
+            .notes
+            .iter()
+            .map(|note| note.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(notes, [PathBuf::from("info.md")]);
+        assert!(vault.folders.is_empty(), "{:?}", vault.folders);
+        // The default vault itself still loads in full.
+        let vault = crate::vault::Vault::open_beside(&default, Some(&default), || false).unwrap();
+        assert_eq!(vault.notes.len(), 1);
     }
 }
