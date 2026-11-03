@@ -109,9 +109,32 @@ def check_desktop_and_metainfo():
         result = run(["appstreamcli", "validate", "--no-net", "packaging/rustidian.metainfo.xml"])
         if result.returncode:
             fail("appstream", (result.stdout + result.stderr).strip().splitlines()[-1])
-    # 3 Nov CI: appimagetool wanted usr/share/metainfo/<desktop file name>.appdata.xml.
-    if "metainfo/rustidian.appdata.xml" not in (ROOT / "scripts/package-appimage.py").read_text():
-        fail("appimage-metainfo", "package-appimage.py must write usr/share/metainfo/rustidian.appdata.xml")
+    # 3 Nov CI: appimagetool validates the AppStream file strictly (metainfo-filename-cid-mismatch,
+    # desktop-file-not-found). Build the same two files the script writes and run appstreamcli on them.
+    appimage = (ROOT / "scripts/package-appimage.py").read_text()
+    match = re.search(r"APP_ID = '([^']+)'", appimage)
+    if not match:
+        fail("appimage-metainfo", "package-appimage.py must define APP_ID")
+    else:
+        component = re.search(r"<id>([^<]+)</id>", (ROOT / "packaging/rustidian.metainfo.xml").read_text()).group(1)
+        if component != match.group(1):
+            fail("appimage-metainfo", f"metainfo <id> {component} must equal APP_ID {match.group(1)} (file name = component id)")
+        for needle, why in (("{APP_ID}.appdata.xml", "metainfo file named after the component id"),
+                            ("usr/share/applications/{APP_ID}.desktop", "desktop file in usr/share/applications named after the id")):
+            if needle not in appimage:
+                fail("appimage-metainfo", f"package-appimage.py must write the {why} (CI: metainfo-filename-cid-mismatch, desktop-file-not-found)")
+    if match and shutil.which("appstreamcli"):
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            tree = Path(scratch)
+            for folder in ("usr/share/metainfo", "usr/share/applications"):
+                (tree / folder).mkdir(parents=True)
+            metainfo = (ROOT / "packaging/rustidian.metainfo.xml").read_text().replace(">rustidian.desktop<", f">{match.group(1)}.desktop<")
+            (tree / f"usr/share/metainfo/{match.group(1)}.appdata.xml").write_text(metainfo)
+            (tree / f"usr/share/applications/{match.group(1)}.desktop").write_text((ROOT / "snap/gui/rustidian.desktop").read_text().replace("${SNAP}/meta/gui/rustidian.png", "rustidian"))
+            result = run(["appstreamcli", "validate", "--pedantic", "--strict", "--no-net", str(tree / f"usr/share/metainfo/{match.group(1)}.appdata.xml")])
+            if result.returncode:
+                fail("appimage-appstream", " | ".join(line.strip() for line in result.stdout.splitlines() if line.strip().startswith(("W:", "E:", "P:"))) or result.stdout.strip())
     pkgbuild = ROOT / "packaging/aur-bin/PKGBUILD"
     if run(["bash", "-n", str(pkgbuild)]).returncode:
         fail("pkgbuild-shell", "bash -n rejects PKGBUILD")

@@ -12,6 +12,9 @@ import shutil
 import subprocess
 import tempfile
 
+# AppStream wants the metainfo file name to equal the component id and a desktop file named after it.
+APP_ID = 'io.github.masihmoafi.rustidian'
+
 APPRUN = '''#!/bin/sh
 HERE="$(dirname "$(readlink -f "$0")")"
 for folder in /usr/local/node/bin "$HOME/.local/bin"; do
@@ -46,7 +49,7 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='rustidian-appdir-') as temporary:
         appdir = Path(temporary) / 'Rustidian.AppDir'
-        for directory in ('usr/bin', 'usr/share/rustidian', 'usr/share/doc/rustidian', 'usr/share/metainfo'):
+        for directory in ('usr/bin', 'usr/share/rustidian', 'usr/share/doc/rustidian', 'usr/share/metainfo', 'usr/share/applications'):
             (appdir / directory).mkdir(parents=True)
         shutil.copy2(binary, appdir / 'usr/bin/rustidian')
         shutil.copytree(root / 'demo-vault', appdir / 'usr/share/rustidian/demo-vault')
@@ -55,12 +58,14 @@ def main():
         shutil.copy2(args.notices, documents / 'THIRD_PARTY_NOTICES.txt')
         for license in (root / 'assets/fonts').glob('LICENSE-*.txt'):
             shutil.copy2(license, documents / license.name)
-        shutil.copy2(root / 'packaging/rustidian.metainfo.xml', appdir / 'usr/share/metainfo/rustidian.appdata.xml')
+        metainfo = (root / 'packaging/rustidian.metainfo.xml').read_text().replace('>rustidian.desktop<', f'>{APP_ID}.desktop<')
+        (appdir / f'usr/share/metainfo/{APP_ID}.appdata.xml').write_text(metainfo)
         shutil.copy2(root / 'docs/brand/store-icon.png', appdir / 'rustidian.png')
-        (appdir / 'rustidian.desktop').write_text(DESKTOP)
+        (appdir / f'{APP_ID}.desktop').write_text(DESKTOP)
+        shutil.copy2(appdir / f'{APP_ID}.desktop', appdir / f'usr/share/applications/{APP_ID}.desktop')
         (appdir / 'AppRun').write_text(APPRUN)
         (appdir / 'AppRun').chmod(0o755)
-        subprocess.run(['desktop-file-validate', str(appdir / 'rustidian.desktop')], check=True)
+        subprocess.run(['desktop-file-validate', str(appdir / f'{APP_ID}.desktop')], check=True)
         subprocess.run([tool, str(appdir), str(args.output.resolve())],
                        check=True, env=dict(os.environ, ARCH='x86_64', APPIMAGE_EXTRACT_AND_RUN='1'))
     digest = hashlib.file_digest(args.output.open('rb'), 'sha256').hexdigest()
