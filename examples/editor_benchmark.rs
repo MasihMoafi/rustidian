@@ -1,57 +1,58 @@
 //! CPU editor experiment; run release with no GUI/build/reference in parallel.
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/callout_ui.rs"]
 mod callout_ui;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/code_ui.rs"]
 mod code_ui;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/diagrams.rs"]
 mod diagrams;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/editor_ui.rs"]
 mod editor_ui;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/math_inline.rs"]
 mod math_inline;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/math_ui.rs"]
 mod math_ui;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/note_embed_ui.rs"]
 mod note_embed_ui;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/page_preview.rs"]
 mod page_preview;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/preview.rs"]
 mod preview;
 #[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/syntax.rs"]
 mod syntax;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/table_layout.rs"]
 mod table_layout;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/table_ui.rs"]
 mod table_ui;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/theme.rs"]
 mod theme;
 #[cfg(not(test))]
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/ui_probe.rs"]
 mod ui_probe;
 
