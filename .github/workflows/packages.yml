@@ -33,6 +33,13 @@ jobs:
           grep -q 'bin/rustidian' snap-files.txt
           grep -q 'THIRD_PARTY_NOTICES.txt' snap-files.txt
           grep -q 'share/doc/rustidian/copyright' snap-files.txt
+      - name: Install the snap and run it
+        run: |
+          sudo snap install --dangerous rustidian_amd64.snap
+          snap run rustidian --version | tee snap-version.txt
+          grep -q '^Rustidian ' snap-version.txt
+          test -f /snap/rustidian/current/share/doc/rustidian/THIRD_PARTY_NOTICES.txt
+          test -f /snap/rustidian/current/meta/gui/rustidian.png
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rustidian-snap
@@ -57,6 +64,13 @@ jobs:
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool
           APPIMAGETOOL=$PWD/appimagetool python3 scripts/package-appimage.py --binary target/release/rustidian --notices THIRD_PARTY_NOTICES.txt --output Rustidian-x86_64.AppImage
+      - name: Run the AppImage
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 ./Rustidian-x86_64.AppImage --version | tee appimage-version.txt
+          grep -q '^Rustidian ' appimage-version.txt
+          APPIMAGE_EXTRACT_AND_RUN=1 ./Rustidian-x86_64.AppImage --appimage-extract >/dev/null
+          test -f squashfs-root/usr/share/doc/rustidian/THIRD_PARTY_NOTICES.txt
+          test -f squashfs-root/usr/share/applications/io.github.masihmoafi.rustidian.desktop
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rustidian-appimage
