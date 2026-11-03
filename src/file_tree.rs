@@ -556,14 +556,13 @@ impl Tree {
                 }
                 revealed |= visible;
             });
-            if selection::row(ui, &header.header_response, entry) {
-                if let Some(mut state) =
+            if selection::row(ui, &header.header_response, entry)
+                && let Some(mut state) =
                     egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
-                {
-                    state.set_open(was_open);
-                    state.store(ui.ctx());
-                    ui.ctx().request_repaint();
-                }
+            {
+                state.set_open(was_open);
+                state.store(ui.ctx());
+                ui.ctx().request_repaint();
             }
             start_drag(&header.header_response, entry, name);
             if let (Some(source), Some(slot)) = (&dragging, highlight) {
@@ -740,10 +739,8 @@ impl Tree {
             }
         }
         ui.add_space((self.files.len() - last) as f32 * row_height);
-        if root {
-            if let Some(action) = selection::finish(ui) {
-                open = Some(action);
-            }
+        if root && let Some(action) = selection::finish(ui) {
+            open = Some(action);
         }
         (open, revealed)
     }

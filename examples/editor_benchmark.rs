@@ -25,6 +25,10 @@ mod math_inline;
 mod math_ui;
 #[cfg(not(test))]
 #[allow(dead_code)]
+#[path = "../src/note_embed_ui.rs"]
+mod note_embed_ui;
+
+#[allow(dead_code)]
 #[path = "../src/page_preview.rs"]
 mod page_preview;
 #[cfg(not(test))]
@@ -109,7 +113,7 @@ fn main() {
         }
         let fixture = tempfile::tempdir().unwrap();
         fs::write(fixture.path().join("Benchmark.md"), &source).unwrap();
-        let vault = Vault::open(fixture.path()).unwrap();
+        let mut vault = Vault::open(fixture.path()).unwrap();
         let mut files = FileMatcher::from_notes(&vault.notes);
         let mut tab = Tab::new(vault.read(Path::new("Benchmark.md")).unwrap());
         let mut editor = editor_ui::Editor::default();
@@ -187,7 +191,8 @@ fn main() {
                                     id,
                                     &mut find,
                                     &mut files,
-                                    Some(&vault),
+                                    Some(&mut vault),
+                                    &[],
                                 ));
                             });
                     },

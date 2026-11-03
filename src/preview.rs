@@ -579,7 +579,7 @@ fn render(
     anchor: Option<&str>,
     vault: Option<&rustidian::vault::Vault>,
     document_id: egui::Id,
-    mut embedding: Option<&mut crate::note_embed_ui::Context<'_>>,
+    embedding: Option<&mut crate::note_embed_ui::Context<'_>>,
 ) -> Option<String> {
     let embedded = embedding.is_some();
     let text = &tab.document.text;
@@ -667,7 +667,7 @@ fn render(
             &mut task,
             from,
             document_id,
-            embedding.as_deref_mut(),
+            embedding,
             cache,
         );
         let area = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
@@ -826,6 +826,7 @@ fn matches_anchor(block: &Block, anchor: &str) -> bool {
         || (anchor.starts_with('^') && content.split_whitespace().last() == Some(anchor))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn show_blocks(
     ui: &mut egui::Ui,
     blocks: &[Block],

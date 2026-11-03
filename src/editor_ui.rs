@@ -1320,6 +1320,7 @@ impl Editor {
         ctx.memory_mut(|memory| memory.request_focus(id));
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -4467,7 +4468,7 @@ mod tests {
         };
         let mut editor = Editor::default();
         let mut files = FileMatcher::new(Vec::new());
-        let id = egui::Id::new("note-editor");
+        let id = egui::Id::unique("note-editor");
         let mut waiting = Vec::new();
         for frame in 0..8 {
             ctx.run_ui(

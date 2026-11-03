@@ -100,7 +100,7 @@ pub fn text_field(field: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
     field
         .margin(space::margin(space::S, space::XS))
         .min_size(egui::vec2(0.0, space::CONTROL))
-        .vertical_align(egui::Align::Center)
+        .align(egui::Align2::LEFT_CENTER)
         .font(FontId::proportional(14.0))
 }
 
