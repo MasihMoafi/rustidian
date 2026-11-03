@@ -13,6 +13,8 @@
 
 **A native Markdown notebook for Linux. Your files, your folders, no account.**
 
+Opens Obsidian-format vaults and started faster than Obsidian in our [paired test](docs/performance/startup-2026-10-22/README.md) (0.61 s vs 3.77 s, earlier build, one setup). Independent, not affiliated with Obsidian.
+
 **[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb)**
 
 [Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
