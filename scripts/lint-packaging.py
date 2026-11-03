@@ -142,9 +142,10 @@ def check_files_and_text():
             fail("brand", f"{name} must be RGBA PNG (colour type 6), is {color}")
     if (ROOT / "snap/gui/rustidian.png").read_bytes() != (ROOT / "docs/brand/store-icon.png").read_bytes():
         fail("brand", "snap/gui/rustidian.png differs from docs/brand/store-icon.png; copy it again")
-    tracked = run(["git", "grep", "-l", "/home/masih", "--", ".", ":!THIRD_PARTY_NOTICES.txt"]).stdout.split()
+    home = "/home/" + "mas" + "ih"  # built in parts so this file does not match itself
+    tracked = run(["git", "grep", "-l", home, "--", ".", ":!THIRD_PARTY_NOTICES.txt"]).stdout.split()
     if tracked:
-        fail("personal-path", "tracked files name /home/masih: " + ", ".join(tracked))
+        fail("personal-path", "tracked files name a personal home path: " + ", ".join(tracked))
 
 
 def main():
