@@ -1,5 +1,8 @@
 //! CPU UI/layout measurement; run the release executable without other workloads.
 #[allow(dead_code)]
+#[path = "../src/explorer_selection.rs"]
+mod explorer_selection;
+#[allow(dead_code)]
 #[path = "../src/file_tree.rs"]
 mod file_tree;
 #[allow(dead_code)]
@@ -58,6 +61,8 @@ fn main() {
                                     false,
                                     0,
                                     None,
+                                    &mut None,
+                                    &mut None,
                                 ));
                             });
                     });

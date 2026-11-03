@@ -309,8 +309,12 @@ mod tests {
         fs::write(desktop.join("info.md"), "# info").unwrap();
         fs::write(default.join("deep/Vault note.md"), "x").unwrap();
         fs::write(desktop.join("p/repo/README.md"), "x").unwrap();
-        let (root, document) =
-            resolve_input(&desktop.join("info.md"), Some(&default), &[desktop.clone()]).unwrap();
+        let (root, document) = resolve_input(
+            &desktop.join("info.md"),
+            Some(&default),
+            std::slice::from_ref(&desktop),
+        )
+        .unwrap();
         assert_eq!(
             (root.as_path(), document.as_deref()),
             (desktop.as_path(), Some(Path::new("info.md")))
