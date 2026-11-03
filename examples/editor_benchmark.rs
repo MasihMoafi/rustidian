@@ -27,7 +27,7 @@ mod math_ui;
 #[allow(dead_code)]
 #[path = "../src/note_embed_ui.rs"]
 mod note_embed_ui;
-
+#[cfg(not(test))]
 #[allow(dead_code)]
 #[path = "../src/page_preview.rs"]
 mod page_preview;
