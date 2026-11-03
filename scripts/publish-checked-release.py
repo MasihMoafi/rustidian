@@ -114,9 +114,9 @@ def main():
         "**[Download the Debian/Ubuntu installer](" + base + "rustidian-linux-amd64.deb)** · [Portable Linux archive](" + base + "rustidian-linux-x86_64.tar.gz) · [Checksums](" + base + "SHA256SUMS)\n\n"
         "Linux x86_64, Ubuntu 24.04 or newer, glibc 2.39 or newer. Download the `.deb` and `SHA256SUMS`, then run:\n\n"
         "```sh\nsha256sum --check --ignore-missing SHA256SUMS\nsudo apt install ./rustidian-linux-amd64.deb\n```\n\n"
-        "This release fixes everyday vault workflows: create notes and subfolders in the clicked folder; duplicate folders with their contents; select and move multiple explorer items; reveal files and folders in the system file manager; paste or drop images into the vault; complete heading and block links; follow exact backlink mentions; and render linked-note embeds in Live Preview. Tab close menus, quick-open creation, list indentation, bracket pairing and external file changes preserve notes and drafts. Enter remains literal in plain-text files.\n\n"
+        "This release prepares Rustidian for store listings. It has a new, original logo: the previous one was an edit of another app's icon and is gone. The third-party notices now cover every crate in the build, including the licences of the editor's default fonts. The README and demo vault no longer use another app's name as a slogan; Rustidian opens Obsidian-format vaults and is independent of Obsidian. Existing notes and settings are retained.\n\n"
         "Verified: " + str(total) + " native checks across " + str(len(checks)) + " groups; core tests; exact Debian install/upgrade/remove/purge and portable installer checks. Existing notes, recovery data and user demo edits survive. [Verification run](" + run["url"] + "). `BUILDINFO.json` binds the source and executable.\n\n"
-        "Obsidian community plugins and browser-style HTML rendering remain unfinished. Full Obsidian parity and a current overall performance advantage are unproven.\n"
+        "Obsidian community plugins and browser-style HTML rendering remain unfinished. Full Obsidian parity is unfinished, and the startup comparison with Obsidian measures an earlier build only.\n"
     )
     existing = subprocess.run(["gh", "release", "view", tag, "--repo", repo, "--json", "isDraft,targetCommitish"], capture_output=True, text=True)
     if existing.returncode:
