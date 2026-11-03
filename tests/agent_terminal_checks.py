@@ -195,6 +195,7 @@ def run(scope):
     h.open_note("Home")
     assert not stand_ins(), "An agent started before the Agent tab was shown"
     assert not h.control_bounds("agent-terminal", required=False)
+    assert not (fixture / ".rustidian").exists(), "A vault without an agent got a .rustidian folder"
     started = time.monotonic()
     h.xdo("key", "--clearmodifiers", "ctrl+shift+a")
     wait(lambda: banner(), "Ctrl+Shift+A must start the agent and show its banner", timeout=4)
