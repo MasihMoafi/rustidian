@@ -44,6 +44,8 @@ sudo apt install ./rustidian-linux-amd64.deb
 rustidian
 ```
 
+**Other ways to install.** Snap: `sudo snap install rustidian`; the snap is confined, so it reads vaults in your home folder, and `sudo snap connect rustidian:removable-media` lets it open vaults on other drives. AppImage: download `Rustidian-0.1.4-x86_64.AppImage` from the [release](https://github.com/MasihMoafi/rustidian/releases/latest), run `chmod +x` on it and start it.
+
 The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. The installer is built and checked on Ubuntu 24.04.
 
 For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) and the same checksums:
