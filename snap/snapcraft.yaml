@@ -2,9 +2,21 @@ name: rustidian
 title: Rustidian
 summary: Native Markdown notebook for local vaults
 description: |
-  Rustidian is a fast, native Markdown notebook for Linux. Notes stay as plain
-  files in ordinary folders; no account is needed. It opens Obsidian-format
-  vaults. Independent project, not affiliated with Obsidian.
+  Rustidian is a fast, native Markdown notebook for Linux. Your notes stay plain files in ordinary folders: no account, no import, no lock-in.
+
+  • Live preview, source and reading modes, with wiki links, backlinks, tags and vault-wide search
+  • Tables, tasks, callouts, code with syntax highlighting, LaTeX math and Mermaid diagrams
+  • A global graph and a local graph that follows the note you are reading
+  • Daily notes, templates, bookmarks, pinned tabs, workspaces and file recovery
+  • Four colour palettes, in light and dark
+
+  It opens Obsidian-format vaults. Try it on a copy of your vault first: Obsidian plugins, Canvas and Bases are not supported yet. Rustidian is an independent project and is not affiliated with Obsidian.
+
+  This snap can read your home folder. To open a vault on another drive, run: sudo snap connect rustidian:removable-media
+
+  The Agent tab, which runs Codex, Claude Code or Elpis in a terminal beside your notes, needs your own tools and is available in the .deb and AppImage builds from GitHub.
+
+  Source, downloads and bug reports: https://github.com/MasihMoafi/rustidian
 adopt-info: rustidian
 icon: snap/gui/rustidian.png
 license: MIT
