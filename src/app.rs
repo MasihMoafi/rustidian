@@ -128,7 +128,7 @@ pub struct NotesApp {
     /// Launches that wait to hear this window has the focus; see
     /// `instance::Instance::serve`.
     #[cfg(unix)]
-    showing: Vec<mpsc::Sender<()>>,
+    showing: Vec<mpsc::Sender<crate::instance::Reply>>,
     /// When to check that a window just opened has focus. GNOME may leave it
     /// behind the window being typed in; it then asks for attention, so
     /// "Rustidian is ready" appears instead of nothing.
@@ -1943,10 +1943,15 @@ impl NotesApp {
         }
     }
 
-    fn open_system_selection(&mut self, kind: rustidian::native_picker::Kind, path: PathBuf) {
+    /// The vault root and file a launch or the picker names.
+    fn resolve_system_selection(
+        &self,
+        kind: rustidian::native_picker::Kind,
+        path: &Path,
+    ) -> Result<(PathBuf, Option<PathBuf>), String> {
         use rustidian::{native_picker::Kind, vaults};
-        let target = match kind {
-            Kind::Folder => vaults::folder(&path).map(|root| (root, None)),
+        match kind {
+            Kind::Folder => vaults::folder(path).map(|root| (root, None)),
             Kind::File => (|| {
                 let absolute = path
                     .canonicalize()
@@ -1967,8 +1972,11 @@ impl NotesApp {
                 }
                 Ok(target)
             })(),
-        };
-        match target {
+        }
+    }
+
+    fn open_system_selection(&mut self, kind: rustidian::native_picker::Kind, path: PathBuf) {
+        match self.resolve_system_selection(kind, &path) {
             Ok((root, document)) => self.request_open_input(root, document),
             Err(error) => {
                 self.error = Some(error);
@@ -5838,15 +5846,31 @@ impl eframe::App for NotesApp {
             .unwrap_or_default();
         #[cfg(unix)]
         for crate::instance::Request { path, token, shown } in launches {
-            crate::window::bring_forward(ctx, frame, token.as_deref());
-            self.showing.push(shown);
-            if let Some(path) = path {
-                let kind = if path.is_dir() {
+            let kind = |path: &Path| {
+                if path.is_dir() {
                     rustidian::native_picker::Kind::Folder
                 } else {
                     rustidian::native_picker::Kind::File
-                };
-                self.open_system_selection(kind, path);
+                }
+            };
+            // What is on screen stays: a launch for another vault gets a
+            // window of its own, so a second agent's file never replaces the
+            // one Masih is reading.
+            if let Some(path) = &path
+                && let Ok((root, _)) = self.resolve_system_selection(kind(path), path)
+                && self.vault.as_ref().is_some_and(|vault| vault.root != root)
+            {
+                eprintln!(
+                    "hand-off: {} is another vault; this window stays",
+                    root.display()
+                );
+                let _ = shown.send(crate::instance::Reply::Separate);
+                continue;
+            }
+            crate::window::bring_forward(ctx, frame, token.as_deref());
+            self.showing.push(shown);
+            if let Some(path) = path {
+                self.open_system_selection(kind(&path), path);
             }
         }
         // A launch exits once this window has the focus. One that waits in
@@ -5854,7 +5878,7 @@ impl eframe::App for NotesApp {
         #[cfg(unix)]
         if !self.showing.is_empty() && ctx.input(|input| input.viewport().focused) == Some(true) {
             for shown in self.showing.drain(..) {
-                let _ = shown.send(());
+                let _ = shown.send(crate::instance::Reply::Shown);
             }
         }
         if let Some(signal) = crate::window::take_signal() {

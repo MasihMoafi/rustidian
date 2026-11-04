@@ -5468,8 +5468,8 @@ def main():
                 # 27 Oct: five windows from separate launches stayed alive for hours.
                 # 28 Oct: a launch beside a slow window deleted its live socket and kept a second process.
                 # 29 Oct: on Masih's GNOME Wayland a dock click beside a window on another workspace showed nothing, even with
-                # the launch's activation token. A launch now exits only once the window has the focus; otherwise it opens its
-                # own window and takes the socket.
+                # the launch's activation token. The window now keeps the request and asks for attention; a launch whose window
+                # does not answer at all opens its own and takes the socket; a file of another vault gets a window of its own.
                 socket_file = base / "data/rustidian/instance.sock"
                 identity = lambda: (socket_file.stat().st_ino, socket_file.stat().st_ctime_ns)
                 original = identity()
@@ -5576,42 +5576,56 @@ def main():
                                    "and the window logged `hand-off: no token` or `hand-off: token, focus request`")
 
                     # 29 Oct, fifth report: GNOME did not raise a window on another workspace although the token reached it.
+                    # 3 Nov: the window keeps the request, asks for attention and stays the only one (a second window made three
+                    # Rustidians for one note); the launch says the window got no focus instead of claiming it was shown.
                     unfocus()
                     before = len(hand_offs())
                     requested = fixture / "Notes/Connected thinking.md"
                     second = launch(requested.relative_to(base))
                     asked(window, grant=False)
-                    second_window = opened_window(second, [window], "A launch whose window got no focus must open its own window")
-                    assert said(second[1])[:1] == ["hand-off: hidden, opening a window"], said(second[1])
-                    second_title = lambda: xdo("getwindowname", second_window)
-                    wait_for(lambda: requested.stem in second_title() and "Test Vault" in second_title(),
-                             lambda: f"The new window must show the requested note in the same vault: {second_title()!r}", limit=15)
+                    try:
+                        code = second[0].wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        raise AssertionError(f"A launch whose window got no focus kept running; it said {said(second[1])}") from None
+                    assert code == 0 and said(second[1]) == ["hand-off: taken, but the window got no focus (attention requested)"], \
+                        (code, said(second[1]))
+                    title_contains(requested.stem)
                     assert app.poll() is None and control_bounds("window-focused")[0] == 0, "The window nobody saw must stay open"
                     assert hand_offs()[before:] == ["hand-off: no token"], hand_offs()[before:]
-                    assert sorted(sandbox_apps()) == sorted([app.pid, second[0].pid]), sandbox_apps()
-                    taken = identity()
-                    assert taken != original, "The new window did not take the socket"
-                    later = launch(XDG_ACTIVATION_TOKEN="rustidian-later-token")
-                    asked(second_window)
-                    handed_off(later, "A launch after the takeover must hand over to the new window")
-                    wait_for(lambda: said(second[1])[1:] == ["hand-off: token, focus request"],
-                             lambda: f"The new window did not take the later launch: {said(second[1])}")
-                    assert hand_offs()[before:] == ["hand-off: no token"], f"A later launch reached the window nobody saw: {hand_offs()[before:]}"
-                    assert identity() == taken, "A hand-off to the new window replaced its socket"
-                    results.append("A hand-off whose window got no focus (the window manager refused it) ended with two windows: the launch "
-                                   "logged `hand-off: hidden, opening a window`, opened its own window on the vault with the requested note and "
-                                   "took the socket; the first window stayed open; a later launch handed over to the new window")
+                    assert len(visible()) == 1 and sandbox_apps() == [app.pid], (visible(), sandbox_apps())
+                    assert identity() == original, "A hand-off to a window without focus replaced its socket"
+                    results.append("A hand-off whose window got no focus (the window manager refused it) left one window, which took the "
+                                   "note; the launch logged `hand-off: taken, but the window got no focus (attention requested)`, not `shown`")
+
+                    # 4 Nov: a second agent's file replaced the file Masih was reading. A file of another vault gets a window of its
+                    # own and the first window keeps its note, tabs and socket.
+                    elsewhere = base / "elsewhere"
+                    elsewhere.mkdir(exist_ok=True)
+                    other_note = elsewhere / "Other vault note.md"
+                    other_note.write_text("# Other vault note\n\nAn agent opened this beside the note being read.\n")
+                    before = len(hand_offs())
+                    apart = launch(other_note)
+                    apart_window = opened_window(apart, [window], "A file of another vault must open a window of its own")
+                    assert said(apart[1])[:1] == ["hand-off: another vault, opening a window of its own"], said(apart[1])
+                    apart_title = lambda: xdo("getwindowname", apart_window)
+                    wait_for(lambda: other_note.stem in apart_title(), lambda: f"The new window must show the file: {apart_title()!r}", limit=15)
+                    assert requested.stem in xdo("getwindowname", window), "The first window lost the note it showed"
+                    assert app.poll() is None and identity() == original, "The first window or its socket changed"
+                    assert [line for line in hand_offs()[before:] if "another vault" in line], hand_offs()[before:]
+                    assert sorted(sandbox_apps()) == sorted([app.pid, apart[0].pid]), sandbox_apps()
+                    results.append("A file from another vault opened in a window of its own (`hand-off: another vault, opening a window of "
+                                   "its own`); the first window kept its note and its socket")
 
                     # 28 Oct: a window Masih could not see kept the socket, so his launches showed nothing. One that cannot
-                    # answer at all (stopped here) gets the same treatment after two seconds.
-                    second[0].send_signal(signal.SIGSTOP)
+                    # answer at all (stopped here) gets its socket taken after two seconds.
+                    app.send_signal(signal.SIGSTOP)
                     try:
                         third = launch(fixture)
-                        third_window = opened_window(third, [window, second_window], "A launch beside a stopped window must open its own window")
+                        third_window = opened_window(third, [window, apart_window], "A launch beside a stopped window must open its own window")
                     finally:
-                        second[0].send_signal(signal.SIGCONT)
+                        app.send_signal(signal.SIGCONT)
                     assert said(third[1])[:1] == ["hand-off: no answer, opening a window"], said(third[1])
-                    assert identity() != taken, "A launch beside a stopped window left it the socket"
+                    assert identity() != original, "A launch beside a stopped window left it the socket"
                     taken = identity()
                     last = launch()
                     asked(third_window)
@@ -5619,10 +5633,10 @@ def main():
                     wait_for(lambda: said(third[1])[1:] == ["hand-off: no token"],
                              lambda: f"The newest window did not take the launch: {said(third[1])}")
                     assert identity() == taken, "A hand-off to the newest window replaced its socket"
-                    assert app.poll() is None and second[0].poll() is None, "The earlier windows must stay open"
+                    assert app.poll() is None and apart[0].poll() is None, "The earlier windows must stay open"
                     results.append("Beside a stopped window a launch got no answer within 2 s, logged `hand-off: no answer, opening a window`, "
                                    "opened its own window and took the socket; the next launch handed over to that window")
-                    for process, _ in (second, third):
+                    for process, _ in (apart, third):
                         process.terminate()
                         process.wait(timeout=10)
                 finally:

@@ -372,8 +372,24 @@ pub fn title_bar(
                 crate::ui_probe::record(ui.ctx(), "file-menu", menu.response.rect);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if control(ui, Icon::Close, "Close window", true).clicked() {
-                        // The close-request handler keeps unsaved changes safe.
-                        close(ui.ctx(), "title bar");
+                        // Only a mouse or touch release closes the window. On
+                        // 4 Nov four windows closed 2 to 12 s after they
+                        // opened, each logging this button, and Masih had
+                        // clicked nothing; a click that is no pointer release
+                        // (a key, a screen-reader action) is left to the
+                        // keyboard shortcuts, and logged.
+                        let pointer = ui.input(|input| {
+                            (input.pointer.any_released(), input.pointer.latest_pos())
+                        });
+                        if pointer.0 {
+                            // The close-request handler keeps unsaved changes safe.
+                            close(ui.ctx(), "title bar");
+                        } else {
+                            eprintln!(
+                                "close: ignored a click on the title bar button that was no pointer release (pointer {:?})",
+                                pointer.1
+                            );
+                        }
                     }
                     if control(
                         ui,
@@ -432,7 +448,8 @@ pub fn title_bar(
 }
 
 fn control(ui: &mut egui::Ui, icon: Icon, label: &str, close: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), Sense::click());
+    // Not focusable: Tab, Space and Enter must never press a window button.
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), Sense::CLICK);
     if close && response.hovered() {
         ui.painter()
             .rect_filled(rect, 6.0, Color32::from_rgb(185, 53, 67));

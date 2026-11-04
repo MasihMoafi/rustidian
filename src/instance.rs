@@ -3,7 +3,9 @@
 //! A running window that gets no focus (busy, or GNOME refused the raise)
 //! keeps the request and asks for attention; only a process that does not
 //! answer at all is replaced. On 3 Nov a busy window gave its socket away and
-//! Masih saw three Rustidians for one note.
+//! Masih saw three Rustidians for one note. A launch still never takes the
+//! window from what Masih is reading: a file or folder of another vault gets
+//! a window of its own (4 Nov: a second agent's file replaced the first).
 use std::{
     ffi::OsStr,
     io::{BufRead, BufReader, ErrorKind, Read, Write},
@@ -22,8 +24,19 @@ pub struct Request {
     pub path: Option<PathBuf>,
     /// What lets the window raise itself on Wayland; see `window::bring_forward`.
     pub token: Option<String>,
-    /// The window sends on it once it has the focus, and the launch exits.
-    pub shown: Sender<()>,
+    /// The window answers on it: `Shown` once it has the focus, `Separate`
+    /// when the request belongs to another vault. The launch ends with it.
+    pub shown: Sender<Reply>,
+}
+
+/// What a window tells a launch it took.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// The window took the request and has the focus.
+    Shown,
+    /// The request is for another vault and the window stays as it is: the
+    /// launch opens a window of its own.
+    Separate,
 }
 
 /// Wayland's message buffer holds 4096 bytes by default, and a request that
@@ -63,10 +76,17 @@ const SHOWN_WITHIN: Duration = if cfg!(test) {
     Duration::from_secs(1)
 };
 
-/// The window's answer once it has the request: at once while it opens, else
-/// when it has the focus or after `SHOWN_WITHIN`. Windows from 29 Oct to
-/// 3 Nov answer 2 when they got no focus; that too is a hand-off.
+/// The window's answer once it has the focus. Windows from before 29 Oct give
+/// it at once.
 const SHOWN: u8 = 1;
+/// The window took the request but got no focus within `SHOWN_WITHIN`: it
+/// asks for attention. Windows from 29 Oct to 3 Nov answered 2 too.
+const UNFOCUSED: u8 = 2;
+/// The request is for another vault: the window kept its files and keeps
+/// serving, and the launch opens its own window.
+const SEPARATE: u8 = 3;
+/// The window is still opening: it takes the request on its first pass.
+const OPENING: u8 = 4;
 
 fn socket() -> Option<PathBuf> {
     rustidian::vaults::location().map(|catalog| catalog.with_file_name("instance.sock"))
@@ -79,16 +99,23 @@ pub enum Launch {
     /// This launch opens the window and serves later launches from the
     /// profile's socket: no window ran, or the running one does not answer.
     Serve(Instance),
-    /// The profile's socket cannot be bound: this launch opens its own window
-    /// and serves nothing.
+    /// This launch opens its own window and serves nothing: the profile's
+    /// socket cannot be bound, or the running window kept its files and left
+    /// this launch's vault to a window of its own.
     Alone,
 }
 
 /// What the running window answered a launch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Answer {
-    /// It took the request.
+    /// It took the request and has the focus.
     Shown,
+    /// It took the request and got no focus; it asks for attention.
+    Unfocused,
+    /// It is still opening and takes the request on its first pass.
+    Opening,
+    /// The request is for another vault; it kept its own files.
+    Separate,
     /// Nothing within `ANSWER_WITHIN`: it is stopped or stuck.
     Silent,
 }
@@ -108,6 +135,18 @@ fn launch_at(path: &Path, input: Option<&Path>, token: Option<&str>) -> Launch {
             Some(Answer::Shown) => {
                 eprintln!("hand-off: shown");
                 return Launch::HandedOff;
+            }
+            Some(Answer::Unfocused) => {
+                eprintln!("hand-off: taken, but the window got no focus (attention requested)");
+                return Launch::HandedOff;
+            }
+            Some(Answer::Opening) => {
+                eprintln!("hand-off: taken by a window still opening");
+                return Launch::HandedOff;
+            }
+            Some(Answer::Separate) => {
+                eprintln!("hand-off: another vault, opening a window of its own");
+                return Launch::Alone;
             }
             Some(Answer::Silent) => {
                 // The running process is stopped or stuck. This launch opens a
@@ -134,7 +173,12 @@ fn hand_off(path: &Path, input: Option<&Path>, token: Option<&str>) -> Option<An
         .write_all(&message(input, token))
         .and_then(|()| stream.read_exact(&mut reply))
     {
-        Ok(()) => Some(Answer::Shown),
+        Ok(()) => Some(match reply[0] {
+            SEPARATE => Answer::Separate,
+            UNFOCUSED => Answer::Unfocused,
+            OPENING => Answer::Opening,
+            _ => Answer::Shown,
+        }),
         // The window stopped listening as this launch connected: it closed,
         // or it gave its socket up to an earlier launch. The socket is free.
         Err(error)
@@ -254,10 +298,22 @@ impl Instance {
                         drop(listener);
                         return;
                     }
-                    if wake() {
-                        let _ = focused.recv_timeout(SHOWN_WITHIN);
-                    }
-                    let _ = (&stream).write_all(&[SHOWN]);
+                    // A window still opening has no UI to ask yet; its first
+                    // pass answers within moments. One that has closed in the
+                    // meantime drops the request unanswered: nothing will show
+                    // it, so this launch finds the socket abandoned.
+                    let opening = !wake();
+                    let answer = match focused.recv_timeout(SHOWN_WITHIN) {
+                        Ok(Reply::Shown) => SHOWN,
+                        Ok(Reply::Separate) => SEPARATE,
+                        Err(mpsc::RecvTimeoutError::Timeout) if opening => OPENING,
+                        Err(mpsc::RecvTimeoutError::Timeout) => UNFOCUSED,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            drop(listener);
+                            return;
+                        }
+                    };
+                    let _ = (&stream).write_all(&[answer]);
                 }
             });
         receiver
@@ -287,10 +343,20 @@ mod tests {
         std::thread::spawn(move || {
             for Request { path, token, shown } in requests {
                 let _ = taken.send((path, token));
-                let _ = shown.send(());
+                let _ = shown.send(Reply::Shown);
             }
         });
         received
+    }
+
+    /// A window that keeps its files: it tells each launch the request is for
+    /// another vault.
+    fn separate_window(requests: Receiver<Request>) {
+        std::thread::spawn(move || {
+            for Request { shown, .. } in requests {
+                let _ = shown.send(Reply::Separate);
+            }
+        });
     }
 
     #[test]
@@ -336,6 +402,43 @@ mod tests {
             assert_eq!(unseen.try_recv().unwrap().path.as_deref(), Some(note));
         }
         assert_eq!(inode(&path), before, "The window gave its socket away");
+    }
+
+    #[test]
+    fn a_request_for_another_vault_gets_a_window_of_its_own_and_leaves_the_first_alone() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("instance.sock");
+        let instance = first_window(&path);
+        let before = inode(&path);
+        separate_window(instance.serve(|| true));
+        let other = Path::new("/other-vault/Note.md");
+        for _ in 0..2 {
+            assert!(
+                matches!(launch_at(&path, Some(other), None), Launch::Alone),
+                "A request for another vault must open its own window"
+            );
+            assert_eq!(
+                inode(&path),
+                before,
+                "The new window took the socket from the one that kept its files"
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_that_closes_with_the_request_unanswered_is_not_counted_as_shown() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("instance.sock");
+        let requests = first_window(&path).serve(|| true);
+        // The window takes the request and ends before it shows anything.
+        std::thread::spawn(move || {
+            drop(requests.recv().unwrap());
+            drop(requests);
+        });
+        assert!(
+            matches!(launch_at(&path, None, None), Launch::Serve(_)),
+            "A hand-off to a window that closed answered as shown"
+        );
     }
 
     #[test]
