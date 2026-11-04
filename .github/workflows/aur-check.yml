@@ -1,0 +1,34 @@
+name: AUR check
+
+# Builds packaging/aur-bin/PKGBUILD on a clean Arch Linux container, installs the package and runs it.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['work/store-launch-*']
+    paths: ['packaging/aur-bin/**', '.github/workflows/aur-check.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  arch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: archlinux:latest
+    steps:
+      - run: pacman -Syu --noconfirm base-devel git sudo namcap
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build the package
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur-bin' && makepkg -s --noconfirm"
+      - name: Check, install and run it
+        run: |
+          cd packaging/aur-bin
+          namcap PKGBUILD || true
+          namcap rustidian-bin-*.pkg.tar.zst || true
+          pacman -Qlp rustidian-bin-*.pkg.tar.zst | grep -E 'bin/rustidian|rustidian.desktop|THIRD_PARTY|LICENSE'
+          pacman -U --noconfirm rustidian-bin-*.pkg.tar.zst
+          rustidian --version
