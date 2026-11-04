@@ -98,6 +98,30 @@ pub fn frame_time(ctx: &egui::Context, started: std::time::Instant) {
         .and_then(|mut file| file.write_all(line.as_bytes()));
 }
 
+/// Append a named phase time to `RUSTIDIAN_FRAME_LOG` and restart `clock` (a profiling aid; a
+/// no-op unless the log is set).
+pub fn phase(name: &str, clock: &mut std::time::Instant) {
+    phase_since(name, *clock);
+    *clock = std::time::Instant::now();
+}
+
+pub fn phase_since(name: &str, started: std::time::Instant) {
+    use std::io::Write;
+    static LOG: OnceLock<Option<PathBuf>> = OnceLock::new();
+    let Some(path) = LOG
+        .get_or_init(|| std::env::var_os("RUSTIDIAN_FRAME_LOG").map(PathBuf::from))
+        .as_ref()
+    else {
+        return;
+    };
+    let line = format!("phase {name} {}\n", started.elapsed().as_micros());
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(line.as_bytes()));
+}
+
 pub fn flush(ctx: &egui::Context) {
     let Some(path) = destination() else {
         return;

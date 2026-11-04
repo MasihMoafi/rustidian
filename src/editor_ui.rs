@@ -1331,6 +1331,7 @@ impl Editor {
         mut vault: Option<&mut rustidian::vault::Vault>,
         open_notes: &[(&std::path::Path, &str)],
     ) -> Option<String> {
+        let mut clock = std::time::Instant::now();
         if self
             .reveal
             .as_ref()
@@ -1854,6 +1855,7 @@ impl Editor {
         let source = &self.source;
         let parsed = &self.parsed;
         let sections = &self.sections;
+        crate::ui_probe::phase("before-layout-setup", &mut clock);
         let layout_cache = &mut self.layout_cache;
         let source_version = self.source_version;
         let tables = &mut self.tables;
@@ -1885,6 +1887,7 @@ impl Editor {
                             width: f32|
          -> Arc<egui::Galley> {
             let text = buffer.as_str();
+            let layout_started = std::time::Instant::now();
             if text == source && updated_parsed.take().is_some() && live {
                 images = live_images(
                     ui,
@@ -2011,6 +2014,7 @@ impl Editor {
                 && let Some(cached) = layout_cache.as_ref()
                 && cached.key == key
             {
+                crate::ui_probe::phase_since("layouter-hit", layout_started);
                 return cached.galley.clone();
             }
             let hidden = &key.hidden;
@@ -2059,11 +2063,13 @@ impl Editor {
                 paragraphs,
                 galley: galley.clone(),
             });
+            crate::ui_probe::phase_since("layouter-miss", layout_started);
             galley
         };
         let text_height = layouter(ui, &tab.document.text, ui.available_width())
             .size()
             .y;
+        crate::ui_probe::phase("layouter-first", &mut clock);
         let minimum_height = text_height + ui.clip_rect().height() / 2.0;
         let selection = ui.visuals().selection.bg_fill;
         let cursor_style = ui.visuals().text_cursor.clone();
@@ -2131,6 +2137,7 @@ impl Editor {
                     .show(ui)
             })
             .inner;
+        crate::ui_probe::phase("textedit", &mut clock);
         if bulk_edit && output.response.changed() {
             save_undo(ui.ctx(), &tab.document.text);
         }
@@ -2697,6 +2704,7 @@ impl Editor {
             self.insert_text(tab, text);
             ui.ctx().request_repaint();
         }
+        crate::ui_probe::phase("rest", &mut clock);
         follow
     }
 }
