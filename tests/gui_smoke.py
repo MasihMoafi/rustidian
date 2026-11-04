@@ -4815,6 +4815,7 @@ def main():
                     time.sleep(.05)
                 assert note.read_text() == typed_bold, ("Typing ** over a selection must bold it", note.read_text())
                 results.append("Typing ** over a double-click selection wrapped the word in ** instead of replacing it")
+                bold = typed_bold  # the later reading-view checks assert the note is unchanged
 
                 # Reading view: drag selects, right-click offers Copy and Select all.
                 command("Reading view")
