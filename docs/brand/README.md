@@ -1,9 +1,8 @@
 # Rustidian artwork
 
-Masih selected the green faceted logo on24October2026 and authorized its use and publication. `rustidian.png` is the exact approved generated PNG, preserving its transparency. The original personal icon remains preserved separately.
+The logo is a smooth stone split open, with a soft glowing hollow. It is original artwork. Masih generated it with the image tool built into the Elpis agent, from the prompts in `source/prompts.md` (3 Nov 2026), and picked it. It is not derived from any other app's icon.
 
-The image was generated as a sharper-edged edit of Masih’s recolored Obsidian icon. It is a derivative visual, not a claim of an independently cleared trademark. [Obsidian’s brand rules](https://obsidian.md/brand) identify its logo and app icon as trademarks and allow personal customization. User approval of this artwork does not establish permission from Obsidian for public branding. Rustidian is independent and unaffiliated with Obsidian; the source-code MIT license does not grant rights in third-party trademarks.
+- `store-icon.png`: the red version, 512 px with transparency. Snap, AppImage, the .deb and the portable archive use it.
+- `rustidian.png` and `themes/*.png`: the same stone in the app's four palettes (teal, Love Space red, Elpis gold, signature magenta). The app shows the one that matches the chosen palette.
 
-The older bookmark R and three notebook-logo drafts were rejected and removed from the active shortlist.
-
-The legacy `rustidian-original.png` URL serves the same approved PNG so existing article image links keep working. `rustidian.png` is the canonical asset.
+Rustidian is independent and unaffiliated with Obsidian. The MIT license of the source code does not grant rights in the Rustidian name or logo for use that implies endorsement.
