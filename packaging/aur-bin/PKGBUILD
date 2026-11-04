@@ -11,7 +11,7 @@ depends=('glibc' 'gcc-libs' 'libxkbcommon' 'libxkbcommon-x11' 'libx11' 'libxcurs
 provides=('rustidian')
 conflicts=('rustidian')
 source=("rustidian-${pkgver}-linux-x86_64.tar.gz::${url}/releases/download/v${pkgver}/rustidian-linux-x86_64.tar.gz")
-sha256sums=('SKIP')  # fill from SHA256SUMS after the release is published
+sha256sums=('debec817b677a762b5dd435390d14b1500049560bc3473b5fc6845f08e33968c')
 
 package() {
   cd "$srcdir"
