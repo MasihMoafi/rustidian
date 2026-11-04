@@ -72,6 +72,10 @@ pub struct Markdown {
     pub tasks: Vec<Task>,
     pub highlights: Vec<Range<usize>>,
     pub maths: Vec<crate::math::Span>,
+    /// Byte ranges inside `align="center"` HTML.
+    pub html_centered: Vec<Range<usize>>,
+    /// Lines made only of HTML wrapper tags, each with its newline.
+    pub html_tag_lines: Vec<Range<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -516,7 +520,7 @@ impl Markdown {
             styles.patch(range.start..range.start + 2, |style| style.marker = true);
             styles.patch(range.end - 2..range.end, |style| style.marker = true);
         }
-        if text.contains("![") {
+        if text.contains("![") || crate::html_layout::has_image_tag(text) {
             for image in crate::assets::embedded_images(text) {
                 if maths.iter().any(|math| {
                     math.range.start < image.range.end && math.range.end > image.range.start
@@ -525,6 +529,13 @@ impl Markdown {
                 }
                 styles.patch(image.range, |style| style.image = true);
             }
+        }
+        let html = crate::html_layout::scan(text);
+        for range in &html.hidden {
+            styles.patch(range.clone(), |style| {
+                style.hidden = true;
+                style.marker = true;
+            });
         }
         let mut quotes = Vec::new();
         let mut offset = 0;
@@ -595,6 +606,8 @@ impl Markdown {
             tasks,
             highlights,
             maths,
+            html_centered: html.centered,
+            html_tag_lines: html.tag_lines,
         }
     }
 }

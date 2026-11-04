@@ -34,6 +34,20 @@ struct Block {
     loose_item: bool,
     callout: Option<CalloutBlock>,
     ordinal: usize,
+    /// Inside `align="center"` HTML.
+    center: bool,
+    /// Where a linked image leads.
+    image_link: Option<String>,
+    /// Images that follow this one in the same paragraph, shown beside it (a row of badges).
+    row: Vec<RowImage>,
+    /// While parsing: this image joins the previous block's row.
+    joins_row: bool,
+}
+#[derive(Clone, Default)]
+struct RowImage {
+    uri: String,
+    alt: String,
+    link: Option<String>,
 }
 #[derive(Clone)]
 struct CalloutBlock {
@@ -192,6 +206,10 @@ impl Parsed {
         let mut table_ordinal = 0;
         let mut original_code = None;
         let mut table_row = Vec::new();
+        // Open HTML wrapper elements and whether each centres its content.
+        let mut html_stack: Vec<(String, bool)> = Vec::new();
+        // An image just ended in this paragraph, so a following one joins its row.
+        let mut image_row = false;
         let flush = |block: &mut Block, blocks: &mut Vec<Block>| {
             if !block.parts.is_empty()
                 || block.rule
@@ -214,6 +232,7 @@ impl Parsed {
         )
         .into_offset_iter()
         {
+            let block_html = matches!(event, Event::Html(_));
             if quote_frames
                 .iter()
                 .rev()
@@ -253,10 +272,22 @@ impl Parsed {
                     if block.table.is_some() {
                         parsed.fallback = true;
                     }
-                    flush(&mut block, &mut parsed.blocks);
+                    let joins = image_row
+                        && block.table.is_none()
+                        && block.parts.iter().all(|part| part.text.trim().is_empty());
+                    if joins {
+                        block.parts.clear();
+                    } else {
+                        flush(&mut block, &mut parsed.blocks);
+                    }
                     block.image = Some(dest_url.into_string());
+                    block.image_link = style.link.clone();
+                    block.joins_row = joins;
                 }
-                Event::End(TagEnd::Image) => flush(&mut block, &mut parsed.blocks),
+                Event::End(TagEnd::Image) => {
+                    join_or_flush(&mut block, &mut parsed.blocks);
+                    image_row = true;
+                }
                 Event::Start(Tag::Heading { level, .. }) => block.heading = level as u8,
                 Event::Start(Tag::CodeBlock(kind)) => {
                     flush(&mut block, &mut parsed.blocks);
@@ -361,6 +392,9 @@ impl Parsed {
                 }
                 Event::End(TagEnd::Link) => style.link = None,
                 Event::Text(text) => {
+                    if !text.trim().is_empty() && block.image.is_none() {
+                        image_row = false;
+                    }
                     if let Some(code) = &mut block.code {
                         code.body.push_str(&text);
                     } else {
@@ -415,7 +449,105 @@ impl Parsed {
                     flush(&mut block, &mut parsed.blocks);
                 }
                 Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::Item) => {
-                    flush(&mut block, &mut parsed.blocks)
+                    flush(&mut block, &mut parsed.blocks);
+                    image_row = false;
+                }
+                Event::End(TagEnd::HtmlBlock) => {
+                    flush(&mut block, &mut parsed.blocks);
+                    image_row = false;
+                }
+                Event::Html(html) | Event::InlineHtml(html) if layout_html(&html) => {
+                    for token in rustidian::html_layout::tokens(&html) {
+                        match token {
+                            rustidian::html_layout::Token::Comment(_) => {}
+                            rustidian::html_layout::Token::Text(text) => {
+                                let mut text = rustidian::html_layout::decode(&html[text]);
+                                if block_html {
+                                    text = collapse_whitespace(&text);
+                                    if block.parts.is_empty() {
+                                        text = text.trim_start().to_owned();
+                                    }
+                                }
+                                if text.trim().is_empty()
+                                    && (block.parts.is_empty() || block_html && image_row)
+                                {
+                                    continue;
+                                }
+                                image_row = false;
+                                block.parts.push(Inline {
+                                    text,
+                                    ..style.clone()
+                                });
+                            }
+                            rustidian::html_layout::Token::Tag(tag) => match tag.name.as_str() {
+                                "img" => {
+                                    let Some(src) = tag.attribute("src") else {
+                                        continue;
+                                    };
+                                    let joins = image_row
+                                        && block
+                                            .parts
+                                            .iter()
+                                            .all(|part| part.text.trim().is_empty());
+                                    if joins {
+                                        block.parts.clear();
+                                    } else {
+                                        flush(&mut block, &mut parsed.blocks);
+                                    }
+                                    let alt = tag.attribute("alt").unwrap_or_default();
+                                    block.image = Some(src.into());
+                                    block.image_link = style.link.clone();
+                                    block.joins_row = joins;
+                                    block.center = html_stack.iter().any(|(_, centres)| *centres);
+                                    block.parts.push(Inline {
+                                        text: match tag.pixels("width") {
+                                            Some(width) => format!("{alt}|{width}"),
+                                            None => alt.into(),
+                                        },
+                                        ..Default::default()
+                                    });
+                                    join_or_flush(&mut block, &mut parsed.blocks);
+                                    image_row = true;
+                                }
+                                "br" => block.parts.push(Inline {
+                                    text: "\n".into(),
+                                    ..style.clone()
+                                }),
+                                "b" | "strong" => style.bold = !tag.closing,
+                                "i" | "em" => style.italic = !tag.closing,
+                                "s" | "del" | "strike" => style.strike = !tag.closing,
+                                "u" | "ins" => {
+                                    style.html.underline = (!tag.closing).then_some(true)
+                                }
+                                "a" => {
+                                    style.link = if tag.closing {
+                                        None
+                                    } else {
+                                        tag.attribute("href").map(str::to_owned)
+                                    }
+                                }
+                                "picture" | "source" => {}
+                                _ => {
+                                    flush(&mut block, &mut parsed.blocks);
+                                    image_row = false;
+                                    if tag.closing {
+                                        if let Some(index) = html_stack
+                                            .iter()
+                                            .rposition(|(name, _)| *name == tag.name)
+                                        {
+                                            html_stack.truncate(index);
+                                        }
+                                    } else {
+                                        html_stack.push((tag.name.clone(), tag.centres()));
+                                    }
+                                    if tag.name == "summary" {
+                                        style.bold = !tag.closing;
+                                    }
+                                    block.center = html_stack.iter().any(|(_, centres)| *centres);
+                                }
+                            },
+                        }
+                    }
                 }
                 Event::Rule => {
                     flush(&mut block, &mut parsed.blocks);
@@ -492,9 +624,123 @@ impl Parsed {
                 Event::Html(_) => parsed.fallback = true,
                 _ => {}
             }
+            if html_stack.iter().any(|(_, centres)| *centres) {
+                block.center = true;
+            }
         }
         flush(&mut block, &mut parsed.blocks);
         parsed
+    }
+}
+
+/// Centre each row of a paragraph within its widest row (`align="center"`).
+fn center_rows(galley: &mut Arc<egui::Galley>) {
+    let width = galley
+        .rows
+        .iter()
+        .map(|row| row.row.size.x)
+        .fold(0.0, f32::max);
+    let galley = Arc::make_mut(galley);
+    let mut bounds = egui::Rect::NOTHING;
+    for row in &mut galley.rows {
+        row.pos.x += ((width - row.row.size.x) / 2.0).max(0.0);
+        bounds |= row.visuals.mesh_bounds.translate(row.pos.to_vec2());
+    }
+    galley.rect.min.x = 0.0;
+    galley.rect.max.x = width;
+    galley.mesh_bounds = bounds;
+}
+
+/// One image of a paragraph, at its original size up to its `|width` hint and the page width.
+fn show_image(ui: &mut egui::Ui, item: &RowImage) -> egui::Response {
+    if let Some(target) = item.uri.strip_prefix("rust-missing-image:") {
+        return ui.weak(format!("Image unavailable: {target}"));
+    }
+    let width = item
+        .alt
+        .rsplit('|')
+        .next()
+        .and_then(|hint| hint.split('x').next())
+        .and_then(|width| width.parse::<f32>().ok())
+        .filter(|width| *width > 0.0)
+        .unwrap_or(ui.available_width())
+        .min(ui.available_width());
+    let alt = item
+        .alt
+        .rsplit_once('|')
+        .map_or(item.alt.as_str(), |(alt, _)| alt);
+    ui.add(
+        egui::Image::new(&item.uri)
+            .fit_to_original_size(1.0)
+            .max_width(width)
+            .alt_text(alt)
+            .sense(if item.link.is_some() {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            }),
+    )
+}
+
+/// HTML the native renderer lays out itself: README wrappers, images, links and emphasis.
+fn layout_html(html: &str) -> bool {
+    rustidian::html_layout::tokens(html)
+        .iter()
+        .all(|token| match token {
+            rustidian::html_layout::Token::Tag(tag) => {
+                tag.is_layout()
+                    || matches!(
+                        tag.name.as_str(),
+                        "img"
+                            | "br"
+                            | "b"
+                            | "strong"
+                            | "i"
+                            | "em"
+                            | "s"
+                            | "del"
+                            | "strike"
+                            | "u"
+                            | "ins"
+                    )
+            }
+            _ => true,
+        })
+        && html.contains('<')
+}
+
+/// HTML shows any run of spaces and line breaks as one space.
+fn collapse_whitespace(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut space = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() && ch != '\u{a0}' {
+            if !space {
+                output.push(' ');
+            }
+            space = true;
+        } else {
+            output.push(ch);
+            space = false;
+        }
+    }
+    output
+}
+
+/// An image that follows another in the same paragraph joins its row; any other block stands alone.
+fn join_or_flush(block: &mut Block, blocks: &mut Vec<Block>) {
+    if block.joins_row
+        && let Some(last) = blocks.last_mut().filter(|last| last.image.is_some())
+    {
+        let joined = std::mem::take(block);
+        last.row.push(RowImage {
+            uri: joined.image.unwrap_or_default(),
+            alt: joined.parts.iter().map(|part| part.text.as_str()).collect(),
+            link: joined.image_link,
+        });
+    } else if block.image.is_some() || !block.parts.is_empty() {
+        block.joins_row = false;
+        blocks.push(std::mem::take(block));
     }
 }
 
@@ -1059,30 +1305,58 @@ fn show_blocks(
                 ui.add_space(16.0);
                 continue;
             }
-            let alt: String = block.parts.iter().map(|part| part.text.as_str()).collect();
-            if let Some(target) = uri.strip_prefix("rust-missing-image:") {
-                ui.weak(format!("Image unavailable: {target}"));
+            let items: Vec<RowImage> = std::iter::once(RowImage {
+                uri: uri.clone(),
+                alt: block.parts.iter().map(|part| part.text.as_str()).collect(),
+                link: block.image_link.clone(),
+            })
+            .chain(block.row.iter().cloned())
+            .collect();
+            // A centred row is padded by its width from the previous frame; images load late.
+            let row_id = document_id.with(("image-row", index));
+            let measured = ui.ctx().data(|data| data.get_temp::<f32>(row_id));
+            let pad = if block.center {
+                measured.map_or(0.0, |width| ((ui.available_width() - width) / 2.0).max(0.0))
             } else {
-                let width = alt
-                    .rsplit('|')
-                    .next()
-                    .and_then(|hint| hint.split('x').next())
-                    .and_then(|width| width.parse::<f32>().ok())
-                    .filter(|width| *width > 0.0)
-                    .unwrap_or(ui.available_width())
-                    .min(ui.available_width());
-                let image = ui.add(
-                    egui::Image::new(uri)
-                        .fit_to_original_size(1.0)
-                        .max_width(width)
-                        .alt_text(&alt),
-                );
-                if embedding.is_some() {
+                0.0
+            };
+            let mut extent = egui::Rangef::NOTHING;
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.spacing_mut().item_spacing.y = 4.0;
+                if pad > 0.0 {
+                    ui.add_space(pad - 4.0);
+                }
+                for (number, item) in items.iter().enumerate() {
+                    let image = show_image(ui, item);
+                    extent = extent.union(image.rect.x_range());
                     crate::ui_probe::record(
                         ui.ctx(),
-                        format!("note-embed-image:{}:{uri}", from.display()),
+                        format!("reading-image:{index}:{number}"),
                         image.rect,
                     );
+                    if embedding.is_some() && number == 0 {
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("note-embed-image:{}:{}", from.display(), item.uri),
+                            image.rect,
+                        );
+                    }
+                    if let Some(link) = &item.link {
+                        if image.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        if image.clicked() {
+                            clicked = follow_destination(link, native_links);
+                        }
+                    }
+                }
+            });
+            if block.center && extent.span().is_finite() {
+                let width = extent.span();
+                if measured.is_none_or(|previous| (previous - width).abs() > 0.5) {
+                    ui.ctx().data_mut(|data| data.insert_temp(row_id, width));
+                    ui.ctx().request_repaint();
                 }
             }
             ui.add_space(16.0);
@@ -1155,50 +1429,64 @@ fn show_blocks(
         if let Some(height) = heading_line_height {
             crate::theme::set_line_height(&mut galley, height);
         }
-        let response = egui::Frame::NONE
-            .inner_margin(egui::Margin {
-                left: if block.quote { 26 } else { 0 },
-                ..Default::default()
-            })
-            .show(ui, |ui| {
-                let label = egui::Label::new(galley.clone())
-                    .sense(egui::Sense::click())
-                    .selectable(true);
-                if let Some((ordinal, mut checked)) = block.task {
-                    ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 9.0;
-                        ui.add_space(task_indent);
-                        let line_height = galley.rows.first().map_or(29.16, |row| row.height());
-                        let size = crate::theme::document_size(ui, 18.0);
-                        let checkbox = ui
-                            .allocate_ui_with_layout(
-                                egui::vec2(size, line_height),
-                                egui::Layout::top_down(egui::Align::Min),
-                                |ui| {
-                                    ui.add_space(((line_height - size) / 2.0).max(0.0));
-                                    crate::theme::checkbox(ui, &mut checked)
-                                },
-                            )
-                            .inner;
-                        crate::ui_probe::record(ui.ctx(), format!("task:{ordinal}"), checkbox.rect);
-                        if embedding.is_some() {
+        if block.center {
+            center_rows(&mut galley);
+        }
+        let draw = |ui: &mut egui::Ui| {
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: if block.quote { 26 } else { 0 },
+                    ..Default::default()
+                })
+                .show(ui, |ui| {
+                    let label = egui::Label::new(galley.clone())
+                        .sense(egui::Sense::click())
+                        .selectable(true);
+                    if let Some((ordinal, mut checked)) = block.task {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 9.0;
+                            ui.add_space(task_indent);
+                            let line_height = galley.rows.first().map_or(29.16, |row| row.height());
+                            let size = crate::theme::document_size(ui, 18.0);
+                            let checkbox = ui
+                                .allocate_ui_with_layout(
+                                    egui::vec2(size, line_height),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |ui| {
+                                        ui.add_space(((line_height - size) / 2.0).max(0.0));
+                                        crate::theme::checkbox(ui, &mut checked)
+                                    },
+                                )
+                                .inner;
                             crate::ui_probe::record(
                                 ui.ctx(),
-                                format!("note-embed-task:{}:{ordinal}", from.display()),
+                                format!("task:{ordinal}"),
                                 checkbox.rect,
                             );
-                        }
-                        if checkbox.clicked() {
-                            *task = Some(ordinal);
-                        }
+                            if embedding.is_some() {
+                                crate::ui_probe::record(
+                                    ui.ctx(),
+                                    format!("note-embed-task:{}:{ordinal}", from.display()),
+                                    checkbox.rect,
+                                );
+                            }
+                            if checkbox.clicked() {
+                                *task = Some(ordinal);
+                            }
+                            ui.add(label)
+                        })
+                        .inner
+                    } else {
                         ui.add(label)
-                    })
-                    .inner
-                } else {
-                    ui.add(label)
-                }
-            })
-            .inner;
+                    }
+                })
+                .inner
+        };
+        let response = if block.center {
+            ui.vertical_centered(draw).inner
+        } else {
+            draw(ui)
+        };
         if embedding.is_some() {
             crate::ui_probe::record(
                 ui.ctx(),
@@ -1895,6 +2183,94 @@ mod tests {
             "Task"
         );
         assert!(parsed.blocks[3].task.is_none());
+    }
+
+    #[test]
+    fn a_github_readme_header_renders_natively_centred_with_one_row_of_badges() {
+        let source = "<div align=\"center\">\n\n<img src=\"logo.png\" alt=\"Skills\" width=\"650\">\n\n<br>\n\n**Do not re-explain.**\n\n[![Skills](https://img.shields.io/badge/skills-19-orange)](#available-skills)\n[![Install](https://img.shields.io/badge/install-npx-green)](#quick-start)\n\n</div>\n\nAfter the header.\n";
+        let parsed = Parsed::new(source);
+        assert!(
+            !parsed.fallback,
+            "README layout HTML must not fall back to raw text"
+        );
+        let text = |block: &super::Block| -> String {
+            block.parts.iter().map(|part| part.text.as_str()).collect()
+        };
+        let logo = parsed
+            .blocks
+            .iter()
+            .find(|block| block.image.as_deref() == Some("logo.png"))
+            .unwrap();
+        assert!(logo.center && text(logo) == "Skills|650");
+        let bold = parsed
+            .blocks
+            .iter()
+            .find(|block| text(block) == "Do not re-explain.")
+            .unwrap();
+        assert!(bold.center && bold.parts[0].bold);
+        let badges = parsed
+            .blocks
+            .iter()
+            .find(|block| {
+                block
+                    .image
+                    .as_deref()
+                    .is_some_and(|uri| uri.contains("skills-19"))
+            })
+            .unwrap();
+        assert!(badges.center);
+        assert_eq!(badges.image_link.as_deref(), Some("#available-skills"));
+        assert_eq!(
+            badges.row.len(),
+            1,
+            "the second badge joins the first one's row"
+        );
+        assert_eq!(badges.row[0].link.as_deref(), Some("#quick-start"));
+        assert!(
+            !parsed.blocks.iter().any(|block| text(block).contains('<')),
+            "no tag is shown as text"
+        );
+        let after = parsed.blocks.last().unwrap();
+        assert!(
+            text(after) == "After the header." && !after.center,
+            "centring ends at </div>"
+        );
+    }
+
+    #[test]
+    fn a_centred_html_paragraph_keeps_its_links_and_emphasis() {
+        let parsed = Parsed::new(
+            "<p align=\"center\"><b>The harness.</b></p>\n\n<p align=\"center\"><a href=\"https://example.com/r\">Releases</a> &middot; <a href=\"docs/GUIDE.md\">Guide</a></p>\n\nPlain <b>bold</b> text.\n\n<table><tr><td>x</td></tr></table>\n",
+        );
+        assert!(
+            parsed.fallback,
+            "other HTML, such as a table, still uses the full renderer"
+        );
+        let parsed = Parsed::new(
+            "<p align=\"center\"><b>The harness.</b></p>\n\n<p align=\"center\"><a href=\"https://example.com/r\">Releases</a> &middot; <a href=\"docs/GUIDE.md\">Guide</a></p>\n\nPlain <b>bold</b> text.\n",
+        );
+        assert!(!parsed.fallback);
+        assert!(parsed.blocks[0].center && parsed.blocks[0].parts[0].bold);
+        let links = &parsed.blocks[1];
+        assert!(links.center);
+        let text: String = links.parts.iter().map(|part| part.text.as_str()).collect();
+        assert_eq!(text, "Releases · Guide");
+        assert_eq!(
+            links.parts[0].link.as_deref(),
+            Some("https://example.com/r")
+        );
+        assert_eq!(
+            links.parts.last().unwrap().link.as_deref(),
+            Some("docs/GUIDE.md")
+        );
+        let plain = &parsed.blocks[2];
+        assert!(!plain.center);
+        assert!(
+            plain
+                .parts
+                .iter()
+                .any(|part| part.text == "bold" && part.bold)
+        );
     }
 
     #[test]
