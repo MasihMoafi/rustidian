@@ -220,7 +220,7 @@ impl NotesApp {
             page_pan: Default::default(),
             appearance: Default::default(),
             system_theme: Default::default(),
-            palette: Default::default(),
+            palette: theme::palette::app_wide(),
             cache: CommonMarkCache::default(),
             dialog: None,
             dialog_input: String::new(),
@@ -296,6 +296,7 @@ impl NotesApp {
             graph: Default::default(),
             always_update_links: false,
         };
+        theme::palette::select(&cc.egui_ctx, app.palette);
         app.load_vault(root);
         app
     }

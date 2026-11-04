@@ -130,6 +130,13 @@ pub fn open_with(session: Palette) -> Palette {
     })
 }
 
+/// The app-wide palette for a vault that has no saved session yet; teal until one is chosen.
+pub fn app_wide() -> Palette {
+    state_base()
+        .and_then(|base| read_global(&base))
+        .unwrap_or_default()
+}
+
 /// Remember a palette chosen in Settings for every vault.
 pub fn remember(palette: Palette) {
     if let Some(base) = state_base() {
