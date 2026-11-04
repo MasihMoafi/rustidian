@@ -3229,6 +3229,16 @@ def main():
                 states = [json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json")]
                 assert any(state.get("palette") == "signature" and state["dark"] is False for state in states)
                 expect_icons("signature")
+                # The palette is app-wide: a vault opened later uses it, not teal.
+                assert json.loads((base / "state/rustidian/palette").read_text()) == "signature"
+                key("Escape")
+                other = base / "Palette other vault"; other.mkdir(); (other / "Other.md").write_text("# Other\n")
+                command("Open vault"); modified_shortcut(xdo, "a"); paste_text(str(other), held=True); key("Return"); title_contains(other.name)
+                open_note("Other")
+                expect_background((252,245,242))
+                command("Open vault"); modified_shortcut(xdo, "a"); paste_text(str(fixture), held=True); key("Return"); title_contains(fixture.name)
+                command("Open settings"); click_control("settings-page:Appearance")
+                results.append("A vault opened after the palette was chosen elsewhere opens in that app-wide palette, not in teal")
                 click_control("settings-palette:Original teal"); key("Escape"); set_theme(True)
                 expect_icons("teal")
                 assert note.read_text() == source
