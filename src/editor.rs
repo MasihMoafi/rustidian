@@ -760,6 +760,27 @@ pub fn wrap(
     }
 }
 
+/// Characters that wrap a selection when typed over it, as in Obsidian: `*` and `_` for
+/// emphasis, a backtick for code, `~` for strikethrough and `=` for highlights. Typing the
+/// same character again wraps again, so `**` makes bold and `==` a highlight.
+pub const WRAP_ON_TYPE: [char; 5] = ['*', '_', '`', '~', '='];
+
+/// Put `marker` on both sides of a selection and return the selection of the same text.
+/// Both selections use Unicode scalar indices, as egui does.
+pub fn surround(text: &mut String, selection: Range<usize>, marker: char) -> Range<usize> {
+    let offsets: Vec<_> = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .chain([text.len()])
+        .collect();
+    let Some((&start, &end)) = offsets.get(selection.start).zip(offsets.get(selection.end)) else {
+        return selection;
+    };
+    text.insert(end, marker);
+    text.insert(start, marker);
+    selection.start + 1..selection.end + 1
+}
+
 /// Toggle one parsed task marker while preserving the rest of a note.
 pub fn toggle_task(text: &mut String, ordinal: usize) -> bool {
     let body = crate::metadata::frontmatter(text)
@@ -1046,5 +1067,39 @@ mod math_decoration_tests {
         }
         assert_eq!(parsed.highlights.len(), 1);
         assert_eq!(&source[parsed.highlights[0].clone()], "==outside==");
+    }
+
+    #[test]
+    fn typing_a_marker_over_a_selection_wraps_it_and_keeps_the_selection() {
+        let mut text = "a word here".to_string();
+        let selection = surround(&mut text, 2..6, '*');
+        assert_eq!((text.as_str(), selection), ("a *word* here", 3..7));
+        // A second `*` over the kept selection makes bold; a third, bold italic.
+        let selection = surround(&mut text, selection, '*');
+        assert_eq!(
+            (text.as_str(), selection.clone()),
+            ("a **word** here", 4..8)
+        );
+        surround(&mut text, selection, '*');
+        assert_eq!(text, "a ***word*** here");
+    }
+
+    #[test]
+    fn wrapping_on_type_counts_characters_not_bytes() {
+        let mut text = "π یادداشت x".to_string();
+        let selection = surround(&mut text, 2..9, '`');
+        assert_eq!(text, "π `یادداشت` x");
+        assert_eq!(selection, 3..10);
+        let mut text = "abc".to_string();
+        assert_eq!(surround(&mut text, 1..1, '='), 2..2);
+        assert_eq!(text, "a==bc");
+    }
+
+    #[test]
+    fn only_markdown_markers_wrap_on_type() {
+        for marker in ['*', '_', '`', '~', '='] {
+            assert!(WRAP_ON_TYPE.contains(&marker));
+        }
+        assert!(!WRAP_ON_TYPE.contains(&'a') && !WRAP_ON_TYPE.contains(&'['));
     }
 }
