@@ -3957,6 +3957,14 @@ impl NotesApp {
                                                     ui.ctx().request_repaint();
                                                 }
                                             }
+                                            // The note's full path; a blank tab has none to copy.
+                                            let copy_target = if tab.document.is_blank() {
+                                                None
+                                            } else {
+                                                self.vault.as_ref().map(|vault| {
+                                                    vault.root.join(&tab.document.path)
+                                                })
+                                            };
                                             response.context_menu(|ui| {
                                                 theme::menu_style(ui);
                                                 let action =
@@ -4033,6 +4041,53 @@ impl NotesApp {
                                                 );
                                                 if action.clicked() {
                                                     pin = Some(index);
+                                                    ui.close();
+                                                }
+                                                ui.separator();
+                                                let action = ui
+                                                    .add_enabled_ui(copy_target.is_some(), |ui| {
+                                                        theme::menu_item(
+                                                            ui,
+                                                            Icon::Copy,
+                                                            "Copy path",
+                                                        )
+                                                    })
+                                                    .inner;
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-copy-path",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    if let Some(path) = &copy_target {
+                                                        ui.ctx()
+                                                            .copy_text(path.display().to_string());
+                                                    }
+                                                    ui.close();
+                                                }
+                                                let action = ui
+                                                    .add_enabled_ui(copy_target.is_some(), |ui| {
+                                                        theme::menu_item(
+                                                            ui,
+                                                            Icon::Copy,
+                                                            "Copy file name",
+                                                        )
+                                                    })
+                                                    .inner;
+                                                crate::ui_probe::record(
+                                                    ui.ctx(),
+                                                    "tab-menu-copy-name",
+                                                    action.rect,
+                                                );
+                                                if action.clicked() {
+                                                    if let Some(name) = copy_target
+                                                        .as_ref()
+                                                        .and_then(|path| path.file_name())
+                                                    {
+                                                        ui.ctx().copy_text(
+                                                            name.to_string_lossy().into_owned(),
+                                                        );
+                                                    }
                                                     ui.close();
                                                 }
                                             });

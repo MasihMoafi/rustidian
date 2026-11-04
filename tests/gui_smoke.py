@@ -8815,6 +8815,20 @@ def main():
                 for name in "BCD":
                     key("ctrl+t"); open_note(f"Menu {name}.md", title="Menu " + name)
                 command("Toggle pin"); expect("A", "B", "C", "D")
+                # 4 Nov: the tab menu copies the note's full path and its file name.
+                def clipboard_text():
+                    try:
+                        return subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+                                                       env=environment, timeout=2, stderr=subprocess.DEVNULL).decode()
+                    except subprocess.CalledProcessError:
+                        return ""
+                for copy_control, copied in (("tab-menu-copy-path", str(fixture / "Menu B.md")), ("tab-menu-copy-name", "Menu B.md")):
+                    click_control("tab-full:Menu B.md", "3"); control_bounds(copy_control); click_control(copy_control)
+                    deadline = time.monotonic() + 3
+                    while clipboard_text() != copied and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert clipboard_text() == copied, (copy_control, clipboard_text(), copied)
+                results.append("The tab menu's Copy path put the note's full path on the clipboard and Copy file name its name")
                 select("C"); click_control("tab-full:Menu B.md", "3")
                 capture("native-tab-close-menu.png"); click_control("tab-menu-close-right")
                 expect("A", "B", "D"); title_contains("Menu B")
