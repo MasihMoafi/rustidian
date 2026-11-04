@@ -1,0 +1,36 @@
+name: Store smoke
+
+# Installs the published snap from the Snap Store on a clean runner and runs it.
+# Runs when this file changes on a store-launch branch, or by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Snap Store channel'
+        default: 'edge'
+  push:
+    branches: ['work/store-launch-*']
+    paths: ['.github/workflows/store-smoke.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  snap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install rustidian from the store
+        run: |
+          sudo snap install rustidian --${{ inputs.channel || 'edge' }}
+          snap list rustidian
+      - name: Run it
+        run: |
+          snap run rustidian --version | tee version.txt
+          grep -q '^Rustidian ' version.txt
+          test -f /snap/rustidian/current/share/doc/rustidian/THIRD_PARTY_NOTICES.txt
+          snap info rustidian | head -20
+      - name: Open the demo vault headless for a few seconds
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb
+          xvfb-run -a bash -c 'timeout 15 snap run rustidian /snap/rustidian/current/share/rustidian-demo-vault; test $? -eq 124'
