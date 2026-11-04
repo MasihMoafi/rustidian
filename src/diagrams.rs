@@ -3,7 +3,7 @@ use eframe::egui;
 use std::{
     collections::VecDeque,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex,
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, SyncSender},
     },
@@ -47,30 +47,8 @@ fn render(source: &str, dark: bool) -> Result<String, String> {
     mermaid_rs_renderer::render_with_options(source, options).map_err(|error| error.to_string())
 }
 
-/// SVG options with Rustidian's own fonts, the sans-serif fallback for any family.
-pub fn svg_options() -> usvg::Options<'static> {
-    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
-    let fonts = FONTS.get_or_init(|| {
-        let mut fonts = usvg::fontdb::Database::new();
-        for bytes in [
-            include_bytes!("../assets/fonts/Inter-Regular.otf").as_slice(),
-            include_bytes!("../assets/fonts/Inter-Bold.otf").as_slice(),
-            include_bytes!("../assets/fonts/NotoSansArabic-Regular.ttf").as_slice(),
-        ] {
-            fonts.load_font_data(bytes.to_vec());
-        }
-        fonts.set_sans_serif_family("Inter");
-        Arc::new(fonts)
-    });
-    usvg::Options {
-        font_family: "Inter".into(),
-        fontdb: Arc::clone(fonts),
-        ..Default::default()
-    }
-}
-
 fn svg_paths(svg: &str) -> Result<(String, egui::Vec2), String> {
-    usvg::Tree::from_str(svg, &svg_options())
+    usvg::Tree::from_str(svg, &crate::svg_loader::svg_options())
         .map(|tree| {
             let size = tree.size();
             (

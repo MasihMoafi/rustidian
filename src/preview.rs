@@ -1432,7 +1432,7 @@ fn show_blocks(
         if block.center {
             center_rows(&mut galley);
         }
-        let draw = |ui: &mut egui::Ui| {
+        let mut draw = |ui: &mut egui::Ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: if block.quote { 26 } else { 0 },

@@ -7,8 +7,30 @@ use eframe::egui::{
 };
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
+
+/// SVG options with Rustidian's own fonts, the sans-serif fallback for any family.
+pub fn svg_options() -> usvg::Options<'static> {
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut fonts = usvg::fontdb::Database::new();
+        for bytes in [
+            include_bytes!("../assets/fonts/Inter-Regular.otf").as_slice(),
+            include_bytes!("../assets/fonts/Inter-Bold.otf").as_slice(),
+            include_bytes!("../assets/fonts/NotoSansArabic-Regular.ttf").as_slice(),
+        ] {
+            fonts.load_font_data(bytes.to_vec());
+        }
+        fonts.set_sans_serif_family("Inter");
+        Arc::new(fonts)
+    });
+    usvg::Options {
+        font_family: "Inter".into(),
+        fontdb: Arc::clone(fonts),
+        ..Default::default()
+    }
+}
 
 type Entry = Result<Arc<egui::ColorImage>, String>;
 
@@ -64,12 +86,9 @@ impl ImageLoader for WebSvgLoader {
                 if !is_svg(mime.as_deref(), &bytes) {
                     return Err(LoadError::NotSupported);
                 }
-                let entry = egui_extras::image::load_svg_bytes_with_size(
-                    &bytes,
-                    size_hint,
-                    &crate::diagrams::svg_options(),
-                )
-                .map(Arc::new);
+                let entry =
+                    egui_extras::image::load_svg_bytes_with_size(&bytes, size_hint, &svg_options())
+                        .map(Arc::new);
                 self.cache.lock().unwrap().insert(key, entry.clone());
                 entry
                     .map(|image| ImagePoll::Ready { image })
@@ -128,7 +147,7 @@ mod tests {
         let image = egui_extras::image::load_svg_bytes_with_size(
             badge,
             SizeHint::default(),
-            &crate::diagrams::svg_options(),
+            &svg_options(),
         )
         .unwrap();
         assert_eq!(image.size, [62, 20]);
