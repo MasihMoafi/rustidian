@@ -1,7 +1,7 @@
 # Maintainer: Masih Moafi
 pkgname=rustidian-bin
 _name=rustidian
-pkgver=0.1.4
+pkgver=0.1.5
 pkgrel=1
 pkgdesc='Native Markdown notebook for local vaults (opens Obsidian-format vaults; not affiliated with Obsidian)'
 arch=('x86_64')
@@ -11,7 +11,7 @@ depends=('glibc' 'gcc-libs' 'libxkbcommon' 'libxkbcommon-x11' 'libx11' 'libxcurs
 provides=('rustidian')
 conflicts=('rustidian')
 source=("rustidian-${pkgver}-linux-x86_64.tar.gz::${url}/releases/download/v${pkgver}/rustidian-linux-x86_64.tar.gz")
-sha256sums=('b49c6733f69669b25e627720e32828737d8da819ee9f37d9c7ca5ec13b2562be')
+sha256sums=('SKIP')  # fill from SHA256SUMS after the release is published
 
 package() {
   cd "$srcdir"

@@ -6,4 +6,4 @@ Generated with the image tool built into the Elpis agent, three steps in a row; 
 2. Edit: Refine this logo so it is less hammered and rough: smooth the lumpy outline into confident, softly rounded curves, reduce the number of planes by a third, make the planes larger and cleaner, keep the glowing teal crystals but make them cleaner and more regular.
 3. Edit: Remove all the crystals completely. Keep the same smooth split-open teal rock with its soft rounded outline, now with a clean empty hollow whose smooth inner walls glow with soft mint-teal light, no crystals and no objects inside.
 
-The result is `store-icon.png` (red). Teal, Love Space red, Elpis gold and signature magenta are hue shifts of the same image.
+The result is `store-icon.png` (red). The four palette versions (teal, Love Space red, Elpis gold, signature) are gradient maps of the same image: its brightness is mapped onto each palette's accent colours from `src/palette.rs`, so every stone matches its palette swatches.
