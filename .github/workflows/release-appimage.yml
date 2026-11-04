@@ -1,0 +1,44 @@
+name: Release AppImage
+
+# Builds the AppImage from the exact executable inside the published release's tarball
+# (after checking its SHA256SUMS) and attaches it to that release. The version is Cargo.toml's.
+on:
+  workflow_dispatch:
+  push:
+    branches: ['work/store-launch-*']
+    paths: ['.github/workflows/release-appimage.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch and check the release files
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir release bundle
+          gh release download "v$VERSION" --pattern rustidian-linux-x86_64.tar.gz --pattern SHA256SUMS --pattern THIRD_PARTY_NOTICES.txt --dir release
+          (cd release && sha256sum --check --ignore-missing SHA256SUMS)
+          tar -xzf release/rustidian-linux-x86_64.tar.gz -C bundle
+          bundle/rustidian --version
+      - run: sudo apt-get install -y --no-install-recommends desktop-file-utils appstream
+      - name: Build the AppImage
+        run: |
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          APPIMAGETOOL=$PWD/appimagetool python3 scripts/package-appimage.py --binary bundle/rustidian --notices release/THIRD_PARTY_NOTICES.txt --output "Rustidian-$VERSION-x86_64.AppImage"
+      - name: Run it and check the binary is the release's
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 "./Rustidian-$VERSION-x86_64.AppImage" --version | tee v.txt
+          grep -q "^Rustidian $VERSION" v.txt
+          APPIMAGE_EXTRACT_AND_RUN=1 "./Rustidian-$VERSION-x86_64.AppImage" --appimage-extract >/dev/null
+          test "$(sha256sum squashfs-root/usr/bin/rustidian | cut -d' ' -f1)" = "$(sha256sum bundle/rustidian | cut -d' ' -f1)"
+      - name: Attach it to the release
+        run: gh release upload "v$VERSION" "Rustidian-$VERSION-x86_64.AppImage" "Rustidian-$VERSION-x86_64.AppImage.sha256"
