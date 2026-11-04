@@ -832,6 +832,10 @@ impl Icon {
 
 pub fn install_icons(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
+    // Added last, so it is asked first; it passes on anything that is not SVG.
+    ctx.add_image_loader(std::sync::Arc::new(
+        crate::svg_loader::WebSvgLoader::default(),
+    ));
     for icon in Icon::ALL {
         let (uri, bytes) = icon.asset();
         ctx.include_bytes(uri, egui::load::Bytes::Static(bytes));

@@ -47,7 +47,8 @@ fn render(source: &str, dark: bool) -> Result<String, String> {
     mermaid_rs_renderer::render_with_options(source, options).map_err(|error| error.to_string())
 }
 
-fn svg_paths(svg: &str) -> Result<(String, egui::Vec2), String> {
+/// SVG options with Rustidian's own fonts, the sans-serif fallback for any family.
+pub fn svg_options() -> usvg::Options<'static> {
     static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
     let fonts = FONTS.get_or_init(|| {
         let mut fonts = usvg::fontdb::Database::new();
@@ -61,12 +62,15 @@ fn svg_paths(svg: &str) -> Result<(String, egui::Vec2), String> {
         fonts.set_sans_serif_family("Inter");
         Arc::new(fonts)
     });
-    let options = usvg::Options {
+    usvg::Options {
         font_family: "Inter".into(),
         fontdb: Arc::clone(fonts),
         ..Default::default()
-    };
-    usvg::Tree::from_str(svg, &options)
+    }
+}
+
+fn svg_paths(svg: &str) -> Result<(String, egui::Vec2), String> {
+    usvg::Tree::from_str(svg, &svg_options())
         .map(|tree| {
             let size = tree.size();
             (

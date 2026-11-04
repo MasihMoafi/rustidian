@@ -593,7 +593,7 @@ fn embedded_images(
     from: &std::path::Path,
     maths: &[rustidian::math::Span],
 ) -> Vec<LiveImage> {
-    if !text.contains("![") {
+    if !text.contains("![") && !rustidian::html_layout::has_image_tag(text) {
         return Vec::new();
     }
     let width_limit = (ui.available_width() - 4.0).max(1.0);
@@ -2065,6 +2065,17 @@ impl Editor {
                         hidden.push(start..start + text[callout.body.clone()].chars().count());
                     }
                 }
+                // A line of only wrapper tags (`<div align="center">`) takes no room unless edited.
+                for line in &parsed.html_tag_lines {
+                    if !active_line
+                        .as_ref()
+                        .is_some_and(|active| active.start < line.end && active.end >= line.start)
+                    {
+                        hidden.push(
+                            text[..line.start].chars().count()..text[..line.end].chars().count(),
+                        );
+                    }
+                }
                 for image in &images {
                     if let Some(block) = &image.block {
                         let start = (image.range.end + 1).min(block.end);
@@ -2179,6 +2190,9 @@ impl Editor {
             reserve_table_rows(&mut galley, &table_placements);
             if !hidden.is_empty() {
                 collapse_rows(&mut galley, hidden);
+            }
+            if live && !plain_text {
+                center_rows(&mut galley, text, &parsed.html_centered);
             }
             *layout_cache = Some(LayoutCache {
                 key,
@@ -3168,6 +3182,37 @@ fn collapse_rows(galley: &mut Arc<egui::Galley>, hidden: &[Range<usize>]) {
         character += length;
     }
     galley.rect.max.y -= removed;
+    galley.mesh_bounds = bounds;
+}
+
+/// Rows inside `align="center"` HTML sit in the middle of the page, as GitHub shows them.
+fn center_rows(galley: &mut Arc<egui::Galley>, text: &str, centered: &[Range<usize>]) {
+    let width = galley.job.wrap.max_width;
+    if centered.is_empty() || !width.is_finite() {
+        return;
+    }
+    let ranges: Vec<_> = centered
+        .iter()
+        .map(|range| {
+            text[..range.start].chars().count()..text[..range.end.min(text.len())].chars().count()
+        })
+        .collect();
+    let galley = Arc::make_mut(galley);
+    let mut character = 0;
+    let mut bounds = egui::Rect::NOTHING;
+    let mut right = galley.rect.max.x;
+    for row in &mut galley.rows {
+        let length = row.char_count_including_newline().0;
+        if ranges.iter().any(|range| range.contains(&character)) {
+            row.pos.x += ((width - row.row.size.x) / 2.0).max(0.0);
+            right = right.max(row.pos.x + row.row.size.x);
+        }
+        if row.row.size.y > 0.0 {
+            bounds |= row.visuals.mesh_bounds.translate(row.pos.to_vec2());
+        }
+        character += length;
+    }
+    galley.rect.max.x = right;
     galley.mesh_bounds = bounds;
 }
 

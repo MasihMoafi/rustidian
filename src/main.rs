@@ -20,6 +20,7 @@ mod preview;
 mod properties_ui;
 mod recovery_ui;
 mod session;
+mod svg_loader;
 mod syntax;
 mod table_layout;
 mod table_ui;

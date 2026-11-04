@@ -9,6 +9,8 @@ pub struct EmbeddedImage {
     pub alt: String,
     pub width: Option<f32>,
     pub height: Option<f32>,
+    /// An HTML `<img>` tag rather than Markdown.
+    pub html: bool,
 }
 
 fn dimensions(label: &str) -> (Option<f32>, Option<f32>) {
@@ -60,6 +62,7 @@ pub fn embedded_images(source: &str) -> Vec<EmbeddedImage> {
             alt: alt.into(),
             width,
             height,
+            html: false,
         });
     }
     let mut image = None;
@@ -91,11 +94,25 @@ pub fn embedded_images(source: &str) -> Vec<EmbeddedImage> {
                         alt,
                         width,
                         height,
+                        html: false,
                     });
                 }
             }
             _ => {}
         }
+    }
+    for tag in crate::html_layout::scan(source).images {
+        let Some(target) = tag.attribute("src").filter(|src| !src.trim().is_empty()) else {
+            continue;
+        };
+        images.push(EmbeddedImage {
+            target: target.trim().into(),
+            alt: tag.attribute("alt").unwrap_or_default().into(),
+            width: tag.pixels("width"),
+            height: tag.pixels("height"),
+            range: tag.range,
+            html: true,
+        });
     }
     images.retain(|image| {
         !maths
@@ -125,6 +142,22 @@ pub fn prepare_images(markdown: &str, resolve: impl Fn(&str) -> Option<String>) 
                 format!("rust-missing-image:{}", image.target)
             }
         });
+        if image.html {
+            let attribute = |text: &str| text.replace('&', "&amp;").replace('"', "&quot;");
+            let mut tag = format!(
+                "<img src=\"{}\" alt=\"{}\"",
+                attribute(&destination),
+                attribute(&image.alt)
+            );
+            for (name, value) in [("width", image.width), ("height", image.height)] {
+                if let Some(value) = value {
+                    tag.push_str(&format!(" {name}=\"{value}\""));
+                }
+            }
+            tag.push('>');
+            display.replace_range(image.range, &tag);
+            continue;
+        }
         let alt = image
             .alt
             .replace('\\', "\\\\")
