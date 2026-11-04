@@ -2658,11 +2658,21 @@ def main():
                 type_text("ignored")
                 key("ctrl+s")
                 assert note.read_text() == source
-                assert marked_pixels("native-highlights-reading.png", "reading-block:1") > 15
+                def settled_pixels(name, control, wanted, label):
+                    # A mode switch is painted a frame or two after the command returns; count
+                    # the highlight pixels until they settle instead of trusting the first capture.
+                    deadline = time.monotonic() + 4
+                    while True:
+                        count = marked_pixels(name, control)
+                        if wanted(count) or time.monotonic() >= deadline:
+                            assert wanted(count), (label, count)
+                            return count
+                        time.sleep(.15)
+                settled_pixels("native-highlights-reading.png", "reading-block:1", lambda count: count > 15, "Reading view must paint the yellow highlight")
                 command("Live preview")
-                assert marked_pixels("native-highlights-live-dark.png", "editor") > 15
+                settled_pixels("native-highlights-live-dark.png", "editor", lambda count: count > 15, "Live preview must paint the yellow highlight")
                 command("Source editing")
-                assert marked_pixels("native-highlights-source.png", "editor") == 0
+                settled_pixels("native-highlights-source.png", "editor", lambda count: count == 0, "Source editing must show no highlight paint")
                 editor_end()
                 key("ctrl+shift+Left")
                 command("Highlight selection")
@@ -10656,7 +10666,7 @@ def main():
                             xdo("mousemove", "--sync", str(round(start[0] + delta[0] * step / 8)), str(round(start[1] + delta[1] * step / 8)))
                             time.sleep(.035)
                         if cancel:
-                            key("Escape")
+                            xdo("keydown", "Escape"); time.sleep(.12); xdo("keyup", "Escape")
                             xdo("mousemove", "--sync", str(round(start[0] + delta[0] + 15)), str(round(start[1] + delta[1] + 10)))
                             pause()
                     finally:
@@ -10777,7 +10787,13 @@ def main():
                     assert len(edge_samples) >= 2, ("Connected edge pixels must follow the dragged node into previously blank locations", edge_samples)
                     observations["node-pixels"] = {"before": before, "after": after, "camera_before": before_camera, "camera_after": after_camera, "edge_samples": edge_samples}
                     drag(after["Focus.md"], (31, -28), cancel=True)
-                    cancelled = positions(prefix)
+                    # The probe is rewritten once per painted frame; wait for the frame that follows the release.
+                    deadline = time.monotonic() + 3
+                    while True:
+                        cancelled = positions(prefix)
+                        if all(abs(cancelled[name][axis] - point[axis]) < 1 for name, point in after.items() for axis in (0, 1)) or time.monotonic() >= deadline:
+                            break
+                        time.sleep(.05)
                     assert all(abs(cancelled[name][axis] - point[axis]) < 1 for name, point in after.items() for axis in (0, 1)), ("Escape must restore the node's whole drag and keep it cancelled until mouse release", after, cancelled)
                     assert camera(prefix) == after_camera
                     pan(prefix)
