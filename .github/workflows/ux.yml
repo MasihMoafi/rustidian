@@ -148,6 +148,7 @@ jobs:
           GUI_ONLY: ${{ inputs.gui_only }}
           KEEP_BINARY: ${{ inputs.keep_binary }}
           REUSE_RUN: ${{ inputs.reuse_run }}
+          CARGO_PROFILE_RELEASE_STRIP: 'false'  # TEMPORARY: function names for a sampling profile
         run: |
           if test -n "$REUSE_RUN"; then
             test -x target/release/rustidian
