@@ -625,6 +625,9 @@ impl NotesApp {
                 theme::palette::select(ctx, self.palette);
                 theme::apply_appearance(ctx, self.appearance);
             } else {
+                if self.palette != before.2 {
+                    theme::palette::remember(self.palette);
+                }
                 self.settings_saved();
             }
             ctx.set_zoom_factor(self.ui_zoom);

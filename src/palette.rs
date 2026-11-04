@@ -90,6 +90,53 @@ pub fn current(ctx: &egui::Context) -> Palette {
     ctx.data(|data| data.get_temp(id()).unwrap_or_default())
 }
 
+/// The palette belongs to the app, not to one vault: every vault, folder and file opens in the
+/// palette chosen last. One small file beside the per-vault sessions holds it.
+pub fn global_file(state_base: &std::path::Path) -> std::path::PathBuf {
+    rustidian::paths::app_directory(state_base).join("palette")
+}
+
+fn state_base() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".local/state"))
+        })
+}
+
+pub fn read_global(state_base: &std::path::Path) -> Option<Palette> {
+    serde_json::from_slice(&std::fs::read(global_file(state_base)).ok()?).ok()
+}
+
+pub fn write_global(state_base: &std::path::Path, palette: Palette) -> std::io::Result<()> {
+    let path = global_file(state_base);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, serde_json::to_vec(&palette)?)?;
+    std::fs::rename(temporary, path)
+}
+
+/// The palette to open with: the app-wide choice, or this session's own the first time (which
+/// then becomes the app-wide choice, so an existing palette is kept when upgrading).
+pub fn open_with(session: Palette) -> Palette {
+    let Some(base) = state_base() else {
+        return session;
+    };
+    read_global(&base).unwrap_or_else(|| {
+        let _ = write_global(&base, session);
+        session
+    })
+}
+
+/// Remember a palette chosen in Settings for every vault.
+pub fn remember(palette: Palette) {
+    if let Some(base) = state_base() {
+        let _ = write_global(&base, palette);
+    }
+}
+
 pub fn select(ctx: &egui::Context, palette: Palette) {
     let previous = ctx.data(|data| data.get_temp::<Palette>(id()));
     ctx.data_mut(|data| data.insert_temp(id(), palette));
@@ -240,4 +287,29 @@ pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
         });
     ui.add_space(crate::theme::space::M);
     before != *selected
+}
+
+#[cfg(test)]
+mod global_tests {
+    use super::*;
+
+    #[test]
+    fn the_chosen_palette_is_kept_for_every_vault() {
+        let base = tempfile::tempdir().unwrap();
+        assert!(read_global(base.path()).is_none());
+        write_global(base.path(), Palette::LoveSpace).unwrap();
+        assert!(read_global(base.path()) == Some(Palette::LoveSpace));
+        write_global(base.path(), Palette::Signature).unwrap();
+        assert!(read_global(base.path()) == Some(Palette::Signature));
+        assert!(!global_file(base.path()).with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn a_damaged_file_means_no_choice_not_a_crash() {
+        let base = tempfile::tempdir().unwrap();
+        let path = global_file(base.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(read_global(base.path()).is_none());
+    }
 }

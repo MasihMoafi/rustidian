@@ -138,7 +138,7 @@ impl NotesApp {
         };
         self.restore_sidebars = [true; 2];
         self.right_tab = session.right_tab.min(3);
-        self.palette = session.palette;
+        self.palette = theme::palette::open_with(session.palette);
         theme::palette::select(ctx, self.palette);
         self.ui_zoom = if session.ui_zoom.is_finite() {
             session.ui_zoom.clamp(0.75, 1.5)
