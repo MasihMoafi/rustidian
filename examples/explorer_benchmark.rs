@@ -6,6 +6,9 @@ mod explorer_selection;
 #[path = "../src/file_tree.rs"]
 mod file_tree;
 #[allow(dead_code, unused_imports)]
+#[path = "../src/svg_loader.rs"]
+mod svg_loader;
+#[allow(dead_code, unused_imports)]
 #[path = "../src/theme.rs"]
 mod theme;
 #[allow(dead_code, unused_imports)]
