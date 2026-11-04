@@ -171,8 +171,40 @@ def check_files_and_text():
         fail("personal-path", "tracked files name a personal home path: " + ", ".join(tracked))
 
 
+def clippy_command(path):
+    text = (ROOT / path).read_text()
+    match = re.search(r"cargo(?: \+[\d.]+)? clippy ([^\n|]*?)(?: 2>&1)?(?:\s*\|.*)?$", text, re.M)
+    return match.group(1).strip() if match else None
+
+
+def check_ci_and_release_process():
+    # 3 Nov: the quick check passed, then the full run failed clippy on examples and benches it never linted.
+    quick, full = clippy_command(".github/workflows/native.yml"), clippy_command(".github/workflows/ux.yml")
+    if not quick or quick != full:
+        fail("ci-same-clippy", f"native.yml runs clippy '{quick}' but ux.yml runs '{full}'; the quick check must lint what the full run lints")
+    ux = (ROOT / ".github/workflows/ux.yml").read_text()
+    if not re.search(r"rustidian-verified-\$\{\{ github.sha \}\}", ux) or "package_after_checks" not in ux:
+        fail("release-artifact", "ux.yml no longer creates rustidian-verified-<sha> via package_after_checks; docs/RELEASING.md and the preflight are stale")
+    runbook = ROOT / "docs/RELEASING.md"
+    if not runbook.is_file():
+        fail("release-runbook", "docs/RELEASING.md is missing")
+    else:
+        text = runbook.read_text()
+        for needle in ("gui_only=true", "package_after_checks=true", "publish_run", "preflight-release.py", "lint-packaging.py"):
+            if needle not in text:
+                fail("release-runbook", f"docs/RELEASING.md does not mention {needle}")
+    # 4 Nov: release notes are hard-coded per release; the 0.1.3 text must never ship again.
+    if "fixes everyday vault workflows" in (ROOT / "scripts/publish-checked-release.py").read_text():
+        fail("release-notes", "publish-checked-release.py still has the v0.1.3 release notes; rewrite them for this release")
+    # 3 Nov: Masih's rule, no download over the VPN in expensive mode.
+    for path in sorted((ROOT / "scripts").glob("*.sh")) + [ROOT / "scripts/preflight-release.py"]:
+        text = path.read_text()
+        if re.search(r"\b(gh|curl|snapcraft)\b", text) and not re.search(r"unset HTTPS_PROXY|PROXY = \(", text):
+            fail("no-proxy", f"{path.name} calls the network but does not clear the proxy variables")
+
+
 def main():
-    for check in (check_scripts_compile, check_snap, check_workflows, check_desktop_and_metainfo, check_files_and_text):
+    for check in (check_scripts_compile, check_snap, check_workflows, check_desktop_and_metainfo, check_files_and_text, check_ci_and_release_process):
         try:
             check()
         except Exception as error:  # a crashed check is a failed check
