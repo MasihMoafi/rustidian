@@ -1073,7 +1073,7 @@ mod math_decoration_tests {
     fn typing_a_marker_over_a_selection_wraps_it_and_keeps_the_selection() {
         let mut text = "a word here".to_string();
         let selection = surround(&mut text, 2..6, '*');
-        assert_eq!((text.as_str(), selection), ("a *word* here", 3..7));
+        assert_eq!((text.as_str(), selection.clone()), ("a *word* here", 3..7));
         // A second `*` over the kept selection makes bold; a third, bold italic.
         let selection = surround(&mut text, selection, '*');
         assert_eq!(
