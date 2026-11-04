@@ -4,8 +4,9 @@
 //! keeps the request and asks for attention; only a process that does not
 //! answer at all is replaced. On 3 Nov a busy window gave its socket away and
 //! Masih saw three Rustidians for one note. A launch still never takes the
-//! window from what Masih is reading: a file or folder of another vault gets
-//! a window of its own (4 Nov: a second agent's file replaced the first).
+//! window from what Masih is reading: a file of another vault opens as a tab
+//! beside it, a folder of another vault gets a window of its own (4 Nov: a
+//! second agent's file replaced the first).
 use std::{
     ffi::OsStr,
     io::{BufRead, BufReader, ErrorKind, Read, Write},
@@ -25,7 +26,7 @@ pub struct Request {
     /// What lets the window raise itself on Wayland; see `window::bring_forward`.
     pub token: Option<String>,
     /// The window answers on it: `Shown` once it has the focus, `Separate`
-    /// when the request belongs to another vault. The launch ends with it.
+    /// when the request is a folder of another vault. The launch ends with it.
     pub shown: Sender<Reply>,
 }
 
@@ -34,8 +35,8 @@ pub struct Request {
 pub enum Reply {
     /// The window took the request and has the focus.
     Shown,
-    /// The request is for another vault and the window stays as it is: the
-    /// launch opens a window of its own.
+    /// The request is a folder of another vault and the window stays as it
+    /// is: the launch opens a window of its own.
     Separate,
 }
 

@@ -1975,6 +1975,43 @@ impl NotesApp {
         }
     }
 
+    /// Open a file of another vault as a tab of this window, where it lies. The
+    /// notes already open stay open.
+    fn open_guest_tab(&mut self, file: &Path) {
+        let Ok(absolute) = file.canonicalize() else {
+            self.error = Some(format!("Cannot open {}", file.display()));
+            return;
+        };
+        if let Some(index) = self
+            .tabs
+            .iter()
+            .position(|tab| tab.document.path == absolute)
+        {
+            self.active = index;
+            self.tabs[index].show_document();
+            self.focus_editor();
+            return;
+        }
+        let Some(vault) = &mut self.vault else {
+            return;
+        };
+        match vault.open_guest(&absolute) {
+            Ok(document) => {
+                let mut tab = Tab::new(document);
+                self.editor_preferences.apply(&mut tab);
+                self.tabs.push(tab);
+                self.active = self.tabs.len() - 1;
+                self.cache = CommonMarkCache::default();
+                self.find = Default::default();
+                self.focus_editor();
+            }
+            Err(error) => {
+                self.error = Some(error);
+                self.focus_editor();
+            }
+        }
+    }
+
     fn open_system_selection(&mut self, kind: rustidian::native_picker::Kind, path: PathBuf) {
         match self.resolve_system_selection(kind, &path) {
             Ok((root, document)) => self.request_open_input(root, document),
@@ -5908,19 +5945,39 @@ impl eframe::App for NotesApp {
                     rustidian::native_picker::Kind::File
                 }
             };
-            // What is on screen stays: a launch for another vault gets a
-            // window of its own, so a second agent's file never replaces the
-            // one Masih is reading.
-            if let Some(path) = &path
-                && let Ok((root, _)) = self.resolve_system_selection(kind(path), path)
-                && self.vault.as_ref().is_some_and(|vault| vault.root != root)
-            {
-                eprintln!(
-                    "hand-off: {} is another vault; this window stays",
-                    root.display()
-                );
-                let _ = shown.send(crate::instance::Reply::Separate);
-                continue;
+            // What is on screen stays. A file of another vault opens as a tab
+            // beside the notes being read, so a second agent's file never
+            // replaces the first; a folder of another vault, which has no tab,
+            // gets a window of its own.
+            let other_vault = path.as_ref().and_then(|path| {
+                let kind = kind(path);
+                self.resolve_system_selection(kind, path)
+                    .ok()
+                    .filter(|(root, _)| {
+                        self.vault.as_ref().is_some_and(|vault| vault.root != *root)
+                    })
+                    .map(|_| kind)
+            });
+            match (&path, other_vault) {
+                (Some(path), Some(rustidian::native_picker::Kind::File)) => {
+                    eprintln!(
+                        "hand-off: {} is another vault; opening a tab",
+                        path.display()
+                    );
+                    crate::window::bring_forward(ctx, frame, token.as_deref());
+                    self.showing.push(shown);
+                    self.open_guest_tab(path);
+                    continue;
+                }
+                (Some(path), Some(rustidian::native_picker::Kind::Folder)) => {
+                    eprintln!(
+                        "hand-off: {} is another vault; this window stays",
+                        path.display()
+                    );
+                    let _ = shown.send(crate::instance::Reply::Separate);
+                    continue;
+                }
+                _ => {}
             }
             crate::window::bring_forward(ctx, frame, token.as_deref());
             self.showing.push(shown);

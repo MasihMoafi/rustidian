@@ -182,6 +182,10 @@ pub struct Vault {
     /// holds every project below it: 12,249 notes and 1 GB on 3 Nov. Such a
     /// folder loads only its own files, not its subfolders.
     loose: bool,
+    /// Files of other vaults this window holds as tabs, by absolute path: an
+    /// agent's file opened beside the note being read. They are read and saved
+    /// where they are and never enter the index, the tree or the graph.
+    guests: std::collections::BTreeSet<PathBuf>,
     paths: HashMap<PathBuf, usize>,
     names: HashMap<String, Vec<usize>>,
     incoming: std::sync::OnceLock<HashMap<PathBuf, Vec<usize>>>,
@@ -217,6 +221,7 @@ impl Vault {
             index_time: Duration::ZERO,
             attachments: Vec::new(),
             folders: Vec::new(),
+            guests: std::collections::BTreeSet::new(),
             paths: HashMap::new(),
             names: HashMap::new(),
             incoming: std::sync::OnceLock::new(),
@@ -351,7 +356,7 @@ impl Vault {
     }
 
     pub fn read(&self, path: &Path) -> Result<Document> {
-        let absolute = self.safe_path(path, false)?;
+        let absolute = self.document_path(path, false)?;
         let text = fs::read_to_string(absolute).map_err(|e| format!("Cannot read note: {e}"))?;
         if text.contains('\0') {
             return Err("This file contains binary data and cannot be edited as text.".into());
@@ -495,7 +500,7 @@ impl Vault {
             .clone()
             .ok_or("This note is not on disk yet.")?;
         Ok(PendingSave {
-            absolute: self.safe_path(&document.path, false)?,
+            absolute: self.document_path(&document.path, false)?,
             path: document.path.clone(),
             text: document.text.clone(),
             original,
@@ -507,7 +512,53 @@ impl Vault {
     pub fn commit_save(&mut self, document: &mut Document, text: String) {
         document.original = Some(text.clone());
         document.saved_revision = Document::next_revision();
-        self.index_note(document.path.clone(), text);
+        if !self.guests.contains(&document.path) {
+            self.index_note(document.path.clone(), text);
+        }
+    }
+
+    /// Where a document is on disk: inside the vault by its relative path, or
+    /// a guest file by its absolute one. Renames, moves and the trash use
+    /// `safe_path` and so never touch a guest.
+    fn document_path(&self, path: &Path, create_parents: bool) -> Result<PathBuf> {
+        if !path.is_absolute() {
+            return self.safe_path(path, create_parents);
+        }
+        if !self.guests.contains(path) {
+            return Err("Notes must stay inside the vault. Use a relative Markdown path.".into());
+        }
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                Err("Linked files cannot be edited.".into())
+            }
+            Ok(metadata) if metadata.is_file() => Ok(path.to_owned()),
+            _ => Err("This file no longer exists.".into()),
+        }
+    }
+
+    /// Open a file outside this vault as a guest: the document keeps its
+    /// absolute path, which is how the window tells it from the vault's notes.
+    pub fn open_guest(&mut self, file: &Path) -> Result<Document> {
+        let absolute = file
+            .canonicalize()
+            .map_err(|error| format!("Cannot open {}: {error}", file.display()))?;
+        if absolute.starts_with(&self.root) {
+            return Err("This file belongs to the open vault.".into());
+        }
+        if !is_text_document(&absolute) {
+            return Err("Choose a supported Markdown, text or source-code file.".into());
+        }
+        self.guests.insert(absolute.clone());
+        let document = self.read(&absolute);
+        if document.is_err() {
+            self.guests.remove(&absolute);
+        }
+        document
+    }
+
+    /// Whether `path` is a guest file held by this window.
+    pub fn is_guest(&self, path: &Path) -> bool {
+        self.guests.contains(path)
     }
 
     fn index_note(&mut self, path: PathBuf, text: String) {

@@ -5597,31 +5597,45 @@ def main():
                     results.append("A hand-off whose window got no focus (the window manager refused it) left one window, which took the "
                                    "note; the launch logged `hand-off: taken, but the window got no focus (attention requested)`, not `shown`")
 
-                    # 4 Nov: a second agent's file replaced the file Masih was reading. A file of another vault gets a window of its
-                    # own and the first window keeps its note, tabs and socket.
+                    # 4 Nov: a second agent's file replaced the file Masih was reading. A file of another vault opens as a
+                    # tab beside it; the note being read stays open in its own tab.
                     elsewhere = base / "elsewhere"
                     elsewhere.mkdir(exist_ok=True)
                     other_note = elsewhere / "Other vault note.md"
                     other_note.write_text("# Other vault note\n\nAn agent opened this beside the note being read.\n")
                     before = len(hand_offs())
-                    apart = launch(other_note)
-                    apart_window = opened_window(apart, [window], "A file of another vault must open a window of its own")
+                    guest = launch(other_note)
+                    asked(window)
+                    handed_off(guest, "A file of another vault must open as a tab of the running window")
+                    title_contains(other_note.stem)
+                    tab_names = lambda: json.loads((base / "ui-probe.json").read_text())
+                    wait_for(lambda: f"tab-full:{other_note.name}" in tab_names() and f"tab-full:{requested.name}" in tab_names(),
+                             lambda: f"Both notes must have a tab: {sorted(name for name in tab_names() if name.startswith('tab-full:'))}")
+                    assert len(visible()) == 1 and sandbox_apps() == [app.pid], (visible(), sandbox_apps())
+                    assert identity() == original, "A tab hand-off replaced the window's socket"
+                    click_control(f"tab-full:{requested.name}")
+                    title_contains(requested.stem)
+                    results.append("A file from another vault opened as a tab of the running window (`hand-off: shown`): its tab and the "
+                                   "note being read both stayed, in the one window and process")
+
+                    # A folder of another vault has no tab: it gets a window of its own and the first keeps everything.
+                    apart = launch(elsewhere)
+                    apart_window = opened_window(apart, [window], "A folder of another vault must open a window of its own")
                     assert said(apart[1])[:1] == ["hand-off: another vault, opening a window of its own"], said(apart[1])
-                    apart_title = lambda: xdo("getwindowname", apart_window)
-                    wait_for(lambda: other_note.stem in apart_title(), lambda: f"The new window must show the file: {apart_title()!r}", limit=15)
-                    assert requested.stem in xdo("getwindowname", window), "The first window lost the note it showed"
                     assert app.poll() is None and identity() == original, "The first window or its socket changed"
-                    assert [line for line in hand_offs()[before:] if "another vault" in line], hand_offs()[before:]
                     assert sorted(sandbox_apps()) == sorted([app.pid, apart[0].pid]), sandbox_apps()
-                    results.append("A file from another vault opened in a window of its own (`hand-off: another vault, opening a window of "
-                                   "its own`); the first window kept its note and its socket")
+                    apart[0].terminate()
+                    apart[0].wait(timeout=10)
+                    wait_for(lambda: visible() == [window], lambda: f"The folder's window stayed: {visible()}")
+                    results.append("A folder of another vault opened in a window of its own (`hand-off: another vault, opening a window of "
+                                   "its own`); the first window kept its tabs and its socket")
 
                     # 28 Oct: a window Masih could not see kept the socket, so his launches showed nothing. One that cannot
                     # answer at all (stopped here) gets its socket taken after two seconds.
                     app.send_signal(signal.SIGSTOP)
                     try:
                         third = launch(fixture)
-                        third_window = opened_window(third, [window, apart_window], "A launch beside a stopped window must open its own window")
+                        third_window = opened_window(third, [window], "A launch beside a stopped window must open its own window")
                     finally:
                         app.send_signal(signal.SIGCONT)
                     assert said(third[1])[:1] == ["hand-off: no answer, opening a window"], said(third[1])
@@ -5633,12 +5647,11 @@ def main():
                     wait_for(lambda: said(third[1])[1:] == ["hand-off: no token"],
                              lambda: f"The newest window did not take the launch: {said(third[1])}")
                     assert identity() == taken, "A hand-off to the newest window replaced its socket"
-                    assert app.poll() is None and apart[0].poll() is None, "The earlier windows must stay open"
+                    assert app.poll() is None, "The first window must stay open"
                     results.append("Beside a stopped window a launch got no answer within 2 s, logged `hand-off: no answer, opening a window`, "
                                    "opened its own window and took the socket; the next launch handed over to that window")
-                    for process, _ in (apart, third):
-                        process.terminate()
-                        process.wait(timeout=10)
+                    third[0].terminate()
+                    third[0].wait(timeout=10)
                 finally:
                     for process in started:
                         if process.poll() is None:
