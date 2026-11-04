@@ -1473,6 +1473,7 @@ impl Tables {
         };
         let (rows, columns) = selection.ranges(view.cells.len(), view.model.alignments.len());
         let (mut copy, mut clear, mut cancel) = (false, false, false);
+        let mut delete_key = false;
         ui.input_mut(|input| {
             input.events.retain(|event| match event {
                 egui::Event::Copy => {
@@ -1488,7 +1489,7 @@ impl Tables {
                     pressed: true,
                     ..
                 } => {
-                    clear = true;
+                    (clear, delete_key) = (true, true);
                     false
                 }
                 egui::Event::Key {
@@ -1520,13 +1521,18 @@ impl Tables {
             self.views[selection.table].model = model.clone();
             self.draft = None;
             let id = self.owner.unwrap_or(egui::Id::NULL);
-            self.apply(
-                ui,
-                tab,
-                id,
-                selection.table,
-                Action::Clear { rows, columns },
-            );
+            // Delete or Backspace over whole body rows removes the rows, as Delete rows in
+            // the menu does; the header row and partial ranges only lose their contents.
+            let whole_rows = delete_key
+                && rows.start > 0
+                && columns.len() == self.views[selection.table].model.alignments.len();
+            let action = if whole_rows {
+                self.selection = None;
+                Action::RemoveRows(rows)
+            } else {
+                Action::Clear { rows, columns }
+            };
+            self.apply(ui, tab, id, selection.table, action);
         }
         if cancel {
             self.selection = None;

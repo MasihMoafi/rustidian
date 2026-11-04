@@ -1668,6 +1668,48 @@ impl Editor {
         }
         if ui.memory(|m| m.has_focus(id)) {
             let pending = self.pending_edit.take();
+            // Typing `*`, `_`, a backtick, `~` or `=` over a selection wraps it instead of
+            // replacing it, so `**` makes bold. The typed character never reaches TextEdit.
+            let typed = {
+                let selected = TextEditState::load(ui.ctx(), id)
+                    .and_then(|state| state.cursor.char_range())
+                    .is_some_and(|range| range.primary.index != range.secondary.index);
+                selected
+                    .then(|| {
+                        ui.input_mut(|input| {
+                            let position = input.events.iter().position(|event| {
+                                matches!(event, egui::Event::Text(text)
+                                    if text.chars().count() == 1
+                                        && text.chars().next().is_some_and(|c| rustidian::editor::WRAP_ON_TYPE.contains(&c)))
+                            })?;
+                            match input.events.remove(position) {
+                                egui::Event::Text(text) => text.chars().next(),
+                                _ => None,
+                            }
+                        })
+                    })
+                    .flatten()
+            };
+            if let Some(marker) = typed {
+                let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
+                if let Some(selection) = state.cursor.char_range() {
+                    let mut undoer = state.undoer();
+                    undoer.add_undo(&(selection, tab.document.text.clone()));
+                    let sorted = selection.as_sorted_char_range();
+                    let range = rustidian::editor::surround(
+                        &mut tab.document.text,
+                        sorted.start.0..sorted.end.0,
+                        marker,
+                    );
+                    let cursor =
+                        CCursorRange::two(CCursor::new(range.start), CCursor::new(range.end));
+                    state.cursor.set_char_range(Some(cursor));
+                    undoer.add_undo(&(cursor, tab.document.text.clone()));
+                    state.set_undoer(undoer);
+                    state.store(ui.ctx(), id);
+                    tab.edited();
+                }
+            }
             let shortcut = [
                 (Key::B, egui::Modifiers::COMMAND, "**"),
                 (Key::I, egui::Modifiers::COMMAND, "*"),

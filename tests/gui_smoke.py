@@ -3563,6 +3563,15 @@ def main():
                 menu("Delete rows")
                 source = head + "| A | B |\n| --- | --- |\n| 7 | 8 |\n" + tail
                 saved(note, source, "Shift+click row handles then Delete rows")
+                # Delete over whole selected body rows removes them; it used to clear their cells.
+                rows_note = fixture / "Notes/Table row delete.md"
+                rows_note.write_text(head + "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n" + tail); time.sleep(.6)
+                open_note("Table row delete"); command("Live preview")
+                grip("row", 1, "edit-table-cell:0:1:0")
+                grip("row", 2, "edit-table-cell:0:2:0", extra=("keydown", "shift"))
+                xdo("keyup", "shift"); pause()
+                key("Delete")
+                saved(rows_note, head + "| A | B |\n| --- | --- |\n| 5 | 6 |\n" + tail, "Delete key over selected rows removes them")
                 assert app.poll() is None, "The app must survive range selection"
 
             def table_edge_checks():
@@ -4790,6 +4799,22 @@ def main():
                     time.sleep(.05)
                 assert note.read_text() == bold, repr(note.read_text())
                 results.append("Double-click selected a word and Bold from the menu wrapped it in **")
+
+                # Typing `*` twice over a selected word makes it bold (it used to delete the word).
+                beta = caret_at(2, 8)
+                y = round((beta[1] + beta[3]) / 2)
+                xdo("mousemove", "--sync", str(round(beta[0])), str(y), "click", "--repeat", "2", "--delay", "80", "1")
+                pause()
+                key("ctrl+c")
+                wait_clipboard("beta")
+                type_text("**")
+                key("ctrl+s")
+                typed_bold = bold.replace("beta", "**beta**")
+                deadline = time.monotonic() + 3
+                while note.read_text() != typed_bold and time.monotonic() < deadline:
+                    time.sleep(.05)
+                assert note.read_text() == typed_bold, ("Typing ** over a selection must bold it", note.read_text())
+                results.append("Typing ** over a double-click selection wrapped the word in ** instead of replacing it")
 
                 # Reading view: drag selects, right-click offers Copy and Select all.
                 command("Reading view")
