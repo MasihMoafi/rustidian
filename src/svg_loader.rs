@@ -69,11 +69,12 @@ impl ImageLoader for WebSvgLoader {
         egui::generate_loader_id!(WebSvgLoader)
     }
 
-    fn load(&self, ctx: &egui::Context, uri: &str, size_hint: SizeHint) -> ImageLoadResult {
+    fn load(&self, ctx: &egui::Context, uri: &str, _size_hint: SizeHint) -> ImageLoadResult {
         if !candidate(uri) {
             return Err(LoadError::NotSupported);
         }
-        let key = (uri.to_owned(), size_hint);
+        // A badge keeps its own size: the editor's width hint would stretch it to the page width.
+        let key = (uri.to_owned(), SizeHint::default());
         if let Some(entry) = self.cache.lock().unwrap().get(&key) {
             return entry
                 .clone()
@@ -86,9 +87,12 @@ impl ImageLoader for WebSvgLoader {
                 if !is_svg(mime.as_deref(), &bytes) {
                     return Err(LoadError::NotSupported);
                 }
-                let entry =
-                    egui_extras::image::load_svg_bytes_with_size(&bytes, size_hint, &svg_options())
-                        .map(Arc::new);
+                let entry = egui_extras::image::load_svg_bytes_with_size(
+                    &bytes,
+                    SizeHint::default(),
+                    &svg_options(),
+                )
+                .map(Arc::new);
                 self.cache.lock().unwrap().insert(key, entry.clone());
                 entry
                     .map(|image| ImagePoll::Ready { image })

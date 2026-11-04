@@ -537,6 +537,12 @@ impl Markdown {
                 style.marker = true;
             });
         }
+        for range in &html.bold {
+            styles.patch(range.clone(), |style| style.strong = true);
+        }
+        for range in &html.italic {
+            styles.patch(range.clone(), |style| style.italic = true);
+        }
         let mut quotes = Vec::new();
         let mut offset = 0;
         for line in text.split_inclusive('\n') {

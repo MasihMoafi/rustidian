@@ -232,6 +232,9 @@ pub struct Layout {
     pub tag_lines: Vec<Range<usize>>,
     /// Text inside `align="center"` or `<center>`.
     pub centered: Vec<Range<usize>>,
+    /// Text inside `<b>`/`<strong>` and `<i>`/`<em>`; their tags are in `hidden`.
+    pub bold: Vec<Range<usize>>,
+    pub italic: Vec<Range<usize>>,
 }
 
 /// Read the layout HTML of a Markdown note, skipping its properties and code.
@@ -246,6 +249,7 @@ pub fn scan(source: &str) -> Layout {
         .flatten()
         .map_or(0, |properties| properties.range.end);
     let mut open: Vec<(String, usize, bool)> = Vec::new();
+    let mut emphasis: Vec<(String, usize)> = Vec::new();
     let parser = Parser::new_ext(
         &source[body..],
         Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS,
@@ -283,6 +287,21 @@ pub fn scan(source: &str) -> Layout {
                             }
                         } else if !matches!(tag.name.as_str(), "source") {
                             open.push((tag.name.clone(), tag.range.start, tag.centres()));
+                        }
+                    } else if matches!(tag.name.as_str(), "b" | "strong" | "i" | "em") {
+                        layout.hidden.push(tag.range.clone());
+                        if !tag.closing {
+                            emphasis.push((tag.name.clone(), tag.range.end));
+                        } else if let Some(index) =
+                            emphasis.iter().rposition(|(name, _)| *name == tag.name)
+                        {
+                            let (name, opened) = emphasis.remove(index);
+                            let inside = opened..tag.range.start;
+                            if matches!(name.as_str(), "b" | "strong") {
+                                layout.bold.push(inside);
+                            } else {
+                                layout.italic.push(inside);
+                            }
                         }
                     } else {
                         line_only_tags = false;
@@ -363,6 +382,20 @@ mod tests {
                 && centred.ends_with("</div>")
         );
         assert!(!centred.contains("After."), "centring stops at </div>");
+    }
+
+    #[test]
+    fn bold_and_italic_tags_mark_their_text_and_hide_themselves() {
+        let source = "<p align=\"center\"><b>The harness.</b></p>\n<p align=\"center\"><i>Be Elpis.</i></p>\n";
+        let layout = scan(source);
+        assert_eq!(&source[layout.bold[0].clone()], "The harness.");
+        assert_eq!(&source[layout.italic[0].clone()], "Be Elpis.");
+        let hidden: Vec<_> = layout
+            .hidden
+            .iter()
+            .map(|range| &source[range.clone()])
+            .collect();
+        assert!(hidden.contains(&"<b>") && hidden.contains(&"</i>"));
     }
 
     #[test]
