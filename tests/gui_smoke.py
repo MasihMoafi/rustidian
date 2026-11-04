@@ -5609,11 +5609,13 @@ def main():
                     handed_off(guest, "A file of another vault must open as a tab of the running window")
                     title_contains(other_note.stem)
                     tab_names = lambda: json.loads((base / "ui-probe.json").read_text())
-                    wait_for(lambda: f"tab-full:{other_note.name}" in tab_names() and f"tab-full:{requested.name}" in tab_names(),
+                    # A note of the vault is named by its vault path, a guest file by its full path.
+                    guest_tab, read_tab = f"tab-full:{other_note}", f"tab-full:{requested.relative_to(fixture)}"
+                    wait_for(lambda: guest_tab in tab_names() and read_tab in tab_names(),
                              lambda: f"Both notes must have a tab: {sorted(name for name in tab_names() if name.startswith('tab-full:'))}")
                     assert len(visible()) == 1 and sandbox_apps() == [app.pid], (visible(), sandbox_apps())
                     assert identity() == original, "A tab hand-off replaced the window's socket"
-                    click_control(f"tab-full:{requested.name}")
+                    click_control(read_tab)
                     title_contains(requested.stem)
                     results.append("A file from another vault opened as a tab of the running window (`hand-off: shown`): its tab and the "
                                    "note being read both stayed, in the one window and process")
