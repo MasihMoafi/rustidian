@@ -6214,6 +6214,15 @@ impl eframe::App for NotesApp {
             self.save(self.active);
         }
         crate::ui_probe::frame_time(&ctx, frame_started);
+        if frame_started.elapsed() > Duration::from_millis(300) {
+            eprintln!(
+                "slow: a whole frame took {} ms (active note {} bytes)",
+                frame_started.elapsed().as_millis(),
+                self.tabs
+                    .get(self.active)
+                    .map_or(0, |tab| tab.document.text.len())
+            );
+        }
         crate::ui_probe::flush(&ctx);
         if self.first_frame {
             eprintln!(

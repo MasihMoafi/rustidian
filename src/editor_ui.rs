@@ -400,6 +400,21 @@ struct LiveImage {
 // Keep the original allocation alive so its pointer identifies the font
 // layout safely. One cached value bounds memory while avoiding row/mesh
 // cloning again on idle frames and repeated layout passes during typing.
+/// Run `work`; a step that takes over 200 ms is named on stderr with the note's size, so a
+/// large note that stalls shows which step it is (5 Nov: a 611 KB note froze for 83 s).
+fn slow<T>(step: &str, bytes: usize, work: impl FnOnce() -> T) -> T {
+    let started = std::time::Instant::now();
+    let result = work();
+    let elapsed = started.elapsed();
+    if elapsed > std::time::Duration::from_millis(200) {
+        eprintln!(
+            "slow: {step} took {} ms ({bytes} bytes)",
+            elapsed.as_millis()
+        );
+    }
+    result
+}
+
 /// The last galley with everything it was built from. Rebuilding the layout
 /// job for an unchanged note costs milliseconds in a large note, so a frame
 /// without edits (or a second layouter call in the same frame) reuses it.
@@ -1775,8 +1790,11 @@ impl Editor {
             }
         }
         if self.source != tab.document.text {
-            self.parsed = Markdown::parse(&tab.document.text);
-            self.sections = rustidian::folding::Sections::new(&tab.document.text, &self.parsed);
+            let bytes = tab.document.text.len();
+            self.parsed = slow("parse", bytes, || Markdown::parse(&tab.document.text));
+            self.sections = slow("sections", bytes, || {
+                rustidian::folding::Sections::new(&tab.document.text, &self.parsed)
+            });
             self.source.clone_from(&tab.document.text);
             self.source_version += 1;
         }
@@ -2015,41 +2033,50 @@ impl Editor {
             }
             let hidden = &key.hidden;
             let job = if plain_text {
-                crate::syntax::source_job(ui, text, from, width, selected_match.as_ref())
+                slow("source job", text.len(), || {
+                    crate::syntax::source_job(ui, text, from, width, selected_match.as_ref())
+                })
             } else {
-                layout(
-                    ui,
-                    text,
-                    parsed,
-                    width,
-                    Decorations {
-                        live,
-                        active_line: active_line.as_ref(),
-                        matched: selected_match.as_ref(),
-                        images: &images,
-                    },
-                )
+                slow("layout job", text.len(), || {
+                    layout(
+                        ui,
+                        text,
+                        parsed,
+                        width,
+                        Decorations {
+                            live,
+                            active_line: active_line.as_ref(),
+                            matched: selected_match.as_ref(),
+                            images: &images,
+                        },
+                    )
+                })
             };
             let previous = layout_cache
                 .as_ref()
                 .filter(|cached| cached.key.fonts == key.fonts)
                 .map(|cached| &cached.paragraphs);
             let indents = if live && !plain_text {
-                quote_indents(text, parsed, &job)
+                slow("quote indents", text.len(), || {
+                    quote_indents(text, parsed, &job)
+                })
             } else {
                 Vec::new()
             };
-            let (original, paragraphs) = ui
-                .fonts_mut(|fonts| fonts.layout_job_incremental_indented(job, previous, &indents));
+            let (original, paragraphs) = slow("font layout", text.len(), || {
+                ui.fonts_mut(|fonts| fonts.layout_job_incremental_indented(job, previous, &indents))
+            });
             let mut galley = original;
-            space_rows(
-                &mut galley,
-                text,
-                parsed,
-                live,
-                &images,
-                active_line.as_ref(),
-            );
+            slow("space rows", text.len(), || {
+                space_rows(
+                    &mut galley,
+                    text,
+                    parsed,
+                    live,
+                    &images,
+                    active_line.as_ref(),
+                )
+            });
             reserve_table_rows(&mut galley, &table_placements);
             if !hidden.is_empty() {
                 collapse_rows(&mut galley, hidden);
