@@ -37,6 +37,16 @@ use std::{path::PathBuf, time::Instant};
 
 fn main() -> eframe::Result {
     let started = Instant::now();
+    #[cfg(target_os = "linux")]
+    if window::use_x11_for_drops(
+        std::env::var_os("RUSTIDIAN_WAYLAND").is_some(),
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var_os("DISPLAY").is_some(),
+    ) {
+        // SAFETY: this runs first in `main`, before any thread starts.
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+        eprintln!("backend: X11 (file drops reach only X11 windows)");
+    }
     let mut arguments = std::env::args_os().skip(1);
     let first = arguments.next();
     if first

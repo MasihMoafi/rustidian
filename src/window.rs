@@ -112,6 +112,14 @@ pub fn close(ctx: &egui::Context, source: &'static str) {
     ctx.request_repaint();
 }
 
+/// Whether the window should be made through X11 (XWayland on a Wayland session).
+/// winit 0.30 delivers dropped files only to X11 windows, so on Wayland dragging
+/// an image or a note into Rustidian did nothing (5 Nov). `RUSTIDIAN_WAYLAND`
+/// keeps a native Wayland window, without drops.
+pub fn use_x11_for_drops(wayland_wanted: bool, wayland_display: bool, x11_display: bool) -> bool {
+    !wayland_wanted && wayland_display && x11_display
+}
+
 /// Why the window was asked to close: what `close` was given, otherwise the
 /// window manager (Alt+F4, the dock, the overview).
 pub fn take_close_source(ctx: &egui::Context) -> &'static str {
@@ -513,6 +521,20 @@ fn resize_edges(ui: &egui::Ui) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_wayland_session_with_xwayland_opens_the_window_on_x11_so_drops_arrive() {
+        assert!(use_x11_for_drops(false, true, true));
+        assert!(
+            !use_x11_for_drops(true, true, true),
+            "RUSTIDIAN_WAYLAND keeps Wayland"
+        );
+        assert!(
+            !use_x11_for_drops(false, true, false),
+            "no X server: stay on Wayland"
+        );
+        assert!(!use_x11_for_drops(false, false, true), "already X11");
+    }
+
     use super::*;
 
     /// A key press as egui-winit reports it on Linux.
