@@ -402,7 +402,7 @@ struct LiveImage {
 // cloning again on idle frames and repeated layout passes during typing.
 /// Run `work`; a step that takes over 200 ms is named on stderr with the note's size, so a
 /// large note that stalls shows which step it is (5 Nov: a 611 KB note froze for 83 s).
-fn slow<T>(step: &str, bytes: usize, work: impl FnOnce() -> T) -> T {
+pub(crate) fn slow<T>(step: &str, bytes: usize, work: impl FnOnce() -> T) -> T {
     let started = std::time::Instant::now();
     let result = work();
     let elapsed = started.elapsed();
@@ -2131,8 +2131,8 @@ impl Editor {
         if bulk_edit || selection_typing {
             save_undo(ui.ctx(), &tab.document.text);
         }
-        let output = ui
-            .scope(|ui| {
+        let output = slow("text edit", tab.document.text.len(), || {
+            ui.scope(|ui| {
                 if active_image {
                     ui.visuals_mut().selection.bg_fill = Color32::TRANSPARENT;
                     ui.visuals_mut().text_cursor.stroke.color = Color32::TRANSPARENT;
@@ -2157,7 +2157,8 @@ impl Editor {
                     })
                     .show(ui)
             })
-            .inner;
+            .inner
+        });
         if bulk_edit && output.response.changed() {
             save_undo(ui.ctx(), &tab.document.text);
         }
@@ -2254,8 +2255,12 @@ impl Editor {
         {
             ui.ctx().request_repaint();
         }
-        let positioned = PositionedText::new(&output);
-        paint_heading_folds(ui, &positioned, &self.sections, &mut collapsed);
+        let positioned = slow("row ends", tab.document.text.len(), || {
+            PositionedText::new(&output)
+        });
+        slow("heading folds", tab.document.text.len(), || {
+            paint_heading_folds(ui, &positioned, &self.sections, &mut collapsed)
+        });
         if live {
             let mut hidden = self.sections.hidden(&collapsed);
             for (callout, key) in self.parsed.callouts.iter().zip(callout_keys(&self.parsed)) {

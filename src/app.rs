@@ -3558,7 +3558,11 @@ impl NotesApp {
                                 ui.add_space(16.218); // obsidian metric: inline title gap
                             }
                             if matches!(view, View::Live | View::Read) {
-                                add_property = self.properties.show(ui, tab);
+                                add_property = crate::editor_ui::slow(
+                                    "properties",
+                                    tab.document.text.len(),
+                                    || self.properties.show(ui, tab),
+                                );
                             }
                             if view == View::Read {
                                 follow = preview::show(
@@ -3569,15 +3573,18 @@ impl NotesApp {
                                     self.vault.as_ref(),
                                 );
                             } else {
-                                follow = self.editor.show(
-                                    ui,
-                                    tab,
-                                    id,
-                                    &mut self.find,
-                                    &mut self.files,
-                                    self.vault.as_mut(),
-                                    &open_notes,
-                                );
+                                let bytes = tab.document.text.len();
+                                follow = crate::editor_ui::slow("editor show", bytes, || {
+                                    self.editor.show(
+                                        ui,
+                                        tab,
+                                        id,
+                                        &mut self.find,
+                                        &mut self.files,
+                                        self.vault.as_mut(),
+                                        &open_notes,
+                                    )
+                                });
                             }
                             ui.add_space(ui.available_height().max(80.0));
                         },
