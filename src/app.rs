@@ -957,7 +957,9 @@ impl NotesApp {
         }
         for tab in &self.tabs {
             let document = &tab.document;
-            if !rustidian::vault::is_markdown(&document.path)
+            // A guest file lives outside the vault, so local history cannot store it.
+            if document.path.is_absolute()
+                || !rustidian::vault::is_markdown(&document.path)
                 || self.recovery_revisions.get(&document.path) == Some(&document.saved_revision())
             {
                 continue;
@@ -994,6 +996,7 @@ impl NotesApp {
                         .get(self.active)
                         .filter(|tab| {
                             tab.view != View::Graph
+                                && tab.document.path.is_relative()
                                 && rustidian::vault::is_markdown(&tab.document.path)
                         })
                         .map(|tab| tab.document.path.clone())
