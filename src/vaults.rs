@@ -22,6 +22,56 @@ pub fn location() -> Option<PathBuf> {
         .map(|base| crate::paths::app_directory(&base).join("vaults.json"))
 }
 
+/// Where the vault Masih last read is kept: beside the vault list, outside his notes.
+fn last_opened_file() -> Option<PathBuf> {
+    location().map(|catalog| catalog.with_file_name("last-vault"))
+}
+
+/// The vault Masih was last reading, and the page when it lies in another vault
+/// than the window's own. A launch without a file opens it again, with the tabs
+/// and scroll the vault's session file keeps (5 Nov: reopening forgot the vault).
+pub fn last_opened() -> Option<(PathBuf, Option<PathBuf>)> {
+    read_last(&last_opened_file()?)
+}
+
+/// Remember the vault (and page) that Masih looked at last; best effort.
+pub fn remember_last_opened(root: &Path, document: Option<&Path>) {
+    if let Some(file) = last_opened_file() {
+        write_last(&file, root, document);
+    }
+}
+
+fn read_last(file: &Path) -> Option<(PathBuf, Option<PathBuf>)> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let mut lines = text.lines();
+    let root = PathBuf::from(lines.next()?);
+    let document = lines
+        .next()
+        .filter(|line| !line.is_empty())
+        .map(PathBuf::from);
+    root.is_dir().then_some((root, document))
+}
+
+fn write_last(file: &Path, root: &Path, document: Option<&Path>) {
+    let text = format!(
+        "{}\n{}\n",
+        root.display(),
+        document
+            .map(|path| path.display().to_string())
+            .unwrap_or_default()
+    );
+    if std::fs::read_to_string(file).is_ok_and(|current| current == text) {
+        return;
+    }
+    if let Some(folder) = file.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
+    let temporary = file.with_extension("tmp");
+    if std::fs::write(&temporary, text).is_ok() && std::fs::rename(&temporary, file).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+}
+
 pub fn default_vault() -> Option<PathBuf> {
     std::env::var_os("RUSTIDIAN_DEFAULT_VAULT")
         .or_else(|| std::env::var_os("RUST_NOTES_DEFAULT_VAULT"))
@@ -182,6 +232,26 @@ impl Vaults {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_last_read_vault_and_page_are_kept_and_a_missing_vault_is_forgotten() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let file = home.path().join("state/last-vault");
+        assert_eq!(read_last(&file), None, "nothing is remembered at first");
+        write_last(&file, vault.path(), None);
+        assert_eq!(read_last(&file), Some((vault.path().to_owned(), None)));
+        write_last(&file, vault.path(), Some(Path::new("Notes/Agent.md")));
+        assert_eq!(
+            read_last(&file),
+            Some((
+                vault.path().to_owned(),
+                Some(PathBuf::from("Notes/Agent.md"))
+            ))
+        );
+        drop(vault);
+        assert_eq!(read_last(&file), None, "a vault that is gone opens nothing");
+    }
+
     use super::*;
     use std::fs;
 

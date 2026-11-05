@@ -36,6 +36,11 @@ pub struct Tab {
     pub image_scale: ImageScale,
     pub edited_at: Option<Instant>,
     pub autosave_failed: bool,
+    /// How far the page was scrolled when last drawn, and the offset a restored
+    /// tab applies once when it is first drawn (a restart brings the page back
+    /// where Masih was reading).
+    pub scroll_y: f32,
+    pub restore_scroll: Option<f32>,
     // Editing state follows a moved file, but never leaks into another document.
     editor_path: std::path::PathBuf,
 }
@@ -143,6 +148,8 @@ impl Tab {
             image_scale: ImageScale::Fit,
             edited_at: None,
             autosave_failed: false,
+            scroll_y: 0.0,
+            restore_scroll: None,
             editor_path,
         }
     }

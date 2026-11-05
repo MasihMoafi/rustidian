@@ -3496,10 +3496,14 @@ impl NotesApp {
         let mut add_property = false;
         let mut renamed_title = None;
         let title = tab.document.title();
-        let area = ScrollArea::vertical()
+        let mut area = ScrollArea::vertical()
             .id_salt(("document", tab.id(), tab.editor_path()))
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .auto_shrink([false, false]);
+        // A tab restored from the last session returns to where it was read, once.
+        if let Some(offset) = tab.restore_scroll.take() {
+            area = area.vertical_scroll_offset(offset);
+        }
         let scroll_id =
             ui.make_persistent_id(egui::IdSalt::new(("document", tab.id(), tab.editor_path())));
         let scroll = self.page_pan.scroll_area(scroll_id, area).show(ui, |ui| {
@@ -3588,6 +3592,8 @@ impl NotesApp {
             "document-scroll-y",
             scroll.state.clamped_offset().y,
         );
+        // Remembered for the session file, so a restart returns to this spot.
+        tab.scroll_y = scroll.state.clamped_offset().y;
         if let Some((source, name)) = renamed_title {
             if name.is_empty() || name.contains(['/', '\\']) || matches!(name.as_str(), "." | "..")
             {

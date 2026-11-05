@@ -14,6 +14,8 @@ struct Session {
     editing_modes: Vec<View>,
     #[serde(default)]
     pinned: Vec<bool>,
+    #[serde(default)]
+    scrolls: Vec<f32>,
     active: usize,
     left: bool,
     right: bool,
@@ -94,6 +96,11 @@ impl Session {
             }
             let mut tab = Tab::new(document);
             tab.pinned = self.pinned.get(index).copied().unwrap_or(false);
+            tab.restore_scroll = self
+                .scrolls
+                .get(index)
+                .copied()
+                .filter(|offset| offset.is_finite() && *offset > 0.0);
             tab.set_view(self.editing_modes.get(index).copied().unwrap_or(View::Live));
             tab.set_view(*view);
             tabs.push(tab);
@@ -178,9 +185,26 @@ impl NotesApp {
     }
 
     pub(crate) fn persist_session(&self) {
-        if self.vault.is_none() {
+        let Some(vault) = &self.vault else {
             return;
-        }
+        };
+        // The next plain launch opens the vault of the tab he looked at last:
+        // a file an agent opened from another vault counts, with its page.
+        let (root, page) = self
+            .tabs
+            .get(self.active)
+            .map(|tab| tab.document.path.as_path())
+            .filter(|path| path.is_absolute() && vault.is_guest(path))
+            .and_then(|path| {
+                rustidian::vaults::resolve_input(
+                    path,
+                    rustidian::vaults::default_vault().as_deref(),
+                    &[],
+                )
+                .ok()
+            })
+            .unwrap_or_else(|| (vault.root.clone(), None));
+        rustidian::vaults::remember_last_opened(&root, page.as_deref());
         if let Err(error) = self.write_session() {
             eprintln!("Cannot preserve workspace layout: {error}");
         }
@@ -196,6 +220,7 @@ impl NotesApp {
         let session = Session {
             editing_modes: self.tabs.iter().map(Tab::editing_view).collect(),
             pinned: self.tabs.iter().map(|tab| tab.pinned).collect(),
+            scrolls: self.tabs.iter().map(|tab| tab.scroll_y).collect(),
             tabs: self
                 .tabs
                 .iter()
@@ -241,6 +266,26 @@ impl NotesApp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_restored_tab_returns_to_its_scroll_and_an_old_session_without_one_does_not() {
+        use rustidian::vault::Vault;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("Home.md"), "# Home\n").unwrap();
+        let vault = Vault::open(root.path()).unwrap();
+        let with: Session = serde_json::from_str(
+            r#"{"tabs":[["Home.md","Live"]],"active":0,"left":true,"right":false,"dark":true,"scrolls":[412.5]}"#,
+        )
+        .unwrap();
+        let (tabs, _) = with.restore_tabs(&vault);
+        assert_eq!(tabs[0].restore_scroll, Some(412.5));
+        let without: Session = serde_json::from_str(
+            r#"{"tabs":[["Home.md","Live"]],"active":0,"left":true,"right":false,"dark":true}"#,
+        )
+        .unwrap();
+        let (tabs, _) = without.restore_tabs(&vault);
+        assert_eq!(tabs[0].restore_scroll, None);
+    }
+
     use super::Session;
 
     #[test]

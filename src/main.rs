@@ -105,8 +105,15 @@ fn main() -> eframe::Result {
         }
     };
     let default_vault = rustidian::vaults::default_vault();
+    // A launch without a file or folder reopens the vault Masih last read, and
+    // its page; only when none is remembered does the default vault open.
+    let remembered = first
+        .is_none()
+        .then(rustidian::vaults::last_opened)
+        .flatten();
     let input = first
         .map(PathBuf::from)
+        .or_else(|| remembered.as_ref().map(|(root, _)| root.clone()))
         .or_else(|| default_vault.clone())
         .unwrap_or_else(|| {
             std::env::current_exe()
@@ -122,7 +129,15 @@ fn main() -> eframe::Result {
     };
     let roots = registered.as_ref().map_or(&[][..], |list| list.roots());
     let (root, startup_document) = match resolve_input(&input, default_vault.as_deref(), roots) {
-        Ok(target) => target,
+        Ok((root, document)) => {
+            let page = document.or_else(|| {
+                remembered
+                    .as_ref()
+                    .filter(|(remembered_root, _)| *remembered_root == root)
+                    .and_then(|(_, page)| page.clone())
+            });
+            (root, page)
+        }
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(2);
