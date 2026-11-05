@@ -79,14 +79,22 @@ impl Session {
             .unwrap_or_else(|| theme::Appearance::from_dark(self.dark))
     }
 
-    fn restore_tabs(&self, vault: &Vault) -> (Vec<Tab>, usize) {
+    fn restore_tabs(&self, vault: &mut Vault) -> (Vec<Tab>, usize) {
         let mut tabs = Vec::new();
         let mut active = 0;
         for (index, (path, view)) in self.tabs.iter().enumerate() {
             let document = if path.as_os_str().is_empty() {
                 Document::blank()
             } else {
-                let Ok(document) = vault.open_document(path) else {
+                // A file an agent opened from another vault is a guest tab: it
+                // comes back where it lies (5 Nov: the active guest tab was
+                // skipped, so reopening showed the first tab instead).
+                let opened = if path.is_absolute() {
+                    vault.open_guest(path)
+                } else {
+                    vault.open_document(path)
+                };
+                let Ok(document) = opened else {
                     continue;
                 };
                 document
@@ -101,6 +109,8 @@ impl Session {
                 .get(index)
                 .copied()
                 .filter(|offset| offset.is_finite() && *offset > 0.0);
+            // Saved again before it is first drawn, a tab keeps the offset it was given.
+            tab.scroll_y = tab.restore_scroll.unwrap_or(0.0);
             tab.set_view(self.editing_modes.get(index).copied().unwrap_or(View::Live));
             tab.set_view(*view);
             tabs.push(tab);
@@ -117,7 +127,7 @@ impl NotesApp {
         }
         crate::table_layout::restore(ctx, Default::default());
         self.graph.restore(Default::default());
-        let Some(vault) = &self.vault else {
+        let Some(vault) = self.vault.as_mut() else {
             return false;
         };
         let Some(path) = location(&vault.root) else {
@@ -267,22 +277,47 @@ impl NotesApp {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn a_guest_tab_from_another_vault_comes_back_and_stays_the_active_tab() {
+        use rustidian::vault::Vault;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("Home.md"), "# Home\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let guest = elsewhere.path().join("Agent note.md");
+        std::fs::write(&guest, "from an agent\n").unwrap();
+        let guest = guest.canonicalize().unwrap();
+        let mut vault = Vault::open(root.path()).unwrap();
+        let state: Session = serde_json::from_str(&format!(
+            r#"{{"tabs":[["Home.md","Live"],["{}","Live"]],"active":1,"left":true,"right":false,"dark":true}}"#,
+            guest.display()
+        ))
+        .unwrap();
+        let (tabs, active) = state.restore_tabs(&mut vault);
+        assert_eq!(tabs.len(), 2, "the guest tab was skipped");
+        assert_eq!(active, 1, "reopening must show the tab he was reading");
+        assert!(vault.is_guest(&tabs[1].document.path));
+    }
+
+    #[test]
     fn a_restored_tab_returns_to_its_scroll_and_an_old_session_without_one_does_not() {
         use rustidian::vault::Vault;
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("Home.md"), "# Home\n").unwrap();
-        let vault = Vault::open(root.path()).unwrap();
+        let mut vault = Vault::open(root.path()).unwrap();
         let with: Session = serde_json::from_str(
             r#"{"tabs":[["Home.md","Live"]],"active":0,"left":true,"right":false,"dark":true,"scrolls":[412.5]}"#,
         )
         .unwrap();
-        let (tabs, _) = with.restore_tabs(&vault);
+        let (tabs, _) = with.restore_tabs(&mut vault);
+        assert_eq!(
+            tabs[0].scroll_y, 412.5,
+            "saved again before drawing, the offset must survive"
+        );
         assert_eq!(tabs[0].restore_scroll, Some(412.5));
         let without: Session = serde_json::from_str(
             r#"{"tabs":[["Home.md","Live"]],"active":0,"left":true,"right":false,"dark":true}"#,
         )
         .unwrap();
-        let (tabs, _) = without.restore_tabs(&vault);
+        let (tabs, _) = without.restore_tabs(&mut vault);
         assert_eq!(tabs[0].restore_scroll, None);
     }
 
@@ -294,7 +329,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let bytes = b"# Home\r\n";
         std::fs::write(root.path().join("Home.md"), bytes).unwrap();
-        let vault = Vault::open(root.path()).unwrap();
+        let mut vault = Vault::open(root.path()).unwrap();
         let mut state: Session = serde_json::from_str(
             r#"{"tabs":[["Missing.md","Read"],["Home.md","Graph"],["Home.md","Source"],["","Graph"]],"active":2,"left":true,"right":false,"dark":true,"editing_modes":["Live","Source","Live","Source"],"pinned":[false,true,false,false]}"#,
         ).unwrap();
@@ -306,7 +341,7 @@ mod tests {
             (99, 0, View::Graph),
         ] {
             state.active = selected;
-            let (tabs, active) = state.restore_tabs(&vault);
+            let (tabs, active) = state.restore_tabs(&mut vault);
             assert_eq!(active, expected, "saved active {selected}");
             assert_eq!(tabs.len(), 3);
             assert_eq!(tabs[active].view, view);
