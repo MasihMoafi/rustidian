@@ -13,6 +13,29 @@ struct Stored {
 pub struct Vaults {
     location: PathBuf,
     stored: Stored,
+    /// Folders that always head the list, in this order (Desktop, then the default vault).
+    pinned: Vec<PathBuf>,
+}
+
+/// Masih's two starting places stay on top however many folders agents open (5 Nov: 29 roots
+/// buried them).
+fn default_pins() -> Vec<PathBuf> {
+    let desktop = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Desktop"));
+    desktop
+        .into_iter()
+        .chain(default_vault())
+        .filter_map(|path| folder(&path).ok())
+        .fold(Vec::new(), |mut pins, path| {
+            if !pins.contains(&path) {
+                pins.push(path);
+            }
+            pins
+        })
+}
+
+fn pin_first(roots: &mut Vec<PathBuf>, pinned: &[PathBuf]) {
+    roots.retain(|root| !pinned.contains(root));
+    roots.splice(0..0, pinned.iter().cloned());
 }
 
 pub fn location() -> Option<PathBuf> {
@@ -152,17 +175,29 @@ pub fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
 
 impl Vaults {
     pub fn open() -> Result<Self, String> {
-        Self::load(location().ok_or("Cannot locate the vault list.")?)
+        Self::load_pinned(
+            location().ok_or("Cannot locate the vault list.")?,
+            default_pins(),
+        )
     }
 
     pub fn load(location: PathBuf) -> Result<Self, String> {
-        let stored = match std::fs::read(&location) {
+        Self::load_pinned(location, Vec::new())
+    }
+
+    pub fn load_pinned(location: PathBuf, pinned: Vec<PathBuf>) -> Result<Self, String> {
+        let mut stored = match std::fs::read(&location) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|error| format!("Cannot read the vault list: {error}"))?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Stored::default(),
             Err(error) => return Err(format!("Cannot read the vault list: {error}")),
         };
-        Ok(Self { location, stored })
+        pin_first(&mut stored.roots, &pinned);
+        Ok(Self {
+            location,
+            stored,
+            pinned,
+        })
     }
 
     pub fn roots(&self) -> &[PathBuf] {
@@ -199,9 +234,10 @@ impl Vaults {
                 Ok(file)
             })
             .map_err(|error| format!("Cannot lock the vault list: {error}"))?;
-        let mut latest = Self::load(self.location.clone())?.stored;
+        let mut latest = Self::load_pinned(self.location.clone(), self.pinned.clone())?.stored;
         let before = latest.roots.clone();
         change(&mut latest.roots);
+        pin_first(&mut latest.roots, &self.pinned);
         if latest.roots == before {
             self.stored = latest;
             Ok(())
@@ -276,6 +312,37 @@ mod tests {
         list.forget(&a).unwrap();
         assert_eq!(Vaults::load(location).unwrap().roots(), [b]);
         assert_eq!(fs::read_to_string(a.join("Keep.md")).unwrap(), "original");
+    }
+
+    #[test]
+    fn the_desktop_and_the_main_vault_stay_on_top_however_many_folders_are_opened() {
+        let base = tempfile::tempdir().unwrap();
+        let [desktop, main, other, newer] =
+            ["Desktop", "Main", "Other", "Newer"].map(|name| base.path().join(name));
+        for folder in [&desktop, &main, &other, &newer] {
+            fs::create_dir_all(folder).unwrap();
+        }
+        let pins = vec![
+            desktop.canonicalize().unwrap(),
+            main.canonicalize().unwrap(),
+        ];
+        let location = base.path().join("state/vaults.json");
+        let mut list = Vaults::load_pinned(location.clone(), pins.clone()).unwrap();
+        assert_eq!(list.roots(), pins, "pins show before anything is stored");
+        list.remember(&other).unwrap();
+        list.remember(&newer).unwrap();
+        list.remember(&main).unwrap();
+        let expected = [
+            pins[0].clone(),
+            pins[1].clone(),
+            newer.canonicalize().unwrap(),
+            other.canonicalize().unwrap(),
+        ];
+        assert_eq!(list.roots(), expected);
+        assert_eq!(
+            Vaults::load_pinned(location, pins).unwrap().roots(),
+            expected
+        );
     }
 
     #[test]

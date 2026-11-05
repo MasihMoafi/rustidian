@@ -137,6 +137,53 @@ pub fn app_wide() -> Palette {
         .unwrap_or_default()
 }
 
+/// Light, dark or system also belongs to the app: switching vault never changes it (5 Nov).
+fn appearance_file(state_base: &std::path::Path) -> std::path::PathBuf {
+    rustidian::paths::app_directory(state_base).join("appearance")
+}
+
+fn read_appearance(state_base: &std::path::Path) -> Option<super::Appearance> {
+    serde_json::from_slice(&std::fs::read(appearance_file(state_base)).ok()?).ok()
+}
+
+fn write_appearance(
+    state_base: &std::path::Path,
+    appearance: super::Appearance,
+) -> std::io::Result<()> {
+    let path = appearance_file(state_base);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("tmp");
+    std::fs::write(&temporary, serde_json::to_vec(&appearance)?)?;
+    std::fs::rename(temporary, path)
+}
+
+/// The appearance to open with: the app-wide choice, or this session's own the first time.
+pub fn open_appearance_with(session: super::Appearance) -> super::Appearance {
+    let Some(base) = state_base() else {
+        return session;
+    };
+    read_appearance(&base).unwrap_or_else(|| {
+        let _ = write_appearance(&base, session);
+        session
+    })
+}
+
+/// The app-wide appearance for a vault that has no saved session yet.
+pub fn app_wide_appearance() -> super::Appearance {
+    state_base()
+        .and_then(|base| read_appearance(&base))
+        .unwrap_or_default()
+}
+
+/// Remember an appearance chosen by the user for every vault.
+pub fn remember_appearance(appearance: super::Appearance) {
+    if let Some(base) = state_base() {
+        let _ = write_appearance(&base, appearance);
+    }
+}
+
 /// Remember a palette chosen in Settings for every vault.
 pub fn remember(palette: Palette) {
     if let Some(base) = state_base() {
@@ -309,6 +356,17 @@ mod global_tests {
         write_global(base.path(), Palette::Signature).unwrap();
         assert!(read_global(base.path()) == Some(Palette::Signature));
         assert!(!global_file(base.path()).with_extension("tmp").exists());
+    }
+
+    #[test]
+    fn light_dark_or_system_is_kept_for_every_vault() {
+        use crate::theme::Appearance;
+        let base = tempfile::tempdir().unwrap();
+        assert!(read_appearance(base.path()).is_none());
+        write_appearance(base.path(), Appearance::Dark).unwrap();
+        assert_eq!(read_appearance(base.path()), Some(Appearance::Dark));
+        write_appearance(base.path(), Appearance::Light).unwrap();
+        assert_eq!(read_appearance(base.path()), Some(Appearance::Light));
     }
 
     #[test]

@@ -198,7 +198,7 @@ impl NotesApp {
         started: Instant,
         startup_document: Option<PathBuf>,
     ) -> Self {
-        theme::apply_appearance(&cc.egui_ctx, theme::Appearance::System);
+        theme::apply_appearance(&cc.egui_ctx, theme::palette::app_wide_appearance());
         crate::window::disable_builtin_quit(&cc.egui_ctx);
         theme::install_fonts(&cc.egui_ctx);
         theme::install_icons(&cc.egui_ctx);
@@ -218,7 +218,7 @@ impl NotesApp {
             dark: cc.egui_ctx.theme() == egui::Theme::Dark,
             agent: Default::default(),
             page_pan: Default::default(),
-            appearance: Default::default(),
+            appearance: theme::palette::app_wide_appearance(),
             system_theme: Default::default(),
             palette: theme::palette::app_wide(),
             cache: CommonMarkCache::default(),
@@ -790,7 +790,11 @@ impl NotesApp {
                             vault.index_time.as_micros(),
                             vault.warnings.len()
                         );
-                        if let Err(error) = self.vault_manager.remember(&vault.root) {
+                        // A file opened from outside (an agent, `op`) names its folder only to
+                        // read it; that folder is not a vault Masih chose.
+                        if self.startup_document.is_none()
+                            && let Err(error) = self.vault_manager.remember(&vault.root)
+                        {
                             self.error = Some(error);
                         }
                         self.vault = Some(vault);
@@ -5698,6 +5702,7 @@ impl NotesApp {
             "Switch appearance" => {
                 self.dark = !self.dark;
                 self.appearance = theme::Appearance::from_dark(self.dark);
+                theme::palette::remember_appearance(self.appearance);
                 theme::apply(ctx, self.dark);
             }
             "Refresh vault" => {

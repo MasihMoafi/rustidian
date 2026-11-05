@@ -140,7 +140,7 @@ impl NotesApp {
             return false;
         };
         (self.tabs, self.active) = session.restore_tabs(vault);
-        self.appearance = session.appearance();
+        self.appearance = theme::palette::open_appearance_with(session.appearance());
         self.graph.restore(session.graph.unwrap_or_default());
         self.show_left = session.left;
         crate::table_layout::restore(ctx, session.table_layouts);
