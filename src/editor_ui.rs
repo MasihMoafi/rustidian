@@ -400,6 +400,48 @@ struct LiveImage {
 // Keep the original allocation alive so its pointer identifies the font
 // layout safely. One cached value bounds memory while avoiding row/mesh
 // cloning again on idle frames and repeated layout passes during typing.
+/// Names the statements of the editor's frame that took long (5 Nov: one frame of a note with
+/// many links froze for 80 s outside every timed step). `at(line)` charges the time since the
+/// last call to the lines before `line`; the report is printed when the frame is dropped.
+pub(crate) struct Checkpoints {
+    start: std::time::Instant,
+    last: std::time::Instant,
+    slow: Vec<(u32, u128)>,
+}
+
+impl Checkpoints {
+    pub(crate) fn new() -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            start: now,
+            last: now,
+            slow: Vec::new(),
+        }
+    }
+
+    pub(crate) fn at(&mut self, line: u32) {
+        let now = std::time::Instant::now();
+        let took = (now - self.last).as_micros();
+        self.last = now;
+        if took > 100_000 {
+            self.slow.push((line, took));
+        }
+    }
+}
+
+impl Drop for Checkpoints {
+    fn drop(&mut self) {
+        if self.start.elapsed() > std::time::Duration::from_millis(200) {
+            for (line, took) in &self.slow {
+                eprintln!(
+                    "slow: editor show spent {} ms before line {line}",
+                    took / 1000
+                );
+            }
+        }
+    }
+}
+
 /// Run `work`; a step that takes over 200 ms is named on stderr with the note's size, so a
 /// large note that stalls shows which step it is (5 Nov: a 611 KB note froze for 83 s).
 pub(crate) fn slow<T>(step: &str, bytes: usize, work: impl FnOnce() -> T) -> T {
@@ -1346,6 +1388,8 @@ impl Editor {
         mut vault: Option<&mut rustidian::vault::Vault>,
         open_notes: &[(&std::path::Path, &str)],
     ) -> Option<String> {
+        let mut cp = Checkpoints::new();
+        cp.at(1349);
         if self
             .reveal
             .as_ref()
@@ -1359,8 +1403,11 @@ impl Editor {
             ));
             self.focus = true;
         }
+        cp.at(1362);
         let dropped = self.import_images(ui, tab, id, vault.as_deref_mut());
+        cp.at(1363);
         let vault = vault.as_deref();
+        cp.at(1364);
         if let Some(vault) = vault {
             let mut local = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             let shared = ui.ctx().data_mut(|data| {
@@ -1372,6 +1419,7 @@ impl Editor {
             local.share_undoer_with(&shared);
             local.store(ui.ctx(), id);
         }
+        cp.at(1375);
         if self.pending_edit.as_ref().is_some_and(|edit| {
             edit.tab != tab.id()
                 || edit.path != tab.document.path
@@ -1381,6 +1429,7 @@ impl Editor {
             self.error = Some("This note changed before the edit was applied. Select the text or insertion point again.".into());
             ui.ctx().request_repaint();
         }
+        cp.at(1384);
         if self.focus {
             // A closing modal remains the top interaction layer for one pass.
             // Keep the request until the editor can register its focus interest.
@@ -1390,14 +1439,20 @@ impl Editor {
             }
             ui.ctx().request_repaint();
         }
+        cp.at(1393);
         let live = tab.view == rustidian::tab::View::Live;
+        cp.at(1394);
         let callout_input = ui.input(|input| input.events.iter().any(|event| matches!(
             event,
             egui::Event::Text(_) | egui::Event::Paste(_) | egui::Event::Cut | egui::Event::Ime(_)
         ) || matches!(event, egui::Event::Key { key, pressed: true, .. } if !matches!(key, Key::S | Key::Escape))));
+        cp.at(1398);
         self.tables.begin(ui, tab, id, live);
+        cp.at(1399);
         let mut callout_change = None;
+        cp.at(1400);
         let mut follow = None;
+        cp.at(1401);
         let header_end = if live {
             rustidian::metadata::frontmatter(&tab.document.text)
                 .ok()
@@ -1406,7 +1461,9 @@ impl Editor {
         } else {
             0
         };
+        cp.at(1409);
         let body_start = tab.document.text[..header_end].chars().count();
+        cp.at(1410);
         if header_end > 0 {
             let header = &tab.document.text[..header_end];
             let changed = ui.ctx().data_mut(|data| {
@@ -1423,6 +1480,7 @@ impl Editor {
                 state.store(ui.ctx(), id);
             }
         }
+        cp.at(1426);
         if body_start > 0 && ui.memory(|memory| memory.has_focus(id)) {
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             if let Some(mut cursor) = state.cursor.char_range() {
@@ -1441,10 +1499,13 @@ impl Editor {
                 state.store(ui.ctx(), id);
             }
         }
+        cp.at(1444);
         let jump = self.jump.take();
+        cp.at(1445);
         if let Some(character) = jump {
             set_cursor(ui.ctx(), id, character);
         }
+        cp.at(1448);
         if let Some((target, range)) = self.focus_range {
             if target != id {
                 self.focus_range = None;
@@ -1457,8 +1518,11 @@ impl Editor {
                 ui.ctx().request_repaint();
             }
         }
+        cp.at(1460);
         let mut action_handled = false;
+        cp.at(1461);
         let mut action_ready = true;
+        cp.at(1462);
         if ui.memory(|m| m.has_focus(id)) {
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             if let Some(mut selection) = state.cursor.char_range() {
@@ -1535,6 +1599,7 @@ impl Editor {
                 action_ready = false;
             }
         }
+        cp.at(1538);
         if action_ready && ui.memory(|m| m.has_focus(id)) {
             let cursor = TextEditState::load(ui.ctx(), id)
                 .and_then(|s| s.cursor.char_range())
@@ -1584,6 +1649,7 @@ impl Editor {
                 }
             }
         }
+        cp.at(1587);
         if action_ready && !action_handled && ui.memory(|memory| memory.has_focus(id)) {
             let modifiers = [egui::Modifiers::NONE, egui::Modifiers::SHIFT]
                 .into_iter()
@@ -1632,6 +1698,7 @@ impl Editor {
                 }
             }
         }
+        cp.at(1635);
         if action_ready
             && !action_handled
             && !tab.document.is_plain_text()
@@ -1657,6 +1724,7 @@ impl Editor {
                 }
             }
         }
+        cp.at(1660);
         if !find.open && find.restore.is_some() {
             if ui.memory(|m| m.owns_ime_events(id)) {
                 let range = find.restore.take().unwrap();
@@ -1681,6 +1749,7 @@ impl Editor {
                 }
             }
         }
+        cp.at(1684);
         if ui.memory(|m| m.has_focus(id)) {
             let pending = self.pending_edit.take();
             // Typing `*`, `_`, a backtick, `~` or `=` over a selection wraps it instead of
@@ -1789,6 +1858,7 @@ impl Editor {
                 }
             }
         }
+        cp.at(1792);
         if self.source != tab.document.text {
             let bytes = tab.document.text.len();
             self.parsed = slow("parse", bytes, || Markdown::parse(&tab.document.text));
@@ -1798,13 +1868,18 @@ impl Editor {
             self.source.clone_from(&tab.document.text);
             self.source_version += 1;
         }
+        cp.at(1801);
         let folds_id = id.with("editing-folds");
+        cp.at(1802);
         let callouts_id = id.with("callout-folds");
+        cp.at(1803);
         let mut callout_folds = ui
             .ctx()
             .data(|data| data.get_temp::<HashMap<String, bool>>(callouts_id))
             .unwrap_or_default();
+        cp.at(1807);
         let reveal = jump.or_else(|| find.restore.as_ref().map(|range| range.start));
+        cp.at(1808);
         if let Some(character) = reveal {
             reveal_callouts(
                 &tab.document.text,
@@ -1813,22 +1888,28 @@ impl Editor {
                 &mut callout_folds,
             );
         }
+        cp.at(1816);
         let mut collapsed = ui.ctx().data(|data| {
             data.get_temp::<HashSet<String>>(folds_id)
                 .unwrap_or_default()
         });
+        cp.at(1820);
         if let Some(character) = jump {
             self.sections.reveal(character, &mut collapsed);
         }
+        cp.at(1823);
         if let Some(range) = &find.restore {
             self.sections.reveal(range.start, &mut collapsed);
         }
+        cp.at(1826);
         let cursor = TextEditState::load(ui.ctx(), id).and_then(|s| s.cursor.char_range());
+        cp.at(1827);
         if let Some(cursor) = cursor {
             self.sections
                 .expand_at(cursor.primary.index.0, &mut collapsed);
         }
         // One walk over the text per cursor end; a caret needs only one.
+        cp.at(1832);
         let byte_of = |character: usize| {
             tab.document
                 .text
@@ -1836,6 +1917,7 @@ impl Editor {
                 .nth(character)
                 .map_or(tab.document.text.len(), |(i, _)| i)
         };
+        cp.at(1839);
         let cursor_bytes = cursor.map(|cursor| {
             let [first, last] = cursor.sorted_cursors();
             let first_byte = byte_of(first.index.0);
@@ -1846,6 +1928,7 @@ impl Editor {
             };
             (first_byte, last_byte)
         });
+        cp.at(1849);
         let active_line = if live && ui.memory(|m| m.has_focus(id)) {
             cursor_bytes.map(|(first_byte, byte)| {
                 let start = tab.document.text[..first_byte]
@@ -1859,9 +1942,11 @@ impl Editor {
         } else {
             None
         };
+        cp.at(1862);
         let caret = active_line.as_ref().and(cursor.zip(cursor_bytes)).and_then(
             |(cursor, (first_byte, _))| (cursor.primary == cursor.secondary).then_some(first_byte),
         );
+        cp.at(1865);
         let selected_match = if find.open {
             find_matches(&tab.document.text, &find.query)
                 .get(find.selected)
@@ -1869,15 +1954,25 @@ impl Editor {
         } else {
             None
         };
+        cp.at(1872);
         let source = &self.source;
+        cp.at(1873);
         let parsed = &self.parsed;
+        cp.at(1874);
         let sections = &self.sections;
+        cp.at(1875);
         let layout_cache = &mut self.layout_cache;
+        cp.at(1876);
         let source_version = self.source_version;
+        cp.at(1877);
         let tables = &mut self.tables;
+        cp.at(1878);
         let mut table_placements = Vec::new();
+        cp.at(1879);
         let from = &tab.document.path;
+        cp.at(1880);
         let plain_text = tab.document.is_plain_text();
+        cp.at(1881);
         let mut images = if live {
             live_images(
                 ui,
@@ -1891,13 +1986,17 @@ impl Editor {
         } else {
             Vec::new()
         };
+        cp.at(1894);
         retain_visible_images(&mut images, sections, &collapsed);
+        cp.at(1895);
         let active_image = images.iter().any(|image| {
             active_line
                 .as_ref()
                 .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start)
         });
+        cp.at(1900);
         let mut updated_parsed = None;
+        cp.at(1901);
         let mut layouter = |ui: &egui::Ui,
                             buffer: &dyn egui::TextBuffer,
                             width: f32|
@@ -2088,15 +2187,23 @@ impl Editor {
             });
             galley
         };
+        cp.at(2091);
         let text_height = layouter(ui, &tab.document.text, ui.available_width())
             .size()
             .y;
+        cp.at(2094);
         let minimum_height = text_height + ui.clip_rect().height() / 2.0;
+        cp.at(2095);
         let selection = ui.visuals().selection.bg_fill;
+        cp.at(2096);
         let cursor_style = ui.visuals().text_cursor.clone();
+        cp.at(2097);
         let code_background = ui.painter().add(egui::Shape::Noop);
+        cp.at(2098);
         let callout_background = ui.painter().add(egui::Shape::Noop);
+        cp.at(2099);
         let selection_shape = ui.painter().add(egui::Shape::Noop);
+        cp.at(2100);
         let bulk_edit = ui.memory(|memory| memory.has_focus(id))
             && ui.input(|input| {
                 input.events.iter().any(|event| match event {
@@ -2110,6 +2217,7 @@ impl Editor {
                     _ => false,
                 })
             });
+        cp.at(2113);
         let selection_typing = ui.memory(|memory| memory.has_focus(id))
             && cursor.is_some_and(|range| !range.is_empty())
             && ui.input(|input| {
@@ -2118,6 +2226,7 @@ impl Editor {
                     .iter()
                     .any(|event| matches!(event, egui::Event::Text(text) if !text.is_empty()))
             });
+        cp.at(2121);
         let save_undo = |ctx: &egui::Context, text: &str| {
             if let Some(mut state) = TextEditState::load(ctx, id)
                 && let Some(range) = state.cursor.char_range()
@@ -2128,9 +2237,11 @@ impl Editor {
                 state.store(ctx, id);
             }
         };
+        cp.at(2131);
         if bulk_edit || selection_typing {
             save_undo(ui.ctx(), &tab.document.text);
         }
+        cp.at(2134);
         let output = slow("text edit", tab.document.text.len(), || {
             ui.scope(|ui| {
                 if active_image {
@@ -2159,9 +2270,11 @@ impl Editor {
             })
             .inner
         });
+        cp.at(2162);
         if bulk_edit && output.response.changed() {
             save_undo(ui.ctx(), &tab.document.text);
         }
+        cp.at(2165);
         if self.focus
             && !ui.is_sizing_pass()
             && ui.memory(|memory| memory.allows_interaction(ui.layer_id()))
@@ -2172,7 +2285,9 @@ impl Editor {
             self.focus = !ui.memory(|memory| memory.has_focus(id));
             ui.ctx().request_repaint();
         }
+        cp.at(2175);
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
+        cp.at(2176);
         if crate::ui_probe::enabled() {
             crate::ui_probe::metric(
                 ui.ctx(),
@@ -2190,6 +2305,7 @@ impl Editor {
                 f32::from(u8::from(self.focus)),
             );
         }
+        cp.at(2193);
         if output.response.has_focus() {
             crate::ui_probe::record(ui.ctx(), "editor-focused", output.response.rect);
             if let Some(range) = output.cursor_range {
@@ -2203,12 +2319,14 @@ impl Editor {
                 );
             }
         }
+        cp.at(2206);
         if output.response.has_focus()
             && let Some(range) = output.cursor_range
         {
             self.selection = Some((tab.id(), range));
         }
         // A right-click on the selection keeps it for the menu (see hold_menu_click).
+        cp.at(2212);
         if output.response.has_focus()
             && let Some(range) = output.cursor_range
             && range.primary.index != range.secondary.index
@@ -2218,13 +2336,17 @@ impl Editor {
                 menu_target(ui, rect, MenuArea::Editor);
             }
         }
+        cp.at(2221);
         let mut menu = egui::Popup::context_menu(&output.response);
+        cp.at(2222);
         if take_menu_click(ui.ctx(), MenuArea::Editor).is_some() {
             menu = menu.open_memory(Some(egui::SetOpenCommand::Bool(true)));
         }
+        cp.at(2225);
         if let Some(menu) = menu.show(|ui| self.note_menu(ui, tab, id, body_start)) {
             crate::ui_probe::record(ui.ctx(), "editor-menu", menu.response.rect);
         }
+        cp.at(2228);
         if header_end > 0 && !tab.document.text.starts_with(&self.source[..header_end]) {
             tab.document.text.clone_from(&self.source);
             self.focus_range = Some((id, CCursorRange::one(CCursor::new(body_start))));
@@ -2232,6 +2354,7 @@ impl Editor {
             images.clear();
             updated_parsed = None;
         }
+        cp.at(2235);
         if let Some(parsed) = updated_parsed {
             self.sections = rustidian::folding::Sections::new(&tab.document.text, &parsed);
             self.parsed = parsed;
@@ -2239,10 +2362,12 @@ impl Editor {
             // The layouter's last call laid out this text under the next version.
             self.source_version += 1;
         }
+        cp.at(2242);
         if output.response.changed() {
             tab.edited();
             ui.ctx().request_repaint();
         }
+        cp.at(2246);
         if callout_input
             && output.response.has_focus()
             && let Some(cursor) = output.cursor_range
@@ -2255,12 +2380,15 @@ impl Editor {
         {
             ui.ctx().request_repaint();
         }
+        cp.at(2258);
         let positioned = slow("row ends", tab.document.text.len(), || {
             PositionedText::new(&output)
         });
+        cp.at(2261);
         slow("heading folds", tab.document.text.len(), || {
             paint_heading_folds(ui, &positioned, &self.sections, &mut collapsed)
         });
+        cp.at(2264);
         if live {
             let mut hidden = self.sections.hidden(&collapsed);
             for (callout, key) in self.parsed.callouts.iter().zip(callout_keys(&self.parsed)) {
@@ -2333,6 +2461,7 @@ impl Editor {
         }
         ui.ctx()
             .data_mut(|data| data.insert_temp(folds_id, collapsed));
+        cp.at(2336);
         paint_code_blocks(
             ui,
             &positioned,
@@ -2350,6 +2479,7 @@ impl Editor {
             active_line.as_ref(),
             code_background,
         );
+        cp.at(2353);
         paint_markers(
             ui,
             &positioned,
@@ -2358,6 +2488,7 @@ impl Editor {
             live,
             active_line.as_ref(),
         );
+        cp.at(2361);
         for (ordinal, image) in images.iter().enumerate() {
             let active = active_line
                 .as_ref()
@@ -2486,6 +2617,7 @@ impl Editor {
                 ui.ctx().request_repaint();
             }
         }
+        cp.at(2489);
         let table_origins: Vec<_> = table_placements
             .iter()
             .map(|table| {
@@ -2493,15 +2625,18 @@ impl Editor {
                 egui::pos2(output.galley_pos.x, output.galley_pos.y + caret.top())
             })
             .collect();
+        cp.at(2496);
         if let Some(link) = self
             .tables
             .show(ui, tab, id, &table_placements, &table_origins)
         {
             follow = Some(link);
         }
+        cp.at(2502);
         if let Some(character) = self.tables.take_exit() {
             self.focus_range = Some((id, CCursorRange::one(CCursor::new(character))));
         }
+        cp.at(2505);
         if active_image && output.response.has_focus() {
             paint_image_selection(
                 ui,
@@ -2531,6 +2666,7 @@ impl Editor {
                     .request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
+        cp.at(2534);
         if let Some(character) = jump {
             output.response.request_focus();
             ui.ctx().request_repaint();
@@ -2540,14 +2676,17 @@ impl Editor {
                 .translate(output.galley_pos.to_vec2());
             ui.scroll_to_rect(rect, Some(egui::Align::Center));
         }
+        cp.at(2543);
         let pressed_button = ui.input(|input| {
             [egui::PointerButton::Primary, egui::PointerButton::Middle]
                 .into_iter()
                 .find(|button| input.pointer.button_pressed(*button))
         });
+        cp.at(2548);
         if pressed_button.is_some() {
             self.pressed_link = None;
         }
+        cp.at(2551);
         if let Some(pointer) = output.response.hover_pos() {
             let character = output
                 .galley
@@ -2592,6 +2731,7 @@ impl Editor {
                 }
             }
         }
+        cp.at(2595);
         if self
             .pressed_link
             .as_ref()
@@ -2602,6 +2742,7 @@ impl Editor {
         {
             follow = Some(target);
         }
+        cp.at(2605);
         if crate::ui_probe::enabled() {
             // Table cells can edit the document after this frame's text layout.
             // Probe the same source that owns the parsed ranges and galley.
@@ -2628,6 +2769,7 @@ impl Editor {
             }
         }
         // Keep the popup alive while its button owns the press/release sequence.
+        cp.at(2631);
         let pointer_in_completion = self.completion_popup.take().is_some_and(|(target, rect)| {
             target == id
                 && ui.input(|input| {
@@ -2637,6 +2779,7 @@ impl Editor {
                         .is_some_and(|pos| rect.contains(pos))
                 })
         });
+        cp.at(2640);
         let completion_cursor = output.cursor_range.or_else(|| {
             pointer_in_completion
                 .then(|| {
@@ -2644,6 +2787,7 @@ impl Editor {
                 })
                 .flatten()
         });
+        cp.at(2647);
         if (output.response.has_focus() || pointer_in_completion)
             && !self.completion_dismissed
             && let Some(cursor) = completion_cursor
@@ -2706,6 +2850,7 @@ impl Editor {
             }
         }
         // Finish source-indexed overlays before changing a marker's byte length.
+        cp.at(2709);
         if let Some((callout, kind)) = callout_change {
             crate::table_ui::checkpoint(ui.ctx(), id, &tab.document.text);
             if callout.change_kind(&mut tab.document.text, kind) {
@@ -2715,6 +2860,7 @@ impl Editor {
                 ui.ctx().request_repaint();
             }
         }
+        cp.at(2718);
         if let Some(vault) = vault
             && let Some(state) = TextEditState::load(ui.ctx(), id)
         {
@@ -2723,6 +2869,7 @@ impl Editor {
                     .insert(tab.document.path.clone(), state);
             });
         }
+        cp.at(2726);
         if let Some((text, pos)) = dropped {
             let cursor = output.galley.cursor_from_pos(pos - output.galley_pos);
             self.selection = Some((tab.id(), CCursorRange::one(cursor)));
