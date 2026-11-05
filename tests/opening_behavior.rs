@@ -31,11 +31,14 @@ fn existing_file_links_use_encoded_desktop_uris_without_creating_or_escaping_not
     }
     #[cfg(unix)]
     {
+        // A symlink inside the vault resolves to the real file, which the vault does not own.
         std::os::unix::fs::symlink(&outside, root.join("Escaping.json")).unwrap();
-        assert!(
-            vault
-                .external_file_uri(Path::new("Home.md"), "Escaping.json")
-                .is_none()
+        assert_eq!(
+            vault.external_file_uri(Path::new("Home.md"), "Escaping.json"),
+            Some(format!(
+                "file://{}/record%20%231.json",
+                base.path().canonicalize().unwrap().display()
+            ))
         );
     }
     // The external opening route does not relax the vault's read/write boundary.
