@@ -957,9 +957,11 @@ pub fn markdown_enter(text: &mut String, selection: Range<usize>) -> Option<Rang
         return Some(cursor..cursor);
     }
     let mut continuation = format!("\n{indent}{quote}");
+    let mut renumber = None;
     if let Some(number) = captures.get(4) {
         let number: u64 = number.as_str().parse().ok()?;
         continuation.push_str(&format!("{}{} ", number.checked_add(1)?, &captures[5]));
+        renumber = Some((number, format!("{indent}{quote}"), captures[5].to_owned()));
     } else if let Some(bullet) = captures.get(3) {
         continuation.push_str(bullet.as_str());
         continuation.push(' ');
@@ -969,7 +971,59 @@ pub fn markdown_enter(text: &mut String, selection: Range<usize>) -> Option<Rang
     }
     let cursor = selection.start + continuation.chars().count();
     text.replace_range(start..end, &continuation);
+    if let Some((number, lead, delimiter)) = renumber {
+        let tail = line_end + continuation.len() - (end - start);
+        let shifted = renumber_after(&text[tail..], &lead, &delimiter, number);
+        text.replace_range(tail.., &shifted);
+    }
     Some(cursor..cursor)
+}
+
+/// After an item is inserted, the items below that continued the old sequence
+/// (`old + 1`, `old + 2`, ...) move up by one, so the list never shows two 13s.
+/// Nested lines, headings and prose between items are left alone; the first
+/// item that broke the sequence ends the shift, as does a shorter-indented item.
+fn renumber_after(tail: &str, indent: &str, delimiter: &str, inserted_after: u64) -> String {
+    static ITEM: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let item = ITEM.get_or_init(|| {
+        regex::Regex::new(r"^([ \t]*(?:> ?)*)(?:([0-9]+)([.)])|[-+*])[ \t]").unwrap()
+    });
+    let mut expected = inserted_after.saturating_add(1);
+    let mut in_fence = false;
+    let mut shifting = true;
+    let mut result = String::with_capacity(tail.len() + 8);
+    for line in tail.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+        }
+        if shifting
+            && !in_fence
+            && let Some(found) = item.captures(line)
+        {
+            let lead = &found[1];
+            if lead == indent {
+                match (found.get(2), found.get(3)) {
+                    (Some(old), Some(mark))
+                        if mark.as_str() == delimiter
+                            && old.as_str().parse::<u64>().ok() == Some(expected) =>
+                    {
+                        let rest = &line[old.end()..];
+                        result.push_str(lead);
+                        result.push_str(&expected.saturating_add(1).to_string());
+                        result.push_str(rest);
+                        expected = expected.saturating_add(1);
+                        continue;
+                    }
+                    _ => shifting = false,
+                }
+            } else if lead.len() < indent.len() {
+                shifting = false;
+            }
+        }
+        result.push_str(line);
+    }
+    result
 }
 
 pub fn find_matches(text: &str, needle: &str) -> Vec<Range<usize>> {

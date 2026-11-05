@@ -284,3 +284,24 @@ fn live_heading_positions_exclude_yaml_and_setext_underlines() {
             .all(|&start| start > source.find("title:").unwrap())
     );
 }
+
+#[test]
+fn a_new_numbered_item_moves_the_items_below_it_up_so_no_number_repeats() {
+    use rustidian::editor::markdown_enter;
+    // The list runs on across a heading, as in REQUIREMENTS.md.
+    let mut text =
+        "12. Twelve\n13. Old thirteen\n\n## Machine\n\n14. Fourteen\n15. Fifteen\n".to_owned();
+    markdown_enter(&mut text, 10..10).unwrap();
+    assert_eq!(
+        text,
+        "12. Twelve\n13. \n14. Old thirteen\n\n## Machine\n\n15. Fourteen\n16. Fifteen\n"
+    );
+    // A numbering gap ends the shift; nested items and other lists stay as they are.
+    let mut text = "1. A\n   1. nested\n2. B\n7. far\n".to_owned();
+    markdown_enter(&mut text, 4..4).unwrap();
+    assert_eq!(text, "1. A\n2. \n   1. nested\n3. B\n7. far\n");
+    // Enter on the last item changes nothing else.
+    let mut text = "1. A\n2. B".to_owned();
+    markdown_enter(&mut text, 9..9).unwrap();
+    assert_eq!(text, "1. A\n2. B\n3. ");
+}
