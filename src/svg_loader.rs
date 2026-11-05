@@ -34,24 +34,64 @@ pub fn svg_options() -> usvg::Options<'static> {
 
 type Entry = Result<Arc<egui::ColorImage>, String>;
 
-#[derive(Default)]
-pub struct WebSvgLoader {
-    cache: Mutex<HashMap<(String, SizeHint), Entry>>,
+enum State {
+    /// A thread is drawing it; the page shows a placeholder until then.
+    Drawing,
+    Done(Entry),
 }
 
-/// An address this loader may read: on the web, and not named as another image type.
-fn candidate(uri: &str) -> bool {
-    let path = uri
-        .split(['?', '#'])
+/// Every SVG the page shows: web badges without an extension, and `.svg` files or addresses.
+/// egui's own SVG loader draws no text (it loads no fonts) and draws on the UI thread; this one
+/// uses Rustidian's fonts (5 Nov: Elpis's diagrams lost every title, legend and axis label) and
+/// draws on a thread, crisp at the size the page asks for.
+#[derive(Default)]
+pub struct WebSvgLoader {
+    cache: Arc<Mutex<HashMap<(String, SizeHint), State>>>,
+}
+
+fn path_of(uri: &str) -> String {
+    uri.split(['?', '#'])
         .next()
         .unwrap_or(uri)
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+/// A web address this loader reads by the server's type: not named as another image type.
+fn badge(uri: &str) -> bool {
+    let path = path_of(uri);
     (uri.starts_with("https://") || uri.starts_with("http://"))
         && ![
             ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
         ]
         .iter()
         .any(|extension| path.ends_with(extension))
+}
+
+/// A named SVG file or web address. The app's own embedded icons (`bytes://`) stay with egui's
+/// loader: they are small, hold no text and must be ready in the first frame.
+fn svg_named(uri: &str) -> bool {
+    (uri.starts_with("file://") || uri.starts_with("http://") || uri.starts_with("https://"))
+        && path_of(uri).ends_with(".svg")
+}
+
+/// Sizes round up to 256 px steps, so a window being resized does not redraw the diagram at
+/// every width.
+fn coarse(hint: SizeHint) -> SizeHint {
+    let up = |pixels: u32| pixels.div_ceil(256).max(1) * 256;
+    match hint {
+        SizeHint::Width(width) => SizeHint::Width(up(width)),
+        SizeHint::Height(height) => SizeHint::Height(up(height)),
+        SizeHint::Size {
+            width,
+            height,
+            maintain_aspect_ratio,
+        } => SizeHint::Size {
+            width: up(width),
+            height: up(height),
+            maintain_aspect_ratio,
+        },
+        scale => scale,
+    }
 }
 
 /// SVG by the server's type, or by the document's start when the type is missing.
@@ -69,34 +109,48 @@ impl ImageLoader for WebSvgLoader {
         egui::generate_loader_id!(WebSvgLoader)
     }
 
-    fn load(&self, ctx: &egui::Context, uri: &str, _size_hint: SizeHint) -> ImageLoadResult {
-        if !candidate(uri) {
+    fn load(&self, ctx: &egui::Context, uri: &str, size_hint: SizeHint) -> ImageLoadResult {
+        let named = svg_named(uri);
+        if !named && !badge(uri) {
             return Err(LoadError::NotSupported);
         }
         // A badge keeps its own size: the editor's width hint would stretch it to the page width.
-        let key = (uri.to_owned(), SizeHint::default());
-        if let Some(entry) = self.cache.lock().unwrap().get(&key) {
-            return entry
-                .clone()
-                .map(|image| ImagePoll::Ready { image })
-                .map_err(LoadError::Loading);
+        let hint = if named {
+            coarse(size_hint)
+        } else {
+            SizeHint::default()
+        };
+        let key = (uri.to_owned(), hint);
+        match self.cache.lock().unwrap().get(&key) {
+            Some(State::Done(entry)) => {
+                return entry
+                    .clone()
+                    .map(|image| ImagePoll::Ready { image })
+                    .map_err(LoadError::Loading);
+            }
+            Some(State::Drawing) => return Ok(ImagePoll::Pending { size: None }),
+            None => {}
         }
         match ctx.try_load_bytes(uri)? {
             BytesPoll::Pending { size } => Ok(ImagePoll::Pending { size }),
             BytesPoll::Ready { bytes, mime, .. } => {
-                if !is_svg(mime.as_deref(), &bytes) {
+                if !named && !is_svg(mime.as_deref(), &bytes) {
                     return Err(LoadError::NotSupported);
                 }
-                let entry = egui_extras::image::load_svg_bytes_with_size(
-                    &bytes,
-                    SizeHint::default(),
-                    &svg_options(),
-                )
-                .map(Arc::new);
-                self.cache.lock().unwrap().insert(key, entry.clone());
-                entry
-                    .map(|image| ImagePoll::Ready { image })
-                    .map_err(LoadError::Loading)
+                self.cache
+                    .lock()
+                    .unwrap()
+                    .insert(key.clone(), State::Drawing);
+                let cache = Arc::clone(&self.cache);
+                let ctx = ctx.clone();
+                std::thread::spawn(move || {
+                    let entry =
+                        egui_extras::image::load_svg_bytes_with_size(&bytes, hint, &svg_options())
+                            .map(Arc::new);
+                    cache.lock().unwrap().insert(key, State::Done(entry));
+                    ctx.request_repaint();
+                });
+                Ok(ImagePoll::Pending { size: None })
             }
         }
     }
@@ -114,7 +168,10 @@ impl ImageLoader for WebSvgLoader {
             .lock()
             .unwrap()
             .values()
-            .map(|entry| entry.as_ref().map_or(0, |image| image.pixels.len() * 4))
+            .map(|state| match state {
+                State::Done(Ok(image)) => image.pixels.len() * 4,
+                _ => 0,
+            })
             .sum()
     }
 }
@@ -125,16 +182,21 @@ mod tests {
 
     #[test]
     fn badges_are_read_by_type_or_content_and_named_images_are_left_to_their_loaders() {
-        assert!(candidate(
+        assert!(badge(
             "https://img.shields.io/badge/skills-19-orange?style=flat-square"
         ));
-        assert!(candidate("https://skills.sh/b/MasihMoafi/skills"));
+        assert!(badge("https://skills.sh/b/MasihMoafi/skills"));
         assert!(
-            !candidate("https://example.com/logo.svg"),
-            "egui reads .svg itself"
+            !badge("https://example.com/logo.svg") && svg_named("https://example.com/logo.svg"),
+            "a named SVG is drawn with the page's size, not as a badge"
         );
-        assert!(!candidate("https://example.com/photo.PNG?x=1"));
-        assert!(!candidate("file:///vault/badge"));
+        assert!(svg_named("file:///vault/diagram.SVG?x=1") && !svg_named("file:///vault/a.png"));
+        assert!(
+            !svg_named("bytes://icons/folder.svg"),
+            "app icons stay with egui"
+        );
+        assert!(!badge("https://example.com/photo.PNG?x=1"));
+        assert!(!badge("file:///vault/badge"));
         assert!(is_svg(Some("image/svg+xml;charset=utf-8"), b""));
         assert!(!is_svg(Some("image/png"), b"<svg"));
         assert!(is_svg(
@@ -143,6 +205,26 @@ mod tests {
         ));
         assert!(is_svg(None, b"<?xml version=\"1.0\"?>\n<svg/>"));
         assert!(!is_svg(None, b"\x89PNG\r\n"));
+    }
+
+    #[test]
+    fn sizes_round_up_in_coarse_steps() {
+        assert_eq!(coarse(SizeHint::Width(1)), SizeHint::Width(256));
+        assert_eq!(coarse(SizeHint::Width(917)), SizeHint::Width(1024));
+        assert_eq!(coarse(SizeHint::Width(1024)), SizeHint::Width(1024));
+    }
+
+    #[test]
+    fn a_diagram_with_titles_and_legends_draws_its_text() {
+        let diagram = br##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60"><rect width="200" height="60" fill="#fff"/><text x="100" y="35" fill="#000" font-family="Inter" font-size="20" text-anchor="middle">Run 1</text></svg>"##;
+        let image = egui_extras::image::load_svg_bytes_with_size(
+            diagram,
+            SizeHint::default(),
+            &svg_options(),
+        )
+        .unwrap();
+        let dark = image.pixels.iter().filter(|pixel| pixel.r() < 100).count();
+        assert!(dark > 20, "the title is drawn ({dark} dark pixels)");
     }
 
     #[test]
