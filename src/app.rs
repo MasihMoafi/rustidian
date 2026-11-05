@@ -1192,6 +1192,7 @@ impl NotesApp {
             .filter(|file| rustidian::vault::is_text_document(file))
         {
             self.open_guest_tab(&file);
+            self.jump_to_link_fragment(target);
             return;
         }
         if let Some(uri) = self
@@ -1228,14 +1229,18 @@ impl NotesApp {
                     self.search_cache.invalidate();
                 }
                 self.open_note_at(&document.path, new_tab);
-                if let Some((_, fragment)) = target.split_once('#') {
-                    let fragment = fragment.split('|').next().unwrap_or(fragment);
-                    let decoded = rustidian::paths::decode(fragment);
-                    self.jump_to_anchor(decoded.as_deref().unwrap_or(fragment));
-                }
+                self.jump_to_link_fragment(target);
             }
             Some(Err(error)) => self.error = Some(error),
             None => {}
+        }
+    }
+
+    fn jump_to_link_fragment(&mut self, target: &str) {
+        if let Some((_, fragment)) = target.split_once('#') {
+            let fragment = fragment.split('|').next().unwrap_or(fragment);
+            let decoded = rustidian::paths::decode(fragment);
+            self.jump_to_anchor(decoded.as_deref().unwrap_or(fragment));
         }
     }
 

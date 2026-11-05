@@ -771,12 +771,14 @@ impl Vault {
             }
         }
         let file = lexical.canonicalize().ok()?;
-        if file != lexical || !file.is_file() {
+        if !file.is_file() {
             return None;
         }
-        if file.starts_with(&self.root)
-            && (is_text_document(&file) || crate::assets::is_image(&file))
-        {
+        let root = self
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| self.root.clone());
+        if file.starts_with(&root) && (is_text_document(&file) || crate::assets::is_image(&file)) {
             return None;
         }
         Some(file)

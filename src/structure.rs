@@ -223,7 +223,21 @@ pub fn find_anchor(text: &str, fragment: &str) -> Option<usize> {
         let target = fragment.trim().to_lowercase();
         outline(text)
             .into_iter()
-            .find(|heading| heading.title.to_lowercase() == target)
+            .find(|heading| {
+                heading.title.to_lowercase() == target || heading_slug(&heading.title) == target
+            })
             .map(|heading| heading.character)
     }
+}
+
+/// The anchor a Markdown link uses for a heading: `Runtime Architecture` is
+/// `runtime-architecture` (lowercase, punctuation dropped, spaces to hyphens).
+fn heading_slug(title: &str) -> String {
+    title
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+        .map(|c| if c == ' ' { '-' } else { c })
+        .collect()
 }

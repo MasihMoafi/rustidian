@@ -83,3 +83,34 @@ fn a_link_to_a_note_outside_the_vault_names_that_file_not_a_browser_page() {
         None
     );
 }
+
+#[test]
+fn a_heading_is_found_by_the_slug_a_markdown_link_gives() {
+    let text = "# Guide\n\n## Runtime Architecture\n\ntext\n\n## Q&A: what's new?\n";
+    assert!(rustidian::structure::find_anchor(text, "runtime-architecture").is_some());
+    assert!(rustidian::structure::find_anchor(text, "Runtime Architecture").is_some());
+    assert!(rustidian::structure::find_anchor(text, "qa-whats-new").is_some());
+    assert!(rustidian::structure::find_anchor(text, "missing-heading").is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_reached_through_a_symlinked_folder_still_names_the_file() {
+    let home = tempfile::tempdir().unwrap();
+    fs::write(home.path().join("Home.md"), "# Home\n").unwrap();
+    let real = tempfile::tempdir().unwrap();
+    fs::write(real.path().join("Guide.md"), "# Guide\n").unwrap();
+    let link = tempfile::tempdir().unwrap().keep().join("docs");
+    std::os::unix::fs::symlink(real.path(), &link).unwrap();
+    let vault = Vault::open(home.path()).unwrap();
+
+    let found = vault.external_file(
+        std::path::Path::new("Home.md"),
+        &format!("{}/Guide.md", link.display()),
+    );
+
+    assert_eq!(
+        found,
+        Some(real.path().join("Guide.md").canonicalize().unwrap())
+    );
+}
