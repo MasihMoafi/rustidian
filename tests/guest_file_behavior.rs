@@ -64,3 +64,22 @@ fn only_a_file_outside_the_vault_opens_as_a_guest_and_only_once_opened() {
     );
     assert!(!vault.is_guest(&elsewhere.path().join("Missing.md")));
 }
+
+#[test]
+fn a_link_to_a_note_outside_the_vault_names_that_file_not_a_browser_page() {
+    let home = tempfile::tempdir().unwrap();
+    fs::write(home.path().join("Home.md"), "# Home\n").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let note = elsewhere.path().join("Other.md");
+    fs::write(&note, "x\n").unwrap();
+    let vault = Vault::open(home.path()).unwrap();
+    let link = note.to_string_lossy().replace(' ', "%20");
+
+    let found = vault.external_file(std::path::Path::new("Home.md"), &link);
+
+    assert_eq!(found, Some(note.canonicalize().unwrap()));
+    assert_eq!(
+        vault.external_file(std::path::Path::new("Home.md"), "Home.md"),
+        None
+    );
+}

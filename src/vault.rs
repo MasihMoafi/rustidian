@@ -743,6 +743,16 @@ impl Vault {
     /// Existing attachments and files outside the vault belong to the desktop file handler.
     /// Resolving them must not create notes, change the vault, or follow a symlink escape.
     pub fn external_file_uri(&self, from: &Path, target: &str) -> Option<String> {
+        let file = self.external_file(from, target)?;
+        Some(format!(
+            "file://{}",
+            crate::paths::markdown_destination(Path::new(""), &file)
+        ))
+    }
+
+    /// A file a link names that the vault does not own: outside the root, or inside it but
+    /// not a note or image.
+    pub fn external_file(&self, from: &Path, target: &str) -> Option<PathBuf> {
         let target = crate::paths::decode(target.split('|').next()?.split('#').next()?.trim())?;
         let candidate = self
             .root
@@ -769,10 +779,7 @@ impl Vault {
         {
             return None;
         }
-        Some(format!(
-            "file://{}",
-            crate::paths::markdown_destination(Path::new(""), &file)
-        ))
+        Some(file)
     }
 
     pub fn open_link(&mut self, from: &Path, target: &str) -> Result<Document> {

@@ -1173,7 +1173,25 @@ impl NotesApp {
                 })
         });
         if uri {
-            self.ctx.open_url(egui::OpenUrl::new_tab(target));
+            let local = target
+                .strip_prefix("file://")
+                .and_then(rustidian::paths::decode)
+                .map(PathBuf::from)
+                .filter(|path| path.is_file() && rustidian::vault::is_text_document(path));
+            if let Some(file) = local {
+                self.open_guest_tab(&file);
+            } else {
+                self.ctx.open_url(egui::OpenUrl::new_tab(target));
+            }
+            return;
+        }
+        if let Some(file) = self
+            .vault
+            .as_ref()
+            .and_then(|vault| vault.external_file(from, target))
+            .filter(|file| rustidian::vault::is_text_document(file))
+        {
+            self.open_guest_tab(&file);
             return;
         }
         if let Some(uri) = self
