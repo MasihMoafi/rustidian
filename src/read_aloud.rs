@@ -488,7 +488,10 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
         .order(egui::Order::Foreground)
         .fixed_pos(position)
         .show(ctx, |ui| {
-            let frame = egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(10, 6));
+            let frame = egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(
+                crate::theme::space::M as i8,
+                crate::theme::space::XS as i8,
+            ));
             let response = frame.show(ui, |ui| {
                 ui.set_width(width - 20.0);
                 ui.horizontal(|ui| {
