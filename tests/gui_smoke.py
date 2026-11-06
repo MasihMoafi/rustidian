@@ -8268,6 +8268,22 @@ def main():
                 pause()  # Let the completed background save reach the visible status.
                 capture("native-external-autosave-chain.png")
                 results.append("With normal autosave enabled, a dirty note followed two immediate external renames and saved its edits only at the final path")
+                # `mkdir new && mv old new/` can outrun the new folder's watch, so
+                # no paired rename arrives; the re-index must still follow the note.
+                (fixture / "Fresh parent").mkdir()
+                (fixture / "Moved outside").rename(fixture / "Fresh parent/Moved outside")
+                control_bounds("tab-full:Fresh parent/Moved outside/Inner/External autosaved.md")
+                open_note("Fresh parent/Moved outside/Inner/External sibling.md", title="External sibling")
+                gone = "tab-full:Fresh parent/Moved outside/Inner/External sibling.md"
+                (fixture / "Fresh parent/Moved outside/Inner/External sibling.md").unlink()
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and control_bounds(gone, required=False):
+                    time.sleep(.05)
+                assert not control_bounds(gone, required=False), "A deleted note's tab stayed open"
+                pause()
+                assert not control_bounds("error-notice", required=False), "An outside move or delete showed an error"
+                capture("native-external-move-delete-quiet.png")
+                results.append("A move into a just-created folder kept the tab; an outside delete closed its clean tab; no error appeared")
 
             def list_indent_checks():
                 # Real keystrokes and saved bytes own this contract, in both editors.
