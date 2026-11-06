@@ -1,7 +1,7 @@
 use crate::explorer_selection as selection;
 use crate::theme;
 use eframe::egui::{self, Color32, FontId, RichText, Stroke};
-use rustidian::vault::Vault;
+use rustidian::{explorer_order::Order, vault::Vault};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -30,6 +30,32 @@ pub enum FileAction {
         source: PathBuf,
         folder: PathBuf,
     },
+    /// Rows dragged between their siblings: `group` is the folder's new folder or file order.
+    Reorder {
+        folder: PathBuf,
+        group: Vec<String>,
+    },
+}
+
+/// How the explorer orders a folder's rows: by name, or the user's own order.
+#[derive(Clone, Copy)]
+pub struct Sort<'a> {
+    pub reverse: bool,
+    pub order: Option<&'a Order>,
+}
+
+/// Where a drag would land this frame: a folder to move into, or a place between siblings.
+#[derive(Default)]
+pub struct DropTarget {
+    pub folder: Option<PathBuf>,
+    slot: Option<Slot>,
+}
+
+/// A place between sibling rows: the line to draw and the folder's order after the drop.
+struct Slot {
+    folder: PathBuf,
+    group: Vec<String>,
+    line: [egui::Pos2; 2],
 }
 
 pub(crate) fn copy_menu(ui: &mut egui::Ui, path: &Path, action: &mut Option<FileAction>) {
@@ -271,7 +297,7 @@ pub fn drag_scroll(ui: &egui::Ui) {
 /// release anywhere else cancels, as does a release over the item's own folder.
 pub fn finish_drag(
     ui: &egui::Ui,
-    folder: Option<PathBuf>,
+    drop: DropTarget,
     list: egui::Rect,
     root_slot: egui::layers::ShapeIdx,
 ) -> Option<FileAction> {
@@ -280,7 +306,35 @@ pub fn finish_drag(
         ctx.data_mut(|data| data.remove::<DropHover>(drop_hover_id()));
         return None;
     };
-    let target = folder
+    if let Some(slot) = drop.slot {
+        // A place between siblings: an insertion line, and a release saves the order.
+        ctx.data_mut(|data| data.remove::<DropHover>(drop_hover_id()));
+        let [start, end] = slot.line;
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            drop_hover_id().with("insertion"),
+        ));
+        painter.line_segment([start, end], Stroke::new(2.0, theme::interactive(ui)));
+        painter.circle_stroke(start, 3.0, Stroke::new(1.5, theme::interactive(ui)));
+        crate::ui_probe::record(
+            ctx,
+            format!("drop-slot:{}", slot.folder.display()),
+            egui::Rect::from_two_pos(start, end).expand2(egui::vec2(0.0, 2.0)),
+        );
+        if let Some(pointer) = ctx.input(|input| input.pointer.latest_pos()) {
+            paint_ghost(ui, &dragged, pointer);
+        }
+        if !ctx.input(|input| input.pointer.any_released()) {
+            return None;
+        }
+        egui::DragAndDrop::clear_payload(ctx);
+        return Some(FileAction::Reorder {
+            folder: slot.folder,
+            group: slot.group,
+        });
+    }
+    let target = drop
+        .folder
         .or_else(|| ui.rect_contains_pointer(list).then(PathBuf::new))
         .filter(|folder| !dragged.paths.iter().any(|path| folder.starts_with(path)));
     let now = ctx.input(|input| input.time);
@@ -439,16 +493,17 @@ impl Tree {
         ui: &mut egui::Ui,
         prefix: &str,
         active: Option<&Path>,
-        reverse: bool,
+        sort: Sort<'_>,
         collapse_epoch: u64,
         reveal_folder: Option<&Path>,
         visible_files: &mut Option<Vec<PathBuf>>,
-        drop_folder: &mut Option<PathBuf>,
+        drop: &mut DropTarget,
     ) -> (Option<FileAction>, bool) {
         let root = prefix.is_empty();
         if root {
             selection::begin(ui.ctx(), active);
         }
+        let here = PathBuf::from(prefix.trim_start_matches('/'));
         let mut open = None;
         let mut revealed = false;
         // During a drag the deepest folder under the pointer is the drop target, and the
@@ -459,14 +514,41 @@ impl Tree {
                 .data(|data| data.get_temp::<DropHover>(drop_hover_id()))
         });
         let now = ui.input(|input| input.time);
-        let folders: Box<dyn Iterator<Item = (&String, &Tree)>> = if reverse {
-            Box::new(self.folders.iter().rev())
-        } else {
-            Box::new(self.folders.iter())
-        };
+        // The rows in display order: the user's own order, else by name (Z to A reversed).
+        let mut folders: Vec<(&String, &Tree)> = self.folders.iter().collect();
+        let index = (!root)
+            .then(|| rustidian::explorer_order::index_note(&here, &self.files))
+            .flatten();
+        let mut files: Vec<&PathBuf> = self
+            .files
+            .iter()
+            .filter(|path| Some(*path) != index)
+            .collect();
+        if let Some(order) = sort.order {
+            order.arrange(&here, &mut folders, |(name, _)| (*name).clone());
+            order.arrange(&here, &mut files, |path| name_of(path));
+        } else if sort.reverse {
+            folders.reverse();
+            files.reverse();
+        }
+        let folder_names: Vec<String> = folders.iter().map(|(name, _)| (*name).clone()).collect();
+        let file_names: Vec<String> = files.iter().map(|path| name_of(path)).collect();
+        // A folder's index note sits first, above its subfolders, and stays there.
+        if let Some(index) = index {
+            selection::record(ui.ctx(), [index.clone()]);
+            if let Some(paths) = visible_files.as_mut() {
+                paths.push(index.clone());
+            }
+            let response = file_entry(ui, index, &mut open);
+            paint_badge(ui, response.rect, "index");
+            if pending_reveal(ui.ctx()).as_deref() == Some(index.as_path()) {
+                reveal_note_row(ui, index, response.rect);
+            }
+        }
         for (name, folder) in folders {
             let id = format!("{prefix}/{name}");
             let entry = Path::new(id.trim_start_matches('/'));
+            let folder_index = rustidian::explorer_order::index_note(entry, &folder.files);
             let persistent = ui.make_persistent_id(&id);
             let selection_len = selection::record(ui.ctx(), [entry.to_owned()]);
             let (selection_changed, collapse) = ui.ctx().data_mut(|data| {
@@ -545,26 +627,55 @@ impl Tree {
                     ui,
                     &id,
                     active,
-                    reverse,
+                    sort,
                     collapse_epoch,
                     reveal_folder,
                     visible_files,
-                    drop_folder,
+                    drop,
                 );
                 if action.is_some() {
                     open = action;
                 }
                 revealed |= visible;
             });
-            if selection::row(ui, &header.header_response, entry)
+            let selection_click = selection::row(ui, &header.header_response, entry);
+            // A click on the name of a folder with an index note opens the note and keeps
+            // the folder open; the disclosure arrow alone still folds it.
+            let arrow = ui.spacing().icon_width + ui.spacing().icon_spacing + 8.0;
+            let name_click = header.header_response.clicked()
+                && header
+                    .header_response
+                    .interact_pointer_pos()
+                    .is_some_and(|pointer| pointer.x > header.header_response.rect.left() + arrow);
+            let keep_open = if selection_click {
+                Some(was_open)
+            } else if name_click && let Some(index) = folder_index {
+                open = Some(FileAction::Open(index.clone()));
+                Some(true)
+            } else {
+                None
+            };
+            if let Some(keep_open) = keep_open
                 && let Some(mut state) =
                     egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
             {
-                state.set_open(was_open);
+                state.set_open(keep_open);
                 state.store(ui.ctx());
                 ui.ctx().request_repaint();
             }
             start_drag(&header.header_response, entry, name);
+            let is_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                .is_some_and(|state| state.is_open());
+            find_slot(
+                ui,
+                drop,
+                dragging.as_deref(),
+                header.header_response.rect,
+                &here,
+                &folder_names,
+                name,
+                Some(is_open),
+            );
             if let (Some(source), Some(slot)) = (&dragging, highlight) {
                 let block = header
                     .body_response
@@ -572,22 +683,17 @@ impl Tree {
                     .map_or(header.header_response.rect, |body| {
                         header.header_response.rect.union(body.rect)
                     });
-                if drop_folder.is_none() && ui.rect_contains_pointer(block) {
-                    *drop_folder = Some(entry.to_owned());
-                    if !entry.starts_with(&source.path) {
+                if drop.folder.is_none() && ui.rect_contains_pointer(block) {
+                    drop.folder = Some(entry.to_owned());
+                    if !entry.starts_with(&source.path) && drop.slot.is_none() {
                         paint_drop_target(ui, slot, block, entry);
                     }
                 }
             }
-            if egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
-                .is_some_and(|state| !state.is_open())
-                && let Some(paths) = visible_files.as_mut()
-            {
+            if !is_open && let Some(paths) = visible_files.as_mut() {
                 paths.truncate(first_child);
             }
-            if egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
-                .is_some_and(|state| !state.is_open())
-            {
+            if !is_open {
                 selection::truncate(ui.ctx(), selection_len);
             }
             ui.visuals_mut().collapsing_header_frame = framed;
@@ -640,36 +746,23 @@ impl Tree {
                 header.header_response.rect,
             );
         }
-        if reverse {
-            selection::record(ui.ctx(), self.files.iter().rev().cloned());
-        } else {
-            selection::record(ui.ctx(), self.files.iter().cloned());
-        }
+        selection::record(ui.ctx(), files.iter().map(|path| (*path).clone()));
         let row_height = 31.0 + ui.spacing().item_spacing.y;
         let top = ui.cursor().top();
         let first = (((ui.clip_rect().top() - top) / row_height).floor().max(0.0) as usize)
-            .min(self.files.len())
+            .min(files.len())
             .saturating_sub(1);
         let last = ((((ui.clip_rect().bottom() - top) / row_height)
             .ceil()
             .max(0.0) as usize)
             .saturating_add(1))
-        .clamp(first, self.files.len());
+        .clamp(first, files.len());
         if let Some(paths) = visible_files.as_mut() {
-            if reverse {
-                paths.extend(self.files.iter().rev().cloned());
-            } else {
-                paths.extend(self.files.iter().cloned());
-            }
+            paths.extend(files.iter().map(|path| (*path).clone()));
         }
         if let Some(target) = pending_reveal(ui.ctx())
-            && let Some(index) = self.files.iter().position(|path| *path == target)
+            && let Some(slot) = files.iter().position(|path| **path == target)
         {
-            let slot = if reverse {
-                self.files.len() - 1 - index
-            } else {
-                index
-            };
             reveal_note_row(
                 ui,
                 &target,
@@ -680,70 +773,159 @@ impl Tree {
             );
         }
         ui.add_space(first as f32 * row_height);
-        for slot in first..last {
-            let index = if reverse {
-                self.files.len() - 1 - slot
-            } else {
-                slot
-            };
-            let path = &self.files[index];
-            let title = rustidian::vault::file_title(path);
-            let selected = selection::contains(ui.ctx(), path);
-            let response = file_row(ui, path, &title, selected);
-            let selection_click = selection::row(ui, &response, path);
-            start_drag(&response, path, &title);
-            crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);
-            let response = response.on_hover_text(path.display().to_string());
-            response.context_menu(|ui| {
-                theme::menu_style(ui);
-                if selection::menu(ui, &mut open) {
-                    return;
-                }
-                if theme::menu_item(ui, theme::Icon::NewTab, "Open in new tab").clicked() {
-                    open = Some(FileAction::OpenInNewTab(path.clone()));
-                    ui.close();
-                }
-                ui.separator();
-                copy_menu(ui, path, &mut open);
-                if theme::menu_item(ui, theme::Icon::Files, "Move file to...").clicked() {
-                    open = Some(FileAction::Move(path.clone()));
-                    ui.close();
-                }
-                let bookmark = theme::menu_item(ui, theme::Icon::Bookmark, "Bookmark…");
-                crate::ui_probe::record(
-                    ui.ctx(),
-                    format!("file-bookmark:{}", path.display()),
-                    bookmark.rect,
-                );
-                if bookmark.clicked() {
-                    open = Some(FileAction::Bookmark(path.clone()));
-                    ui.close();
-                }
-                reveal_menu(ui, path, &mut open);
-                if theme::menu_item(ui, theme::Icon::Copy, "Copy path").clicked() {
-                    open = Some(FileAction::CopyPath(path.clone()));
-                    ui.close();
-                }
-                ui.separator();
-                if theme::menu_item(ui, theme::Icon::Edit, "Rename…").clicked() {
-                    open = Some(FileAction::Rename(path.clone()));
-                    ui.close();
-                }
-                if theme::delete_menu_item(ui, "Delete").1 {
-                    open = Some(FileAction::Trash(path.clone()));
-                    ui.close();
-                }
-            });
-            if response.clicked() && !selection_click {
-                open = Some(FileAction::Open(path.clone()));
-            }
+        for path in &files[first..last] {
+            let response = file_entry(ui, path, &mut open);
+            find_slot(
+                ui,
+                drop,
+                dragging.as_deref(),
+                response.rect,
+                &here,
+                &file_names,
+                &name_of(path),
+                None,
+            );
         }
-        ui.add_space((self.files.len() - last) as f32 * row_height);
+        ui.add_space((files.len() - last) as f32 * row_height);
         if root && let Some(action) = selection::finish(ui) {
             open = Some(action);
         }
         (open, revealed)
     }
+}
+
+/// A row's own name, as the order stores it.
+fn name_of(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// One file row: selection, opening, dragging and its context menu.
+fn file_entry(ui: &mut egui::Ui, path: &PathBuf, open: &mut Option<FileAction>) -> egui::Response {
+    let title = rustidian::vault::file_title(path);
+    let selected = selection::contains(ui.ctx(), path);
+    let response = file_row(ui, path, &title, selected);
+    let selection_click = selection::row(ui, &response, path);
+    start_drag(&response, path, &title);
+    crate::ui_probe::record(ui.ctx(), format!("file:{}", path.display()), response.rect);
+    let response = response.on_hover_text(path.display().to_string());
+    response.context_menu(|ui| {
+        theme::menu_style(ui);
+        if selection::menu(ui, open) {
+            return;
+        }
+        if theme::menu_item(ui, theme::Icon::NewTab, "Open in new tab").clicked() {
+            *open = Some(FileAction::OpenInNewTab(path.clone()));
+            ui.close();
+        }
+        ui.separator();
+        copy_menu(ui, path, open);
+        if theme::menu_item(ui, theme::Icon::Files, "Move file to...").clicked() {
+            *open = Some(FileAction::Move(path.clone()));
+            ui.close();
+        }
+        let bookmark = theme::menu_item(ui, theme::Icon::Bookmark, "Bookmark…");
+        crate::ui_probe::record(
+            ui.ctx(),
+            format!("file-bookmark:{}", path.display()),
+            bookmark.rect,
+        );
+        if bookmark.clicked() {
+            *open = Some(FileAction::Bookmark(path.clone()));
+            ui.close();
+        }
+        reveal_menu(ui, path, open);
+        if theme::menu_item(ui, theme::Icon::Copy, "Copy path").clicked() {
+            *open = Some(FileAction::CopyPath(path.clone()));
+            ui.close();
+        }
+        ui.separator();
+        if theme::menu_item(ui, theme::Icon::Edit, "Rename…").clicked() {
+            *open = Some(FileAction::Rename(path.clone()));
+            ui.close();
+        }
+        if theme::delete_menu_item(ui, "Delete").1 {
+            *open = Some(FileAction::Trash(path.clone()));
+            ui.close();
+        }
+    });
+    if response.clicked() && !selection_click {
+        *open = Some(FileAction::Open(path.clone()));
+    }
+    response
+}
+
+/// A small weak label at a row's right end, such as "index".
+fn paint_badge(ui: &egui::Ui, rect: egui::Rect, text: &str) {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        FontId::proportional(11.0),
+        ui.visuals().weak_text_color(),
+    );
+    let position = egui::pos2(
+        rect.right() - 12.0 - galley.size().x,
+        rect.center().y - galley.size().y * 0.5,
+    );
+    ui.painter()
+        .galley(position, galley, ui.visuals().weak_text_color());
+    crate::ui_probe::record(ui.ctx(), format!("badge:{text}"), rect);
+}
+
+/// The place between siblings that a drag over `rect` (the row of `name` in `folder`)
+/// points at: a file row's top or bottom half, or a folder row's top or bottom third
+/// (bottom only while folded); the rest of a folder row moves the drag into it. Only rows
+/// dragged from this same folder and group (folders or files) reorder.
+#[allow(clippy::too_many_arguments)]
+fn find_slot(
+    ui: &egui::Ui,
+    drop: &mut DropTarget,
+    dragged: Option<&Dragged>,
+    rect: egui::Rect,
+    folder: &Path,
+    group: &[String],
+    name: &str,
+    folder_row_open: Option<bool>,
+) {
+    let Some(dragged) = dragged else {
+        return;
+    };
+    if drop.slot.is_some() || !ui.rect_contains_pointer(rect) {
+        return;
+    }
+    let moving: Vec<String> = dragged
+        .paths
+        .iter()
+        .filter(|path| path.parent() == Some(folder))
+        .map(|path| name_of(path))
+        .collect();
+    if moving.len() != dragged.paths.len() || !moving.iter().all(|name| group.contains(name)) {
+        return;
+    }
+    let Some(pointer) = ui.input(|input| input.pointer.latest_pos()) else {
+        return;
+    };
+    let fraction = (pointer.y - rect.top()) / rect.height().max(1.0);
+    let after = match folder_row_open {
+        None => fraction >= 0.5,
+        Some(_) if fraction < 0.3 => false,
+        Some(false) if fraction > 0.7 => true,
+        Some(_) => return,
+    };
+    let reordered = rustidian::explorer_order::placed(group, &moving, name, after);
+    if reordered == group {
+        return;
+    }
+    let y = if after { rect.bottom() } else { rect.top() };
+    drop.slot = Some(Slot {
+        folder: folder.to_owned(),
+        group: reordered,
+        line: [
+            egui::pos2(rect.left() + 4.0, y),
+            egui::pos2(rect.right() - 6.0, y),
+        ],
+    });
 }
 
 #[cfg(test)]

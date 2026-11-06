@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -7146,6 +7146,93 @@ def main():
                 assert all((many / f"Item {number:03}.md").read_text() == f"# Item {number:03}\n" for number in range(1, 101))
                 results.append("Shift-selection crossed virtualized offscreen rows from item 001 to 100; Delete counted all 100, and cancellation preserved every file")
 
+            def explorer_order_checks():
+                # Masih (6 Nov): arrange files by dragging them between rows, and see each
+                # folder's index note first, opened by a click on the folder's name.
+                click_control("button:File explorer")
+                close_tabs()
+                folder = fixture / "Order test"
+                (folder / "Sub one").mkdir(parents=True)
+                (folder / "Sub two").mkdir()
+                (folder / "Sub one/One.md").write_bytes(b"# One\n")
+                (folder / "Sub two/Two.md").write_bytes(b"# Two\n")
+                for name in ("Alpha", "Beta", "Gamma"):
+                    (folder / f"{name}.md").write_bytes(f"# {name}\n".encode())
+                (folder / "Index.md").write_bytes(b"# Order index\n\n- [[Alpha]]\n")
+
+                def files():
+                    return {path.relative_to(fixture).as_posix(): path.read_bytes() for path in fixture.rglob("*") if path.is_file()}
+
+                before = files()
+                command("Refresh vault")
+                pause()
+                click_control("file-collapse")
+                pause()
+                header = control_bounds("folder:Order test")
+                y = round((header[1] + header[3]) / 2)
+                # The name opens the index note and the folder; the index sits first, marked.
+                xdo("mousemove", "--sync", str(round(header[0]) + 70), str(y), "click", "1")
+                pause()
+                title_contains("Index")
+                index = control_bounds("file:Order test/Index.md")
+                assert index[1] < control_bounds("folder:Order test/Sub one")[1], "The index note must sit above the subfolders"
+                assert index[1] < control_bounds("file:Order test/Alpha.md")[1]
+                control_bounds("badge:index")
+                capture("native-explorer-index.png")
+                # The arrow alone folds the folder and opens nothing.
+                open_note("Beta")
+                xdo("mousemove", "--sync", str(round(header[0]) + 9), str(y), "click", "1")
+                pause()
+                assert control_bounds("file:Order test/Alpha.md", required=False) is None, "The arrow must fold the folder"
+                title_contains("Beta")
+                xdo("mousemove", "--sync", str(round(header[0]) + 70), str(y), "click", "1")
+                pause()
+                title_contains("Index")
+                results.append("A click on a folder's name opened its Index.md and kept the folder open; the index sat first, above the subfolders, marked; the arrow alone folded the folder")
+
+                def top(name):
+                    return control_bounds(name)[1]
+
+                def slots():
+                    return [name for name in json.loads((base / "ui-probe.json").read_text()) if name.startswith("drop-slot:")]
+
+                def drag(source, target, fraction):
+                    left, upper, right, lower = control_bounds(source)
+                    start = (round(left + 60), round((upper + lower) / 2))
+                    t_left, t_upper, t_right, t_lower = control_bounds(target)
+                    end = (round(t_left + 60), round(t_upper + (t_lower - t_upper) * fraction))
+                    xdo("mousemove", "--sync", str(start[0]), str(start[1]), "mousedown", "1")
+                    try:
+                        time.sleep(.1)
+                        xdo("mousemove", "--sync", str(start[0] + 3), str(start[1]))
+                        for step in range(1, 13):
+                            xdo("mousemove", "--sync", str(round(start[0] + 3 + (end[0] - start[0] - 3) * step / 12)), str(round(start[1] + (end[1] - start[1]) * step / 12)))
+                            time.sleep(.03)
+                        time.sleep(.3)
+                        seen = slots()
+                        capture("native-explorer-order-drag.png")
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+                    return seen
+
+                seen = drag("file:Order test/Gamma.md", "file:Order test/Alpha.md", .25)
+                assert seen == ["drop-slot:Order test"], ("An insertion line must show between the rows", seen)
+                assert top("file:Order test/Gamma.md") < top("file:Order test/Alpha.md") < top("file:Order test/Beta.md"), "Gamma must now sit above Alpha"
+                seen = drag("folder:Order test/Sub two", "folder:Order test/Sub one", .15)
+                assert seen == ["drop-slot:Order test"], seen
+                assert top("folder:Order test/Sub two") < top("folder:Order test/Sub one"), "Sub two must now sit above Sub one"
+                assert top("file:Order test/Index.md") < top("folder:Order test/Sub two"), "The index note stays first"
+                assert files() == before, "Arranging rows must not change, add or move any file in the vault"
+                assert not (fixture / ".rustidian").exists()
+                state = [json.loads(path.read_text()) for path in (base / "state" / "rustidian").glob("*.json")]
+                saved = [entry["explorer_order"].get("Order test", []) for entry in state if entry.get("custom_order")]
+                assert saved, ("Custom order must be saved in the workspace state", state)
+                order = saved[0]
+                assert order.index("Gamma.md") < order.index("Alpha.md") and order.index("Sub two") < order.index("Sub one"), order
+                capture("native-explorer-order.png")
+                results.append("Dragging Gamma above Alpha and Sub two above Sub one drew an insertion line and kept the new order, saved in the workspace state with Custom order on; the index stayed first and no vault file changed")
+
             def drag_move_checks():
                 # Obsidian's explorer: drag a note or a folder onto a folder or the vault root (29 Oct).
                 click_control("button:File explorer")
@@ -11082,6 +11169,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "file-move"}))
                 return
+            if args.section == "explorer-order":
+                explorer_order_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "explorer-order"}))
+                return
             if args.section == "drag-move":
                 drag_move_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -11744,6 +11836,7 @@ def main():
                 file_copy_checks,
                 file_move_checks,
                 drag_move_checks,
+                explorer_order_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,

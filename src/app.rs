@@ -152,6 +152,9 @@ pub struct NotesApp {
     new_tab_gesture: bool,
     properties: crate::properties_ui::Properties,
     pub(crate) sort_descending: bool,
+    /// The explorer shows the user's own order (rows dragged into place) instead of by name.
+    pub(crate) custom_order: bool,
+    pub(crate) explorer_order: rustidian::explorer_order::Order,
     collapse_epoch: u64,
     reveal_folder: Option<PathBuf>,
     /// The active note the explorer last scrolled to; a new one is revealed once.
@@ -260,6 +263,8 @@ impl NotesApp {
             new_tab_gesture: false,
             properties: Default::default(),
             sort_descending: false,
+            custom_order: false,
+            explorer_order: Default::default(),
             collapse_epoch: 0,
             reveal_folder: None,
             revealed_note: None,
@@ -2467,15 +2472,28 @@ impl NotesApp {
                                     (true, "File name (Z to A)", "sort-descending"),
                                 ] {
                                     let response = ui.selectable_label(
-                                        self.sort_descending == descending,
+                                        !self.custom_order && self.sort_descending == descending,
                                         label,
                                     );
                                     crate::ui_probe::record(ui.ctx(), probe, response.rect);
                                     if response.clicked() {
                                         self.sort_descending = descending;
+                                        self.custom_order = false;
                                         self.reset_tree_scroll = true;
+                                        self.persist_session();
                                         ui.close();
                                     }
+                                }
+                                let custom = ui
+                                    .selectable_label(self.custom_order, "Custom order")
+                                    .on_hover_text(
+                                        "Drag files and folders between rows to arrange them",
+                                    );
+                                crate::ui_probe::record(ui.ctx(), "sort-custom", custom.rect);
+                                if custom.clicked() {
+                                    self.custom_order = true;
+                                    self.persist_session();
+                                    ui.close();
                                 }
                             });
                             let collapse =
@@ -2658,7 +2676,7 @@ impl NotesApp {
                         tree_scroll = tree_scroll.vertical_scroll_offset(0.0);
                         self.reset_tree_scroll = false;
                     }
-                    let mut drop_folder = None;
+                    let mut drop_folder = crate::file_tree::DropTarget::default();
                     let scroll = tree_scroll.show(ui, |ui| {
                         let (action, revealed) = self.tree.show(
                             ui,
@@ -2666,7 +2684,10 @@ impl NotesApp {
                             self.tabs
                                 .get(self.active)
                                 .map(|tab| tab.document.path.as_path()),
-                            self.sort_descending,
+                            crate::file_tree::Sort {
+                                reverse: self.sort_descending && !self.custom_order,
+                                order: self.custom_order.then_some(&self.explorer_order),
+                            },
                             self.collapse_epoch,
                             self.reveal_folder.as_deref(),
                             &mut visible_files,
@@ -2837,6 +2858,11 @@ impl NotesApp {
                 FileAction::Trash(path) => self.ask_file(Dialog::TrashNote, path),
                 FileAction::Bookmark(path) => self.add_bookmark(&path),
                 FileAction::MoveInto { source, folder } => self.drop_into(&source, &folder),
+                FileAction::Reorder { folder, group } => {
+                    self.explorer_order.set(&folder, group);
+                    self.custom_order = true;
+                    self.persist_session();
+                }
             }
         }
     }
@@ -4944,6 +4970,7 @@ impl NotesApp {
 
     fn relocate_tabs(&mut self, source: &Path, destination: &Path) {
         crate::explorer_selection::moved(&self.ctx, source, destination);
+        self.explorer_order.renamed(source, destination);
         self.page_preview.close();
         if let Some(vault) = &self.vault {
             crate::editor_ui::relocate_histories(&self.ctx, &vault.root, source, destination);

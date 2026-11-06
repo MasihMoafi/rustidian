@@ -27,6 +27,10 @@ struct Session {
     #[serde(default)]
     sort_descending: bool,
     #[serde(default)]
+    custom_order: bool,
+    #[serde(default)]
+    explorer_order: rustidian::explorer_order::Order,
+    #[serde(default)]
     bookmarks: rustidian::bookmarks::Bookmarks,
     #[serde(default)]
     bookmarks_open: bool,
@@ -186,6 +190,8 @@ impl NotesApp {
         }
         ctx.set_zoom_factor(self.ui_zoom);
         self.sort_descending = session.sort_descending;
+        self.custom_order = session.custom_order;
+        self.explorer_order = session.explorer_order;
         self.bookmarks = session.bookmarks;
         self.bookmarks.sanitize();
         self.show_bookmarks = session.bookmarks_open;
@@ -243,6 +249,8 @@ impl NotesApp {
             appearance: Some(self.appearance),
             palette: self.palette,
             sort_descending: self.sort_descending,
+            custom_order: self.custom_order,
+            explorer_order: self.explorer_order.clone(),
             bookmarks: self.bookmarks.clone(),
             bookmarks_open: self.show_bookmarks,
             right_tab: self.right_tab,
