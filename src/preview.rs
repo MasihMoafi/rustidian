@@ -918,7 +918,25 @@ fn render(
         );
         let area = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
         if !embedded {
-            reading_menu(ui, area, menu, &parsed.blocks, &mut select_all);
+            let speech = ui
+                .ctx()
+                .data_mut(|data| data.remove_temp::<Arc<Speech>>(document_id.with("read-aloud")))
+                .unwrap_or_default();
+            let mut read = speech.requested();
+            reading_menu(
+                ui,
+                area,
+                menu,
+                &parsed.blocks,
+                &mut select_all,
+                &speech,
+                &mut read,
+            );
+            read_selection(ui, area, document_id, select_all, &speech, &mut read);
+            if let Some(text) = read {
+                crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
+            }
+            crate::read_aloud::player_bar(ui.ctx(), ui.clip_rect());
         }
         if select_all {
             ui.painter()
@@ -964,6 +982,8 @@ fn reading_menu(
     menu: egui::Id,
     blocks: &[Block],
     select_all: &mut bool,
+    speech: &Speech,
+    read: &mut Option<String>,
 ) {
     use crate::editor_ui::{MenuArea, menu_target, take_menu_click};
     menu_target(ui, area, MenuArea::Reading);
@@ -1004,9 +1024,94 @@ fn reading_menu(
             clear_label_selection(ui.ctx());
             ui.close();
         }
+        ui.separator();
+        // The selection widened to whole sentences, everything shown under Select all, else
+        // the whole note as shown.
+        let aloud = ui.button(if selected {
+            "Read selection aloud"
+        } else {
+            "Read note aloud"
+        });
+        crate::ui_probe::record(ui.ctx(), "reading-menu:Read aloud", aloud.rect);
+        if aloud.clicked() {
+            let all = speech.all();
+            *read = Some(match crate::read_aloud::selection(ui.ctx()) {
+                Some(selected) if !*select_all => rustidian::speech_text::snap(&all, &selected),
+                _ => all,
+            });
+            ui.close();
+        }
+        if crate::read_aloud::status().active {
+            let stop = ui.button("Stop reading");
+            crate::ui_probe::record(ui.ctx(), "reading-menu:Stop reading", stop.rect);
+            if stop.clicked() {
+                crate::read_aloud::stop(ui.ctx());
+                ui.close();
+            }
+        }
     });
     if let Some(shown) = shown {
         crate::ui_probe::record(ui.ctx(), "reading-menu", shown.response.rect);
+    }
+}
+
+/// A speaker beside a text selection, where the drag ended; pressing it reads the selection,
+/// widened to whole sentences. Under Select all it sits at the top of the note.
+fn read_selection(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    document_id: egui::Id,
+    select_all: bool,
+    speech: &Speech,
+    read: &mut Option<String>,
+) {
+    let release = document_id.with("read-aloud-release");
+    if let Some(pos) = ui.input(|input| {
+        input
+            .pointer
+            .any_released()
+            .then(|| input.pointer.latest_pos())
+            .flatten()
+    }) && area.contains(pos)
+    {
+        ui.ctx().data_mut(|data| data.insert_temp(release, pos));
+    }
+    let selected = crate::read_aloud::selection(ui.ctx());
+    let anchor = if select_all {
+        Some(egui::pos2(
+            area.right() - 40.0,
+            ui.clip_rect().top().max(area.top()) + 8.0,
+        ))
+    } else if selected.is_some() {
+        ui.ctx()
+            .data(|data| data.get_temp::<egui::Pos2>(release))
+            .map(|pos| pos + egui::vec2(10.0, 6.0))
+    } else {
+        None
+    };
+    let Some(anchor) = anchor else {
+        return;
+    };
+    let clip = ui.clip_rect();
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(
+            anchor.x.clamp(clip.left(), clip.right() - 30.0),
+            anchor.y.clamp(clip.top(), clip.bottom() - 30.0),
+        ),
+        egui::vec2(28.0, 28.0),
+    );
+    crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
+    if crate::read_aloud::speaker_button(
+        ui,
+        rect,
+        document_id.with("read-aloud-selection"),
+        "Read aloud",
+    ) {
+        let all = speech.all();
+        *read = Some(match selected {
+            Some(selected) if !select_all => rustidian::speech_text::snap(&all, &selected),
+            _ => all,
+        });
     }
 }
 
@@ -1123,6 +1228,7 @@ fn show_blocks(
         }
     }
     let mut folded_level = None;
+    let mut speech = Speech::default();
     for (index, block) in blocks.iter().enumerate() {
         let ordinal = block.ordinal;
         let table_index = block.ordinal;
@@ -1507,6 +1613,39 @@ fn show_blocks(
             );
         }
         crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);
+        if embedding.is_none() {
+            let text: String = block.parts.iter().map(|part| part.text.as_str()).collect();
+            if !text.trim().is_empty() {
+                // A speaker in the margin while the pointer is on the block: a paragraph reads
+                // itself, a heading its section (folded parts stay silent).
+                let row = galley.rows.first().map_or(18.0, |row| row.height());
+                let x = response.rect.left() - if block.heading > 0 { 38.0 } else { 16.0 };
+                let rect = egui::Rect::from_center_size(
+                    egui::pos2(x, response.rect.top() + row / 2.0),
+                    egui::vec2(18.0, 18.0),
+                );
+                let pressing = ui.input(|input| input.pointer.primary_pressed());
+                if ui.rect_contains_pointer(response.rect.union(rect).expand(4.0))
+                    && (pressing || !ui.input(|input| input.pointer.any_down()))
+                {
+                    crate::ui_probe::record(ui.ctx(), format!("read-aloud-block:{index}"), rect);
+                    let hint = if block.heading > 0 {
+                        "Read this section aloud"
+                    } else {
+                        "Read this paragraph aloud"
+                    };
+                    if crate::read_aloud::speaker_button(
+                        ui,
+                        rect,
+                        document_id.with(("read-aloud-block", index)),
+                        hint,
+                    ) {
+                        speech.request = Some(index);
+                    }
+                }
+                speech.spoken.push((index, block.heading, text));
+            }
+        }
         if let Some(id) = headings[index] {
             let mut collapsed = ui
                 .ctx()
@@ -1596,7 +1735,52 @@ fn show_blocks(
             16.0
         });
     }
+    if embedding.is_none() {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(document_id.with("read-aloud"), Arc::new(speech)));
+    }
     clicked
+}
+
+/// What read aloud can say on this pass: each shown text block (index, heading level, text),
+/// and the block whose margin speaker was pressed.
+#[derive(Default)]
+struct Speech {
+    spoken: Vec<(usize, u8, String)>,
+    request: Option<usize>,
+}
+
+impl Speech {
+    /// Everything shown, one block per line; folded sections are not shown, so not said.
+    fn all(&self) -> String {
+        self.spoken
+            .iter()
+            .map(|(_, _, text)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The pressed block: a paragraph alone, or a heading with its section.
+    fn requested(&self) -> Option<String> {
+        let index = self.request?;
+        let start = self.spoken.iter().position(|(at, _, _)| *at == index)?;
+        let level = self.spoken[start].1;
+        let end = if level == 0 {
+            start + 1
+        } else {
+            self.spoken[start + 1..]
+                .iter()
+                .position(|(_, heading, _)| *heading > 0 && *heading <= level)
+                .map_or(self.spoken.len(), |offset| start + 1 + offset)
+        };
+        Some(
+            self.spoken[start..end]
+                .iter()
+                .map(|(_, _, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    }
 }
 
 fn inline_format(

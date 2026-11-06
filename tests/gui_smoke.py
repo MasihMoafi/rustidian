@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -92,6 +92,20 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
+        if args.section in ("read-aloud", "all"):
+            # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
+            # played file is logged, and nothing reaches the speakers.
+            voice = base / "fake-kokoro"
+            voice.write_text("#!/usr/bin/env python3\nimport json, sys, os\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(r['out'], 'w').write(r['text'])\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    print(json.dumps({'id': r['id'], 'ok': True}), flush=True)\n")
+            player = base / "fake-player"
+            player.write_text("#!/bin/sh\ncat \"$1\" >> \"$READ_ALOUD_LOG.played\"\necho >> \"$READ_ALOUD_LOG.played\"\nsleep 0.4\n")
+            for stub in (voice, player):
+                stub.chmod(0o755)
+            (base / "kokoro.onnx").write_bytes(b"")
+            (base / "voices.bin").write_bytes(b"")
+            environment.update(RUSTIDIAN_KOKORO_PYTHON=str(voice), RUSTIDIAN_KOKORO_MODEL=str(base / "kokoro.onnx"),
+                               RUSTIDIAN_KOKORO_VOICES=str(base / "voices.bin"), RUSTIDIAN_READ_ALOUD_PLAYER=str(player),
+                               READ_ALOUD_LOG=str(base / "read-aloud"))
         if args.section in ("palettes", "all"):
             launcher = base / "data/applications/rustidian.desktop"
             environment["XDG_DATA_DIRS"] = str(base / "system data") + os.pathsep + os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
@@ -7146,6 +7160,86 @@ def main():
                 assert all((many / f"Item {number:03}.md").read_text() == f"# Item {number:03}\n" for number in range(1, 101))
                 results.append("Shift-selection crossed virtualized offscreen rows from item 001 to 100; Delete counted all 100, and cancellation preserved every file")
 
+            def read_aloud_checks():
+                # Masih (6 Nov): read a paragraph, a selection (whole sentences) or the note aloud,
+                # skip folded sections, and stop both voicing and playback at once.
+                click_control("button:File explorer")
+                close_tabs()
+                note = fixture / "Read aloud test.md"
+                note.write_text("# Intro\n\nFirst sentence here. Second sentence follows. Third one ends it.\n\n"
+                                "# Skip me\n\nThis must stay silent.\n\n# Later\n\nLast part is read. Then one more. And the end.\n")
+                before = note.read_bytes()
+                log = base / "read-aloud"
+                voiced, played = log.with_suffix(".voiced"), log.with_suffix(".played")
+
+                def lines(path):
+                    return [line for line in path.read_text().splitlines() if line] if path.exists() else []
+
+                def reset():
+                    for path in (voiced, played):
+                        path.unlink(missing_ok=True)
+
+                def wait_played(count, limit=15):
+                    deadline = time.monotonic() + limit
+                    while len(lines(played)) < count and time.monotonic() < deadline:
+                        time.sleep(.1)
+                    return lines(played)
+
+                command("Refresh vault")
+                open_note("Read aloud test")
+                command("Reading view")
+                pause()
+                # The paragraph's margin speaker reads it, one sentence at a time, in order.
+                block = control_bounds("reading-block:1")
+                xdo("mousemove", "--sync", str(round(block[0] + 40)), str(round((block[1] + block[3]) / 2)))
+                pause()
+                click_control("read-aloud-block:1")
+                control_bounds("read-aloud-player")
+                capture("native-read-aloud-playing.png")
+                assert wait_played(3) == ["First sentence here.", "Second sentence follows.", "Third one ends it."], lines(played)
+                assert lines(voiced) == lines(played)
+                deadline = time.monotonic() + 3
+                while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
+                    time.sleep(.1)
+                assert control_bounds("read-aloud-player", required=False) is None, "The player closes when the reading ends"
+                results.append("A paragraph's margin speaker voiced and played its three sentences in order, one chunk each, and the player bar closed at the end")
+                # A double-clicked word reads its whole sentence.
+                reset()
+                block = control_bounds("reading-block:1")
+                xdo("mousemove", "--sync", str(round(block[0] + 250)), str(round((block[1] + block[3]) / 2)), "click", "--repeat", "2", "--delay", "60", "1")
+                pause()
+                click_control("read-aloud-selection")
+                spoken = wait_played(1)
+                assert len(spoken) == 1 and spoken[0] in ("First sentence here.", "Second sentence follows.", "Third one ends it."), spoken
+                results.append(f"A double-clicked word showed the speaker beside it; pressing it read just its whole sentence ({spoken[0]!r})")
+                # A folded section stays silent when the whole note is read.
+                reset()
+                key("Escape")
+                click_control("fold:2")
+                pause()
+                key("ctrl+a")
+                pause()
+                click_control("read-aloud-selection")
+                spoken = wait_played(6)
+                assert "This must stay silent." not in spoken and "Last part is read." in spoken and spoken[0] == "Intro", spoken
+                results.append("With Skip me folded, reading the whole note voiced every shown sentence and none of the folded section")
+                # Stop ends playback and voicing at once.
+                reset()
+                key("Escape")
+                click_control("fold:2")
+                pause()
+                key("ctrl+a")
+                click_control("read-aloud-selection")
+                wait_played(1)
+                click_control("read-aloud-stop")
+                stopped = len(lines(played))
+                time.sleep(1.5)
+                assert len(lines(played)) == stopped <= 2, ("Nothing may play after Stop", lines(played))
+                assert len(lines(voiced)) <= stopped + 2, ("Voicing stops too", lines(voiced))
+                assert control_bounds("read-aloud-player", required=False) is None
+                assert note.read_bytes() == before, "Reading aloud must not change the note"
+                results.append(f"Stop ended playback after {stopped} sentence(s) and voicing after {len(lines(voiced))}; nothing played afterwards and the note kept its bytes")
+
             def explorer_order_checks():
                 # Masih (6 Nov): arrange files by dragging them between rows, and see each
                 # folder's index note first, opened by a click on the folder's name.
@@ -7194,7 +7288,6 @@ def main():
                 pause()
                 title_contains("Index")
                 control_bounds("file:Order test/Alpha.md")
-                assert control_bounds("folder-state-id-mismatch", required=False) is None, "Folder state must be read under egui's own id"
                 results.append("A click on a folder's name opened its Index.md and kept the folder open; the index sat first, above the subfolders, marked; the arrow alone folded the folder")
 
                 def top(name):
@@ -11176,6 +11269,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "file-move"}))
                 return
+            if args.section == "read-aloud":
+                read_aloud_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "read-aloud"}))
+                return
             if args.section == "explorer-order":
                 explorer_order_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -11844,6 +11942,7 @@ def main():
                 file_move_checks,
                 drag_move_checks,
                 explorer_order_checks,
+                read_aloud_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,

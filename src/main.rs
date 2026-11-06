@@ -18,6 +18,7 @@ mod page_pan;
 mod page_preview;
 mod preview;
 mod properties_ui;
+mod read_aloud;
 mod recovery_ui;
 mod session;
 mod svg_loader;

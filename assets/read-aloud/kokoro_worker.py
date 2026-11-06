@@ -1,0 +1,61 @@
+"""Rustidian read aloud: local Kokoro, on the GPU when one is there.
+
+argv: MODEL VOICES. One JSON request per stdin line, {"id": n, "text": "...", "out": "/path.wav"};
+one JSON reply per stdout line, {"id": n, "ok": true} or {"id": n, "ok": false, "error": "..."}.
+The first line out is {"ready": true, "device": "cuda" | "cpu"}.
+"""
+
+import glob
+import json
+import os
+import sys
+
+# onnxruntime finds CUDA and cuDNN through the loader path; the NVIDIA wheels (installed with
+# PyTorch, for example) keep them in site-packages/nvidia/*/lib. Set the path once, then restart.
+if not os.environ.get("RUSTIDIAN_KOKORO_LIBS"):
+    libraries = sorted(
+        {
+            path
+            for entry in sys.path
+            for path in glob.glob(os.path.join(entry, "nvidia", "*", "lib"))
+        }
+    )
+    os.environ["RUSTIDIAN_KOKORO_LIBS"] = "1"
+    if libraries:
+        os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+            libraries + [os.environ.get("LD_LIBRARY_PATH", "")]
+        )
+        os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
+
+import kokoro_onnx
+import onnxruntime
+import soundfile
+
+onnxruntime.set_default_logger_severity(3)
+providers = [
+    name
+    for name in ("CUDAExecutionProvider", "CPUExecutionProvider")
+    if name in onnxruntime.get_available_providers()
+]
+session = onnxruntime.InferenceSession(sys.argv[1], providers=providers)
+model = kokoro_onnx.Kokoro.from_session(session, sys.argv[2])
+voice = os.environ.get("RUSTIDIAN_KOKORO_VOICE", "af_heart")
+speed = float(os.environ.get("RUSTIDIAN_KOKORO_SPEED", "1.0"))
+model.create(
+    "Ready.", voice=voice, speed=speed, lang="en-us"
+)  # load the voice before the first request
+device = "cuda" if session.get_providers()[0] == "CUDAExecutionProvider" else "cpu"
+print(json.dumps({"ready": True, "device": device}), flush=True)
+for line in sys.stdin:
+    request = json.loads(line)
+    try:
+        samples, rate = model.create(
+            request["text"], voice=voice, speed=speed, lang="en-us"
+        )
+        soundfile.write(request["out"], samples, rate)
+        print(json.dumps({"id": request["id"], "ok": True}), flush=True)
+    except Exception as error:  # noqa: BLE001 -- one bad piece of text must not end the worker
+        print(
+            json.dumps({"id": request["id"], "ok": False, "error": str(error)[:300]}),
+            flush=True,
+        )

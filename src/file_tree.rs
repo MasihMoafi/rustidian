@@ -550,8 +550,6 @@ impl Tree {
             let entry = Path::new(id.trim_start_matches('/'));
             let folder_index = rustidian::explorer_order::index_note(entry, &folder.files);
             let persistent = ui.make_persistent_id(&id);
-            // The header's own state id (`CollapsingHeader::id_salt` wraps the salt once more).
-            let state_id = ui.make_persistent_id(egui::IdSalt::new(&id));
             let selection_len = selection::record(ui.ctx(), [entry.to_owned()]);
             let (selection_changed, collapse) = ui.ctx().data_mut(|data| {
                 let key = persistent.with("collapse");
@@ -606,9 +604,12 @@ impl Tree {
             let highlight = dragging
                 .is_some()
                 .then(|| ui.painter().add(egui::Shape::Noop));
+            // Whether the folder was open before this pass, as the last pass left it.
+            let open_key = persistent.with("open");
             let was_open = reveal.unwrap_or_else(|| {
-                egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
-                    .is_some_and(|state| state.is_open())
+                ui.ctx()
+                    .data(|data| data.get_temp::<bool>(open_key))
+                    .unwrap_or(false)
             });
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
@@ -640,13 +641,7 @@ impl Tree {
                 }
                 revealed |= visible;
             });
-            if state_id != header.header_response.id {
-                crate::ui_probe::record(
-                    ui.ctx(),
-                    "folder-state-id-mismatch",
-                    header.header_response.rect,
-                );
-            }
+            // The header keeps its open state under its own id.
             let state_id = header.header_response.id;
             let selection_click = selection::row(ui, &header.header_response, entry);
             // A click on the name of a folder with an index note opens the note and keeps
@@ -676,6 +671,8 @@ impl Tree {
             start_drag(&header.header_response, entry, name);
             let is_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
                 .is_some_and(|state| state.is_open());
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(open_key, is_open));
             find_slot(
                 ui,
                 drop,
@@ -813,7 +810,7 @@ fn name_of(path: &Path) -> String {
 }
 
 /// One file row: selection, opening, dragging and its context menu.
-fn file_entry(ui: &mut egui::Ui, path: &PathBuf, open: &mut Option<FileAction>) -> egui::Response {
+fn file_entry(ui: &mut egui::Ui, path: &Path, open: &mut Option<FileAction>) -> egui::Response {
     let title = rustidian::vault::file_title(path);
     let selected = selection::contains(ui.ctx(), path);
     let response = file_row(ui, path, &title, selected);
@@ -827,13 +824,13 @@ fn file_entry(ui: &mut egui::Ui, path: &PathBuf, open: &mut Option<FileAction>) 
             return;
         }
         if theme::menu_item(ui, theme::Icon::NewTab, "Open in new tab").clicked() {
-            *open = Some(FileAction::OpenInNewTab(path.clone()));
+            *open = Some(FileAction::OpenInNewTab(path.to_path_buf()));
             ui.close();
         }
         ui.separator();
         copy_menu(ui, path, open);
         if theme::menu_item(ui, theme::Icon::Files, "Move file to...").clicked() {
-            *open = Some(FileAction::Move(path.clone()));
+            *open = Some(FileAction::Move(path.to_path_buf()));
             ui.close();
         }
         let bookmark = theme::menu_item(ui, theme::Icon::Bookmark, "Bookmark…");
@@ -843,26 +840,26 @@ fn file_entry(ui: &mut egui::Ui, path: &PathBuf, open: &mut Option<FileAction>) 
             bookmark.rect,
         );
         if bookmark.clicked() {
-            *open = Some(FileAction::Bookmark(path.clone()));
+            *open = Some(FileAction::Bookmark(path.to_path_buf()));
             ui.close();
         }
         reveal_menu(ui, path, open);
         if theme::menu_item(ui, theme::Icon::Copy, "Copy path").clicked() {
-            *open = Some(FileAction::CopyPath(path.clone()));
+            *open = Some(FileAction::CopyPath(path.to_path_buf()));
             ui.close();
         }
         ui.separator();
         if theme::menu_item(ui, theme::Icon::Edit, "Rename…").clicked() {
-            *open = Some(FileAction::Rename(path.clone()));
+            *open = Some(FileAction::Rename(path.to_path_buf()));
             ui.close();
         }
         if theme::delete_menu_item(ui, "Delete").1 {
-            *open = Some(FileAction::Trash(path.clone()));
+            *open = Some(FileAction::Trash(path.to_path_buf()));
             ui.close();
         }
     });
     if response.clicked() && !selection_click {
-        *open = Some(FileAction::Open(path.clone()));
+        *open = Some(FileAction::Open(path.to_path_buf()));
     }
     response
 }

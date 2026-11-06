@@ -37,6 +37,10 @@ mod page_preview;
 mod preview;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
+#[path = "../src/read_aloud.rs"]
+mod read_aloud;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/svg_loader.rs"]
 mod svg_loader;
 #[cfg(not(test))]

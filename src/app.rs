@@ -205,6 +205,7 @@ impl NotesApp {
         crate::window::disable_builtin_quit(&cc.egui_ctx);
         theme::install_fonts(&cc.egui_ctx);
         theme::install_icons(&cc.egui_ctx);
+        cc.egui_ctx.add_plugin(crate::read_aloud::SelectionWatch);
         crate::syntax::prepare();
         let mut app = Self {
             vault: None,

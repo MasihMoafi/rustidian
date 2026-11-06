@@ -4,6 +4,7 @@ pub mod bookmarks;
 pub mod callouts;
 pub mod commands;
 pub mod editor;
+pub mod speech_text;
 pub mod explorer_order;
 pub mod folding;
 pub mod graph;
