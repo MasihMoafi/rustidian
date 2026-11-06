@@ -65,6 +65,8 @@ struct PreparedVault {
 }
 
 const ATTENTION_DELAY: Duration = Duration::from_millis(1500);
+/// How long an error notice stays once the pointer leaves it.
+const ERROR_NOTICE_TIME: Duration = Duration::from_secs(6);
 
 type SharedWatch = Arc<Mutex<rustidian::watcher::Watch>>;
 
@@ -115,6 +117,8 @@ pub struct NotesApp {
     files: rustidian::search::FileMatcher,
     pending: Option<Pending>,
     error: Option<String>,
+    /// The notice on screen and when its fade timer last started.
+    error_seen: Option<(String, Instant)>,
     status: String,
     allow_close: bool,
     started: Instant,
@@ -233,6 +237,7 @@ impl NotesApp {
             files: rustidian::search::FileMatcher::new(Vec::new()),
             pending: None,
             error: None,
+            error_seen: None,
             status: "Ready".into(),
             allow_close: false,
             started,
@@ -6197,10 +6202,21 @@ impl eframe::App for NotesApp {
                 });
             });
         crate::ui_probe::record(ui.ctx(), "status-bar", status.response.rect);
+        if self.error.is_none() {
+            self.error_seen = None;
+        }
         if self.dialog.is_none()
             && let Some(error) = self.error.clone()
         {
-            egui::Area::new(egui::Id::unique("error"))
+            let now = Instant::now();
+            if self
+                .error_seen
+                .as_ref()
+                .is_none_or(|(seen, _)| *seen != error)
+            {
+                self.error_seen = Some((error.clone(), now));
+            }
+            let notice = egui::Area::new(egui::Id::unique("error"))
                 .order(egui::Order::Foreground)
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 44.0))
                 .show(&ctx, |ui| {
@@ -6238,6 +6254,18 @@ impl eframe::App for NotesApp {
                         });
                     });
                 });
+            // Notices fade like Obsidian's; the pointer resting on one keeps it.
+            if notice.response.contains_pointer() {
+                self.error_seen = Some((error, now));
+            }
+            let left = self.error_seen.as_ref().map_or(Duration::ZERO, |(_, at)| {
+                ERROR_NOTICE_TIME.saturating_sub(now.duration_since(*at))
+            });
+            if left.is_zero() {
+                self.error = None;
+            } else {
+                ctx.request_repaint_after(left);
+            }
         }
         self.ribbon(ui);
         self.sidebar(ui);
