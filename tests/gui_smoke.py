@@ -7188,6 +7188,13 @@ def main():
                 xdo("mousemove", "--sync", str(round(header[0]) + 70), str(y), "click", "1")
                 pause()
                 title_contains("Index")
+                # A click on the name of an open folder opens the index and leaves the folder open.
+                open_note("Beta")
+                xdo("mousemove", "--sync", str(round(header[0]) + 70), str(y), "click", "1")
+                pause()
+                title_contains("Index")
+                control_bounds("file:Order test/Alpha.md")
+                assert control_bounds("folder-state-id-mismatch", required=False) is None, "Folder state must be read under egui's own id"
                 results.append("A click on a folder's name opened its Index.md and kept the folder open; the index sat first, above the subfolders, marked; the arrow alone folded the folder")
 
                 def top(name):

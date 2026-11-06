@@ -61,11 +61,14 @@ fn main() {
                                     ui,
                                     "",
                                     Some(&active),
-                                    false,
+                                    file_tree::Sort {
+                                        reverse: false,
+                                        order: None,
+                                    },
                                     0,
                                     None,
                                     &mut None,
-                                    &mut None,
+                                    &mut Default::default(),
                                 ));
                             });
                     });

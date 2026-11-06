@@ -550,6 +550,8 @@ impl Tree {
             let entry = Path::new(id.trim_start_matches('/'));
             let folder_index = rustidian::explorer_order::index_note(entry, &folder.files);
             let persistent = ui.make_persistent_id(&id);
+            // The header's own state id (`CollapsingHeader::id_salt` wraps the salt once more).
+            let state_id = ui.make_persistent_id(egui::IdSalt::new(&id));
             let selection_len = selection::record(ui.ctx(), [entry.to_owned()]);
             let (selection_changed, collapse) = ui.ctx().data_mut(|data| {
                 let key = persistent.with("collapse");
@@ -605,7 +607,7 @@ impl Tree {
                 .is_some()
                 .then(|| ui.painter().add(egui::Shape::Noop));
             let was_open = reveal.unwrap_or_else(|| {
-                egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
                     .is_some_and(|state| state.is_open())
             });
             let header = egui::CollapsingHeader::new(
@@ -638,6 +640,14 @@ impl Tree {
                 }
                 revealed |= visible;
             });
+            if state_id != header.header_response.id {
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    "folder-state-id-mismatch",
+                    header.header_response.rect,
+                );
+            }
+            let state_id = header.header_response.id;
             let selection_click = selection::row(ui, &header.header_response, entry);
             // A click on the name of a folder with an index note opens the note and keeps
             // the folder open; the disclosure arrow alone still folds it.
@@ -657,14 +667,14 @@ impl Tree {
             };
             if let Some(keep_open) = keep_open
                 && let Some(mut state) =
-                    egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+                    egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
             {
                 state.set_open(keep_open);
                 state.store(ui.ctx());
                 ui.ctx().request_repaint();
             }
             start_drag(&header.header_response, entry, name);
-            let is_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), persistent)
+            let is_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
                 .is_some_and(|state| state.is_open());
             find_slot(
                 ui,
