@@ -7222,7 +7222,13 @@ def main():
                 click_control("read-aloud-selection")
                 spoken = wait_played(6)
                 assert "This must stay silent." not in spoken and "Skip me" not in spoken and "Last part is read." in spoken and spoken[0] == "Intro", spoken
-                results.append("With Skip me folded, reading the whole note voiced every shown sentence and none of the folded section")
+                deadline = time.monotonic() + 10
+                while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
+                    time.sleep(.1)
+                spoken = lines(played)
+                assert spoken == ["Intro", "First sentence here.", "Second sentence follows.", "Third one ends it.", "Later",
+                                  "Last part is read.", "Then one more.", "And the end."], spoken
+                results.append("With Skip me folded, reading the whole note voiced every shown sentence in order and none of the folded section, heading included")
                 # Stop ends playback and voicing at once.
                 reset()
                 key("Escape")
