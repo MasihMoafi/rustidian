@@ -6232,6 +6232,12 @@ impl eframe::App for NotesApp {
         crate::ui_probe::record(ui.ctx(), "status-bar", status.response.rect);
         if self.error.is_none() {
             self.error_seen = None;
+        } else if self.error_seen.as_ref().is_some_and(|(seen, at)| {
+            self.error.as_ref() == Some(seen) && at.elapsed() >= ERROR_NOTICE_TIME
+        }) {
+            // Expire before drawing, so the last painted frame has no notice.
+            self.error = None;
+            self.error_seen = None;
         }
         if self.dialog.is_none()
             && let Some(error) = self.error.clone()
@@ -6284,15 +6290,12 @@ impl eframe::App for NotesApp {
                 });
             // Notices fade like Obsidian's; the pointer resting on one keeps it.
             if notice.response.contains_pointer() {
+                // Recheck often so a still pointer keeps renewing the timer.
                 self.error_seen = Some((error, now));
-            }
-            let left = self.error_seen.as_ref().map_or(Duration::ZERO, |(_, at)| {
-                ERROR_NOTICE_TIME.saturating_sub(now.duration_since(*at))
-            });
-            if left.is_zero() {
-                self.error = None;
-            } else {
-                ctx.request_repaint_after(left);
+                ctx.request_repaint_after(Duration::from_millis(250));
+            } else if let Some((_, at)) = &self.error_seen {
+                let left = ERROR_NOTICE_TIME.saturating_sub(now.duration_since(*at));
+                ctx.request_repaint_after(left.max(Duration::from_millis(16)));
             }
         }
         self.ribbon(ui);
