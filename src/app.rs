@@ -6260,7 +6260,7 @@ impl eframe::App for NotesApp {
                             ui.vertical(|ui| {
                                 ui.set_max_width(320.0);
                                 let message = ui
-                                    .add(egui::Label::new(RichText::new(error).size(13.0)).wrap());
+                                    .add(egui::Label::new(RichText::new(&error).size(13.0)).wrap());
                                 crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
                                 if self
                                     .tabs
