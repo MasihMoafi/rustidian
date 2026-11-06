@@ -1667,7 +1667,15 @@ fn show_blocks(
                         speech.request = Some(index);
                     }
                 }
-                speech.spoken.push((index, block.heading, text));
+                // A folded section is silent, its heading included.
+                let folded = headings[index].is_some_and(|id| {
+                    ui.ctx()
+                        .data(|data| data.get_temp::<bool>(id))
+                        .unwrap_or(false)
+                });
+                if !folded {
+                    speech.spoken.push((index, block.heading, text));
+                }
             }
         }
         if let Some(id) = headings[index] {
