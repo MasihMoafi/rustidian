@@ -9343,6 +9343,18 @@ def main():
                     assert control_bounds("error-notice",required=False) is None
                 assert not (fixture/"Missing creator folder").exists()
                 results.append("Constant-name collisions and missing templates/folders gave visible errors without opening or overwriting a file")
+                # Error notices fade on their own; the pointer resting on one keeps it.
+                command("Unique note creator: Create new unique note")
+                notice = control_bounds("error-notice")
+                xdo("mousemove", "--window", window, str(int(notice[0]) + 10), str(int(notice[1]) + 5))
+                time.sleep(7)
+                assert control_bounds("error-notice", required=False), "A hovered notice faded"
+                xdo("mousemove", "--window", window, "200", "600")
+                deadline = time.monotonic() + 9
+                while time.monotonic() < deadline and control_bounds("error-notice", required=False):
+                    time.sleep(.2)
+                assert not control_bounds("error-notice", required=False), "An error notice stayed after 6 s"
+                results.append("An error notice stayed while hovered and faded about 6 s after the pointer left")
 
                 configure(**expected)
                 other=base/"Creators other vault";other.mkdir();(other/"Home.md").write_bytes(b"# Other creator vault\n")
