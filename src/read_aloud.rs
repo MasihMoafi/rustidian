@@ -257,6 +257,13 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     if chunks.is_empty() {
         return;
     }
+    if let Some(reason) = unavailable() {
+        let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
+        status.active = false;
+        status.error = Some(reason);
+        ctx.request_repaint();
+        return;
+    }
     {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         let device = status.device.take();
@@ -384,6 +391,10 @@ pub struct SelectionWatch;
 impl egui::plugin::Plugin for SelectionWatch {
     fn debug_name(&self) -> &'static str {
         "rustidian-read-aloud-selection"
+    }
+
+    fn on_exit(&mut self, _ctx: &egui::Context) {
+        shutdown();
     }
 
     fn output_hook(&mut self, _ctx: &egui::Context, output: &mut egui::FullOutput) {
