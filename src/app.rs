@@ -823,9 +823,21 @@ impl NotesApp {
                             }
                         }
                         self.recovery_index_paths.clear();
+                        // A clean tab whose file vanished follows the file if it
+                        // moved, and closes quietly if it was deleted.
+                        let mut moved = Vec::new();
+                        let mut gone = Vec::new();
                         for tab in &mut self.tabs {
                             if !tab.document.dirty() && !tab.document.is_blank() {
-                                match vault.open_document(&tab.document.path) {
+                                let path = tab.document.path.clone();
+                                if !vault.root.join(&path).exists() {
+                                    match vault.find_moved(&path, &tab.document.text) {
+                                        Some(to) => moved.push((path, to)),
+                                        None => gone.push(tab.id()),
+                                    }
+                                    continue;
+                                }
+                                match vault.open_document(&path) {
                                     Ok(document) if document.text != tab.document.text => {
                                         tab.replace(document)
                                     }
@@ -838,6 +850,18 @@ impl NotesApp {
                         self.files = files;
                         self.search_cache.invalidate();
                         self.vault = Some(vault);
+                        let changed = !moved.is_empty() || !gone.is_empty();
+                        for (from, to) in moved {
+                            self.relocate_tabs(&from, &to);
+                        }
+                        for id in gone {
+                            if let Some(index) = self.tabs.iter().position(|tab| tab.id() == id) {
+                                self.close_tab(index);
+                            }
+                        }
+                        if changed {
+                            self.persist_session();
+                        }
                     }
                     if let Some(vault) = &self.vault {
                         self.status = format!("{} notes", vault.notes.len());

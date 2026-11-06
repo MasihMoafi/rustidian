@@ -390,6 +390,37 @@ impl Vault {
         })
     }
 
+    /// Where a vanished note went when something outside Rustidian moved it:
+    /// an indexed note with the same file name and the same saved text. Among
+    /// identical copies the one sharing the longest path ending wins, so a
+    /// folder moved into another folder keeps its tab; a tie finds nothing.
+    pub fn find_moved(&self, old: &Path, text: &str) -> Option<PathBuf> {
+        let trailing = |path: &Path| {
+            path.components()
+                .rev()
+                .zip(old.components().rev())
+                .take_while(|(a, b)| a == b)
+                .count()
+        };
+        let mut best: Option<(usize, &Path)> = None;
+        let mut tied = false;
+        for note in &self.notes {
+            if note.path == old || note.path.file_name() != old.file_name() || note.text != text {
+                continue;
+            }
+            let score = trailing(&note.path);
+            match best {
+                Some((top, _)) if score < top => {}
+                Some((top, _)) if score == top => tied = true,
+                _ => {
+                    best = Some((score, &note.path));
+                    tied = false;
+                }
+            }
+        }
+        best.filter(|_| !tied).map(|(_, path)| path.to_owned())
+    }
+
     /// Import the current HTML buffer beside its source without replacing either
     /// the source file or an existing Markdown note. Relative links keep their base.
     pub fn import_html(&mut self, source: &Document) -> Result<Document> {
