@@ -1066,6 +1066,7 @@ fn read_selection(
     read: &mut Option<String>,
 ) {
     let release = document_id.with("read-aloud-release");
+    let shown = document_id.with("read-aloud-shown");
     if let Some(pos) = ui.input(|input| {
         input
             .pointer
@@ -1076,20 +1077,47 @@ fn read_selection(
     {
         ui.ctx().data_mut(|data| data.insert_temp(release, pos));
     }
-    let selected = crate::read_aloud::selection(ui.ctx());
-    let anchor = if select_all {
-        Some(egui::pos2(
-            area.right() - 40.0,
-            ui.clip_rect().top().max(area.top()) + 8.0,
-        ))
-    } else if selected.is_some() {
+    // A press on the speaker also lands on the text under it, which ends the selection (or
+    // Select all) in that same pass; so the press is matched against where the speaker was
+    // last pass, with the text it would have read.
+    let pressed = ui.input(|input| {
+        input
+            .pointer
+            .primary_pressed()
+            .then(|| input.pointer.interact_pos())
+            .flatten()
+    });
+    if let Some(pos) = pressed
+        && let Some((rect, text)) = ui
+            .ctx()
+            .data(|data| data.get_temp::<(egui::Rect, String)>(shown))
+        && rect.contains(pos)
+    {
         ui.ctx()
-            .data(|data| data.get_temp::<egui::Pos2>(release))
-            .map(|pos| pos + egui::vec2(10.0, 6.0))
-    } else {
-        None
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+        *read = Some(text);
+        return;
+    }
+    let all = speech.all();
+    let (anchor, text) = match crate::read_aloud::selection(ui.ctx()) {
+        _ if select_all => (
+            Some(egui::pos2(
+                area.right() - 40.0,
+                ui.clip_rect().top().max(area.top()) + 8.0,
+            )),
+            all,
+        ),
+        Some(selected) => (
+            ui.ctx()
+                .data(|data| data.get_temp::<egui::Pos2>(release))
+                .map(|pos| pos + egui::vec2(10.0, 6.0)),
+            rustidian::speech_text::snap(&all, &selected),
+        ),
+        None => (None, String::new()),
     };
     let Some(anchor) = anchor else {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
         return;
     };
     let clip = ui.clip_rect();
@@ -1101,18 +1129,14 @@ fn read_selection(
         egui::vec2(28.0, 28.0),
     );
     crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
-    if crate::read_aloud::speaker_button(
+    crate::read_aloud::speaker_button(
         ui,
         rect,
         document_id.with("read-aloud-selection"),
         "Read aloud",
-    ) {
-        let all = speech.all();
-        *read = Some(match selected {
-            Some(selected) if !select_all => rustidian::speech_text::snap(&all, &selected),
-            _ => all,
-        });
-    }
+    );
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(shown, (rect, text)));
 }
 
 /// Consume exactly Ctrl+A, leaving Ctrl+Shift+A to the agent shortcut.
