@@ -830,12 +830,45 @@ impl Icon {
     }
 }
 
+/// Serves inline `data:` images decoded by `rustidian::assets::data_image_uri`.
+struct DataImageLoader;
+
+impl egui::load::BytesLoader for DataImageLoader {
+    fn id(&self) -> &str {
+        egui::generate_loader_id!(DataImageLoader)
+    }
+
+    fn load(&self, _: &egui::Context, uri: &str) -> egui::load::BytesLoadResult {
+        if !uri.starts_with(rustidian::assets::DATA_IMAGE_SCHEME) {
+            return Err(egui::load::LoadError::NotSupported);
+        }
+        let (bytes, mime) = rustidian::assets::data_image(uri)
+            .ok_or_else(|| egui::load::LoadError::Loading("Unknown inline image".into()))?;
+        Ok(egui::load::BytesPoll::Ready {
+            size: None,
+            bytes: egui::load::Bytes::Shared(bytes),
+            mime: Some(mime.into()),
+        })
+    }
+
+    fn forget(&self, _: &str) {}
+
+    fn forget_all(&self) {}
+
+    fn byte_size(&self) -> usize {
+        0
+    }
+}
+
 pub fn install_icons(ctx: &egui::Context) {
     egui_extras::install_image_loaders(ctx);
     // Added last, so it is asked first; it passes on anything that is not SVG.
     ctx.add_image_loader(std::sync::Arc::new(
         crate::svg_loader::WebSvgLoader::default(),
     ));
+    if !ctx.is_loader_installed(egui::generate_loader_id!(DataImageLoader)) {
+        ctx.add_bytes_loader(std::sync::Arc::new(DataImageLoader));
+    }
     for icon in Icon::ALL {
         let (uri, bytes) = icon.asset();
         ctx.include_bytes(uri, egui::load::Bytes::Static(bytes));

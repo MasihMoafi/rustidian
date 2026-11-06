@@ -183,9 +183,76 @@ pub fn image_uri(vault: Option<&Vault>, from: &Path, target: &str) -> Option<Str
     if target.starts_with("https://") || target.starts_with("http://") {
         return Some(target.into());
     }
+    if target.starts_with("data:") {
+        return data_image_uri(target);
+    }
     vault?
         .resolve_attachment(from, target)
         .map(|path| format!("file://{}", path.display()))
+}
+
+/// URI scheme under which decoded inline `data:` images are served.
+pub const DATA_IMAGE_SCHEME: &str = "data-image://";
+
+type DataImages = std::collections::HashMap<String, (std::sync::Arc<[u8]>, &'static str)>;
+
+fn data_images() -> &'static std::sync::Mutex<DataImages> {
+    static IMAGES: std::sync::OnceLock<std::sync::Mutex<DataImages>> = std::sync::OnceLock::new();
+    IMAGES.get_or_init(Default::default)
+}
+
+/// Decode a `data:image/...` URI (base64 or percent-encoded) once and return a
+/// `data-image://<hash>.<ext>` URI; image loaders pick a decoder by extension.
+pub fn data_image_uri(target: &str) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let (header, payload) = target.strip_prefix("data:")?.split_once(',')?;
+    let mut fields = header.split(';');
+    let mime = fields.next()?.trim().to_ascii_lowercase();
+    let (extension, mime) = match mime.as_str() {
+        "image/svg+xml" => ("svg", "image/svg+xml"),
+        "image/png" => ("png", "image/png"),
+        "image/jpeg" | "image/jpg" => ("jpg", "image/jpeg"),
+        "image/gif" => ("gif", "image/gif"),
+        "image/webp" => ("webp", "image/webp"),
+        "image/bmp" => ("bmp", "image/bmp"),
+        _ => return None,
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    target.hash(&mut hasher);
+    let uri = format!("{DATA_IMAGE_SCHEME}{:016x}.{extension}", hasher.finish());
+    let mut images = data_images()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if !images.contains_key(&uri) {
+        let bytes: Vec<u8> = if fields.any(|field| field.trim().eq_ignore_ascii_case("base64")) {
+            use base64::Engine;
+            let compact: String = percent_encoding::percent_decode_str(payload)
+                .decode_utf8()
+                .ok()?
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
+            base64::engine::general_purpose::STANDARD_NO_PAD
+                .decode(compact.trim_end_matches('='))
+                .ok()?
+        } else {
+            percent_encoding::percent_decode_str(payload).collect()
+        };
+        if bytes.is_empty() {
+            return None;
+        }
+        images.insert(uri.clone(), (bytes.into(), mime));
+    }
+    Some(uri)
+}
+
+/// The decoded bytes and mime type behind a `data-image://` URI.
+pub fn data_image(uri: &str) -> Option<(std::sync::Arc<[u8]>, &'static str)> {
+    data_images()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(uri)
+        .cloned()
 }
 
 impl Vault {
@@ -226,5 +293,38 @@ impl Vault {
         };
         let absolute = self.root.join(relative).canonicalize().ok()?;
         (absolute.starts_with(&self.root) && absolute.is_file()).then_some(absolute)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_data_images_resolve_to_decoded_bytes() {
+        let svg = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%201%201%22%3E%3Crect%20width%3D%221%22%20height%3D%221%22%20fill%3D%22rgb(243%2C243%2C243)%22%2F%3E%3C%2Fsvg%3E";
+        let uri = image_uri(None, Path::new("note.md"), svg).unwrap();
+        assert!(uri.starts_with(DATA_IMAGE_SCHEME) && uri.ends_with(".svg"));
+        let (bytes, mime) = data_image(&uri).unwrap();
+        assert_eq!(mime, "image/svg+xml");
+        assert!(
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .starts_with("<svg xmlns=\"http://www.w3.org/2000/svg\"")
+        );
+
+        let png = image_uri(
+            None,
+            Path::new("note.md"),
+            "data:image/png;base64,iVBORw0KGgo=",
+        )
+        .unwrap();
+        assert_eq!(&*data_image(&png).unwrap().0, b"\x89PNG\r\n\x1a\n");
+
+        let display = prepare_images(&format!("![]({svg})"), |target| {
+            image_uri(None, Path::new("note.md"), target)
+        });
+        assert!(!display.contains("rust-missing-image:"), "{display}");
+        assert!(image_uri(None, Path::new("note.md"), "data:text/html,<b>x</b>").is_none());
     }
 }
