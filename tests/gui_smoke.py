@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -92,7 +92,7 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
-        if args.section in ("read-aloud", "all"):
+        if args.section in ("read-aloud", "voice-account", "all"):
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
             voice = base / "fake-kokoro"
@@ -7160,6 +7160,129 @@ def main():
                 assert all((many / f"Item {number:03}.md").read_text() == f"# Item {number:03}\n" for number in range(1, 101))
                 results.append("Shift-selection crossed virtualized offscreen rows from item 001 to 100; Delete counted all 100, and cancellation preserved every file")
 
+            def voice_account_checks():
+                # Masih (7 Nov): users sign in to their own OpenRouter account for read aloud.
+                # Provider-login check 7: drive every state in the real UI, keyboard included,
+                # and find the canary key in no file, log or probe.
+                import http.server
+                import threading
+                canary = "sk-or-v1-CANARY-7f3e9a1c55d0"
+                heard = []
+
+                class Speech(http.server.BaseHTTPRequestHandler):
+                    def do_POST(self):
+                        heard.append(self.headers.get("Authorization", ""))
+                        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                        if heard[-1] == "Bearer bad-key":
+                            self.send_response(401)
+                            self.send_header("Content-Length", "0")
+                            self.end_headers()
+                            return
+                        audio = b"\0\0" * 2400
+                        self.send_response(200)
+                        self.send_header("Content-Type", "audio/pcm")
+                        self.send_header("Content-Length", str(len(audio)))
+                        self.end_headers()
+                        self.wfile.write(audio)
+
+                    def log_message(self, *_):
+                        pass
+
+                speech = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Speech)
+                threading.Thread(target=speech.serve_forever, daemon=True).start()
+                endpoint = f"http://127.0.0.1:{speech.server_port}/api/v1/audio/speech"
+                played = (base / "read-aloud").with_suffix(".played")
+                note = fixture / "Voice test.md"
+                note.write_text("# Voice\n\nOne sentence to hear.\n")
+
+                def read_paragraph():
+                    open_note("Voice test")
+                    command("Reading view")
+                    pause()
+                    block = control_bounds("reading-block:1")
+                    xdo("mousemove", "--sync", str(round(block[0] + 40)), str(round((block[1] + block[3]) / 2)))
+                    pause()
+                    click_control("read-aloud-block:1")
+
+                def wait(predicate, message, limit=10):
+                    deadline = time.monotonic() + limit
+                    while not predicate():
+                        assert time.monotonic() < deadline, message
+                        time.sleep(0.1)
+
+                def settings_page():
+                    command("Open settings")
+                    click_control("settings-page:Read aloud")
+
+                try:
+                    command("Refresh vault")
+                    settings_page()
+                    capture("native-voice-local.png")
+                    assert control_bounds("settings-voice-key", required=False) is None
+                    click_control("settings-voice-engine")
+                    click_control("settings-voice-engine:OpenRouter")
+                    click_control("settings-voice-endpoint")
+                    key("ctrl+a")
+                    type_text(endpoint)
+                    # Keyboard: Tab from the name field reaches the masked key field.
+                    click_control("settings-voice-label")
+                    type_text("Personal")
+                    key("Tab")
+                    type_text(canary)
+                    capture("native-voice-key-typed.png")
+                    click_control("settings-voice-save")
+                    # This display has no keyring: the key may be kept for this session only.
+                    control_bounds("settings-voice-session")
+                    capture("native-voice-keyring-locked.png")
+                    click_control("settings-voice-session")
+                    control_bounds("settings-voice-disconnect:Personal")
+                    assert control_bounds("settings-voice-session", required=False) is None
+                    capture("native-voice-connected.png")
+                    key("Escape")
+                    results.append("Settings → Read aloud: chose OpenRouter, typed a name, Tab reached the masked key field, the locked keyring offered session-only keeping, and the account showed as in use")
+
+                    read_paragraph()
+                    wait(lambda: heard and played.exists(), f"No hosted voice was heard: {heard}")
+                    assert heard[0] == "Bearer " + canary, heard
+                    capture("native-voice-hosted-playing.png")
+                    results.append("Read aloud voiced the paragraph through the selected OpenRouter key and played it")
+
+                    settings_page()
+                    click_control("settings-voice-replace:Personal")
+                    click_control("settings-voice-key")
+                    type_text("bad-key")
+                    click_control("settings-voice-save")
+                    click_control("settings-voice-session")
+                    key("Escape")
+                    count = len(heard)
+                    read_paragraph()
+                    wait(lambda: len(heard) > count, "The replaced key was not used")
+                    assert heard[-1] == "Bearer bad-key", heard
+                    pause()
+                    capture("native-voice-refused.png")
+                    control_bounds("read-aloud-player")
+                    xdo("mousemove", "--sync", "5", "5")
+                    wait(lambda: control_bounds("read-aloud-player", required=False) is None, "The refused-key message stayed on screen", limit=10)
+                    results.append("A replaced key was used at once; the refusal showed a message that faded by itself")
+
+                    settings_page()
+                    click_control("settings-voice-disconnect:Personal")
+                    assert control_bounds("settings-voice-disconnect:Personal", required=False) is None
+                    capture("native-voice-disconnected.png")
+                    key("Escape")
+                    count = len(heard)
+                    read_paragraph()
+                    time.sleep(1.5)
+                    assert len(heard) == count, "A disconnected key was still sent"
+                    results.append("After Disconnect no request was sent")
+
+                    leaks = [str(path) for path in base.rglob("*") if path.is_file() and canary.encode() in path.read_bytes()]
+                    leaks += [str(path) for path in reports.rglob("*") if path.is_file() and canary.encode() in path.read_bytes()]
+                    assert not leaks, f"The canary key leaked into {leaks}"
+                    results.append("The canary key appeared in no state file, log, probe or report")
+                finally:
+                    speech.shutdown()
+
             def read_aloud_checks():
                 # Masih (6 Nov): read a paragraph, a selection (whole sentences) or the note aloud,
                 # skip folded sections, and stop both voicing and playback at once.
@@ -11302,6 +11425,11 @@ def main():
                 file_move_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "file-move"}))
+                return
+            if args.section == "voice-account":
+                voice_account_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "voice-account"}))
                 return
             if args.section == "read-aloud":
                 read_aloud_checks()

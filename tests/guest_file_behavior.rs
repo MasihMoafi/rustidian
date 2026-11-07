@@ -129,5 +129,8 @@ fn a_rescan_keeps_the_guest_files_readable() {
 
     let mut rescanned = Vault::open(home.path()).unwrap();
     rescanned.keep_guests(&vault);
-    assert_eq!(rescanned.open_document(&document.path).unwrap().text, "first\n");
+    assert_eq!(
+        rescanned.open_document(&document.path).unwrap().text,
+        "first\n"
+    );
 }

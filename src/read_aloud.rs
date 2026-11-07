@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
 /// The worker leaves after this long without a read, to give the GPU memory back.
 const IDLE: Duration = Duration::from_secs(300);
+/// How long a read-aloud error stays when the pointer is not on it.
+const ERROR_TIME: Duration = Duration::from_secs(6);
 
 /// What the player bar shows.
 #[derive(Clone, Default)]
@@ -524,7 +526,7 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
     }
     let width = area.width().clamp(240.0, 560.0);
     let position = egui::pos2(area.center().x - width / 2.0, area.bottom() - 64.0);
-    egui::Area::new(egui::Id::unique("read-aloud-player"))
+    let shown = egui::Area::new(egui::Id::unique("read-aloud-player"))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
         .show(ctx, |ui| {
@@ -581,5 +583,33 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
             });
             crate::ui_probe::record(ctx, "read-aloud-player", response.response.rect);
             crate::ui_probe::metric(ctx, "read-aloud-index", status.index as f32);
+            response.response.contains_pointer()
         });
+    // An error fades like the app's notices: 6 s after it shows, kept while hovered.
+    if !status.active
+        && let Some(error) = status.error
+    {
+        let id = egui::Id::new("read-aloud-error-seen");
+        let now = Instant::now();
+        let seen = ctx.data(|data| data.get_temp::<(String, Instant)>(id));
+        let since = match seen {
+            Some((shown_error, at)) if shown_error == error && !shown.inner => at,
+            _ => {
+                ctx.data_mut(|data| data.insert_temp(id, (error, now)));
+                now
+            }
+        };
+        let left = ERROR_TIME.saturating_sub(now.duration_since(since));
+        if left.is_zero() {
+            SHARED
+                .status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .error = None;
+            ctx.data_mut(|data| data.remove::<(String, Instant)>(id));
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(left.min(Duration::from_millis(250)));
+        }
+    }
 }
