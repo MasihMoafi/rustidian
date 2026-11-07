@@ -5,8 +5,10 @@
 //!
 //! Paths come from `RUSTIDIAN_KOKORO_PYTHON`, `RUSTIDIAN_KOKORO_MODEL` and
 //! `RUSTIDIAN_KOKORO_VOICES`; the voice and speed from `RUSTIDIAN_KOKORO_VOICE` (af_heart)
-//! and `RUSTIDIAN_KOKORO_SPEED`. This is a local feature; a hosted voice would be a setting.
+//! and `RUSTIDIAN_KOKORO_SPEED`. Settings → Read aloud can choose a hosted voice instead: the
+//! user's own OpenRouter key (`rustidian::voice_account`).
 use eframe::egui;
+use rustidian::voice_account;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -203,6 +205,20 @@ fn synthesize(text: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// Voice `text` through the user's OpenRouter account into a WAV file.
+fn synthesize_hosted(route: &voice_account::Route, text: &str) -> Result<PathBuf, String> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let audio = voice_account::speak(route, text)?;
+    let folder = scratch();
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let out = folder.join(format!(
+        "hosted-{}.wav",
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::write(&out, audio).map_err(|error| error.to_string())?;
+    Ok(out)
+}
+
 fn current(session: u64) -> bool {
     SHARED.session.load(Ordering::SeqCst) == session
 }
@@ -257,7 +273,11 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     if chunks.is_empty() {
         return;
     }
-    if let Some(reason) = unavailable() {
+    let settings = voice_account::state_base()
+        .map(|base| voice_account::Settings::load(&base))
+        .unwrap_or_default();
+    let hosted = settings.engine == voice_account::Engine::OpenRouter;
+    if let Some(reason) = unavailable().filter(|_| !hosted) {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         status.active = false;
         status.error = Some(reason);
@@ -283,11 +303,31 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     let voice_ctx = ctx.clone();
     let texts = chunks.clone();
     std::thread::spawn(move || {
+        // The keyring is asked here, off the UI thread, once per reading.
+        let route = if hosted {
+            match settings.route(voice_account::Stores::app()) {
+                Ok(route) => Some(route),
+                Err(error) => {
+                    update(&voice_ctx, session, |status| {
+                        status.error = Some(error);
+                        status.preparing = false;
+                        status.active = false;
+                    });
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         for (index, text) in texts.iter().enumerate() {
             if !current(session) {
                 break;
             }
-            match synthesize(text) {
+            let voiced = match &route {
+                Some(route) => synthesize_hosted(route, text),
+                None => synthesize(text),
+            };
+            match voiced {
                 Ok(path) => {
                     if !current(session) || sender.send((index, path.clone())).is_err() {
                         let _ = std::fs::remove_file(path);

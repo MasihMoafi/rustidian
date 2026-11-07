@@ -30,6 +30,7 @@ pub mod tables;
 pub mod terminal;
 pub mod vault;
 pub mod vaults;
+pub mod voice_account;
 pub mod watcher;
 pub mod workspaces;
 

@@ -114,3 +114,20 @@ fn a_link_reached_through_a_symlinked_folder_still_names_the_file() {
         Some(real.path().join("Guide.md").canonicalize().unwrap())
     );
 }
+
+/// 7 Nov: a file opened from outside (`op`) showed "Notes must stay inside the
+/// vault" after every rescan, because the rescanned vault forgot its guests.
+#[test]
+fn a_rescan_keeps_the_guest_files_readable() {
+    let home = tempfile::tempdir().unwrap();
+    fs::write(home.path().join("Home.md"), "# Home\n").unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let file = elsewhere.path().join("PRIORITIES.md");
+    fs::write(&file, "first\n").unwrap();
+    let mut vault = Vault::open(home.path()).unwrap();
+    let document = vault.open_guest(&file).unwrap();
+
+    let mut rescanned = Vault::open(home.path()).unwrap();
+    rescanned.keep_guests(&vault);
+    assert_eq!(rescanned.open_document(&document.path).unwrap().text, "first\n");
+}

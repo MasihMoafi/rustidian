@@ -49,10 +49,11 @@ pub(super) enum Page {
     Templates,
     Unique,
     Recovery,
+    ReadAloud,
 }
 
 impl Page {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Appearance,
         Self::Interface,
         Self::Editor,
@@ -62,6 +63,7 @@ impl Page {
         Self::Templates,
         Self::Unique,
         Self::Recovery,
+        Self::ReadAloud,
     ];
 
     fn label(self) -> &'static str {
@@ -75,6 +77,7 @@ impl Page {
             Self::Templates => "Templates",
             Self::Unique => "Unique note creator",
             Self::Recovery => "File recovery",
+            Self::ReadAloud => "Read aloud",
         }
     }
 
@@ -93,6 +96,7 @@ impl Page {
             Self::Templates => "templates date time format folder location",
             Self::Unique => "unique notes prefix format folder template new file location",
             Self::Recovery => "file recovery snapshots history interval length days",
+            Self::ReadAloud => "read aloud voice speech tts kokoro openrouter key account login",
         };
         query.split_whitespace().all(|word| terms.contains(word))
     }
@@ -512,6 +516,7 @@ impl NotesApp {
                                     "YYYYMMDDHHmm",
                                 );
                             }
+                            Page::ReadAloud => self.voice_settings(ui),
                             Page::Recovery => {
                                 changed |= row(
                                     ui,
@@ -672,6 +677,16 @@ fn row(
     changed.inner
 }
 
+/// The settings row layout, for the Read aloud page (`voice_ui`).
+pub(super) fn voice_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    description: &str,
+    control: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
+    row(ui, title, description, control)
+}
+
 /// Searching settings scrolls the first matching row into view, once per query.
 fn reveal_match(ui: &egui::Ui, title: &str, rect: egui::Rect) {
     let (query, shown): (String, Option<String>) = ui.ctx().data(|data| {
@@ -805,6 +820,7 @@ fn navigation_row(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Respon
         Page::Templates => Icon::Templates,
         Page::Unique => Icon::NewNote,
         Page::Recovery => Icon::Recovery,
+        Page::ReadAloud => Icon::Reading,
     };
     theme::icon_image(icon, ui.visuals().weak_text_color()).paint_at(
         ui,

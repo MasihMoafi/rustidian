@@ -1230,6 +1230,30 @@ impl Editor {
                 done = true;
             }
         }
+        // Colour the selection, or the word at the caret, with one click.
+        ui.horizontal(|ui| {
+            ui.label("Color");
+            let dark = ui.visuals().dark_mode;
+            for color in rustidian::highlight::NativeColor::ALL {
+                let [r, g, b, _] = color.rgba(dark);
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                let fill = egui::Color32::from_rgb(r, g, b);
+                let ring = if response.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                ui.painter()
+                    .circle(rect.center(), 8.0, fill, egui::Stroke::new(1.5, ring));
+                let name = color.command().trim_start_matches("Toggle ");
+                crate::ui_probe::record(ui.ctx(), format!("editor-menu:{name}"), rect);
+                if response.on_hover_text(name).clicked() {
+                    self.native_highlight(tab, color);
+                    done = true;
+                }
+            }
+        });
         ui.separator();
         for level in 1..=3 {
             if item(ui, format!("Heading {level}").as_str(), "", true) {

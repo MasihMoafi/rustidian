@@ -1,5 +1,7 @@
 #[path = "settings_ui.rs"]
 pub(crate) mod settings_ui;
+#[path = "voice_ui.rs"]
+mod voice_ui;
 
 use crate::{
     file_tree::{FileAction, Tree},
@@ -114,6 +116,9 @@ pub struct NotesApp {
     dialog_focus: bool,
     dialog_selected: usize,
     settings_page: settings_ui::Page,
+    /// Read aloud's voice choice and OpenRouter accounts (app-wide).
+    voice: rustidian::voice_account::Settings,
+    voice_form: voice_ui::VoiceForm,
     files: rustidian::search::FileMatcher,
     pending: Option<Pending>,
     error: Option<String>,
@@ -240,6 +245,10 @@ impl NotesApp {
             dialog_focus: false,
             dialog_selected: 0,
             settings_page: Default::default(),
+            voice: rustidian::voice_account::state_base()
+                .map(|base| rustidian::voice_account::Settings::load(&base))
+                .unwrap_or_default(),
+            voice_form: Default::default(),
             files: rustidian::search::FileMatcher::new(Vec::new()),
             pending: None,
             error: None,
@@ -694,7 +703,7 @@ impl NotesApp {
             match result {
                 Ok(prepared) => {
                     let PreparedVault {
-                        vault,
+                        mut vault,
                         tree,
                         files,
                         monitoring,
@@ -834,6 +843,10 @@ impl NotesApp {
                             }
                         }
                         self.recovery_index_paths.clear();
+                        // A rescan must not forget files opened from outside the vault.
+                        if let Some(old) = &self.vault {
+                            vault.keep_guests(old);
+                        }
                         // A clean tab whose file vanished follows the file if it
                         // moved, and closes quietly if it was deleted.
                         let mut moved = Vec::new();

@@ -54,6 +54,9 @@ fastrand = "=2.5.0"
 portable-pty = "0.9"
 vt100 = "0.16"
 htmd = "=0.5.6"
+# Read aloud's hosted voice: the OpenRouter key in the OS keyring, the request over HTTPS.
+keyring = { version = "3.6", default-features = false, features = ["sync-secret-service", "crypto-rust", "vendored", "apple-native", "windows-native"] }
+ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip"] }
 
 # A launch's activation token raises the running window (src/window.rs).
 [target.'cfg(target_os = "linux")'.dependencies]

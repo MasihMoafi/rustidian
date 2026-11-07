@@ -597,6 +597,12 @@ impl Vault {
         document
     }
 
+    /// Carry over the guest files `before` held, so a rescan of the same
+    /// vault still reads and saves them.
+    pub fn keep_guests(&mut self, before: &Vault) {
+        self.guests.extend(before.guests.iter().cloned());
+    }
+
     /// Whether `path` is a guest file held by this window.
     pub fn is_guest(&self, path: &Path) -> bool {
         self.guests.contains(path)
