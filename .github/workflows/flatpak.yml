@@ -1,0 +1,35 @@
+name: Flatpak check
+
+# Generates the offline cargo sources, builds the Flathub manifest from source with Flathub's tooling, lints it, and
+# uploads cargo-sources.json (Flathub needs it beside the manifest) and the bundle.
+on:
+  push:
+    branches: [build/flatpak]
+  workflow_dispatch:
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Offline cargo sources
+        run: |
+          dnf install -y python3-aiohttp python3-tomlkit python3-pip || pip install aiohttp tomlkit
+          curl -sSLo /tmp/gen.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+          python3 /tmp/gen.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+      - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: rustidian.flatpak
+          manifest-path: packaging/flatpak/io.github.masihmoafi.rustidian.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+      - name: Flathub linter (manifest)
+        run: |
+          flatpak install -y --noninteractive flathub org.flatpak.Builder
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.masihmoafi.rustidian.yml || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-sources
+          path: packaging/flatpak/cargo-sources.json
