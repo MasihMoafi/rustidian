@@ -2409,7 +2409,13 @@ def main():
                     away();absent()
                 results.append("Live and Source required Ctrl for the same preview; plain hover in both modes showed no card")
                 command("Reading view");hover_target()
+                task_box=control_bounds("page-preview/task:0")
+                xdo("mousemove","--sync",str(round((task_box[0]+task_box[2])/2)),str(round((task_box[1]+task_box[3])/2)));pause()
+                speaker_box=control_bounds("page-preview/read-aloud-block:2")
+                capture("native-page-preview-task-speaker.png")
+                assert speaker_box[2]<=task_box[0] or task_box[2]<=speaker_box[0] or speaker_box[3]<=task_box[1] or task_box[3]<=speaker_box[1], ("A task speaker must not cover its checkbox",speaker_box,task_box)
                 click_control("page-preview/task:0");title_contains("Preview source")
+                assert control_bounds("read-aloud-player",required=False) is None and control_bounds("settings-voice-key-focused",required=False) is None, "A task click must not start reading or open voice setup"
                 assert target.read_text()==target_original.replace("- [ ]","- [x]")
                 assert source.read_text()==original
                 away();control_bounds("page-preview-card");key("Escape");control_bounds("page-preview-card")
@@ -3544,6 +3550,27 @@ def main():
                 open_note("Resize tables")
                 for mode in ("Live preview", "Reading view"):
                     command(mode)
+                    # Release may arrive in the same UI frame as the last real pointer move.
+                    divider = control_bounds("table-resize:0:0")
+                    x, y = round((divider[0] + divider[2]) / 2), round((divider[1] + divider[3]) / 2)
+                    xdo("mousemove", "--sync", str(x), str(y)); pause(); xdo("mousedown", "1")
+                    try:
+                        for step in range(1, 6):
+                            xdo("mousemove", "--sync", str(x + 4 * step), str(y)); time.sleep(.05)
+                        app.send_signal(signal.SIGSTOP)
+                        try:
+                            xdo("mousemove", "--sync", str(x + 60), str(y)); xdo("mouseup", "1")
+                        finally:
+                            app.send_signal(signal.SIGCONT)
+                    finally:
+                        xdo("mouseup", "1")
+                    pause()
+                    released = control_bounds("table-resize:0:0")
+                    assert abs((released[0] + released[2] - divider[0] - divider[2]) / 2 - 60) < 2, ("Release lost the final pointer move", mode, divider, released)
+                    assert note.read_text() == source
+                    key("ctrl+z")
+                    restored = control_bounds("table-resize:0:0")
+                    assert abs(restored[0] - divider[0]) < 2 and note.read_text() == source
                     capture("native-table-resize-" + mode.split()[0].lower() + "-before.png")
                     for table in (0, 1):
                         name = f"table-resize:{table}:0"
@@ -7466,6 +7493,36 @@ def main():
                     time.sleep(.1)
                 assert control_bounds("read-aloud-player", required=False) is None, "The player closes when the reading ends"
                 results.append("A paragraph's margin speaker voiced and played its three sentences in order, one chunk each, and the player bar closed at the end")
+                # A settings dialog covers the previously visible selection speaker.
+                block = control_bounds("reading-block:1")
+                y = round((block[1] + block[3]) / 2)
+                xdo("mousemove", "--sync", str(round(block[0] + 15)), str(y), "mousedown", "1"); pause()
+                xdo("mousemove", "--sync", str(round(block[0] + 130)), str(y)); pause()
+                xdo("mouseup", "1"); pause()
+                covered = control_bounds("read-aloud-selection")
+                key("ctrl+comma")
+                dialog = control_bounds("dialog-bounds")
+                x, y = round((covered[0] + covered[2]) / 2), round((covered[1] + covered[3]) / 2)
+                assert dialog[0] <= x <= dialog[2] and dialog[1] <= y <= dialog[3], (covered, dialog)
+                capture("native-read-aloud-selection-covered.png")
+                reset()
+                queued_steps(("click", (x, y)))
+                time.sleep(.6)
+                assert not lines(voiced) and not lines(played) and control_bounds("read-aloud-player", required=False) is None, "A covered selection speaker started reading"
+                key("Escape")
+                results.append("Clicking a dialog over a former selection speaker did not start reading")
+                # A fast click at the former location must not revive a hidden speaker.
+                block = control_bounds("reading-block:1")
+                xdo("mousemove", "--sync", str(round(block[0] + 40)), str(round((block[1] + block[3]) / 2))); pause()
+                old_speaker = control_bounds("read-aloud-block:1")
+                xdo("mousemove", "--sync", "1100", "800"); pause()
+                assert control_bounds("read-aloud-block:1", required=False) is None
+                reset()
+                queued_steps(("click", (round((old_speaker[0] + old_speaker[2]) / 2), round((old_speaker[1] + old_speaker[3]) / 2))))
+                time.sleep(.6)
+                assert not lines(voiced) and not lines(played) and control_bounds("read-aloud-player", required=False) is None, "A click on a hidden former speaker started reading"
+                assert note.read_bytes() == before
+                results.append("Clicking a hidden former paragraph speaker did not start reading or change the note")
                 # A speed change reaches a new request during the same reading and is saved.
                 reset()
                 requests = log.with_suffix(".requests")
@@ -10465,6 +10522,9 @@ def main():
                 def history(minimum=1):
                     command("File recovery: Open local history")
                     assert control_bounds("recovery-files")
+                    # The watcher may already have closed a deleted note's clean tab.
+                    if not any(name.startswith("tab-full:") for name in json.loads((base/"ui-probe.json").read_text())):
+                        click_control("recovery-file:Recovery target.md",hold=.15)
                     return versions(minimum)
 
                 def copy_snapshot():

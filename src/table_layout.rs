@@ -354,7 +354,7 @@ pub fn handles(
             .data(|data| data.get_temp::<Drag>(storage().with("drag")))
             .filter(|drag| drag.path == from && drag.table == table && drag.column == column);
         let mut next = None;
-        if response.dragged()
+        if (response.dragged() || response.drag_stopped())
             && let Some(pointer) = response.interact_pointer_pos()
             && let Some(drag) = &drag
             && !drag.cancelled

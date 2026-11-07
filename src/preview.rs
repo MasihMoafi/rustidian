@@ -1076,24 +1076,12 @@ fn read_selection(
     {
         ui.ctx().data_mut(|data| data.insert_temp(release, pos));
     }
-    // A press on the speaker also lands on the text under it, which ends the selection (or
-    // Select all) in that same pass; so the press is matched against where the speaker was
-    // last pass, with the text it would have read.
-    let pressed = ui.input(|input| {
-        input
-            .pointer
-            .primary_pressed()
-            .then(|| input.pointer.interact_pos())
-            .flatten()
-    });
-    if let Some(pos) = pressed
-        && let Some((rect, text)) = ui
-            .ctx()
-            .data(|data| data.get_temp::<(egui::Rect, String)>(shown))
-        && rect.contains(pos)
-    {
-        ui.ctx()
-            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+    // A press clears the selection in this pass, so use the text saved when the speaker was drawn.
+    if let Some(text) = crate::read_aloud::selection_speaker_pressed(
+        ui,
+        shown,
+        document_id.with("read-aloud-selection"),
+    ) {
         *read = Some(text);
         return;
     }
@@ -1561,6 +1549,7 @@ fn show_blocks(
         if block.center {
             center_rows(&mut galley);
         }
+        let mut task_checkbox = None;
         let mut draw = |ui: &mut egui::Ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin {
@@ -1587,6 +1576,7 @@ fn show_blocks(
                                     },
                                 )
                                 .inner;
+                            task_checkbox = Some(checkbox.rect);
                             crate::ui_probe::record(
                                 ui.ctx(),
                                 format!("task:{ordinal}"),
@@ -1642,7 +1632,10 @@ fn show_blocks(
                 // A speaker in the margin while the pointer is on the block: a paragraph reads
                 // itself, a heading its section (folded parts stay silent).
                 let row = galley.rows.first().map_or(18.0, |row| row.height());
-                let x = response.rect.left() - if block.heading > 0 { 38.0 } else { 16.0 };
+                let x = task_checkbox.map_or_else(
+                    || response.rect.left() - if block.heading > 0 { 38.0 } else { 16.0 },
+                    |checkbox| checkbox.left() - 16.0,
+                );
                 let rect = egui::Rect::from_center_size(
                     egui::pos2(x, response.rect.top() + row / 2.0),
                     egui::vec2(18.0, 18.0),

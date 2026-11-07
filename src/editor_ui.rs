@@ -3648,14 +3648,9 @@ fn editor_speakers(
             .then(|| input.pointer.interact_pos())
             .flatten()
     });
-    if let Some(pos) = pressed
-        && let Some((rect, text)) = ui
-            .ctx()
-            .data(|data| data.get_temp::<(egui::Rect, String)>(shown))
-        && rect.contains(pos)
+    if let Some(text) =
+        crate::read_aloud::selection_speaker_pressed(ui, shown, id.with("read-aloud-selection"))
     {
-        ui.ctx()
-            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
         crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
         return;
     }

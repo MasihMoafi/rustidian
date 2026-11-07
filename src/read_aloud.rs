@@ -602,8 +602,41 @@ pub fn paint_speaker(painter: &egui::Painter, rect: egui::Rect, color: egui::Col
     }
 }
 
-/// A round button with a speaker; true when pressed. It acts on the press, since the press
-/// itself clears egui's text selection.
+/// A press belongs to the hit-tested speaker from the previous pass, not a newly shown one.
+fn speaker_pressed(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) -> bool {
+    ui.is_enabled()
+        && ui.is_visible()
+        && response.enabled()
+        && response.visible()
+        && (response.is_pointer_button_down_on() || response.clicked())
+        && ui.input(|input| {
+            input.pointer.primary_pressed()
+                && input
+                    .pointer
+                    .interact_pos()
+                    .is_some_and(|pos| rect.contains(pos) && ui.clip_rect().contains(pos))
+        })
+}
+
+/// Take a selection saved when its speaker was drawn, only if that speaker received the press.
+pub fn selection_speaker_pressed(
+    ui: &egui::Ui,
+    shown: egui::Id,
+    speaker: egui::Id,
+) -> Option<String> {
+    let (rect, text) = ui
+        .ctx()
+        .data(|data| data.get_temp::<(egui::Rect, String)>(shown))?;
+    let response = ui.ctx().read_response(speaker)?;
+    if !speaker_pressed(ui, &response, rect) {
+        return None;
+    }
+    ui.ctx()
+        .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+    Some(text)
+}
+
+/// A round speaker that acts on press, since the press itself clears the text selection.
 pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &str) -> bool {
     let response = ui.interact(rect, id, egui::Sense::click());
     let hovered = response.hovered();
@@ -628,13 +661,7 @@ pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &
         crate::theme::interactive(ui)
     };
     paint_speaker(painter, rect.shrink(rect.width() * 0.22), ink);
-    let pressed = ui.input(|input| {
-        input.pointer.primary_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|pos| rect.contains(pos))
-    });
+    let pressed = speaker_pressed(ui, &response, rect);
     response.on_hover_text(hint);
     pressed
 }
