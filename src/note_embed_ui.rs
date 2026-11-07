@@ -93,6 +93,52 @@ fn section(source: &str, fragment: &str) -> Option<Range<usize>> {
     Some(byte(heading.character)..end)
 }
 
+/// A note an outside file names, found in that file's own vault (the nearest folder above
+/// it holding `.obsidian`, else its folder): e.g. Main Vault's day page, open as a guest in
+/// another window, embeds `![[Now]]` from Main Vault. Reads are cached for two seconds,
+/// since embeds are drawn every frame.
+fn resolve_outside(from: &Path, target: &str) -> Option<(PathBuf, String)> {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+    use std::time::{Duration, Instant};
+    type Found = Option<(PathBuf, String)>;
+    static CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), (Instant, Found)>>> =
+        LazyLock::new(Default::default);
+    let folder = from.parent()?;
+    let home = folder
+        .ancestors()
+        .find(|dir| dir.join(".obsidian").is_dir())
+        .unwrap_or(folder)
+        .to_owned();
+    let file = target.split('#').next().unwrap_or(target).trim();
+    if file.is_empty() {
+        return None;
+    }
+    let key = (home.clone(), file.to_owned());
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, found)) = cache.get(&key)
+        && at.elapsed() < Duration::from_secs(2)
+    {
+        return found.clone();
+    }
+    let name = rustidian::paths::markdown_name(Path::new(file));
+    let direct = [folder.join(&name), home.join(&name)]
+        .into_iter()
+        .find(|path| path.is_file());
+    let path = direct.or_else(|| {
+        let wanted = name.file_name()?.to_owned();
+        walkdir::WalkDir::new(&home)
+            .into_iter()
+            .filter_entry(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+            .filter_map(Result::ok)
+            .find(|entry| entry.file_type().is_file() && entry.file_name() == wanted)
+            .map(|entry| entry.into_path())
+    });
+    let found = path.and_then(|path| Some((path.clone(), std::fs::read_to_string(&path).ok()?)));
+    cache.insert(key, (Instant::now(), found.clone()));
+    found
+}
+
 pub fn resolve(
     vault: &Vault,
     current_path: &Path,
@@ -102,11 +148,22 @@ pub fn resolve(
     target: &str,
 ) -> Result<Source, String> {
     let target = target.split('|').next().unwrap_or(target);
-    let path = vault
-        .resolve(from, target)
-        .ok_or_else(|| format!("Note not found: {target}"))?;
-    let full = text(vault, current_path, current_text, open, &path)
-        .ok_or_else(|| format!("Note not found: {target}"))?;
+    let missing = || format!("\u{201c}{target}\u{201d} could not be found.");
+    let outside;
+    let (path, full) = match vault.resolve(from, target).and_then(|path| {
+        Some((
+            path.clone(),
+            text(vault, current_path, current_text, open, &path)?,
+        ))
+    }) {
+        Some(found) => found,
+        None if from.is_absolute() => {
+            let (path, text) = resolve_outside(from, target).ok_or_else(missing)?;
+            outside = text;
+            (path, outside.as_str())
+        }
+        None => return Err(missing()),
+    };
     let range = if let Some((_, fragment)) = target
         .split_once('#')
         .filter(|(_, fragment)| !fragment.is_empty())
@@ -184,30 +241,6 @@ impl<'a> Context<'a> {
         let mut edit = false;
         let frame = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width((width - 18.0).max(40.0));
-            ui.horizontal(|ui| {
-                let title = ui.link(&embed.target);
-                crate::ui_probe::record(
-                    ui.ctx(),
-                    format!("note-embed-open:{}", embed.target),
-                    title.rect,
-                );
-                if title.clicked() {
-                    self.actions.push(crate::page_preview::Action::Open {
-                        from: from.into(),
-                        target: embed.target.clone(),
-                    });
-                }
-                if edit_source {
-                    let response = ui.small_button("Edit embed");
-                    crate::ui_probe::record(
-                        ui.ctx(),
-                        format!("note-embed-edit:{}", embed.target),
-                        response.rect,
-                    );
-                    edit = response.clicked();
-                }
-            });
-            ui.add_space(6.0);
             let source = match &embed.source {
                 Ok(source) => source,
                 Err(error) => {
@@ -247,7 +280,7 @@ impl<'a> Context<'a> {
                     target,
                 });
             }
-            if rendered != source.text {
+            if rendered != source.text && !source.path.is_absolute() {
                 let outcome = (|| {
                     let full = text(
                         self.vault,
@@ -284,6 +317,53 @@ impl<'a> Context<'a> {
             format!("note-embed:{}", embed.target),
             frame.response.rect,
         );
+        // Open and Edit sit in the top-right corner and show on hover, as in Obsidian; no
+        // title row above the embedded text.
+        let rect = frame.response.rect;
+        let hovered = ui.rect_contains_pointer(rect);
+        let corner = |slot: f32| {
+            egui::Rect::from_min_size(
+                egui::pos2(rect.right() - 26.0 * (slot + 1.0), rect.top() + 4.0),
+                egui::vec2(22.0, 22.0),
+            )
+        };
+        let mut corner_button = |slot: f32, name: &str, icon, hint: String| {
+            let area = corner(slot);
+            let response = ui
+                .interact(area, embed.id.with(name), egui::Sense::click())
+                .on_hover_text(hint);
+            crate::ui_probe::record(ui.ctx(), format!("{name}:{}", embed.target), area);
+            if hovered || response.hovered() {
+                let color = if response.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                crate::theme::icon_image(icon, color).paint_at(ui, area.shrink(3.0));
+            }
+            response.clicked()
+        };
+        if corner_button(
+            0.0,
+            "note-embed-open",
+            crate::theme::Icon::OpenLink,
+            format!("Open {}", embed.target),
+        ) {
+            self.actions.push(crate::page_preview::Action::Open {
+                from: from.into(),
+                target: embed.target.clone(),
+            });
+        }
+        if edit_source
+            && corner_button(
+                1.0,
+                "note-embed-edit",
+                crate::theme::Icon::Edit,
+                "Edit embed".into(),
+            )
+        {
+            edit = true;
+        }
         if edit_source {
             let measured = frame.response.rect.height();
             if (height(ui.ctx(), embed.id, width) - measured).abs() > 1.0 {
