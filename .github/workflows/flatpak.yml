@@ -11,7 +11,7 @@ jobs:
   flatpak:
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       - name: Flathub linter (manifest)
         run: |
           flatpak install -y --noninteractive flathub org.flatpak.Builder
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.masihmoafi.rustidian.yml || true
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/io.github.masihmoafi.rustidian.yml
       - uses: actions/upload-artifact@v4
         with:
           name: cargo-sources
