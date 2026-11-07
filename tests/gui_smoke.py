@@ -7421,6 +7421,28 @@ def main():
                 assert control_bounds("read-aloud-player", required=False) is None
                 assert note.read_bytes() == before, "Reading aloud must not change the note"
                 results.append(f"Stop ended playback after {stopped} sentence(s) and voicing after {len(lines(voiced))}; nothing played afterwards and the note kept its bytes")
+                # Masih (7 Nov): read aloud must be reachable where he edits, and never speak Markdown markup.
+                marked = fixture / "Read aloud markup.md"
+                marked.write_text("# Plan\n\nThis is **bold** and `code`. See [the guide](https://example.com) and [[Read aloud test|the test]]. Two * three stays.\n")
+                command("Refresh vault")
+                open_note("Read aloud markup")
+                for view in ("Live preview", "Source editing"):
+                    reset()
+                    command(view)
+                    pause()
+                    control_bounds("read-aloud-toolbar")
+                    capture(f"native-read-aloud-{view.split()[0].lower()}.png")
+                    click_control("editor")
+                    key("ctrl+shift+r")
+                    wait_played(3)
+                    deadline = time.monotonic() + 10
+                    while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
+                        time.sleep(.1)
+                    spoken = lines(played)
+                    assert spoken == ["Plan", "This is bold and code.", "See the guide and the test.", "Two * three stays."], (view, spoken)
+                    assert not any(mark in " ".join(spoken) for mark in ("**", "`", "[", "](", "#")), (view, spoken)
+                    results.append(f"In {view}, the toolbar speaker showed and Ctrl+Shift+R read the whole note without Markdown markup: {spoken}")
+                assert marked.read_text().startswith("# Plan"), "Reading aloud must not change the note"
 
             def explorer_order_checks():
                 # Masih (6 Nov): arrange files by dragging them between rows, and see each
