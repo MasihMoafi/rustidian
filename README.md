@@ -32,6 +32,19 @@ I built Rustidian for myself because every note editor I tried felt too slow. **
   <img src="docs/images/rustidian.png" alt="Rustidian showing its bundled Markdown notebook">
 </picture>
 
+## Listen and dictate
+
+Rustidian reads your notes aloud. The toolbar speaker reads the whole note; select a passage and the speaker beside it
+reads only those sentences; hover a paragraph to hear just that one. Markdown symbols are skipped, and the player
+offers speeds from Normal to 2×. The microphone takes dictation: click, speak, click again, and the text lands at your
+cursor as one undoable edit.
+
+Both work with your own [OpenRouter](https://openrouter.ai) key (Settings → Read aloud; the key stays in your system
+keyring), or fully locally with [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for the voice and
+[WhisperType](https://github.com/MasihMoafi/WhisperType) for dictation.
+
+<img src="docs/images/rustidian-themes.gif" width="720" alt="Switching between Rustidian's four palettes in Settings">
+
 ## Quick start
 
 **Requirements:** Linux x86_64 with **glibc 2.39 or newer** (Ubuntu 24.04 or newer; check with `ldd --version`) and an X11 or Wayland desktop. The Open dialogs use `zenity`, which the package installs; with the portable archive, install `zenity` with your package manager. Native UI checks use X11; Wayland is enabled, with broader coverage still open.

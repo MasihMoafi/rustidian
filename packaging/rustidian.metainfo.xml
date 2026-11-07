@@ -22,5 +22,5 @@
   <categories><category>Office</category><category>TextEditor</category></categories>
   <provides><binary>rustidian</binary></provides>
   <content_rating type="oars-1.1"/>
-  <releases><release version="0.1.6" date="2026-11-04"/></releases>
+  <releases><release version="0.1.7" date="2026-11-08"/><release version="0.1.6" date="2026-11-04"/></releases>
 </component>

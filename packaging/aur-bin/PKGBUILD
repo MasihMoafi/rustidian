@@ -1,7 +1,7 @@
 # Maintainer: Masih Moafi
 pkgname=rustidian-bin
 _name=rustidian
-pkgver=0.1.6
+pkgver=0.1.7
 pkgrel=1
 pkgdesc='Native Markdown notebook for local vaults (opens Obsidian-format vaults; not affiliated with Obsidian)'
 arch=('x86_64')
