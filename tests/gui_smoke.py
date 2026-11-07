@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -3497,6 +3497,42 @@ def main():
                 assert abs(before[0] - after[0]) < 2, (before, after)
                 assert note.read_text() == source
                 results.append("Table widths survive a real restart in workspace state while the Markdown remains byte-for-byte unchanged")
+
+            def find_navigation_checks():
+                note = fixture / "Notes/Find navigation.md"
+                source = "# Find navigation\n\n" + "".join(
+                    f"Paragraph {i}: " + ("needle " if i in (40, 100) else "") + "ordinary text.\n\n"
+                    for i in range(130)
+                )
+                note.write_text(source)
+                time.sleep(.6)
+                open_note("Find navigation")
+                command("Live preview")
+                key("ctrl+f")
+                type_text("needle")
+
+                def match_is_visible():
+                    time.sleep(.8)  # Wait for the scroll animation to finish.
+                    offset = control_bounds("document-scroll-y")[0]
+                    assert offset > 500, offset
+                    match = control_bounds("find-match")
+                    viewport = control_bounds("document-viewport")
+                    assert viewport[1] <= match[1] and match[3] <= viewport[3], (match, viewport)
+                    return offset
+
+                first = match_is_visible()
+                click_control("find-next")
+                second = match_is_visible()
+                assert second > first + 500, (first, second)
+                click_control("find-previous")
+                previous = match_is_visible()
+                assert abs(previous - first) < 10, (first, previous)
+                key("Escape")
+                time.sleep(.8)
+                closed = control_bounds("document-scroll-y")[0]
+                assert abs(closed - previous) < 10, (previous, closed)
+                assert note.read_text() == source
+                results.append("Find scrolls to each match, stays there, and preserves the note when closed")
 
             def chrome_spacing_checks():
                 # One spacing scale: bars share inset and control height; rows share a text edge.
@@ -11572,6 +11608,13 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "table-edges"}))
                 return
+            if args.section in ("find-navigation", "all"):
+                find_navigation_checks()
+                if args.section != "all":
+                    (reports / "gui-results.json").write_text(json.dumps({"status": "passed", "checks": results}, indent=2) + "\n")
+                    print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                    return
+
             if args.section == "chrome-spacing":
                 chrome_spacing_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")

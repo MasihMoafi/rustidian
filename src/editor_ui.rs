@@ -24,6 +24,8 @@ pub struct Find {
     replacing: bool,
     selected: usize,
     restore: Option<Range<usize>>,
+    /// Scroll to a newly selected match without moving focus out of Find.
+    scroll_to_match: Option<usize>,
     /// When the closed bar began waiting for the editor to take focus.
     restore_since: Option<f64>,
 }
@@ -814,7 +816,9 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
             find.selected = (find.selected + matches.len() - 1) % matches.len();
             select = true;
         }
-        if (ui.button("Next").clicked()
+        let next = ui.button("Next");
+        crate::ui_probe::record(ui.ctx(), "find-next", next.rect);
+        if (next.clicked()
             || response.has_focus()
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter)))
             && !matches.is_empty()
@@ -867,12 +871,17 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
         if let Some(range) = matches.get(find.selected.min(matches.len().saturating_sub(1))) {
             find.restore = Some(range.clone());
             find.restore_since = None;
+            find.scroll_to_match = find.open.then_some(range.start);
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             state.cursor.set_char_range(Some(CCursorRange::two(
                 CCursor::new(range.start),
                 CCursor::new(range.end),
             )));
             state.store(ui.ctx(), id);
+        } else {
+            find.restore = None;
+            find.restore_since = None;
+            find.scroll_to_match = None;
         }
     }
     ui.separator();
@@ -2705,14 +2714,27 @@ impl Editor {
             }
         }
         cp.at(2534);
-        if let Some(character) = jump {
+        if jump.is_some() {
             output.response.request_focus();
             ui.ctx().request_repaint();
+        }
+        let scroll_to_match = find.scroll_to_match.take();
+        if let Some(character) = jump.or(scroll_to_match) {
             let rect = output
                 .galley
                 .pos_from_cursor(CCursor::new(character))
                 .translate(output.galley_pos.to_vec2());
             ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        }
+        if crate::ui_probe::enabled()
+            && let Some(range) = &selected_match
+        {
+            let rect = output
+                .galley
+                .pos_from_cursor(CCursor::new(range.start))
+                .translate(output.galley_pos.to_vec2())
+                .expand2(egui::vec2(1.0, 0.0));
+            crate::ui_probe::record(ui.ctx(), "find-match", rect);
         }
         cp.at(2543);
         let pressed_button = ui.input(|input| {
