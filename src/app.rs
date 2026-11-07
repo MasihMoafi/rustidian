@@ -149,6 +149,8 @@ pub struct NotesApp {
     refresh_required: bool,
     loading_root: Option<PathBuf>,
     startup_document: Option<PathBuf>,
+    /// The vault was opened to show one file, not chosen as a vault.
+    vault_for_file: bool,
     find: crate::editor_ui::Find,
     editor: crate::editor_ui::Editor,
     title: crate::title_ui::Title,
@@ -261,6 +263,7 @@ impl NotesApp {
             refresh_paths: Default::default(),
             refresh_required: false,
             loading_root: None,
+            vault_for_file: startup_document.is_some(),
             startup_document,
             find: Default::default(),
             editor: Default::default(),
@@ -442,6 +445,7 @@ impl NotesApp {
         self.page_pan = Default::default();
         self.persist_session();
         self.loading_root = Some(root.to_owned());
+        self.vault_for_file = self.startup_document.is_some();
         self.queue_index(root.to_owned());
         self.status = "Opening vault…".into();
     }
@@ -456,6 +460,7 @@ impl NotesApp {
             cancelled: cancelled.clone(),
         });
         let ctx = self.ctx.clone();
+        let for_file = self.vault_for_file;
         let document = self
             .loading_root
             .is_some()
@@ -471,8 +476,9 @@ impl NotesApp {
             .name("rustidian-index".into())
             .spawn(move || {
                 let prepare = || -> Result<_, String> {
-                    let vault =
-                        Vault::open_cancellable(&root, || cancelled.load(Ordering::Relaxed))?;
+                    let vault = Vault::open_cancellable(&root, for_file, || {
+                        cancelled.load(Ordering::Relaxed)
+                    })?;
                     if let Some(path) = &document {
                         vault.open_document(path)?;
                     }

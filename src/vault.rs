@@ -193,11 +193,21 @@ pub struct Vault {
 
 impl Vault {
     pub fn open(root: &Path) -> Result<Self> {
-        Self::open_cancellable(root, || false)
+        Self::open_cancellable(root, false, || false)
     }
 
-    pub fn open_cancellable(root: &Path, cancelled: impl Fn() -> bool) -> Result<Self> {
-        let default = crate::vaults::default_vault().and_then(|vault| vault.canonicalize().ok());
+    /// `for_file`: the folder opens only to show one file passed on the command line
+    /// (`~/Desktop/info.md`). Then a folder around the default vault loads just its own
+    /// files. Opening that folder as a vault (the switcher, Open folder) loads it all.
+    pub fn open_cancellable(
+        root: &Path,
+        for_file: bool,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self> {
+        let default = for_file
+            .then(crate::vaults::default_vault)
+            .flatten()
+            .and_then(|vault| vault.canonicalize().ok());
         Self::open_beside(root, default.as_deref(), cancelled)
     }
 
