@@ -102,8 +102,8 @@ fn resolve_outside(from: &Path, target: &str) -> Option<(PathBuf, String)> {
     use std::sync::{LazyLock, Mutex};
     use std::time::{Duration, Instant};
     type Found = Option<(PathBuf, String)>;
-    static CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), (Instant, Found)>>> =
-        LazyLock::new(Default::default);
+    type Cache = HashMap<(PathBuf, String), (Instant, Found)>;
+    static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(Default::default);
     let folder = from.parent()?;
     let home = folder
         .ancestors()
@@ -327,7 +327,7 @@ impl<'a> Context<'a> {
                 egui::vec2(22.0, 22.0),
             )
         };
-        let mut corner_button = |slot: f32, name: &str, icon, hint: String| {
+        let corner_button = |slot: f32, name: &str, icon, hint: String| {
             let area = corner(slot);
             let response = ui
                 .interact(area, embed.id.with(name), egui::Sense::click())
