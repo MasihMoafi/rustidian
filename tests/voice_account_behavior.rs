@@ -1,7 +1,10 @@
 //! Read aloud's OpenRouter account (provider-login contract, checks 1, 4 and 6): keys live in
 //! a secret store, are sent only to the endpoint and account chosen, and never reach a file
 //! or a message.
-use rustidian::voice_account::{Engine, Memory, SaveError, Secrets, Settings, Stores, speak};
+use rustidian::voice_account::{
+    DictationBackend, Engine, Memory, SaveError, Secrets, Settings, Stores, VoiceChoice,
+    choose_engine, speak, transcribe, transcription_models,
+};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc;
@@ -227,4 +230,243 @@ fn only_https_or_this_machine_may_receive_a_key() {
         voice.save_key(stores, None, "", "sk-x", false),
         Err(SaveError::Invalid(_))
     ));
+}
+
+#[test]
+fn transcription_sends_wav_and_reads_the_returned_text() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/api/v1/audio/speech",
+        listener.local_addr().unwrap()
+    );
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        assert!(request.starts_with("POST /api/v1/audio/transcriptions "));
+        let mut length = 0;
+        let mut auth = String::new();
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            let lower = line.to_ascii_lowercase();
+            if let Some(value) = lower.strip_prefix("content-length:") {
+                length = value.trim().parse().unwrap();
+            }
+            if lower.starts_with("authorization:") {
+                auth = line[14..].trim().to_owned();
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"model":"example/model", "language":"en", "input_audio":{"data":"UklGRg==", "format":"wav"}})
+        );
+        assert_eq!(auth, "Bearer sk-test");
+        let body = r#"{"text":" hello "}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+    });
+    let (keyring, session) = (Memory::default(), Memory::default());
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut voice = settings(&endpoint);
+    voice
+        .save_key(stores, None, "Mine", "sk-test", false)
+        .unwrap();
+    assert_eq!(
+        transcribe(&voice.route(stores).unwrap(), "example/model", b"RIFF").unwrap(),
+        "hello"
+    );
+    server.join().unwrap();
+}
+
+#[test]
+fn voice_choice_preserves_preferences_and_only_falls_back_when_local_is_missing() {
+    use Engine::{Local, OpenRouter};
+    use VoiceChoice::{Hosted, Local as UseLocal, Setup};
+    for (preference, local_available, key_available, expected) in [
+        (Local, true, true, UseLocal),
+        (Local, true, false, UseLocal),
+        (Local, false, true, Hosted),
+        (Local, false, false, Setup),
+        (OpenRouter, true, true, Hosted),
+        (OpenRouter, false, true, Hosted),
+        (OpenRouter, true, false, Setup),
+        (OpenRouter, false, false, Setup),
+    ] {
+        assert_eq!(
+            choose_engine(preference, local_available, key_available),
+            expected
+        );
+    }
+    let previous: Settings = serde_json::from_str("{}").unwrap();
+    assert_eq!(previous.engine, Local);
+    assert_eq!(previous.dictation_backend, DictationBackend::Codex);
+    assert!(!previous.transcription_model.is_empty());
+}
+
+/// A single response for a transcription or model-list request.
+fn json_server(status: &str, body: &str) -> (String, std::thread::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/api/v1/audio/speech",
+        listener.local_addr().unwrap()
+    );
+    let status = status.to_owned();
+    let body = body.to_owned();
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        let mut ignored = vec![0; length];
+        reader.read_exact(&mut ignored).unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+        )
+        .unwrap();
+        request
+    });
+    (endpoint, handle)
+}
+
+#[test]
+fn transcription_reports_provider_and_response_failures_without_secrets() {
+    let (keyring, session) = (Memory::default(), Memory::default());
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    assert!(
+        Settings::default()
+            .route(stores)
+            .unwrap_err()
+            .contains("Add an OpenRouter key")
+    );
+    for (status, body, expected) in [
+        ("401 Unauthorized", CANARY, "refused this key"),
+        ("402 Payment Required", CANARY, "no credit"),
+        ("500 Internal Server Error", CANARY, "HTTP 500"),
+        ("200 OK", "not json", "invalid transcript"),
+        ("200 OK", r#"{"text":"  "}"#, "No speech"),
+        ("200 OK", r#"{"error":"missing"}"#, "No speech"),
+    ] {
+        let (endpoint, server) = json_server(status, body);
+        let mut voice = settings(&endpoint);
+        voice.save_key(stores, None, "Mine", CANARY, false).unwrap();
+        let error = transcribe(&voice.route(stores).unwrap(), "test/model", b"wav").unwrap_err();
+        assert!(error.contains(expected), "{error}");
+        assert!(!error.contains(CANARY));
+        assert!(
+            server
+                .join()
+                .unwrap()
+                .starts_with("POST /api/v1/audio/transcriptions ")
+        );
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/api/v1/audio/speech",
+        listener.local_addr().unwrap()
+    );
+    drop(listener);
+    let mut voice = settings(&endpoint);
+    voice.save_key(stores, None, "Mine", CANARY, false).unwrap();
+    let error = transcribe(&voice.route(stores).unwrap(), "test/model", b"wav").unwrap_err();
+    assert!(error.contains("cannot be reached") && !error.contains(CANARY));
+}
+
+#[test]
+fn transcription_does_not_forward_a_key_on_redirect_or_to_an_unrelated_origin() {
+    let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+    destination.set_nonblocking(true).unwrap();
+    let target = format!("http://{}/stolen", destination.local_addr().unwrap());
+    let source = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/api/v1/audio/speech",
+        source.local_addr().unwrap()
+    );
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = source.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        let mut ignored = vec![0; length];
+        reader.read_exact(&mut ignored).unwrap();
+        write!(stream, "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+    });
+    let (keyring, session) = (Memory::default(), Memory::default());
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut voice = settings(&endpoint);
+    voice.save_key(stores, None, "Mine", CANARY, false).unwrap();
+    let error = transcribe(&voice.route(stores).unwrap(), "test/model", b"wav").unwrap_err();
+    assert!(!error.contains(CANARY));
+    server.join().unwrap();
+    assert!(
+        matches!(destination.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
+
+    let mut other = settings("https://unrelated.example/api/v1/audio/speech");
+    other
+        .save_key(stores, None, "Other", CANARY, false)
+        .unwrap();
+    assert!(transcribe(&other.route(stores).unwrap(), "test/model", b"wav").is_err());
+}
+
+#[test]
+fn transcription_model_menu_uses_the_filtered_models_api() {
+    let (endpoint, server) = json_server(
+        "200 OK",
+        r#"{"data":[{"id":"z/model"},{"id":"a/model"},{"id":"a/model"},{"name":"no id"}]}"#,
+    );
+    assert_eq!(
+        transcription_models(&endpoint).unwrap(),
+        ["a/model", "z/model"]
+    );
+    assert!(
+        server
+            .join()
+            .unwrap()
+            .starts_with("GET /api/v1/models?output_modalities=transcription ")
+    );
 }

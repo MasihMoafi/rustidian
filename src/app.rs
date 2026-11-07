@@ -3664,14 +3664,44 @@ impl NotesApp {
 
     fn toggle_dictation(&mut self) {
         if let Some(recording) = self.recording.take() {
-            self.dictation_result =
-                Some(recording.finish(self.voice.dictation_backend.command(), self.ctx.clone()));
+            self.dictation_result = Some(recording.finish(self.ctx.clone()));
             return;
         }
         if self.dictation_result.is_some() {
             self.error = Some("Transcription is still in progress.".into());
             return;
         }
+        use rustidian::voice_account::{DictationBackend, Engine, VoiceChoice, choose_engine};
+        let preferred = if self.voice.dictation_backend == DictationBackend::OpenRouter {
+            Engine::OpenRouter
+        } else {
+            Engine::Local
+        };
+        let transcriber = match choose_engine(
+            preferred,
+            crate::dictation::available(),
+            self.voice.selected_account().is_some(),
+        ) {
+            VoiceChoice::Setup => {
+                self.open_voice_setup();
+                return;
+            }
+            VoiceChoice::Local => {
+                crate::dictation::Transcriber::WhisperType(self.voice.dictation_backend)
+            }
+            VoiceChoice::Hosted => {
+                match self.voice.route(rustidian::voice_account::Stores::app()) {
+                    Ok(route) => crate::dictation::Transcriber::OpenRouter {
+                        route,
+                        model: self.voice.transcription_model.clone(),
+                    },
+                    Err(error) => {
+                        self.error = Some(error);
+                        return;
+                    }
+                }
+            }
+        };
         let reading = self.view() == View::Read;
         if reading {
             self.set_view(View::Live);
@@ -3692,13 +3722,21 @@ impl NotesApp {
             source: tab.document.text.clone(),
             selection,
         };
-        match crate::dictation::Recording::start() {
+        match crate::dictation::Recording::start(transcriber) {
             Ok(recording) => {
                 self.recording = Some(recording);
                 self.dictation_target = Some(target);
             }
             Err(error) => self.error = Some(error),
         }
+    }
+
+    fn open_voice_setup(&mut self) {
+        self.ask(Dialog::Settings);
+        self.settings_page = settings_ui::Page::ReadAloud;
+        self.dialog_focus = false;
+        self.voice_form.setup = true;
+        self.voice_form.focus_key = true;
     }
 
     fn document_view(&mut self, ui: &mut egui::Ui) {
@@ -6228,6 +6266,15 @@ impl eframe::App for NotesApp {
     /// Runs before every `ui` pass and alone while the window is hidden, so
     /// hand-offs, signals and close requests never wait for a drawn frame.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let setup = ctx.data_mut(|data| {
+            let id = egui::Id::new("voice-setup");
+            let requested = data.get_temp::<bool>(id).unwrap_or(false);
+            data.remove::<bool>(id);
+            requested
+        });
+        if setup {
+            self.open_voice_setup();
+        }
         let dictated =
             self.dictation_result
                 .as_ref()

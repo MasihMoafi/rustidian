@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 pub const DEFAULT_ENDPOINT: &str = "https://openrouter.ai/api/v1/audio/speech";
+pub const DEFAULT_TRANSCRIPTION_MODEL: &str = "nvidia/parakeet-tdt-0.6b-v3";
 pub const DEFAULT_MODEL: &str = "openai/gpt-4o-mini-tts-2025-12-15";
 pub const DEFAULT_VOICE: &str = "coral";
 /// OpenRouter's `pcm` speech: 24 kHz, mono, 16-bit little-endian samples.
@@ -45,6 +46,7 @@ pub enum DictationBackend {
     Codex,
     Whisper,
     Parakeet,
+    OpenRouter,
 }
 
 impl DictationBackend {
@@ -53,6 +55,7 @@ impl DictationBackend {
             Self::Codex => "codex",
             Self::Whisper => "local",
             Self::Parakeet => "parakeet",
+            Self::OpenRouter => "openrouter",
         }
     }
 }
@@ -62,6 +65,7 @@ impl DictationBackend {
 pub struct Settings {
     pub engine: Engine,
     pub dictation_backend: DictationBackend,
+    pub transcription_model: String,
     pub model: String,
     pub voice: String,
     pub speed: Option<f32>,
@@ -75,6 +79,7 @@ impl Default for Settings {
         Self {
             engine: Engine::Local,
             dictation_backend: DictationBackend::Codex,
+            transcription_model: DEFAULT_TRANSCRIPTION_MODEL.into(),
             model: DEFAULT_MODEL.into(),
             voice: DEFAULT_VOICE.into(),
             speed: None,
@@ -82,6 +87,22 @@ impl Default for Settings {
             accounts: Vec::new(),
             selected: None,
         }
+    }
+}
+
+/// The configured choice wins when available; a missing local engine may use the key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoiceChoice {
+    Local,
+    Hosted,
+    Setup,
+}
+
+pub fn choose_engine(preferred: Engine, local_available: bool, key_available: bool) -> VoiceChoice {
+    match (preferred, local_available, key_available) {
+        (Engine::Local, true, _) => VoiceChoice::Local,
+        (_, _, true) => VoiceChoice::Hosted,
+        _ => VoiceChoice::Setup,
     }
 }
 
@@ -462,6 +483,134 @@ pub fn speak(route: &Route, text: &str, speed: f32) -> Result<Vec<u8>, String> {
         return Err("OpenRouter sent no audio.".into());
     }
     Ok(wav(&pcm, PCM_RATE))
+}
+
+// Only OpenRouter itself, or a strictly parsed loopback origin, may receive this key.
+fn transcription_origin(endpoint: &str) -> Result<String, String> {
+    if endpoint == DEFAULT_ENDPOINT {
+        return Ok("https://openrouter.ai".into());
+    }
+    let authority = endpoint
+        .strip_prefix("http://")
+        .and_then(|rest| rest.split('/').next())
+        .ok_or("This account is not configured for OpenRouter dictation.")?;
+    let (host, port) = authority.split_once(':').unwrap_or((authority, ""));
+    if !matches!(host, "localhost" | "127.0.0.1")
+        || (!port.is_empty() && port.parse::<u16>().ok().filter(|port| *port != 0).is_none())
+    {
+        return Err("This account is not configured for OpenRouter dictation.".into());
+    }
+    Ok(format!("http://{authority}"))
+}
+
+fn transcription_agent(endpoint: &str) -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .proxy(if endpoint.starts_with("http://") {
+                None
+            } else {
+                ureq::Proxy::try_from_env()
+            })
+            .timeout_global(Some(std::time::Duration::from_secs(60)))
+            .max_redirects(0)
+            .build(),
+    )
+}
+
+/// Available transcription model IDs, fetched without credentials.
+pub fn transcription_models(endpoint: &str) -> Result<Vec<String>, String> {
+    let origin = transcription_origin(endpoint)?;
+    let url = format!("{origin}/api/v1/models?output_modalities=transcription");
+    let mut response = transcription_agent(&url)
+        .get(&url)
+        .call()
+        .map_err(|_| "Could not load OpenRouter transcription models. Check the connection.")?;
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(4 << 20)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read the transcription models.")?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "OpenRouter returned an invalid model list.")?;
+    let entries = value
+        .get("data")
+        .and_then(|data| data.as_array())
+        .ok_or("OpenRouter returned an invalid model list.")?;
+    let mut models: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| entry.get("id")?.as_str())
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .collect();
+    models.sort();
+    models.dedup();
+    if models.is_empty() {
+        return Err("OpenRouter returned no transcription models.".into());
+    }
+    Ok(models)
+}
+
+/// Transcribe WAV bytes using the selected account, without exposing its key in errors.
+pub fn transcribe(route: &Route, model: &str, wav: &[u8]) -> Result<String, String> {
+    use base64::Engine as _;
+    let origin = transcription_origin(&route.endpoint)?;
+    let mut endpoint = format!("{origin}/api/v1/audio/transcriptions");
+    // Test overrides may use only the same loopback origin for which the key was saved.
+    if origin.starts_with("http://")
+        && let Ok(overridden) = std::env::var("RUSTIDIAN_TRANSCRIPTION_ENDPOINT")
+        && overridden
+            .strip_prefix(&origin)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+    {
+        endpoint = overridden;
+    }
+    let body = serde_json::json!({
+        "model": model,
+        "language": "en",
+        "input_audio": {
+            "data": base64::engine::general_purpose::STANDARD.encode(wav),
+            "format": "wav"
+        }
+    })
+    .to_string();
+    let mut response = match transcription_agent(&endpoint)
+        .post(&endpoint)
+        .header("Authorization", &format!("Bearer {}", route.key))
+        .header("Content-Type", "application/json")
+        .send(body.as_str())
+    {
+        Ok(response) => response,
+        Err(ureq::Error::StatusCode(401 | 403)) => {
+            return Err("OpenRouter refused this key. Replace it in Settings → Read aloud.".into());
+        }
+        Err(ureq::Error::StatusCode(402)) => {
+            return Err("OpenRouter: this key has no credit left.".into());
+        }
+        Err(ureq::Error::StatusCode(code)) => {
+            return Err(format!(
+                "OpenRouter could not transcribe this (HTTP {code})."
+            ));
+        }
+        Err(_) => return Err("OpenRouter cannot be reached. Check the connection.".into()),
+    };
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(1 << 20)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "OpenRouter's transcript was cut off.")?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| "OpenRouter returned an invalid transcript.")?;
+    value
+        .get("text")
+        .and_then(|text| text.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "No speech was transcribed.".into())
 }
 
 /// Wrap mono 16-bit little-endian samples in a WAV header.

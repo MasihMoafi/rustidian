@@ -314,14 +314,22 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
         .map(|base| voice_account::Settings::load(&base))
         .unwrap_or_default();
     set_speed(settings.speed);
-    let hosted = settings.engine == voice_account::Engine::OpenRouter;
-    if let Some(reason) = unavailable().filter(|_| !hosted) {
+    let choice = voice_account::choose_engine(
+        settings.engine,
+        unavailable().is_none(),
+        settings.selected_account().is_some(),
+    );
+    if choice == voice_account::VoiceChoice::Setup {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         status.active = false;
-        status.error = Some(reason);
+        status.preparing = false;
+        status.error = None;
+        drop(status);
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("voice-setup"), true));
         ctx.request_repaint();
         return;
     }
+    let hosted = choice == voice_account::VoiceChoice::Hosted;
     {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         let device = status.device.take();

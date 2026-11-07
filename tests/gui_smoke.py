@@ -92,15 +92,45 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
+        transcription_server = None
+        transcription_requests = []
         if args.section in ("dictation", "all"):
+            import http.server
+
+            class AudioProvider(http.server.BaseHTTPRequestHandler):
+                def reply(self, content_type, body):
+                    self.send_response(200)
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def do_GET(self):
+                    transcription_requests.append((self.path, self.headers.get("Authorization"), None))
+                    self.reply("application/json", json.dumps({"data": [{"id": "test/model"}]}).encode())
+
+                def do_POST(self):
+                    body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    transcription_requests.append((self.path, self.headers.get("Authorization"), body))
+                    if self.path == "/api/v1/audio/speech":
+                        self.reply("audio/pcm", b"\0\0" * 2400)
+                    else:
+                        self.reply("application/json", b'{"text":"hosted words"}')
+
+                def log_message(self, *_):
+                    pass
+
+            transcription_server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), AudioProvider)
+            audio_origin = f"http://127.0.0.1:{transcription_server.server_port}"
+            environment["RUSTIDIAN_TRANSCRIPTION_ENDPOINT"] = audio_origin + "/test-transcriptions"
             recorder = base / "fake-recorder"
-            recorder.write_text("#!/usr/bin/env python3\nimport signal, sys, time\nsignal.signal(signal.SIGINT, lambda *args: sys.exit(0))\nopen(sys.argv[1], 'wb').write(b'fake wav')\nwhile True: time.sleep(.1)\n")
+            recorder.write_text("#!/usr/bin/env python3\nimport signal, sys, time, wave\nsignal.signal(signal.SIGINT, lambda *args: sys.exit(0))\nwith wave.open(sys.argv[1], 'wb') as wav:\n    wav.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))\n    wav.writeframes(b'\\0\\0' * 160)\nwhile True: time.sleep(.1)\n")
             transcriber = base / "fake-transcriber"
             transcriber.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps({'text': ' dictated text'}))\n")
             for stub in (recorder, transcriber):
                 stub.chmod(0o755)
             environment.update(RUSTIDIAN_DICTATION_RECORDER=str(recorder), RUSTIDIAN_DICTATION_COMMAND=str(transcriber))
-        if args.section in ("read-aloud", "voice-account", "all"):
+        if args.section in ("read-aloud", "voice-account", "dictation", "all"):
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
             voice = base / "fake-kokoro"
@@ -7552,6 +7582,127 @@ def main():
                 assert note.read_bytes() == b"First line.\n dictated text", note.read_bytes()
                 results.append("The Reading view microphone switched to Live preview and dictated at the end")
 
+                # Remove the two local engines in this disposable environment. The same
+                # key must serve both fallbacks, but a restored local choice must win.
+                import base64
+                import io
+                import threading
+                import wave
+
+                key("ctrl+z")
+                key("ctrl+s")
+                assert note.read_bytes() == b"First line.\n"
+                transcriber = base / "fake-transcriber"
+                voice_model = base / "kokoro.onnx"
+                disabled_transcriber = base / "fake-transcriber.disabled"
+                disabled_voice_model = base / "kokoro.onnx.disabled"
+                transcriber.rename(disabled_transcriber)
+                voice_model.rename(disabled_voice_model)
+                server_thread = threading.Thread(target=transcription_server.serve_forever, daemon=True)
+                server_thread.start()
+                canary = "sk-test-dictation-canary"
+
+                def wait_for(predicate, message):
+                    deadline = time.monotonic() + 10
+                    while not predicate():
+                        assert time.monotonic() < deadline, message
+                        time.sleep(.1)
+
+                def record_and_save(expected):
+                    click_control("editor")
+                    key("ctrl+End")
+                    click_control("dictation-toolbar")
+                    time.sleep(.5)
+                    click_control("dictation-toolbar")
+                    def saved():
+                        key("ctrl+s")
+                        return note.read_bytes() == expected
+                    wait_for(saved, "Dictated text was not inserted and saved")
+
+                try:
+                    click_control("read-aloud-toolbar")
+                    control_bounds("settings-voice-setup")
+                    control_bounds("settings-voice-key-focused")
+                    capture("native-voice-setup-speaker.png")
+                    key("Escape")
+
+                    click_control("dictation-toolbar")
+                    control_bounds("settings-voice-setup")
+                    control_bounds("settings-voice-key-focused")
+                    capture("native-voice-setup-microphone.png")
+                    # Typing without a click proves the key field has keyboard focus.
+                    type_text(canary)
+                    click_control("settings-voice-endpoint")
+                    key("ctrl+a")
+                    type_text(audio_origin + "/api/v1/audio/speech")
+                    click_control("settings-voice-label")
+                    type_text("Test")
+                    click_control("settings-voice-save")
+                    click_control("settings-voice-session")
+                    control_bounds("settings-voice-disconnect:Test")
+                    key("Escape")
+                    results.append("Missing Kokoro and WhisperType opened the key field with the setup message; the key was kept for this session")
+
+                    played = base / "read-aloud.played"
+                    played_bytes = played.stat().st_size if played.exists() else 0
+                    click_control("read-aloud-toolbar")
+                    wait_for(lambda: any(path == "/api/v1/audio/speech" for path, _, _ in transcription_requests), "Missing Kokoro did not use hosted voice")
+                    speech = next(request for request in transcription_requests if request[0] == "/api/v1/audio/speech")
+                    assert speech[1] == "Bearer " + canary
+                    wait_for(lambda: played.exists() and played.stat().st_size > played_bytes, "Hosted voice was not played")
+                    capture("native-voice-fallback-playing.png")
+
+                    record_and_save(b"First line.\nhosted words")
+                    posted = [request for request in transcription_requests if request[0] == "/test-transcriptions"]
+                    assert len(posted) == 1 and posted[0][1] == "Bearer " + canary
+                    body = posted[0][2]
+                    assert body["model"] == "nvidia/parakeet-tdt-0.6b-v3" and body["language"] == "en"
+                    assert body["input_audio"]["format"] == "wav"
+                    with wave.open(io.BytesIO(base64.b64decode(body["input_audio"]["data"])), "rb") as recording:
+                        assert (recording.getnchannels(), recording.getsampwidth(), recording.getframerate()) == (1, 2, 16000)
+                        assert recording.readframes(160) == b"\0\0" * 160
+                    capture("native-dictation-hosted.png")
+                    key("ctrl+z")
+                    key("ctrl+s")
+                    assert note.read_bytes() == b"First line.\n"
+                    results.append("A missing local voice and transcriber used the selected account; hosted dictation sent the recorded WAV, inserted the response, and undid as one edit")
+
+                    disabled_transcriber.rename(transcriber)
+                    before = len(transcription_requests)
+                    record_and_save(b"First line.\n dictated text")
+                    assert len(transcription_requests) == before, "A local preference sent a hosted request"
+                    key("ctrl+z")
+                    key("ctrl+s")
+                    assert note.read_bytes() == b"First line.\n"
+
+                    command("Open settings")
+                    click_control("settings-page:Read aloud")
+                    click_control("settings-dictation-backend")
+                    click_control("settings-dictation-backend:OpenRouter")
+                    click_control("settings-dictation-model")
+                    control_bounds("settings-dictation-model:test/model")
+                    click_control("settings-dictation-model:test/model")
+                    model_requests = [request for request in transcription_requests if request[0] == "/api/v1/models?output_modalities=transcription"]
+                    assert len(model_requests) == 1 and model_requests[0][1] is None
+                    capture("native-dictation-model.png")
+                    key("Escape")
+                    record_and_save(b"First line.\nhosted words")
+                    posted = [request for request in transcription_requests if request[0] == "/test-transcriptions"]
+                    assert len(posted) == 2 and posted[-1][2]["model"] == "test/model"
+                    results.append("With both routes available, the local choice stayed local and an explicit OpenRouter choice used the model picked from its catalog")
+
+                    leaks = [str(path) for path in base.rglob("*") if path.is_file() and canary.encode() in path.read_bytes()]
+                    leaks += [str(path) for path in reports.rglob("*") if path.is_file() and canary.encode() in path.read_bytes()]
+                    assert not leaks, f"The test key leaked into {leaks}"
+                finally:
+                    if disabled_transcriber.exists():
+                        disabled_transcriber.rename(transcriber)
+                    if disabled_voice_model.exists():
+                        disabled_voice_model.rename(voice_model)
+                    transcription_server.shutdown()
+                    server_thread.join(timeout=5)
+                    assert not server_thread.is_alive(), "The fake audio server did not stop"
+
             def explorer_order_checks():
                 # Masih (6 Nov): arrange files by dragging them between rows, and see each
                 # folder's index note first, opened by a click on the folder's name.
@@ -12399,6 +12550,8 @@ def main():
                 window_manager.wait(timeout=5)
             if unicode_keyboard is not None:
                 unicode_keyboard.close()
+            if transcription_server is not None:
+                transcription_server.server_close()
             server.terminate()
             server.wait(timeout=5)
             xvfb_log.close()

@@ -1,7 +1,7 @@
 //! Settings → Read aloud: choose the local voice or the user's own OpenRouter account,
 //! and add, select, replace or disconnect OpenRouter keys (`rustidian::voice_account`).
 use super::*;
-use rustidian::voice_account::{Engine, SaveError, Settings, Stores};
+use rustidian::voice_account::{DictationBackend, Engine, SaveError, Settings, Stores};
 
 /// What the Read aloud page is typing or saying.
 #[derive(Default)]
@@ -14,6 +14,12 @@ pub(crate) struct VoiceForm {
     pub message: Option<String>,
     /// The keyring failed: offer to keep the typed key for this session only.
     pub offer_session: bool,
+    pub setup: bool,
+    pub focus_key: bool,
+    models: Vec<String>,
+    models_endpoint: Option<String>,
+    model_error: Option<String>,
+    model_request: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
 }
 
 impl NotesApp {
@@ -22,16 +28,16 @@ impl NotesApp {
         settings_ui::voice_row(
             ui,
             "Dictation",
-            "Choose the WhisperType transcription backend.",
+            "Choose WhisperType or an OpenRouter transcription model.",
             |ui| {
-                use rustidian::voice_account::DictationBackend;
                 let mut backend = self.voice.dictation_backend;
                 let label = |backend| match backend {
                     DictationBackend::Codex => "Codex / ChatGPT",
                     DictationBackend::Whisper => "Local Whisper",
                     DictationBackend::Parakeet => "Local Parakeet",
+                    DictationBackend::OpenRouter => "OpenRouter",
                 };
-                egui::ComboBox::from_id_salt("settings-dictation-backend")
+                let response = egui::ComboBox::from_id_salt("settings-dictation-backend")
                     .icon(theme::combo_chevron)
                     .selected_text(label(backend))
                     .show_ui(ui, |ui| {
@@ -40,14 +46,31 @@ impl NotesApp {
                             DictationBackend::Codex,
                             DictationBackend::Whisper,
                             DictationBackend::Parakeet,
+                            DictationBackend::OpenRouter,
                         ] {
-                            ui.selectable_value(&mut backend, value, label(value));
+                            let option = ui.selectable_value(&mut backend, value, label(value));
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("settings-dictation-backend:{}", label(value)),
+                                option.rect,
+                            );
                         }
                     });
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    "settings-dictation-backend",
+                    response.response.rect,
+                );
                 self.voice.dictation_backend = backend;
                 false
             },
         );
+        let hosted_dictation = self.voice.dictation_backend == DictationBackend::OpenRouter
+            || (!crate::dictation::available() && self.voice.selected_account().is_some());
+        if hosted_dictation || self.voice_form.setup {
+            ui.separator();
+            self.transcription_model_picker(ui);
+        }
         ui.separator();
         settings_ui::voice_row(
             ui,
@@ -105,6 +128,12 @@ impl NotesApp {
                 "settings-voice-name",
                 |v| &mut v.voice,
             );
+        }
+        if self.voice.engine == Engine::OpenRouter
+            || hosted_dictation
+            || self.voice.selected_account().is_some()
+            || self.voice_form.setup
+        {
             ui.separator();
             self.voice_text(
                 ui,
@@ -118,6 +147,86 @@ impl NotesApp {
         }
         if self.voice != before {
             self.save_voice();
+        }
+    }
+
+    fn transcription_model_picker(&mut self, ui: &mut egui::Ui) {
+        if self.voice_form.models_endpoint.as_deref() != Some(self.voice.endpoint.as_str()) {
+            self.voice_form.models.clear();
+            self.voice_form.model_error = None;
+            self.voice_form.model_request = None;
+            self.voice_form.models_endpoint = Some(self.voice.endpoint.clone());
+        }
+        if let Some(request) = &self.voice_form.model_request {
+            match request.try_recv() {
+                Ok(Ok(models)) => {
+                    self.voice_form.models = models;
+                    self.voice_form.model_error = None;
+                    self.voice_form.model_request = None;
+                }
+                Ok(Err(error)) => {
+                    self.voice_form.model_error = Some(error);
+                    self.voice_form.model_request = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.voice_form.model_error =
+                        Some("The model list could not be loaded.".into());
+                    self.voice_form.model_request = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        let description = self
+            .voice_form
+            .model_error
+            .as_deref()
+            .unwrap_or("Choose from OpenRouter's transcription models.");
+        let mut fetch = false;
+        settings_ui::voice_row(ui, "Transcription model", description, |ui| {
+            let response = egui::ComboBox::from_id_salt("settings-dictation-model")
+                .icon(theme::combo_chevron)
+                .selected_text(&self.voice.transcription_model)
+                .show_ui(ui, |ui| {
+                    theme::menu_style(ui);
+                    if self.voice_form.models.is_empty() {
+                        ui.label(if self.voice_form.model_request.is_some() {
+                            "Loading models…"
+                        } else {
+                            "Open to load models"
+                        });
+                    }
+                    for model in &self.voice_form.models {
+                        let option = ui.selectable_value(
+                            &mut self.voice.transcription_model,
+                            model.clone(),
+                            model,
+                        );
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            format!("settings-dictation-model:{model}"),
+                            option.rect,
+                        );
+                    }
+                });
+            crate::ui_probe::record(ui.ctx(), "settings-dictation-model", response.response.rect);
+            if response.response.clicked()
+                && self.voice_form.models.is_empty()
+                && self.voice_form.model_request.is_none()
+            {
+                fetch = true;
+            }
+            false
+        });
+        if fetch {
+            let endpoint = self.voice.endpoint.clone();
+            let ctx = ui.ctx().clone();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            self.voice_form.model_error = None;
+            self.voice_form.model_request = Some(receiver);
+            std::thread::spawn(move || {
+                let _ = sender.send(rustidian::voice_account::transcription_models(&endpoint));
+                ctx.request_repaint();
+            });
         }
     }
 
@@ -233,7 +342,11 @@ impl NotesApp {
         settings_ui::voice_row(
             ui,
             "API key",
-            "Kept in the system keyring, never in a file. Create one at openrouter.ai/keys.",
+            if self.voice_form.setup {
+                "Add your OpenRouter key, or install the local voice."
+            } else {
+                "Kept in the system keyring, never in a file. Create one at openrouter.ai/keys."
+            },
             |ui| {
                 let response = ui.add(
                     theme::text_field(
@@ -245,6 +358,25 @@ impl NotesApp {
                     .desired_width(ui.available_width()),
                 );
                 crate::ui_probe::record(ui.ctx(), "settings-voice-key", response.rect);
+                if self.voice_form.setup {
+                    crate::ui_probe::record(ui.ctx(), "settings-voice-setup", response.rect);
+                }
+                if self.voice_form.focus_key {
+                    response.scroll_to_me(Some(egui::Align::Center));
+                    let settled = ui.memory(|memory| {
+                        memory.has_focus(response.id) && memory.had_focus_last_frame(response.id)
+                    });
+                    if !response.has_focus() {
+                        response.request_focus();
+                    }
+                    self.voice_form.focus_key = !settled || ui.is_sizing_pass();
+                    if self.voice_form.focus_key {
+                        ui.ctx().request_repaint();
+                    }
+                }
+                if response.has_focus() {
+                    crate::ui_probe::record(ui.ctx(), "settings-voice-key-focused", response.rect);
+                }
                 false
             },
         );

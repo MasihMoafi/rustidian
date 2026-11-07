@@ -1,5 +1,7 @@
-//! Microphone recording and WhisperType transcription, kept off the UI thread.
+//! Microphone recording and transcription, kept off the UI thread.
 use eframe::egui;
+use rustidian::voice_account::{self, DictationBackend, Route};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use tempfile::NamedTempFile;
@@ -7,6 +9,46 @@ use tempfile::NamedTempFile;
 pub struct Recording {
     child: Child,
     wav: NamedTempFile,
+    transcriber: Option<Transcriber>,
+}
+
+pub enum Transcriber {
+    WhisperType(DictationBackend),
+    OpenRouter { route: Route, model: String },
+}
+
+fn executable(program: &std::ffi::OsStr) -> Option<PathBuf> {
+    let name = Path::new(program);
+    let candidates: Vec<PathBuf> = if name.components().count() > 1 || name.is_absolute() {
+        vec![name.to_owned()]
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join(name))
+            .collect()
+    };
+    candidates.into_iter().find(|path| {
+        let Ok(metadata) = path.metadata() else {
+            return false;
+        };
+        if !metadata.is_file() {
+            return false;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            metadata.permissions().mode() & 0o111 != 0
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    })
+}
+
+pub fn available() -> bool {
+    let program =
+        std::env::var_os("RUSTIDIAN_DICTATION_COMMAND").unwrap_or_else(|| "whispertype".into());
+    executable(&program).is_some()
 }
 
 impl Drop for Recording {
@@ -18,7 +60,7 @@ impl Drop for Recording {
 }
 
 impl Recording {
-    pub fn start() -> Result<Self, String> {
+    pub fn start(transcriber: Transcriber) -> Result<Self, String> {
         let wav = tempfile::Builder::new()
             .suffix(".wav")
             .tempfile()
@@ -47,17 +89,17 @@ impl Recording {
                 .stderr(Stdio::null())
                 .spawn()
             {
-                return Ok(Self { child, wav });
+                return Ok(Self {
+                    child,
+                    wav,
+                    transcriber: Some(transcriber),
+                });
             }
         }
         Err("Could not start a microphone recorder.".into())
     }
 
-    pub fn finish(
-        mut self,
-        backend: &'static str,
-        ctx: egui::Context,
-    ) -> Receiver<Result<String, String>> {
+    pub fn finish(mut self, ctx: egui::Context) -> Receiver<Result<String, String>> {
         let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let result = (|| {
@@ -84,6 +126,18 @@ impl Recording {
                 self.child
                     .wait()
                     .map_err(|_| "Microphone recording failed.")?;
+                let transcriber = self
+                    .transcriber
+                    .take()
+                    .ok_or("No transcription engine selected.")?;
+                let backend = match transcriber {
+                    Transcriber::OpenRouter { route, model } => {
+                        let wav = std::fs::read(self.wav.path())
+                            .map_err(|_| "Could not read the recording.")?;
+                        return voice_account::transcribe(&route, &model, &wav);
+                    }
+                    Transcriber::WhisperType(backend) => backend.command(),
+                };
                 if backend != "codex" && std::env::var_os("RUSTIDIAN_DICTATION_COMMAND").is_none() {
                     return transcribe_local(self.wav.path(), backend);
                 }
@@ -112,9 +166,7 @@ impl Recording {
 // WhisperType's `transcribe FILE` currently routes non-Codex backends to
 // OpenRouter, so use the same local engines and models as its recorder.
 fn transcribe_local(wav: &std::path::Path, backend: &str) -> Result<String, String> {
-    let executable = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .map(|dir| dir.join("whispertype"))
-        .find(|path| path.is_file())
+    let executable = executable(std::ffi::OsStr::new("whispertype"))
         .and_then(|path| path.canonicalize().ok())
         .ok_or("WhisperType was not found.")?;
     let root = executable.parent().ok_or("WhisperType was not found.")?;
