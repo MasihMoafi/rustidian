@@ -143,7 +143,7 @@ fn a_locked_keyring_offers_session_only_and_the_key_stays_out_of_files() {
 
     let file = Settings::file(state.path());
     let written = std::fs::read_to_string(&file).unwrap();
-    assert!(!written.contains(CANARY) && written.contains("0def"));
+    assert!(!written.contains(CANARY) && written.contains("cdef"));
     assert!(!format!("{voice:?}{:?}", voice.route(locked).unwrap()).contains(CANARY));
     #[cfg(unix)]
     {

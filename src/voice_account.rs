@@ -193,14 +193,16 @@ impl Settings {
         crate::paths::app_directory(state_base).join("voice.json")
     }
 
-    /// Read the settings; session-only accounts of an earlier run are dropped, since
-    /// their keys left with it.
+    /// Read the settings; a session-only account whose key is no longer in this run's
+    /// memory (an earlier run's) is dropped.
     pub fn load(state_base: &Path) -> Self {
         let mut settings: Self = std::fs::read(Self::file(state_base))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        settings.accounts.retain(|account| !account.session_only);
+        settings.accounts.retain(|account| {
+            !account.session_only || SESSION.get(&account.id).ok().flatten().is_some()
+        });
         if settings
             .selected
             .as_ref()
