@@ -374,39 +374,47 @@ impl Manager {
                                     .on_hover_text(destination.display().to_string());
                                 }
                                 ui.add_space(crate::theme::space::S);
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let confirm = crate::theme::button(
-                                        ui,
-                                        if creating { "Create" } else { "Open" },
-                                        crate::theme::Kind::Primary,
-                                    );
-                                    ui_probe::record(ctx, "vault-confirm", confirm.rect);
-                                    let enter = ui.is_enabled()
-                                        && ui.input_mut(|input| {
-                                            input.consume_key(
-                                                egui::Modifiers::NONE,
-                                                egui::Key::Enter,
-                                            )
-                                        });
-                                    if confirm.clicked() || enter {
-                                        let result = if creating {
-                                            vaults::create(Path::new(&self.folder), &self.name)
-                                        } else {
-                                            vaults::folder(Path::new(&self.folder))
-                                        };
-                                        match result {
-                                            Ok(root) => selected = Some(root),
-                                            Err(error) => self.error = Some(error),
+                                // One control-high row: the buttons sit right under the path.
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(ui.available_width(), crate::theme::space::CONTROL),
+                                    Layout::right_to_left(Align::Center),
+                                    |ui| {
+                                        let confirm = crate::theme::button(
+                                            ui,
+                                            if creating { "Create" } else { "Open" },
+                                            crate::theme::Kind::Primary,
+                                        );
+                                        ui_probe::record(ctx, "vault-confirm", confirm.rect);
+                                        let enter = ui.is_enabled()
+                                            && ui.input_mut(|input| {
+                                                input.consume_key(
+                                                    egui::Modifiers::NONE,
+                                                    egui::Key::Enter,
+                                                )
+                                            });
+                                        if confirm.clicked() || enter {
+                                            let result = if creating {
+                                                vaults::create(Path::new(&self.folder), &self.name)
+                                            } else {
+                                                vaults::folder(Path::new(&self.folder))
+                                            };
+                                            match result {
+                                                Ok(root) => selected = Some(root),
+                                                Err(error) => self.error = Some(error),
+                                            }
                                         }
-                                    }
-                                    let back =
-                                        crate::theme::button(ui, "Back", crate::theme::Kind::Ghost);
-                                    ui_probe::record(ctx, "vault-back", back.rect);
-                                    if back.clicked() {
-                                        self.page = Page::Home;
-                                        self.error = None;
-                                    }
-                                });
+                                        let back = crate::theme::button(
+                                            ui,
+                                            "Back",
+                                            crate::theme::Kind::Ghost,
+                                        );
+                                        ui_probe::record(ctx, "vault-back", back.rect);
+                                        if back.clicked() {
+                                            self.page = Page::Home;
+                                            self.error = None;
+                                        }
+                                    },
+                                );
                             }
                         }
                     });

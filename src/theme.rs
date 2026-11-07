@@ -333,8 +333,6 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
         Color32::from_rgb(209, 215, 211)
     };
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
-    // shadcn "outline": a plain button reads as a button, not as loose text.
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
     visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     visuals.widgets.inactive.bg_fill = if dark {
         Color32::from_rgb(27, 32, 35)
