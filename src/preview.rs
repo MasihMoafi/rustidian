@@ -936,7 +936,6 @@ fn render(
             if let Some(text) = read {
                 crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
             }
-            crate::read_aloud::player_bar(ui.ctx(), ui.clip_rect());
         }
         if select_all {
             ui.painter()

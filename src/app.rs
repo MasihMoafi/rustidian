@@ -1795,6 +1795,28 @@ impl NotesApp {
         }
     }
 
+    fn read_aloud(&self, ctx: &egui::Context, selection: bool) {
+        let Some(tab) = self.tabs.get(self.active).filter(|tab| {
+            !tab.document.is_blank() && !tab.document.is_image() && tab.view != View::Graph
+        }) else {
+            return;
+        };
+        let full = &tab.document.text;
+        let selected = if selection {
+            crate::read_aloud::selection(ctx).or_else(|| {
+                (tab.view != View::Read)
+                    .then(|| self.editor.selected_text(tab))
+                    .flatten()
+            })
+        } else {
+            None
+        };
+        let text = selected
+            .map(|text| rustidian::speech_text::snap(full, &text))
+            .unwrap_or_else(|| full.clone());
+        crate::read_aloud::speak(ctx, rustidian::speech_text::chunks(&text));
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         if self.pending.is_some() {
             return;
@@ -1809,6 +1831,11 @@ impl NotesApp {
             return;
         }
         if self.dialog.is_none() {
+            if ctx.input_mut(|input| {
+                input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::R)
+            }) {
+                self.read_aloud(ctx, true);
+            }
             if ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::A)
             }) {
@@ -3383,11 +3410,11 @@ impl NotesApp {
                                 )
                                 .replace('/', " / ");
                                 let available = ui.available_width();
-                                // Icon buttons on the right: two, or four for images.
+                                // Icon buttons on the right: three, or four for images.
                                 let icons = if self.tabs[self.active].document.is_image() {
                                     4.0
                                 } else {
-                                    2.0
+                                    3.0
                                 };
                                 let actions_width = icons * theme::space::CONTROL
                                     + (icons - 1.0) * theme::space::S
@@ -3464,6 +3491,26 @@ impl NotesApp {
                                         }
                                     });
                                     return;
+                                }
+                                let (speaker_rect, speaker) = ui.allocate_exact_size(
+                                    egui::vec2(theme::space::CONTROL, theme::space::CONTROL),
+                                    egui::Sense::click(),
+                                );
+                                crate::read_aloud::paint_speaker(
+                                    ui.painter(),
+                                    speaker_rect.shrink(7.0),
+                                    ui.visuals().text_color(),
+                                );
+                                crate::ui_probe::record(
+                                    ui.ctx(),
+                                    "read-aloud-toolbar",
+                                    speaker_rect,
+                                );
+                                if speaker
+                                    .on_hover_text("Read selection or note aloud · Ctrl+Shift+R")
+                                    .clicked()
+                                {
+                                    self.read_aloud(ui.ctx(), true);
                                 }
                                 let reading = self.view() == View::Read;
                                 if icon_button(
@@ -3719,6 +3766,7 @@ impl NotesApp {
             }
         });
         crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
+        crate::read_aloud::player_bar(ui.ctx(), scroll.inner_rect);
         self.page_pan.viewport(&scroll);
         crate::ui_probe::metric(
             ui.ctx(),
@@ -5636,6 +5684,9 @@ impl NotesApp {
             return;
         }
         match command {
+            "Read aloud: read selection" => self.read_aloud(ctx, true),
+            "Read aloud: read note" => self.read_aloud(ctx, false),
+            "Read aloud: stop" => crate::read_aloud::stop(ctx),
             rustidian::commands::OPEN_AGENT => self.open_agent(),
             rustidian::commands::OPEN_GRAPH => self.open_global_graph(),
             rustidian::commands::OPEN_LOCAL_GRAPH if self.local_graph_available() => {

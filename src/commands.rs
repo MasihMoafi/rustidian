@@ -48,6 +48,21 @@ impl AsRef<str> for Command {
 
 pub const ALL: &[Command] = &[
     Command {
+        name: "Read aloud: read selection",
+        shortcut: "Ctrl+Shift+R",
+        scope: Scope::Document,
+    },
+    Command {
+        name: "Read aloud: read note",
+        shortcut: "",
+        scope: Scope::Document,
+    },
+    Command {
+        name: "Read aloud: stop",
+        shortcut: "",
+        scope: Scope::Document,
+    },
+    Command {
         name: OPEN_FILE,
         shortcut: OPEN_FILE_SHORTCUT,
         scope: Scope::Global,

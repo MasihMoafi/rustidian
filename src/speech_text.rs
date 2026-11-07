@@ -101,16 +101,115 @@ pub fn sentence_ranges(text: &str) -> Vec<Range<usize>> {
 
 /// Text the voice can say: no web addresses, normalized spacing.
 fn speakable(text: &str) -> String {
-    let lines: Vec<String> = text
-        .lines()
-        .map(|line| {
+    let mut lines = Vec::new();
+    for raw in text.lines() {
+        let mut line = raw.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            continue;
+        }
+        if line.contains('-') && line.chars().all(|c| matches!(c, '|' | '-' | ':' | ' ')) {
+            continue;
+        }
+        loop {
+            let before = line;
+            line = line.trim_start_matches('>').trim_start();
+            line = line.trim_start_matches('#').trim_start();
+            for marker in ["- ", "* ", "+ "] {
+                if let Some(rest) = line.strip_prefix(marker) {
+                    line = rest.trim_start();
+                }
+            }
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            if digits > 0
+                && let Some(rest) = line[digits..].strip_prefix(". ")
+            {
+                line = rest.trim_start();
+            }
+            for task in ["[ ] ", "[x] ", "[X] "] {
+                if let Some(rest) = line.strip_prefix(task) {
+                    line = rest;
+                }
+            }
+            if line == before {
+                break;
+            }
+        }
+        let line = inline_speakable(line);
+        lines.push(
             line.split(' ')
                 .filter(|word| !word.starts_with("http://") && !word.starts_with("https://"))
                 .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect();
+                .join(" "),
+        );
+    }
     normalize(&lines.join("\n"))
+}
+
+fn inline_speakable(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '<'
+            && let Some(end) = chars[i..].iter().position(|&x| x == '>')
+        {
+            let first = chars.get(i + 1).copied().unwrap_or(' ');
+            if first == '/' || first.is_ascii_alphabetic() {
+                i += end + 1;
+                continue;
+            }
+        }
+        if c == '['
+            && chars.get(i + 1) == Some(&'[')
+            && let Some(end) = (i + 2..chars.len().saturating_sub(1))
+                .find(|&j| chars[j] == ']' && chars[j + 1] == ']')
+        {
+            let inner: String = chars[i + 2..end].iter().collect();
+            out.push_str(&inline_speakable(
+                inner.rsplit('|').next().unwrap_or(&inner),
+            ));
+            i = end + 2;
+            continue;
+        }
+        if c == '[' || (c == '!' && chars.get(i + 1) == Some(&'[')) {
+            let open = if c == '!' { i + 1 } else { i };
+            if let Some(close) = (open + 1..chars.len()).find(|&j| chars[j] == ']')
+                && chars.get(close + 1) == Some(&'(')
+                && let Some(end) = (close + 2..chars.len()).find(|&j| chars[j] == ')')
+            {
+                let label: String = chars[open + 1..close].iter().collect();
+                out.push_str(&inline_speakable(&label));
+                i = end + 1;
+                continue;
+            }
+        }
+        if matches!(c, '*' | '_' | '~' | '=' | '`') {
+            let mut j = i;
+            while j < chars.len() && chars[j] == c {
+                j += 1;
+            }
+            let space_before = i == 0 || chars[i - 1].is_whitespace();
+            let space_after = j == chars.len() || chars[j].is_whitespace();
+            let marker = match c {
+                '*' => !(space_before && space_after),
+                '_' => space_before != space_after,
+                '~' | '=' => j - i >= 2,
+                _ => true,
+            };
+            if marker {
+                i = j;
+                continue;
+            }
+        }
+        if matches!(c, '🟢' | '🔵' | '🟣' | '🟠' | '🟡' | '🔴') {
+            i += 1;
+            continue;
+        }
+        out.push(if c == '|' { ' ' } else { c });
+        i += 1;
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Split one long sentence at a comma, semicolon or space, each piece at most `LONGEST`.
@@ -174,6 +273,46 @@ pub fn snap(full: &str, selected: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markup_is_not_spoken() {
+        assert_eq!(
+            speakable("This is **really** important."),
+            "This is really important."
+        );
+        assert_eq!(
+            speakable("## Heading\n- [ ] a *task* with `code`"),
+            "Heading\na task with code"
+        );
+        assert_eq!(
+            speakable("See [the docs](https://x.y) and ![logo](a.png)."),
+            "See the docs and logo."
+        );
+        assert_eq!(
+            speakable("> quoted ~~old~~ ==marked== [[Note|shown]]"),
+            "quoted old marked shown"
+        );
+        assert_eq!(speakable("| a | b |\n|---|---|\n| 1 | 2 |"), "a b\n1 2");
+        assert_eq!(speakable("```rust\nlet x = 1;\n```"), "let x = 1;");
+        assert_eq!(speakable("1. First\n2. Second"), "First\nSecond");
+        assert_eq!(
+            speakable("- ==🟢Ship it== <mark style=\"background: #ec4899;\">today</mark>"),
+            "Ship it today"
+        );
+    }
+
+    #[test]
+    fn ordinary_text_is_kept() {
+        assert_eq!(
+            speakable("Two * three is six; my_var stays; 1. First point."),
+            "Two * three is six; my_var stays; 1. First point."
+        );
+    }
+
+    #[test]
+    fn formatting_inside_link_labels_is_not_spoken() {
+        assert_eq!(speakable("[**bold**](url) [[note|*shown*]]"), "bold shown");
+    }
 
     fn sentences(text: &str) -> Vec<&str> {
         sentence_ranges(text)

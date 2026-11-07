@@ -1066,6 +1066,20 @@ fn consume_action(ui: &egui::Ui, modifiers: egui::Modifiers, keys: &[Key]) -> bo
 }
 
 impl Editor {
+    pub fn selected_text(&self, tab: &Tab) -> Option<String> {
+        let (_, range) = self.selection.filter(|(owner, range)| {
+            *owner == tab.id() && range.primary.index != range.secondary.index
+        })?;
+        let range = range.as_sorted_char_range();
+        Some(
+            tab.document
+                .text
+                .chars()
+                .skip(range.start.0)
+                .take(range.end.0 - range.start.0)
+                .collect(),
+        )
+    }
     pub fn raw_input(
         &mut self,
         ctx: &egui::Context,
@@ -1230,6 +1244,14 @@ impl Editor {
                 ),
             );
             self.focus = true;
+            done = true;
+        }
+        ui.separator();
+        if item(ui, "Read aloud", "Ctrl+Shift+R", selected.is_some())
+            && let Some(text) = &selected
+        {
+            let text = rustidian::speech_text::snap(&tab.document.text, text);
+            crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
             done = true;
         }
         ui.separator();
