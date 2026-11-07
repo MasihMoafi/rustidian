@@ -1245,6 +1245,24 @@ impl NotesApp {
             self.ctx.open_url(egui::OpenUrl::new_tab(uri));
             return;
         }
+        if self
+            .vault
+            .as_ref()
+            .is_some_and(|vault| vault.resolve_destination(from, target).is_none())
+            && let Some(date) = self.note_aids.linked_daily_date(from, target)
+        {
+            // A day in prod-dash links to a note not written yet: create it from
+            // the daily template for that day, not as an empty note.
+            self.open_created_note(move |config, vault, now| {
+                let at = date
+                    .and_time(now.time())
+                    .and_local_timezone(*now.offset())
+                    .single()
+                    .unwrap_or(now);
+                config.create_daily(vault, at)
+            });
+            return;
+        }
         let new_tab = self.new_tab_gesture
             || self.tabs.get(self.active).is_some_and(|tab| tab.pinned)
             || self.ctx.input(|input| {
@@ -2574,6 +2592,9 @@ impl NotesApp {
                             .small()
                             .weak(),
                         );
+                        // A rule under the count: scrolled rows slide under it instead
+                        // of looking cut into it.
+                        ui.separator();
                         let target = crate::file_tree::pending_reveal(ui.ctx());
                         let mut search_scroll = theme::sidebar_scroll().id_salt("search-results");
                         if let Some(index) = target

@@ -209,9 +209,11 @@ impl NotesApp {
                         ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                         ui.set_min_height(height - 24.0);
                         let input = ui.add(
-                            TextEdit::singleline(&mut self.dialog_input)
-                                .hint_text("Search settings…")
-                                .desired_width(f32::INFINITY),
+                            crate::theme::text_field(
+                                TextEdit::singleline(&mut self.dialog_input)
+                                    .hint_text("Search settings…"),
+                            )
+                            .desired_width(f32::INFINITY),
                         );
                         crate::ui_probe::record(ctx, "dialog-input", input.rect);
                         if self.dialog_focus {
@@ -646,12 +648,15 @@ fn row(
     control: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
     ui.add_space(crate::theme::space::M);
-    let label_width = (ui.available_width() - 180.0).max(100.0);
+    // One label column and one control column, so every control starts on the same
+    // left edge whatever its label's length.
+    let label_width = (ui.available_width() - 280.0).max(160.0);
     let changed = ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(label_width, 0.0),
             Layout::top_down(Align::LEFT),
             |ui| {
+                ui.set_min_width(label_width);
                 ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                 ui.label(title);
                 if !description.is_empty() {
@@ -765,9 +770,7 @@ fn text(
 ) -> bool {
     row(ui, title, description, |ui| {
         let response = ui.add(
-            TextEdit::singleline(value)
-                .id_salt(id)
-                .hint_text(hint)
+            crate::theme::text_field(TextEdit::singleline(value).id_salt(id).hint_text(hint))
                 .desired_width(ui.available_width()),
         );
         crate::ui_probe::record(ui.ctx(), id, response.rect);

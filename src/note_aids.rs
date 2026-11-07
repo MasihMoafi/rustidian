@@ -178,6 +178,40 @@ impl Config {
             .into_owned()
     }
 
+    /// The day a link names when it points at a daily note that does not exist yet:
+    /// its file name matches the daily format and it sits in the daily folder (or
+    /// names no folder). Following it creates that day's note from the template.
+    pub fn linked_daily_date(&self, from: &Path, target: &str) -> Option<NaiveDate> {
+        let target = target.split(['#', '|']).next()?.trim();
+        let target = crate::paths::decode(target).unwrap_or_else(|| target.to_owned());
+        let target = Path::new(&target);
+        let name = target.file_stem()?.to_str()?;
+        let format = match self.daily.format.trim() {
+            "" => "YYYY-MM-DD",
+            format => format,
+        };
+        let pattern = format
+            .replace("YYYY", "%Y")
+            .replace("MM", "%m")
+            .replace("DD", "%d");
+        let date = NaiveDate::parse_from_str(name, &pattern).ok()?;
+        let noon = date.and_hms_opt(12, 0, 0)?.and_utc().fixed_offset();
+        if moment_format(noon, format, "YYYY-MM-DD") != name {
+            return None;
+        }
+        let folder = Path::new(self.daily.folder.trim().trim_matches('/'));
+        let parent = target
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let in_daily_folder = parent.is_none_or(|parent| {
+            parent == folder
+                || from
+                    .parent()
+                    .is_some_and(|base| base.join(parent) == folder)
+        });
+        in_daily_folder.then_some(date)
+    }
+
     pub fn create_daily(&self, vault: &mut Vault, now: DateTime<FixedOffset>) -> Result<PathBuf> {
         let name = moment_format(now, self.daily.format.trim(), "YYYY-MM-DD");
         let path = relative(&self.daily.folder, true)?.join(relative(&name, false)?);

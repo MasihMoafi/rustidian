@@ -425,3 +425,24 @@ fn linked_settings_and_template_folders_cannot_read_outside_the_vault() {
         "Private"
     );
 }
+
+#[test]
+fn a_link_to_a_missing_day_in_the_daily_folder_names_that_day() {
+    let mut config = Config::default();
+    config.daily.folder = "Journal".into();
+    config.daily.format = "YYYY-MM-DD".into();
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 14);
+    let dash = Path::new("prod-dash.md");
+    assert_eq!(config.linked_daily_date(dash, "Journal/2026-11-14.md"), day);
+    assert_eq!(config.linked_daily_date(dash, "2026-11-14"), day);
+    assert_eq!(
+        config.linked_daily_date(Path::new("Journal/2026-11-13.md"), "2026-11-14.md"),
+        day
+    );
+    assert_eq!(config.linked_daily_date(dash, "Other/2026-11-14.md"), None);
+    assert_eq!(config.linked_daily_date(dash, "Journal/Ideas.md"), None);
+    assert_eq!(
+        config.linked_daily_date(dash, "Journal/2026-13-40.md"),
+        None
+    );
+}

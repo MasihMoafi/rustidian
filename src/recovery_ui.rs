@@ -283,11 +283,13 @@ impl Manager {
                                 ui.memory_mut(|memory| memory.request_focus(input_id));
                             }
                             let input = ui.add(
-                                TextEdit::singleline(&mut self.input)
-                                    .id(input_id)
-                                    .return_key(None)
-                                    .hint_text("Choose a file...")
-                                    .desired_width(ui.available_width()),
+                                theme::text_field(
+                                    TextEdit::singleline(&mut self.input)
+                                        .id(input_id)
+                                        .return_key(None)
+                                        .hint_text("Choose a file..."),
+                                )
+                                .desired_width(ui.available_width()),
                             );
                             if self.focus {
                                 input.request_focus();
@@ -418,6 +420,7 @@ impl Manager {
                     ui.separator();
                     ui.vertical(|ui| {
                         ui.set_min_width(ui.available_width());
+                        // Title row: the file name owns the line, the close button its end.
                         ui.horizontal(|ui| {
                             let name = self
                                 .path
@@ -425,22 +428,33 @@ impl Manager {
                                 .and_then(|path| path.file_stem())
                                 .map(|name| name.to_string_lossy())
                                 .unwrap_or_default();
-                            ui.add_sized(
-                                egui::vec2((ui.available_width() - 320.0).max(20.0), 24.0),
-                                egui::Label::new(RichText::new(name.as_ref()).strong()).truncate(),
-                            )
-                            .on_hover_text(name.as_ref());
-                            if busy {
-                                ui.spinner();
-                            }
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 let button = theme::icon_button(ui, theme::Icon::Close, "Close");
                                 ui_probe::record(ctx, "recovery-close", button.rect);
                                 close = button.clicked();
-                                let button = ui.add_enabled(
-                                    !busy && self.text.is_some() && self.expected.is_some(),
-                                    egui::Button::new("Restore"),
-                                );
+                                if busy {
+                                    ui.spinner();
+                                }
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                    ui.add(
+                                        egui::Label::new(
+                                            RichText::new(name.as_ref()).strong().size(15.0),
+                                        )
+                                        .truncate(),
+                                    )
+                                    .on_hover_text(name.as_ref());
+                                });
+                            });
+                        });
+                        // Action row below it, so nothing overlaps the name.
+                        ui.horizontal(|ui| {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let button = ui
+                                    .add_enabled_ui(
+                                        !busy && self.text.is_some() && self.expected.is_some(),
+                                        |ui| theme::button(ui, "Restore", theme::Kind::Primary),
+                                    )
+                                    .inner;
                                 ui_probe::record(ctx, "recovery-restore", button.rect);
                                 if button.clicked()
                                     && let (Some(expected), Some(version)) =
@@ -451,10 +465,11 @@ impl Manager {
                                         version,
                                     });
                                 }
-                                let button = ui.add_enabled(
-                                    !busy && self.text.is_some(),
-                                    egui::Button::new("Copy"),
-                                );
+                                let button = ui
+                                    .add_enabled_ui(!busy && self.text.is_some(), |ui| {
+                                        theme::button(ui, "Copy", theme::Kind::Outline)
+                                    })
+                                    .inner;
                                 ui_probe::record(ctx, "recovery-copy", button.rect);
                                 if !busy {
                                     ui_probe::record(ctx, "recovery-loaded", button.rect);
@@ -486,8 +501,10 @@ impl Manager {
                         ScrollArea::both()
                             .id_salt(("recovery-text", self.selected))
                             .auto_shrink([false, false])
-                            .max_height(height - 48.0)
-                            .min_scrolled_height(height - 48.0)
+                            .max_height(height - 48.0 - theme::space::CONTROL - theme::space::S)
+                            .min_scrolled_height(
+                                height - 48.0 - theme::space::CONTROL - theme::space::S,
+                            )
                             .show(ui, |ui| {
                                 let response = if self.show_changes {
                                     let mut job = egui::text::LayoutJob::default();

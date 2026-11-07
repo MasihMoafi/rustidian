@@ -854,6 +854,13 @@ impl Tables {
                                         .and_then(|state| state.cursor.char_range())
                                         .map_or(0, |range| range.primary.index.0);
                                     follow = rustidian::editor::link_at(&cell.text, caret);
+                                } else if !focused
+                                    && response.clicked()
+                                    && let Some(target) = rustidian::editor::sole_link(&cell.text)
+                                {
+                                    // Like Obsidian: a cell that is only a link opens it on
+                                    // a plain click; other cells start editing.
+                                    follow = Some(target);
                                 }
                                 if let Some(direction) = nav {
                                     navigation = Some((key, direction));

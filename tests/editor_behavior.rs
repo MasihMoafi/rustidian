@@ -305,3 +305,19 @@ fn a_new_numbered_item_moves_the_items_below_it_up_so_no_number_repeats() {
     markdown_enter(&mut text, 9..9).unwrap();
     assert_eq!(text, "1. A\n2. B\n3. ");
 }
+
+#[test]
+fn only_a_cell_that_is_one_whole_link_follows_on_a_plain_click() {
+    use rustidian::editor::sole_link;
+    assert_eq!(
+        sole_link(" [Sat · Nov 7](Journal/2026-11-07.md) ").as_deref(),
+        Some("Journal/2026-11-07.md")
+    );
+    assert_eq!(
+        sole_link("[[Journal/2026-11-08|Sun]]").as_deref(),
+        Some("Journal/2026-11-08")
+    );
+    assert_eq!(sole_link("see [a](x.md)"), None);
+    assert_eq!(sole_link("[a](x.md) [b](y.md)"), None);
+    assert_eq!(sole_link("plain"), None);
+}

@@ -26,6 +26,27 @@ pub fn link_at(text: &str, caret: usize) -> Option<String> {
         })
 }
 
+/// The target when the text is nothing but one link, such as a table cell
+/// `[Sat · Nov 7](Journal/2026-11-07.md)`: a plain click there follows it.
+pub fn sole_link(text: &str) -> Option<String> {
+    let text = text.trim();
+    let whole = 0..text.len();
+    if text.is_empty() {
+        return None;
+    }
+    if let Some((range, target)) = crate::vault::wiki_spans(text).into_iter().next() {
+        return (range == whole).then_some(target);
+    }
+    Parser::new(text)
+        .into_offset_iter()
+        .find_map(|(event, range)| match event {
+            Event::Start(Tag::Link { dest_url, .. }) if range == whole => {
+                Some(dest_url.into_string())
+            }
+            _ => None,
+        })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Style {
     pub heading: u8,

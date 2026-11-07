@@ -333,6 +333,8 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
         Color32::from_rgb(209, 215, 211)
     };
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
+    // shadcn "outline": a plain button reads as a button, not as loose text.
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, border);
     visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     visuals.widgets.inactive.bg_fill = if dark {
         Color32::from_rgb(27, 32, 35)
@@ -982,38 +984,67 @@ pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui:
     .inner
 }
 
+/// shadcn/ui button variants: one height, one radius, one padding.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// The one main action of a dialog or row (filled accent).
+    Primary,
+    /// A secondary action (bordered).
+    Outline,
+    /// A quiet action such as Back (no frame until hovered).
+    Ghost,
+    /// An action that deletes or discards.
+    Destructive,
+}
+
+pub fn button(ui: &mut egui::Ui, label: &str, kind: Kind) -> egui::Response {
+    let (fill, text, stroke) = match kind {
+        Kind::Primary => (
+            accent(ui),
+            if ui.visuals().dark_mode {
+                DARK_SIDE
+            } else {
+                Color32::WHITE
+            },
+            Stroke::NONE,
+        ),
+        Kind::Destructive => (Color32::from_rgb(180, 45, 55), Color32::WHITE, Stroke::NONE),
+        Kind::Outline => (
+            ui.visuals().window_fill,
+            ui.visuals().text_color(),
+            ui.visuals().widgets.noninteractive.bg_stroke,
+        ),
+        Kind::Ghost => (
+            Color32::TRANSPARENT,
+            ui.visuals().text_color(),
+            Stroke::NONE,
+        ),
+    };
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).size(14.0).color(text))
+            .fill(fill)
+            .stroke(stroke)
+            .frame_when_inactive(kind != Kind::Ghost)
+            .corner_radius(6)
+            .min_size(egui::vec2(space::XXL * 2.0, space::CONTROL)),
+    )
+}
+
 pub fn dialog_actions(
     ui: &mut egui::Ui,
     label: &str,
     destructive: bool,
 ) -> (egui::Response, egui::Response) {
-    ui.add_space(8.0);
+    ui.add_space(space::S);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let background = if destructive {
-                Color32::from_rgb(180, 45, 55)
+            let kind = if destructive {
+                Kind::Destructive
             } else {
-                accent(ui)
+                Kind::Primary
             };
-            let foreground = if destructive || !ui.visuals().dark_mode {
-                Color32::WHITE
-            } else {
-                Color32::from_rgb(17, 21, 23)
-            };
-            let submit = ui.add(
-                egui::Button::new(egui::RichText::new(label).color(foreground))
-                    .fill(background)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(6)
-                    .min_size(egui::vec2(0.0, space::CONTROL)),
-            );
-            let cancel = ui.add(
-                egui::Button::new("Cancel")
-                    .fill(ui.visuals().window_fill)
-                    .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-                    .corner_radius(6)
-                    .min_size(egui::vec2(0.0, space::CONTROL)),
-            );
+            let submit = button(ui, label, kind);
+            let cancel = button(ui, "Cancel", Kind::Outline);
             crate::ui_probe::record(ui.ctx(), "dialog-submit", submit.rect);
             crate::ui_probe::record(ui.ctx(), "dialog-cancel", cancel.rect);
             (submit, cancel)
