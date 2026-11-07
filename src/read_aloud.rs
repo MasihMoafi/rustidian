@@ -589,7 +589,7 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
     if !status.active
         && let Some(error) = status.error
     {
-        let id = egui::Id::new("read-aloud-error-seen");
+        let id = egui::Id::unique("read-aloud-error-seen");
         let now = Instant::now();
         let seen = ctx.data(|data| data.get_temp::<(String, Instant)>(id));
         let since = match seen {
