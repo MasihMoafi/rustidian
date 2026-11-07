@@ -446,3 +446,36 @@ fn a_link_to_a_missing_day_in_the_daily_folder_names_that_day() {
         None
     );
 }
+
+/// 7 Nov: a window on a vault without daily notes opened an empty note of its own; today's
+/// note comes from the vault that has them, from its template, and is never rewritten.
+#[test]
+fn today_in_another_vault_uses_that_vaults_folder_and_template() {
+    let main = tempfile::tempdir().unwrap();
+    fs::create_dir_all(main.path().join(".obsidian")).unwrap();
+    fs::create_dir_all(main.path().join("Templates")).unwrap();
+    fs::write(
+        main.path().join(".obsidian/daily-notes.json"),
+        r#"{"folder":"Journal","format":"YYYY-MM-DD","template":"Templates/Daily"}"#,
+    )
+    .unwrap();
+    fs::write(
+        main.path().join("Templates/Daily.md"),
+        "# {{title}}\n\nRuthlessly prioritize.\n",
+    )
+    .unwrap();
+    let other = tempfile::tempdir().unwrap();
+    assert!(Config::has_daily_setup(main.path()));
+    assert!(!Config::has_daily_setup(other.path()));
+
+    let file = Config::daily_in(main.path(), clock()).unwrap();
+    assert_eq!(file, main.path().join("Journal/2026-10-21.md"));
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        "# 2026-10-21\n\nRuthlessly prioritize.\n"
+    );
+    fs::write(&file, "my plan\n").unwrap();
+    assert_eq!(Config::daily_in(main.path(), clock()).unwrap(), file);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "my plan\n");
+    assert!(fs::read_dir(other.path()).unwrap().next().is_none());
+}

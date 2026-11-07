@@ -3801,6 +3801,23 @@ def main():
                 title_contains("Home")
                 assert note.read_text() == source
                 results.append("Ctrl+Enter and Ctrl+click followed table wiki links, including queued input; inline-code links remained literal")
+                # Masih (7 Nov): a plain click on a prod-dash day cell opens that day's page,
+                # with its contents, not an empty page.
+                (fixture / "Journal").mkdir(exist_ok=True)
+                day = fixture / "Journal/2026-11-07.md"
+                day.write_text("---\ntype: daily\n---\n\n# Saturday\n\nRuthlessly prioritize.\n")
+                dash = fixture / "prod-dash.md"
+                dash.write_text("# Prod dash\n\n| Day | DW |\n| --- | --- |\n| [Sat · Nov 7](Journal/2026-11-07.md) |  |\n")
+                time.sleep(.6)
+                open_note("prod-dash", title="prod-dash")
+                command("Live preview")
+                click_control("edit-table-cell:0:1:0")
+                pause()
+                capture("native-table-day-link.png")
+                title_contains("2026-11-07")
+                assert dash.read_text().startswith("# Prod dash"), dash.read_text()
+                assert day.read_text().endswith("Ruthlessly prioritize.\n"), day.read_text()
+                results.append("A plain click on a prod-dash day cell opened that day's page")
 
             def table_edit_checks():
                 source = "# Visual table GUI\n\n| Item | Value |\n| :--- | ---: |\n| **Alpha** | 2 |\n| Beta | 1 |\n\nAfter table π\n"

@@ -5955,7 +5955,22 @@ impl NotesApp {
     }
 
     fn open_daily(&mut self) {
-        self.open_created_note(rustidian::note_aids::Config::create_daily);
+        use rustidian::note_aids::Config;
+        // A vault without daily notes of its own opens the default vault's day page.
+        let elsewhere = rustidian::vaults::default_vault().filter(|default| {
+            self.vault.as_ref().is_some_and(|vault| {
+                !Config::has_daily_setup(&vault.root)
+                    && default.canonicalize().ok() != vault.root.canonicalize().ok()
+            }) && Config::has_daily_setup(default)
+        });
+        if let Some(root) = elsewhere {
+            match Config::daily_in(&root, chrono::Local::now().fixed_offset()) {
+                Ok(file) => self.open_guest_tab(&file),
+                Err(error) => self.error = Some(error),
+            }
+            return;
+        }
+        self.open_created_note(Config::create_daily);
     }
 
     fn open_created_note(

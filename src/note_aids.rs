@@ -230,6 +230,57 @@ impl Config {
         Ok(path)
     }
 
+    /// Whether `root` has its own daily-notes setup (Settings → Daily notes).
+    pub fn has_daily_setup(root: &Path) -> bool {
+        root.join(".obsidian/daily-notes.json").is_file()
+    }
+
+    /// Today's note of the vault at `root`, created there from that vault's daily template
+    /// when missing; an existing note is never rewritten. For a window whose own vault has
+    /// no daily notes (7 Nov: the swarm-hackathon window opened an empty note instead of
+    /// Main Vault's day page).
+    pub fn daily_in(root: &Path, now: DateTime<FixedOffset>) -> Result<PathBuf> {
+        let (config, _) = Self::from_obsidian_partial(root);
+        let name = moment_format(now, config.daily.format.trim(), "YYYY-MM-DD");
+        let path = crate::paths::markdown_name(
+            &relative(&config.daily.folder, true)?.join(relative(&name, false)?),
+        );
+        let file = root.join(&path);
+        if file.exists() {
+            return Ok(file);
+        }
+        let title = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = if config.daily.template.trim().is_empty() {
+            String::new()
+        } else {
+            let template = root.join(crate::paths::markdown_name(&relative(
+                &config.daily.template,
+                false,
+            )?));
+            let source = std::fs::read_to_string(&template)
+                .map_err(|error| format!("Cannot read the daily template: {error}"))?;
+            config.expand(&source, &title, now)
+        };
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+        {
+            Ok(mut created) => std::io::Write::write_all(&mut created, text.as_bytes())
+                .map_err(|error| error.to_string())?,
+            // Another window made it first; keep its bytes.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        Ok(file)
+    }
+
     pub fn create_unique(&self, vault: &mut Vault, now: DateTime<FixedOffset>) -> Result<PathBuf> {
         loop {
             let path = self.unique_path(vault, now)?;
