@@ -51,7 +51,7 @@ for line in sys.stdin:
     request = json.loads(line)
     try:
         samples, rate = model.create(
-            request["text"], voice=voice, speed=speed, lang="en-us"
+            request["text"], voice=voice, speed=request.get("speed", speed), lang="en-us"
         )
         pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
         print(json.dumps({"id": request["id"], "ok": True, "rate": rate,

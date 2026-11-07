@@ -87,7 +87,7 @@ fn a_key_is_used_replaced_disconnected_and_never_sent_to_another_endpoint() {
     let id = voice
         .save_key(stores, None, "Mine", "sk-first", false)
         .unwrap();
-    let audio = speak(&voice.route(stores).unwrap(), "Hello").unwrap();
+    let audio = speak(&voice.route(stores).unwrap(), "Hello", 1.0).unwrap();
     assert_eq!(&audio[..4], b"RIFF");
     assert_eq!(&audio[44..], &[1, 2, 3, 4]);
     assert_eq!(heard.recv().unwrap(), "Bearer sk-first");
@@ -97,11 +97,11 @@ fn a_key_is_used_replaced_disconnected_and_never_sent_to_another_endpoint() {
         .unwrap();
     assert_eq!(voice.accounts.len(), 1);
     assert_eq!(voice.accounts[0].label, "Mine");
-    speak(&voice.route(stores).unwrap(), "Hello").unwrap();
+    speak(&voice.route(stores).unwrap(), "Hello", 1.0).unwrap();
     assert_eq!(heard.recv().unwrap(), "Bearer sk-second");
 
     voice.save_key(stores, Some(&id), "", "bad", false).unwrap();
-    let refused = speak(&voice.route(stores).unwrap(), "Hello").unwrap_err();
+    let refused = speak(&voice.route(stores).unwrap(), "Hello", 1.0).unwrap_err();
     assert!(refused.contains("refused this key"), "{refused}");
     assert!(!refused.contains("bad"));
     heard.recv().unwrap();
@@ -185,14 +185,14 @@ fn two_accounts_stay_apart_and_the_choice_survives_a_restart() {
         .save_key(stores, None, "Home", "sk-home", false)
         .unwrap();
 
-    speak(&voice.route(stores).unwrap(), "Hi").unwrap();
+    speak(&voice.route(stores).unwrap(), "Hi", 1.0).unwrap();
     assert_eq!(heard.recv().unwrap(), "Bearer sk-home");
     voice.selected = Some(work.clone());
     voice.save(state.path()).unwrap();
 
     let restarted = Settings::load(state.path());
     assert_eq!(restarted.selected.as_deref(), Some(work.as_str()));
-    speak(&restarted.route(stores).unwrap(), "Hi").unwrap();
+    speak(&restarted.route(stores).unwrap(), "Hi", 1.0).unwrap();
     assert_eq!(heard.recv().unwrap(), "Bearer sk-work");
 
     // The selected key is missing from the keyring: no fallback to the other account.
@@ -211,7 +211,7 @@ fn two_accounts_stay_apart_and_the_choice_survives_a_restart() {
     offline
         .save_key(stores, None, "Home", "sk-home", false)
         .unwrap();
-    let outage = speak(&offline.route(stores).unwrap(), "Hi").unwrap_err();
+    let outage = speak(&offline.route(stores).unwrap(), "Hi", 1.0).unwrap_err();
     assert!(outage.contains("cannot be reached"), "{outage}");
 }
 

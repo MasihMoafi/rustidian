@@ -104,7 +104,7 @@ def main():
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
             voice = base / "fake-kokoro"
-            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    time.sleep(.3)\n    pcm = base64.b64encode((r['text'] + '\\n').encode()).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
+            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    open(os.environ['READ_ALOUD_LOG'] + '.requests', 'a').write(json.dumps(r) + '\\n')\n    time.sleep(.3)\n    pcm = base64.b64encode((r['text'] + '\\n').encode()).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
             player = base / "fake-player"
             player.write_text("#!/usr/bin/env python3\nimport os, sys, time\nf = open(os.environ['READ_ALOUD_LOG'] + '.played', 'ab', buffering=0)\nwhile True:\n    line = sys.stdin.buffer.readline()\n    if not line: break\n    f.write(line)\n    time.sleep(.4)\n")
             for stub in (voice, player):
@@ -7389,6 +7389,26 @@ def main():
                     time.sleep(.1)
                 assert control_bounds("read-aloud-player", required=False) is None, "The player closes when the reading ends"
                 results.append("A paragraph's margin speaker voiced and played its three sentences in order, one chunk each, and the player bar closed at the end")
+                # A speed change reaches a new request during the same reading and is saved.
+                reset()
+                requests = log.with_suffix(".requests")
+                requests.unlink(missing_ok=True)
+                key("ctrl+a")
+                click_control("read-aloud-selection")
+                click_control("read-aloud-speed")
+                capture("native-read-aloud-speed-menu.png")
+                click_control("read-aloud-speed:1.3×")
+                count = len(lines(requests))
+                deadline = time.monotonic() + 5
+                while len(lines(requests)) <= count and time.monotonic() < deadline:
+                    time.sleep(.05)
+                later = [json.loads(line) for line in lines(requests)[count:]]
+                assert later and abs(later[0]["speed"] - 1.3) < .0001, later
+                state = base / "state" / "rustidian" / "voice.json"
+                assert abs(json.loads(state.read_text())["speed"] - 1.3) < .0001
+                click_control("read-aloud-stop")
+                key("Escape")
+                results.append("Speed menu selected 1.3×, the next worker request used it, and voice settings saved it")
                 # A double-clicked word reads its whole sentence.
                 reset()
                 block = control_bounds("reading-block:1")

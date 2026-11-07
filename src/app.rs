@@ -3500,11 +3500,13 @@ impl NotesApp {
                                     });
                                     return;
                                 }
-                                crate::read_aloud::warm_up();
                                 let (speaker_rect, speaker) = ui.allocate_exact_size(
                                     egui::vec2(theme::space::CONTROL, theme::space::CONTROL),
                                     egui::Sense::click(),
                                 );
+                                if speaker.hovered() {
+                                    crate::read_aloud::warm_up();
+                                }
                                 crate::read_aloud::paint_speaker(
                                     ui.painter(),
                                     speaker_rect.shrink(7.0),
@@ -3869,7 +3871,12 @@ impl NotesApp {
             }
         });
         crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
-        crate::read_aloud::player_bar(ui.ctx(), scroll.inner_rect);
+        if crate::read_aloud::player_bar(ui.ctx(), scroll.inner_rect, &mut self.voice.speed)
+            && let Some(base) = rustidian::voice_account::state_base()
+            && let Err(error) = self.voice.save(&base)
+        {
+            self.voice_form.message = Some(error);
+        }
         self.page_pan.viewport(&scroll);
         crate::ui_probe::metric(
             ui.ctx(),

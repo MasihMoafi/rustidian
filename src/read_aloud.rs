@@ -13,9 +13,58 @@ use rustidian::voice_account;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, mpsc};
 use std::time::{Duration, Instant};
+
+pub const SPEEDS: [(f32, &str, &str); 7] = [
+    (1.0, "Normal", "1.0×"),
+    (1.25, "1.25×", "1.25×"),
+    (1.3, "1.3×", "1.3×"),
+    (1.4, "1.4×", "1.4×"),
+    (1.5, "1.5×", "1.5×"),
+    (1.75, "1.75×", "1.75×"),
+    (2.0, "2.0×", "2.0×"),
+];
+static SPEED: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_speed(speed: Option<f32>) {
+    SPEED.store(speed.map_or(0, f32::to_bits), Ordering::SeqCst);
+}
+
+fn effective_speed(speed: Option<f32>) -> f32 {
+    speed
+        .or_else(|| std::env::var("RUSTIDIAN_KOKORO_SPEED").ok()?.parse().ok())
+        .unwrap_or(1.0)
+}
+
+pub fn speed_menu(ui: &mut egui::Ui, speed: &mut Option<f32>, id: &str) {
+    let current = effective_speed(*speed);
+    let label = SPEEDS
+        .iter()
+        .find(|(value, _, _)| *value == current)
+        .map_or_else(
+            || format!("{current}×"),
+            |(_, _, label)| (*label).to_owned(),
+        );
+    let response = egui::ComboBox::from_id_salt(id)
+        .selected_text(label)
+        .show_ui(ui, |ui| {
+            crate::theme::menu_style(ui);
+            for (value, name, _) in SPEEDS {
+                let response = ui.selectable_label(
+                    current == value,
+                    format!("{} {name}", if current == value { "✓" } else { "　" }),
+                );
+                crate::ui_probe::record(ui.ctx(), format!("{id}:{name}"), response.rect);
+                if response.clicked() {
+                    *speed = Some(value);
+                    ui.close();
+                }
+            }
+        });
+    crate::ui_probe::record(ui.ctx(), id, response.response.rect);
+}
 
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
 /// The worker leaves after this long without a read, to give the GPU memory back.
@@ -163,7 +212,7 @@ fn start_worker() -> Result<Worker, String> {
 }
 
 /// Voice one piece as mono 16-bit PCM.
-fn synthesize(text: &str) -> Result<Vec<u8>, String> {
+fn synthesize(text: &str, speed: Option<f32>) -> Result<Vec<u8>, String> {
     let mut slot = SHARED.worker.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_none() {
         *slot = Some(start_worker()?);
@@ -171,7 +220,10 @@ fn synthesize(text: &str) -> Result<Vec<u8>, String> {
     let worker = slot.as_mut().expect("worker started above");
     worker.next_id += 1;
     let id = worker.next_id;
-    let request = serde_json::json!({"id": id, "text": text});
+    let mut request = serde_json::json!({"id": id, "text": text});
+    if let Some(speed) = speed {
+        request["speed"] = serde_json::json!(speed);
+    }
     let reply = (|| -> Result<serde_json::Value, String> {
         writeln!(worker.input, "{request}").map_err(|error| error.to_string())?;
         worker.input.flush().map_err(|error| error.to_string())?;
@@ -225,10 +277,19 @@ fn update(ctx: &egui::Context, session: u64, change: impl FnOnce(&mut Status)) {
     }
 }
 
-/// Start the model in the background when the first note is shown.
+/// Start the model in the background when the pointer reaches a speaker, so the click that
+/// follows does not wait for it; a note that is only read never loads it (about 1.3 GB).
 pub fn warm_up() {
-    static STARTED: AtomicBool = AtomicBool::new(false);
-    if unavailable().is_some() || STARTED.swap(true, Ordering::SeqCst) {
+    static WARMING: AtomicBool = AtomicBool::new(false);
+    if WARMING.load(Ordering::SeqCst) {
+        return;
+    }
+    match SHARED.worker.try_lock() {
+        Ok(slot) if slot.is_some() => return,
+        Err(std::sync::TryLockError::WouldBlock) => return,
+        _ => {}
+    }
+    if unavailable().is_some() || WARMING.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(|| {
@@ -238,6 +299,7 @@ pub fn warm_up() {
         }
         *SHARED.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
         drop(slot);
+        WARMING.store(false, Ordering::SeqCst);
         schedule_idle_exit();
     });
 }
@@ -251,6 +313,7 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     let settings = voice_account::state_base()
         .map(|base| voice_account::Settings::load(&base))
         .unwrap_or_default();
+    set_speed(settings.speed);
     let hosted = settings.engine == voice_account::Engine::OpenRouter;
     if let Some(reason) = unavailable().filter(|_| !hosted) {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
@@ -353,12 +416,15 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
                         if !current(session) {
                             return;
                         }
+                        let bits = SPEED.load(Ordering::SeqCst);
+                        let speed = (bits != 0).then(|| f32::from_bits(bits));
                         let pcm: Result<Vec<u8>, String> = (|| match &route {
                             Some(route) => {
-                                let wav = voice_account::speak(route, piece)?;
+                                let wav =
+                                    voice_account::speak(route, piece, effective_speed(speed))?;
                                 Ok(wav.get(44..).ok_or("Invalid hosted audio")?.to_vec())
                             }
-                            None => synthesize(piece),
+                            None => synthesize(piece, speed),
                         })();
                         if !current(session) {
                             return;
@@ -533,6 +599,9 @@ pub fn paint_speaker(painter: &egui::Painter, rect: egui::Rect, color: egui::Col
 pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &str) -> bool {
     let response = ui.interact(rect, id, egui::Sense::click());
     let hovered = response.hovered();
+    if hovered {
+        warm_up();
+    }
     let fill = if hovered {
         crate::theme::interactive(ui)
     } else {
@@ -563,10 +632,11 @@ pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &
 }
 
 /// The floating player: Stop, which sentence is playing, and its words.
-pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
+pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>) -> bool {
+    let before = *speed;
     let status = status();
     if !status.active && status.error.is_none() {
-        return;
+        return false;
     }
     let width = area.width().clamp(240.0, 560.0);
     let position = egui::pos2(area.center().x - width / 2.0, area.bottom() - 64.0);
@@ -599,6 +669,7 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
                         if stop.on_hover_text("Stop reading").clicked() {
                             self::stop(ui.ctx());
                         }
+                        speed_menu(ui, speed, "read-aloud-speed");
                         let label = if status.preparing {
                             format!("Preparing · {} sentences", status.total)
                         } else {
@@ -656,4 +727,8 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect) {
             ctx.request_repaint_after(left.min(Duration::from_millis(250)));
         }
     }
+    if *speed != before {
+        set_speed(*speed);
+    }
+    *speed != before
 }

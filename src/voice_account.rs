@@ -64,6 +64,7 @@ pub struct Settings {
     pub dictation_backend: DictationBackend,
     pub model: String,
     pub voice: String,
+    pub speed: Option<f32>,
     pub endpoint: String,
     pub accounts: Vec<Account>,
     pub selected: Option<String>,
@@ -76,6 +77,7 @@ impl Default for Settings {
             dictation_backend: DictationBackend::Codex,
             model: DEFAULT_MODEL.into(),
             voice: DEFAULT_VOICE.into(),
+            speed: None,
             endpoint: DEFAULT_ENDPOINT.into(),
             accounts: Vec::new(),
             selected: None,
@@ -404,12 +406,13 @@ pub fn endpoint_allowed(endpoint: &str) -> Result<(), String> {
 
 /// Voice `text` through the route; returns a WAV file's bytes. Error messages never hold
 /// the key.
-pub fn speak(route: &Route, text: &str) -> Result<Vec<u8>, String> {
+pub fn speak(route: &Route, text: &str, speed: f32) -> Result<Vec<u8>, String> {
     let body = serde_json::json!({
         "model": route.model,
         "input": text,
         "voice": route.voice,
         "response_format": "pcm",
+        "speed": speed,
     })
     .to_string();
     // A proxy from the environment carries hosted requests; this machine is reached directly.
@@ -479,4 +482,18 @@ pub fn wav(pcm: &[u8], rate: u32) -> Vec<u8> {
     out.extend_from_slice(&data.to_le_bytes());
     out.extend_from_slice(&pcm[..data as usize]);
     out
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::Settings;
+    #[test]
+    fn read_aloud_speed_survives_a_settings_restart() {
+        let state = tempfile::tempdir().unwrap();
+        let mut settings = Settings::default();
+        assert_eq!(settings.speed, None);
+        settings.speed = Some(1.3);
+        settings.save(state.path()).unwrap();
+        assert_eq!(Settings::load(state.path()).speed, Some(1.3));
+    }
 }

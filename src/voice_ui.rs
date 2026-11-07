@@ -80,6 +80,14 @@ impl NotesApp {
                 false
             },
         );
+        ui.separator();
+        settings_ui::voice_row(ui, "Speed", "Applies to the next piece of speech.", |ui| {
+            crate::read_aloud::speed_menu(ui, &mut self.voice.speed, "settings-voice-speed");
+            false
+        });
+        if self.voice.speed != before.speed {
+            crate::read_aloud::set_speed(self.voice.speed);
+        }
         if self.voice.engine == Engine::OpenRouter {
             ui.separator();
             self.voice_text(
