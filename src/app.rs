@@ -6270,7 +6270,7 @@ impl eframe::App for NotesApp {
     /// hand-offs, signals and close requests never wait for a drawn frame.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let setup = ctx.data_mut(|data| {
-            let id = egui::Id::new("voice-setup");
+            let id = egui::Id::unique("voice-setup");
             let requested = data.get_temp::<bool>(id).unwrap_or(false);
             data.remove::<bool>(id);
             requested

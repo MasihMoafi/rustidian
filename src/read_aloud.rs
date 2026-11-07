@@ -325,7 +325,7 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
         status.preparing = false;
         status.error = None;
         drop(status);
-        ctx.data_mut(|data| data.insert_temp(egui::Id::new("voice-setup"), true));
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("voice-setup"), true));
         ctx.request_repaint();
         return;
     }
