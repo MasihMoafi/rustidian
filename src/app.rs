@@ -3500,6 +3500,7 @@ impl NotesApp {
                                     });
                                     return;
                                 }
+                                crate::read_aloud::warm_up();
                                 let (speaker_rect, speaker) = ui.allocate_exact_size(
                                     egui::vec2(theme::space::CONTROL, theme::space::CONTROL),
                                     egui::Sense::click(),
@@ -3669,12 +3670,17 @@ impl NotesApp {
             self.error = Some("Transcription is still in progress.".into());
             return;
         }
-        let tab = &self.tabs[self.active];
-        if tab.view == View::Read {
-            self.error = Some("Switch to an editing view to dictate.".into());
-            return;
+        let reading = self.view() == View::Read;
+        if reading {
+            self.set_view(View::Live);
         }
-        let Some(selection) = self.editor.dictation_selection(tab) else {
+        let tab = &self.tabs[self.active];
+        let selection = if reading {
+            Some(self.editor.caret_at_end(tab))
+        } else {
+            self.editor.dictation_selection(tab)
+        };
+        let Some(selection) = selection else {
             self.error = Some("Place the cursor in the editor before dictating.".into());
             return;
         };

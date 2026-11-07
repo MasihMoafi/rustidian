@@ -1,10 +1,11 @@
 """Rustidian read aloud: local Kokoro, on the GPU when one is there.
 
-argv: MODEL VOICES. One JSON request per stdin line, {"id": n, "text": "...", "out": "/path.wav"};
-one JSON reply per stdout line, {"id": n, "ok": true} or {"id": n, "ok": false, "error": "..."}.
+argv: MODEL VOICES. Requests contain an id and text. Replies contain the id, sample rate,
+and base64-encoded mono 16-bit PCM, or an error.
 The first line out is {"ready": true, "device": "cuda" | "cpu"}.
 """
 
+import base64
 import glob
 import json
 import os
@@ -29,7 +30,7 @@ if not os.environ.get("RUSTIDIAN_KOKORO_LIBS"):
 
 import kokoro_onnx
 import onnxruntime
-import soundfile
+import numpy as np
 
 onnxruntime.set_default_logger_severity(3)
 providers = [
@@ -52,8 +53,9 @@ for line in sys.stdin:
         samples, rate = model.create(
             request["text"], voice=voice, speed=speed, lang="en-us"
         )
-        soundfile.write(request["out"], samples, rate)
-        print(json.dumps({"id": request["id"], "ok": True}), flush=True)
+        pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
+        print(json.dumps({"id": request["id"], "ok": True, "rate": rate,
+                          "pcm": base64.b64encode(pcm).decode("ascii")}), flush=True)
     except Exception as error:  # noqa: BLE001 -- one bad piece of text must not end the worker
         print(
             json.dumps({"id": request["id"], "ok": False, "error": str(error)[:300]}),

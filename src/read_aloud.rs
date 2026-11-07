@@ -1,5 +1,5 @@
-//! Read aloud with local Kokoro (Masih, 6 Nov): the chosen text is spoken one whole sentence
-//! at a time. The next sentence is voiced while the current one plays, and Stop ends both at
+//! Read aloud with local Kokoro: short pieces feed one continuous PCM player. The next piece
+//! is voiced while the current one plays, and Stop ends both at
 //! once. The voice runs in a Python worker on the GPU (see `assets/read-aloud`), which keeps
 //! the model loaded between reads and leaves after five idle minutes to free the GPU.
 //!
@@ -7,13 +7,14 @@
 //! `RUSTIDIAN_KOKORO_VOICES`; the voice and speed from `RUSTIDIAN_KOKORO_VOICE` (af_heart)
 //! and `RUSTIDIAN_KOKORO_SPEED`. Settings → Read aloud can choose a hosted voice instead: the
 //! user's own OpenRouter key (`rustidian::voice_account`).
+use base64::Engine as _;
 use eframe::egui;
 use rustidian::voice_account;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
@@ -161,8 +162,8 @@ fn start_worker() -> Result<Worker, String> {
     })
 }
 
-/// Voice `text` into a WAV file; starts the worker if it is not running.
-fn synthesize(text: &str) -> Result<PathBuf, String> {
+/// Voice one piece as mono 16-bit PCM.
+fn synthesize(text: &str) -> Result<Vec<u8>, String> {
     let mut slot = SHARED.worker.lock().unwrap_or_else(|e| e.into_inner());
     if slot.is_none() {
         *slot = Some(start_worker()?);
@@ -170,8 +171,7 @@ fn synthesize(text: &str) -> Result<PathBuf, String> {
     let worker = slot.as_mut().expect("worker started above");
     worker.next_id += 1;
     let id = worker.next_id;
-    let out = scratch().join(format!("{id}.wav"));
-    let request = serde_json::json!({"id": id, "text": text, "out": out});
+    let request = serde_json::json!({"id": id, "text": text});
     let reply = (|| -> Result<serde_json::Value, String> {
         writeln!(worker.input, "{request}").map_err(|error| error.to_string())?;
         worker.input.flush().map_err(|error| error.to_string())?;
@@ -195,7 +195,14 @@ fn synthesize(text: &str) -> Result<PathBuf, String> {
     })();
     *SHARED.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
     match reply {
-        Ok(message) if message["ok"] == true => Ok(out),
+        Ok(message) if message["ok"] == true => {
+            if message["rate"].as_u64() != Some(24_000) {
+                return Err("The voice returned an unsupported sample rate.".into());
+            }
+            base64::engine::general_purpose::STANDARD
+                .decode(message["pcm"].as_str().unwrap_or(""))
+                .map_err(|error| error.to_string())
+        }
         Ok(message) => Err(message["error"]
             .as_str()
             .unwrap_or("The voice could not say this.")
@@ -205,20 +212,6 @@ fn synthesize(text: &str) -> Result<PathBuf, String> {
             Err(error)
         }
     }
-}
-
-/// Voice `text` through the user's OpenRouter account into a WAV file.
-fn synthesize_hosted(route: &voice_account::Route, text: &str) -> Result<PathBuf, String> {
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let audio = voice_account::speak(route, text)?;
-    let folder = scratch();
-    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let out = folder.join(format!(
-        "hosted-{}.wav",
-        NEXT.fetch_add(1, Ordering::SeqCst)
-    ));
-    std::fs::write(&out, audio).map_err(|error| error.to_string())?;
-    Ok(out)
 }
 
 fn current(session: u64) -> bool {
@@ -232,44 +225,24 @@ fn update(ctx: &egui::Context, session: u64, change: impl FnOnce(&mut Status)) {
     }
 }
 
-/// Play one WAV file; returns early, killing the player, once `session` is no longer current.
-fn play(path: &std::path::Path, session: u64) -> Result<(), String> {
-    // RUSTIDIAN_READ_ALOUD_PLAYER replaces the player (checks record the audio instead).
-    let chosen = std::env::var("RUSTIDIAN_READ_ALOUD_PLAYER").ok();
-    let programs: Vec<&str> = chosen.as_deref().map_or_else(
-        || vec!["pw-play", "paplay", "aplay"],
-        |program| vec![program],
-    );
-    let mut player = programs
-        .iter()
-        .find_map(|program| {
-            Command::new(program)
-                .arg(path)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .ok()
-        })
-        .ok_or("No audio player (pw-play, paplay or aplay) is installed.")?;
-    loop {
-        if !current(session) {
-            let _ = player.kill();
-            let _ = player.wait();
-            return Ok(());
-        }
-        if player
-            .try_wait()
-            .map_err(|error| error.to_string())?
-            .is_some()
-        {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(20));
+/// Start the model in the background when the first note is shown.
+pub fn warm_up() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if unavailable().is_some() || STARTED.swap(true, Ordering::SeqCst) {
+        return;
     }
+    std::thread::spawn(|| {
+        let mut slot = SHARED.worker.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            *slot = start_worker().ok();
+        }
+        *SHARED.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
+        drop(slot);
+        schedule_idle_exit();
+    });
 }
 
-/// Read `chunks` (whole sentences) aloud, replacing any read in progress.
+/// Read a selection through one continuous mono PCM player.
 pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     let session = SHARED.session.fetch_add(1, Ordering::SeqCst) + 1;
     if chunks.is_empty() {
@@ -300,73 +273,144 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
         };
     }
     ctx.request_repaint();
-    // One sentence is voiced ahead of the one playing.
-    let (sender, receiver) = mpsc::sync_channel::<(usize, PathBuf)>(1);
-    let voice_ctx = ctx.clone();
-    let texts = chunks.clone();
+    let ctx = ctx.clone();
     std::thread::spawn(move || {
-        // The keyring is asked here, off the UI thread, once per reading.
-        let route = if hosted {
-            match settings.route(voice_account::Stores::app()) {
-                Ok(route) => Some(route),
-                Err(error) => {
-                    update(&voice_ctx, session, |status| {
-                        status.error = Some(error);
-                        status.preparing = false;
-                        status.active = false;
-                    });
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-        for (index, text) in texts.iter().enumerate() {
-            if !current(session) {
-                break;
-            }
-            let voiced = match &route {
-                Some(route) => synthesize_hosted(route, text),
-                None => synthesize(text),
+        let result = (|| -> Result<(), String> {
+            let route = if hosted {
+                Some(settings.route(voice_account::Stores::app())?)
+            } else {
+                None
             };
-            match voiced {
-                Ok(path) => {
-                    if !current(session) || sender.send((index, path.clone())).is_err() {
-                        let _ = std::fs::remove_file(path);
+            let chosen = std::env::var("RUSTIDIAN_READ_ALOUD_PLAYER").ok();
+            let programs: Vec<&str> = chosen
+                .as_deref()
+                .map_or_else(|| vec!["pw-play", "paplay", "aplay"], |p| vec![p]);
+            let mut player = programs
+                .iter()
+                .find_map(|program| {
+                    let mut command = Command::new(program);
+                    if chosen.is_some() {
+                        command.args([
+                            "--raw",
+                            "--rate",
+                            "24000",
+                            "--channels",
+                            "1",
+                            "--format",
+                            "s16le",
+                        ]);
+                    } else if *program == "pw-play" {
+                        command.args([
+                            "--raw",
+                            "--rate",
+                            "24000",
+                            "--channels",
+                            "1",
+                            "--format",
+                            "s16",
+                        ]);
+                        command.arg("-");
+                    } else if *program == "paplay" {
+                        command.args(["--raw", "--rate=24000", "--channels=1", "--format=s16le"]);
+                    } else {
+                        command.args(["-t", "raw", "-r", "24000", "-c", "1", "-f", "S16_LE"]);
+                    }
+                    command
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .ok()
+                })
+                .ok_or("No audio player (pw-play, paplay or aplay) is installed.")?;
+            let mut input = player.stdin.take().ok_or("The player has no input")?;
+            let player = Arc::new(Mutex::new(player));
+            let watcher = Arc::clone(&player);
+            let done = Arc::new(AtomicBool::new(false));
+            let watching = Arc::clone(&done);
+            let monitor = std::thread::spawn(move || {
+                while !watching.load(Ordering::SeqCst) {
+                    if !current(session) {
+                        let _ = watcher.lock().unwrap_or_else(|e| e.into_inner()).kill();
                         break;
                     }
+                    std::thread::sleep(Duration::from_millis(20));
                 }
-                Err(error) => {
-                    update(&voice_ctx, session, |status| {
-                        status.error = Some(error);
+            });
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let producer = std::thread::spawn(move || {
+                for (index, text) in chunks.iter().enumerate() {
+                    let mut pieces = vec![text.as_str()];
+                    if index == 0
+                        && text.chars().count() > 80
+                        && let Some(comma) = text.find(',')
+                        && comma > 0
+                        && comma + 1 < text.len()
+                    {
+                        pieces = vec![&text[..=comma], text[comma + 1..].trim_start()];
+                    }
+                    for piece in pieces {
+                        if !current(session) {
+                            return;
+                        }
+                        let pcm: Result<Vec<u8>, String> = (|| match &route {
+                            Some(route) => {
+                                let wav = voice_account::speak(route, piece)?;
+                                Ok(wav.get(44..).ok_or("Invalid hosted audio")?.to_vec())
+                            }
+                            None => synthesize(piece),
+                        })();
+                        if !current(session) {
+                            return;
+                        }
+                        let failed = pcm.is_err();
+                        if sender.send((index, text.clone(), pcm)).is_err() || failed {
+                            return;
+                        }
+                    }
+                }
+            });
+            let played = (|| -> Result<(), String> {
+                for (index, text, pcm) in receiver {
+                    if !current(session) {
+                        break;
+                    }
+                    let pcm = pcm?;
+                    update(&ctx, session, |status| {
+                        status.index = index + 1;
+                        status.current = text;
                         status.preparing = false;
                     });
-                    break;
+                    input
+                        .write_all(&pcm)
+                        .map_err(|error| format!("Audio player stopped: {error}"))?;
                 }
+                Ok(())
+            })();
+            drop(input);
+            let _ = producer.join();
+            // Poll instead of waiting under the mutex, so Stop can kill a draining player.
+            let exit = loop {
+                let result = player.lock().unwrap_or_else(|e| e.into_inner()).try_wait();
+                match result {
+                    Ok(Some(exit)) => break Ok(exit),
+                    Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                    Err(error) => break Err(error),
+                }
+            };
+            done.store(true, Ordering::SeqCst);
+            let _ = monitor.join();
+            played?;
+            if current(session) && !exit.map_err(|e| e.to_string())?.success() {
+                return Err("The audio player failed.".into());
             }
-        }
+            Ok(())
+        })();
         schedule_idle_exit();
-    });
-    let play_ctx = ctx.clone();
-    std::thread::spawn(move || {
-        for (index, path) in receiver {
-            if !current(session) {
-                let _ = std::fs::remove_file(&path);
-                continue;
-            }
-            update(&play_ctx, session, |status| {
-                status.index = index + 1;
-                status.current = chunks[index].clone();
-                status.preparing = false;
-            });
-            let result = play(&path, session);
-            let _ = std::fs::remove_file(&path);
+        update(&ctx, session, |status| {
             if let Err(error) = result {
-                update(&play_ctx, session, |status| status.error = Some(error));
-                break;
+                status.error = Some(error);
             }
-        }
-        update(&play_ctx, session, |status| {
             status.active = false;
             status.preparing = false;
         });

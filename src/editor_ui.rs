@@ -1150,6 +1150,14 @@ impl Editor {
             .map(|(_, range)| range)
     }
 
+    pub fn caret_at_end(&mut self, tab: &Tab) -> CCursorRange {
+        let range = CCursorRange::one(CCursor::new(tab.document.text.chars().count()));
+        self.selection = Some((tab.id(), range));
+        self.jump = Some(range.primary.index.0);
+        self.focus = true;
+        range
+    }
+
     pub fn insert_dictation(&mut self, tab: &Tab, text: String, selection: CCursorRange) {
         self.pending_edit = Some(PendingEdit {
             tab: tab.id(),
@@ -2376,6 +2384,7 @@ impl Editor {
         }
         cp.at(2175);
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
+        editor_speakers(ui, &output, id, &tab.document.text, &images);
         cp.at(2176);
         if crate::ui_probe::enabled() {
             crate::ui_probe::metric(
@@ -3621,6 +3630,160 @@ fn paint_image_selection(
         .map(|rect| egui::Shape::rect_filled(rect, 0.0, color))
         .collect();
     ui.painter().set(shape, egui::Shape::Vec(shapes));
+}
+
+/// Show speakers for the selection and the paragraph beneath the pointer.
+fn editor_speakers(
+    ui: &mut egui::Ui,
+    output: &egui::text_edit::TextEditOutput,
+    id: egui::Id,
+    source: &str,
+    images: &[LiveImage],
+) {
+    let shown = id.with("editor-read-aloud-shown");
+    let pressed = ui.input(|input| {
+        input
+            .pointer
+            .primary_pressed()
+            .then(|| input.pointer.interact_pos())
+            .flatten()
+    });
+    if let Some(pos) = pressed
+        && let Some((rect, text)) = ui
+            .ctx()
+            .data(|data| data.get_temp::<(egui::Rect, String)>(shown))
+        && rect.contains(pos)
+    {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+        crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
+        return;
+    }
+    if output.response.has_focus()
+        && let Some(range) = output.cursor_range
+        && !range.is_empty()
+        && !ui.input(|input| input.pointer.any_down())
+    {
+        let sorted = range.as_sorted_char_range();
+        let selected: String = source
+            .chars()
+            .skip(sorted.start.0)
+            .take(sorted.end.0 - sorted.start.0)
+            .collect();
+        let text = rustidian::speech_text::snap(source, &selected);
+        let caret = output
+            .galley
+            .pos_from_cursor(range.primary)
+            .translate(output.galley_pos.to_vec2());
+        let clip = ui.clip_rect();
+        let anchor = caret.right_bottom() + egui::vec2(10.0, 6.0);
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(
+                anchor.x.clamp(clip.left(), clip.right() - 30.0),
+                anchor.y.clamp(clip.top(), clip.bottom() - 30.0),
+            ),
+            egui::vec2(28.0, 28.0),
+        );
+        crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
+        crate::read_aloud::speaker_button(ui, rect, id.with("read-aloud-selection"), "Read aloud");
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(shown, (rect, text)));
+    } else {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+    }
+
+    let Some(pointer) = ui.input(|input| input.pointer.hover_pos()) else {
+        return;
+    };
+    if !output
+        .response
+        .rect
+        .expand(24.0)
+        .intersect(ui.clip_rect())
+        .contains(pointer)
+    {
+        return;
+    }
+    type Blocks = (String, Vec<(usize, std::ops::Range<usize>, usize, usize)>);
+    let cache_id = id.with("editor-speech-blocks");
+    let cached = ui
+        .ctx()
+        .data(|data| data.get_temp::<std::sync::Arc<Blocks>>(cache_id));
+    let blocks = cached.filter(|cache| cache.0 == source).unwrap_or_else(|| {
+        let mut blocks = Vec::new();
+        let mut index = 0;
+        let mut byte = 0;
+        let mut chars = 0;
+        for (event, range) in pulldown_cmark::Parser::new(source).into_offset_iter() {
+            let paragraph = matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph)
+            );
+            let heading = matches!(
+                event,
+                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Heading { .. })
+            );
+            if !paragraph && !heading {
+                continue;
+            }
+            let block_index = index;
+            index += 1;
+            if !paragraph {
+                continue;
+            }
+            chars += source[byte..range.start].chars().count();
+            let start = chars;
+            chars += source[range.start..range.end].chars().count();
+            byte = range.end;
+            blocks.push((block_index, range, start, chars));
+        }
+        let cache = std::sync::Arc::new((source.to_owned(), blocks));
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(cache_id, cache.clone()));
+        cache
+    });
+    let character = output
+        .galley
+        .cursor_from_pos(pointer - output.galley_pos)
+        .index
+        .0;
+    let nearest = blocks.1.partition_point(|block| block.3 < character);
+    for (block_index, range, start, end) in blocks.1.iter().skip(nearest.saturating_sub(1)).take(3)
+    {
+        let block_range = CCursorRange::two(CCursor::new(*start), CCursor::new(*end));
+        let rects = selection_rects(output, block_range, images, source);
+        let Some(first) = rects.first().copied() else {
+            continue;
+        };
+        crate::ui_probe::record(
+            ui.ctx(),
+            format!("editor-speech-block:{block_index}"),
+            first,
+        );
+        let speaker = egui::Rect::from_center_size(
+            egui::pos2(first.left() - 16.0, first.center().y),
+            egui::vec2(18.0, 18.0),
+        );
+        let over_block = rects.iter().any(|rect| rect.expand(4.0).contains(pointer));
+        if (over_block || speaker.expand(4.0).contains(pointer))
+            && (pressed.is_some() || !ui.input(|input| input.pointer.any_down()))
+        {
+            crate::ui_probe::record(ui.ctx(), format!("read-aloud-block:{block_index}"), speaker);
+            if crate::read_aloud::speaker_button(
+                ui,
+                speaker,
+                id.with(("read-aloud-block", *block_index)),
+                "Read this paragraph aloud",
+            ) {
+                crate::read_aloud::speak(
+                    ui.ctx(),
+                    rustidian::speech_text::chunks(&source[range.clone()]),
+                );
+            }
+            break;
+        }
+    }
 }
 
 /// The painted rectangles of `range`, row by row, in screen coordinates.

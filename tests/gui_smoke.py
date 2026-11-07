@@ -104,9 +104,9 @@ def main():
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
             voice = base / "fake-kokoro"
-            voice.write_text("#!/usr/bin/env python3\nimport json, sys, os\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(r['out'], 'w').write(r['text'])\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    print(json.dumps({'id': r['id'], 'ok': True}), flush=True)\n")
+            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    time.sleep(.3)\n    pcm = base64.b64encode((r['text'] + '\\n').encode()).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
             player = base / "fake-player"
-            player.write_text("#!/bin/sh\ncat \"$1\" >> \"$READ_ALOUD_LOG.played\"\necho >> \"$READ_ALOUD_LOG.played\"\nsleep 0.4\n")
+            player.write_text("#!/usr/bin/env python3\nimport os, sys, time\nf = open(os.environ['READ_ALOUD_LOG'] + '.played', 'ab', buffering=0)\nwhile True:\n    line = sys.stdin.buffer.readline()\n    if not line: break\n    f.write(line)\n    time.sleep(.4)\n")
             for stub in (voice, player):
                 stub.chmod(0o755)
             (base / "kokoro.onnx").write_bytes(b"")
@@ -7454,6 +7454,34 @@ def main():
                     results.append(f"In {view}, the toolbar speaker showed and Ctrl+Shift+R read the whole note without Markdown markup: {spoken}")
                 assert marked.read_text().startswith("# Plan"), "Reading aloud must not change the note"
 
+                for view in ("Live preview", "Source editing"):
+                    command(view)
+                    click_control("editor")
+                    key("ctrl+Home")
+                    pause()
+                    editor = control_bounds("editor")
+                    xdo("mousemove", "--sync", str(round(editor[0] + 100)), str(round(editor[1] + 10)))
+                    pause()
+                    block = control_bounds("editor-speech-block:1")
+                    y = round((block[1] + block[3]) / 2)
+                    xdo("mousemove", "--sync", str(round(block[0] + 20)), str(y))
+                    pause()
+                    reset()
+                    click_control("read-aloud-block:1")
+                    assert wait_played(3) == ["This is bold and code.", "See the guide and the test.", "Two * three stays."], (view, lines(played))
+                    deadline = time.monotonic() + 10
+                    while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
+                        time.sleep(.1)
+                    reset()
+                    block = control_bounds("editor-speech-block:1")
+                    y = round((block[1] + block[3]) / 2)
+                    xdo("mousemove", "--sync", str(round(block[0] + 5)), str(y), "mousedown", "1")
+                    xdo("mousemove", "--sync", str(round(block[0] + 45)), str(y), "mouseup", "1")
+                    pause()
+                    click_control("read-aloud-selection")
+                    assert wait_played(1) == ["This is bold and code."], (view, lines(played))
+                    results.append(f"In {view}, the paragraph and drag-selection speakers read the intended text")
+
             def dictation_checks():
                 click_control("button:File explorer")
                 close_tabs()
@@ -7479,6 +7507,20 @@ def main():
                 pause()
                 assert note.read_bytes() == b"First line.\n", note.read_bytes()
                 results.append("Dictation inserted at the caret as one undoable edit and saved the exact note bytes")
+
+                command("Reading view")
+                click_control("dictation-toolbar")
+                control_bounds("view-mode:Live preview")
+                time.sleep(.5)
+                click_control("dictation-toolbar")
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    key("ctrl+s")
+                    if note.read_bytes() == b"First line.\n dictated text":
+                        break
+                    time.sleep(.2)
+                assert note.read_bytes() == b"First line.\n dictated text", note.read_bytes()
+                results.append("The Reading view microphone switched to Live preview and dictated at the end")
 
             def explorer_order_checks():
                 # Masih (6 Nov): arrange files by dragging them between rows, and see each
