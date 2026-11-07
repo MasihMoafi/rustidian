@@ -1,0 +1,24 @@
+Rustidian on Flathub: what you do (about 5 minutes, by hand; Flathub forbids AI-made submissions)
+
+1. Fork https://github.com/flathub/flathub (untick "Copy the main branch only").
+2. In your fork, create a branch from `new-pr`, e.g. `rustidian`.
+3. Add the two files from packaging/flatpak/flathub/ at the top level:
+   io.github.masihmoafi.rustidian.yml and cargo-sources.json
+4. Open a pull request against flathub/flathub, base branch `new-pr`, title: Add io.github.masihmoafi.rustidian
+5. Fill their checklist honestly. Text you can use or change:
+
+Description:
+Rustidian is a native Markdown notebook (Rust, egui) for local vaults: live, source and reading modes, wiki links,
+backlinks, search, tasks, tables, callouts, Mermaid, daily notes, templates and graph views. Notes stay plain files.
+It opens Obsidian-format vaults and is not affiliated with Obsidian. Built from source; file dialogs use the portal.
+--filesystem=home because vaults are whole folders the app watches, renames and links across.
+
+AI disclosure:
+Much of the application code and the Flatpak packaging were written with AI coding assistants (Claude, Codex)
+under my direction; I reviewed, tested and maintain it.
+
+Video: record ~20 seconds of the Flatpak running (GNOME screen recorder: Ctrl+Shift+Alt+R).
+  Test build: rustidian repo -> Actions -> "Flatpak check" (branch build/flatpak) -> artifact, then
+  flatpak install --user rustidian-x86_64.flatpak
+
+Rustidian has history since October 2026, releases up to 0.1.6 and is on the Snap Store.
