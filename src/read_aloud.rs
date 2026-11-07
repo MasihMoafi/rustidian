@@ -1,7 +1,7 @@
 //! Read aloud with local Kokoro: short pieces feed one continuous PCM player. The next piece
 //! is voiced while the current one plays, and Stop ends both at
 //! once. The voice runs in a Python worker on the GPU (see `assets/read-aloud`), which keeps
-//! the model loaded between reads and leaves after five idle minutes to free the GPU.
+//! the model loaded between reads and leaves after 30 idle minutes to free the GPU.
 //!
 //! Paths come from `RUSTIDIAN_KOKORO_PYTHON`, `RUSTIDIAN_KOKORO_MODEL` and
 //! `RUSTIDIAN_KOKORO_VOICES`; the voice and speed from `RUSTIDIAN_KOKORO_VOICE` (af_heart)
@@ -68,7 +68,7 @@ pub fn speed_menu(ui: &mut egui::Ui, speed: &mut Option<f32>, id: &str) {
 
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
 /// The worker leaves after this long without a read, to give the GPU memory back.
-const IDLE: Duration = Duration::from_secs(300);
+const IDLE: Duration = Duration::from_secs(30 * 60);
 /// How long a read-aloud error stays when the pointer is not on it.
 const ERROR_TIME: Duration = Duration::from_secs(6);
 
@@ -631,7 +631,16 @@ pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &
     pressed
 }
 
-/// The floating player: Stop, which sentence is playing, and its words.
+/// Height reserved under the document while the player shows, so it never covers note text.
+pub const PLAYER_STRIP: f32 = 52.0;
+
+/// Whether the player shows this frame (a reading or its error).
+pub fn player_visible() -> bool {
+    let status = status();
+    status.active || status.error.is_some()
+}
+
+/// The player: Stop, which sentence is playing, and its words, in the strip under `area`.
 pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>) -> bool {
     let before = *speed;
     let status = status();
@@ -639,7 +648,7 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
         return false;
     }
     let width = area.width().clamp(240.0, 560.0);
-    let position = egui::pos2(area.center().x - width / 2.0, area.bottom() - 64.0);
+    let position = egui::pos2(area.center().x - width / 2.0, area.bottom() + 6.0);
     let shown = egui::Area::new(egui::Id::unique("read-aloud-player"))
         .order(egui::Order::Foreground)
         .fixed_pos(position)

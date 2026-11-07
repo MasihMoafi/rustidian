@@ -3782,6 +3782,10 @@ impl NotesApp {
         if let Some(offset) = tab.restore_scroll.take() {
             area = area.vertical_scroll_offset(offset);
         }
+        if crate::read_aloud::player_visible() {
+            area =
+                area.max_height((ui.available_height() - crate::read_aloud::PLAYER_STRIP).max(0.0));
+        }
         let scroll_id =
             ui.make_persistent_id(egui::IdSalt::new(("document", tab.id(), tab.editor_path())));
         let scroll = self.page_pan.scroll_area(scroll_id, area).show(ui, |ui| {
