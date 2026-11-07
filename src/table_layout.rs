@@ -26,6 +26,7 @@ struct Drag {
 }
 
 type Commands = BTreeMap<PathBuf, BTreeMap<u64, Change>>;
+type DeferredInput = Vec<(PathBuf, egui::Event)>;
 
 fn storage() -> Id {
     Id::unique("table-column-widths")
@@ -37,6 +38,7 @@ pub fn restore(ctx: &Context, layouts: Layouts) {
         data.remove::<Drag>(storage().with("drag"));
         data.remove::<Vec<Change>>(storage().with("pending"));
         data.remove::<Commands>(storage().with("commands"));
+        data.remove::<DeferredInput>(storage().with("deferred-input"));
     });
 }
 
@@ -142,6 +144,11 @@ pub fn relocate(ctx: &Context, from: &Path, to: &Path) {
         for change in data.get_temp_mut_or_default::<Vec<Change>>(storage().with("pending")) {
             change.path = rustidian::paths::moved_path(&change.path, from, to, true);
         }
+        for (path, _) in
+            data.get_temp_mut_or_default::<DeferredInput>(storage().with("deferred-input"))
+        {
+            *path = rustidian::paths::moved_path(path, from, to, true);
+        }
         if let Some(mut drag) = data.get_temp::<Drag>(storage().with("drag")) {
             drag.path = rustidian::paths::moved_path(&drag.path, from, to, true);
             data.insert_temp(storage().with("drag"), drag);
@@ -152,6 +159,32 @@ pub fn relocate(ctx: &Context, from: &Path, to: &Path) {
 pub fn has_focus(ctx: &Context, from: &Path) -> bool {
     let focused = ctx.data(|data| data.get_temp::<Id>(storage().with(("focus", from))));
     focused.is_some_and(|id| ctx.memory(|memory| memory.has_focus(id)))
+}
+
+pub fn replay_input(ctx: &Context, from: &Path) {
+    if ctx.data(|data| data.get_temp::<Drag>(storage().with("drag")).is_some()) {
+        return;
+    }
+    let mut events = ctx.data_mut(|data| {
+        let queued =
+            data.get_temp_mut_or_default::<DeferredInput>(storage().with("deferred-input"));
+        let mut events = Vec::new();
+        queued.retain(|(path, event)| {
+            if path == from {
+                events.push(event.clone());
+                false
+            } else {
+                true
+            }
+        });
+        events
+    });
+    if !events.is_empty() {
+        ctx.input_mut(|input| {
+            events.append(&mut input.events);
+            input.events = events;
+        });
+    }
 }
 
 // Layout commands use real marker edges in the document's shared text history.
@@ -174,6 +207,7 @@ pub fn history(
         }
         if drag.cancelled && !ctx.input(|input| input.pointer.primary_down()) {
             ctx.data_mut(|data| data.remove::<Drag>(storage().with("drag")));
+            ctx.request_repaint();
         }
     }
     let pending = ctx.data_mut(|data| {
@@ -249,6 +283,25 @@ pub fn history(
     let Some((event_index, redo)) = request else {
         return false;
     };
+    // The editor checks shortcuts before drawing the table. A release and
+    // Undo in this frame must wait until the handle has committed the drag.
+    if ctx.input(|input| input.pointer.primary_released())
+        && ctx
+            .data(|data| data.get_temp::<Drag>(storage().with("drag")))
+            .is_some_and(|drag| drag.path == from && !drag.cancelled)
+    {
+        let events = ctx.input_mut(|input| {
+            let mut events = Vec::new();
+            crate::table_ui::defer_from(&mut input.events, &mut events, event_index);
+            events
+        });
+        ctx.data_mut(|data| {
+            data.get_temp_mut_or_default::<DeferredInput>(storage().with("deferred-input"))
+                .extend(events.into_iter().map(|event| (from.to_owned(), event)));
+        });
+        ctx.request_repaint();
+        return true;
+    }
     let mut history = state.undoer();
     let mut current = (cursor, text.to_owned());
     loop {
@@ -418,6 +471,7 @@ pub fn handles(
         if response.drag_stopped() {
             ui.ctx()
                 .data_mut(|data| data.remove::<Drag>(storage().with("drag")));
+            ui.ctx().request_repaint();
         }
     }
 }

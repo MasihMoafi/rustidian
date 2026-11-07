@@ -3782,6 +3782,7 @@ impl NotesApp {
                 &tab.document.text,
                 state.cursor.char_range(),
             );
+            crate::table_layout::replay_input(ui.ctx(), &tab.document.path);
             let history_key =
                 ui.input(|input| input.key_pressed(Key::Z) || input.key_pressed(Key::Y));
             let shortcuts = history_key

@@ -158,7 +158,11 @@ fn take_action(
     Some(action)
 }
 
-fn defer_from(events: &mut Vec<egui::Event>, deferred: &mut Vec<egui::Event>, index: usize) {
+pub(crate) fn defer_from(
+    events: &mut Vec<egui::Event>,
+    deferred: &mut Vec<egui::Event>,
+    index: usize,
+) {
     for event in events.split_off(index) {
         if matches!(
             event,

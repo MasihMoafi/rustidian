@@ -3390,6 +3390,30 @@ def main():
 
                 before_edge = columns()
                 capture("native-table-edge-before.png")
+                # A quick Undo can reach the same frame as the drag release.
+                divider = control_bounds("table-resize:0:1")
+                x, y = round((divider[0] + divider[2]) / 2), round((divider[1] + divider[3]) / 2)
+                xdo("mousemove", "--sync", str(x), str(y)); pause(); xdo("mousedown", "1")
+                try:
+                    for step in range(1, 6):
+                        xdo("mousemove", "--sync", str(x + 4 * step), str(y)); time.sleep(.05)
+                    assert columns()[1][2] > before_edge[1][2] + 5, "The resize must begin before release"
+                    app.send_signal(signal.SIGSTOP)
+                    try:
+                        xdo("mousemove", "--sync", str(x + 60), str(y)); xdo("mouseup", "1")
+                        xdo("key", "--clearmodifiers", "ctrl+z")
+                    finally:
+                        app.send_signal(signal.SIGCONT)
+                finally:
+                    xdo("mouseup", "1")
+                pause()
+                assert same_widths(columns(), before_edge), "Undo queued at release must undo the complete resize"
+                key("ctrl+y")
+                released_edge = columns()
+                assert abs(released_edge[1][2] - before_edge[1][2] - 60) < 2, "Redo must restore the release position"
+                assert edge_note.read_bytes() == edge_source.encode()
+                key("ctrl+z")
+                assert same_widths(columns(), before_edge)
                 drag_divider(1, 1435)
                 after_edge = columns(required=False)
                 capture("native-table-edge-far-right.png")
@@ -3440,9 +3464,11 @@ def main():
 
                 drag_divider(2, 1435)
                 outer_edge = columns()
+                capture("native-table-edge-outer.png")
                 assert outer_edge[2][2] <= content_right + 2 and outer_edge[2][2] > keyboard_edge[2][2] + 2, "Outer edge must use only the remaining document width"
                 drag_divider(2, 0)
                 minimum_edge = columns()
+                capture("native-table-edge-minimum.png")
                 assert abs(minimum_edge[2][2] - minimum_edge[2][0] - 56) < 2, "Outer column must stop at its readable minimum"
                 key("ctrl+z"); assert same_widths(columns(), outer_edge)
                 key("ctrl+z"); assert same_widths(columns(), keyboard_edge)
@@ -3571,6 +3597,11 @@ def main():
                     key("ctrl+z")
                     restored = control_bounds("table-resize:0:0")
                     assert abs(restored[0] - divider[0]) < 2 and note.read_text() == source
+                    key("ctrl+y")
+                    redone = control_bounds("table-resize:0:0")
+                    assert abs(redone[0] - released[0]) < 2 and note.read_text() == source, ("Redo lost the release position", mode, released, redone)
+                    key("ctrl+z")
+                    assert abs(control_bounds("table-resize:0:0")[0] - divider[0]) < 2 and note.read_text() == source
                     capture("native-table-resize-" + mode.split()[0].lower() + "-before.png")
                     for table in (0, 1):
                         name = f"table-resize:{table}:0"
