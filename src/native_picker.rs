@@ -146,8 +146,8 @@ async fn portal(
     cancel: &async_channel::Receiver<()>,
 ) -> PortalResult {
     use ashpd::{
-        desktop::{file_chooser::SelectedFiles, ResponseError},
         Error,
+        desktop::{ResponseError, file_chooser::SelectedFiles},
     };
     let connection = match zbus::Connection::session().await {
         Ok(connection) => connection,
@@ -163,7 +163,7 @@ async fn portal(
             Err(error) => {
                 return PortalResult::Finished(Err(format!(
                     "Cannot set the initial folder: {error}"
-                )))
+                )));
             }
         };
     }
@@ -315,11 +315,13 @@ mod tests {
             choose_backend(PortalResult::Finished(Ok(None)), fallback).unwrap(),
             None
         );
-        assert!(choose_backend(
-            PortalResult::Finished(Err("portal failed".into())),
-            fallback
-        )
-        .is_err());
+        assert!(
+            choose_backend(
+                PortalResult::Finished(Err("portal failed".into())),
+                fallback
+            )
+            .is_err()
+        );
     }
 
     #[test]
