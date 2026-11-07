@@ -315,7 +315,8 @@ fn only_a_cell_that_is_one_whole_link_follows_on_a_plain_click() {
     );
     assert_eq!(
         sole_link("[[Journal/2026-11-08|Sun]]").as_deref(),
-        Some("Journal/2026-11-08")
+        // Same target form as link_at; following drops the alias.
+        Some("Journal/2026-11-08|Sun")
     );
     assert_eq!(sole_link("see [a](x.md)"), None);
     assert_eq!(sole_link("[a](x.md) [b](y.md)"), None);

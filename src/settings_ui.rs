@@ -650,7 +650,7 @@ fn row(
     ui.add_space(crate::theme::space::M);
     // One label column and one control column, so every control starts on the same
     // left edge whatever its label's length.
-    let label_width = (ui.available_width() - 280.0).max(160.0);
+    let label_width = (ui.available_width() - 180.0).max(100.0);
     let changed = ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(label_width, 0.0),
