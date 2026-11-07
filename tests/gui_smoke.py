@@ -449,6 +449,30 @@ def main():
                 xdo("mouseup", "1")
             xdo("mousemove", "--sync", "100", "20");pause()
 
+        def scrollbar_appearance(picture, viewport, dark, state):
+            """Measure the painted handle, allowing the requested pale light-scheme gray."""
+            left, top, right, bottom = map(round, viewport)
+            background = picture.getpixel((right-24, (top+bottom)//2))[:3]
+            rows = []
+            for y in range(top+4, bottom-4):
+                xs = [x for x in range(right, min(picture.width, right+20))
+                      if pixel_contrast(picture.getpixel((x, y)), background) >= (2 if dark else 1.3)]
+                if len(xs) >= 4:
+                    rows.append((y, xs))
+            assert len(rows) >= 24, ("A visible scrollbar thumb must be painted", dark, state, viewport)
+            width = max(len(xs) for _, xs in rows)
+            assert 4 <= width <= 6, ("Scrollbar width must stay compact", dark, state, width)
+            y, xs = rows[len(rows)//2]
+            color = picture.getpixel((xs[len(xs)//2], y))[:3]
+            assert max(color)-min(color) <= 18, ("Scrollbars must stay near neutral in every palette", color)
+            if dark:
+                assert max(color) <= 135, ("Dark thumbs must stay gray", state, color)
+            else:
+                assert 140 <= min(color) and max(color) <= 230, ("Light thumbs must be light gray", state, color)
+                if state == "idle":
+                    assert min(color) >= 180, ("An idle light thumb must not look like dark text", color)
+            return rows, color
+
         def scrollbar_pixels(path, source):
             # Inspect the actual pixels, then drag that visible thumb.
             for dark in (True, False):
@@ -460,6 +484,13 @@ def main():
                 left, top, right, bottom = map(round, viewport)
                 observations = []
                 def thumb_pixels(picture, state):
+                    if not dark:
+                        rows, color = scrollbar_appearance(picture, viewport, dark, state)
+                        observations.append({"state": state, "width": max(len(xs) for _, xs in rows), "color": color})
+                        (reports / "scrollbar-light-states.json").write_text(json.dumps(observations, indent=2) + "\n")
+                        if state != "idle":
+                            assert luminance(color) < luminance(observations[0]["color"])-.05, ("A light thumb must darken on hover and drag", observations)
+                        return rows
                     background = picture.getpixel((right-24, (top+bottom)//2))
                     rows = []
                     for y in range(top+4, bottom-4):
@@ -3267,6 +3298,19 @@ def main():
                         cards = [control_bounds("settings-palette:" + name) for name, _ in palettes]
                         assert max(card[1] for card in cards)-min(card[1] for card in cards) <= 1, cards
                         assert all(left[2] < right[0] for left, right in zip(cards, cards[1:])), cards
+                        xdo("mousemove", "--sync", "100", "20");pause()
+                        viewport = control_bounds("settings-viewport")
+                        rows, idle_color = scrollbar_appearance(ImageGrab.grab(xdisplay=display).convert("RGB"), viewport, dark, "idle")
+                        middle_y, thumb_xs = rows[len(rows)//2]
+                        gap = min(thumb_xs)-max(card[2] for card in cards)
+                        assert gap >= 7, ("Palette cards need an eight-pixel gutter before the scrollbar", value, dark, gap, cards, rows[len(rows)//2])
+                        xdo("mousemove", "--sync", str(thumb_xs[len(thumb_xs)//2]), str(middle_y));pause()
+                        _, hover_color = scrollbar_appearance(ImageGrab.grab(xdisplay=display).convert("RGB"), viewport, dark, "hover")
+                        if not dark:
+                            assert luminance(hover_color) < luminance(idle_color)-.05, ("Light scrollbar hover must be darker", value, idle_color, hover_color)
+                        capture("native-settings-scrollbar-hover-" + ("dark" if dark else "light") + "-" + value + ".png")
+                        (reports / ("settings-scrollbar-" + ("dark" if dark else "light") + "-" + value + ".json")).write_text(json.dumps({"gap": gap, "idle": idle_color, "hover": hover_color}, indent=2) + "\n")
+                        xdo("mousemove", "--sync", "100", "20");pause()
                         capture("native-palettes-" + ("dark" if dark else "light") + "-" + value + ".png")
                         key("Escape")
                         state = None

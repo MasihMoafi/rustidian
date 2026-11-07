@@ -176,11 +176,6 @@ impl NotesApp {
     ) {
         theme::dialog_style(ui);
         ui.style_mut().spacing.slider_width = 120.0;
-        ui.style_mut().visuals.faint_bg_color = if self.dark {
-            Color32::from_rgb(35, 35, 35)
-        } else {
-            Color32::from_rgb(249, 249, 249)
-        };
         let width = (ctx.content_rect().width() - 48.0).clamp(360.0, 900.0);
         let height = (ctx.content_rect().height() - 100.0).clamp(260.0, 672.0);
         ui.set_width(width);
@@ -201,11 +196,7 @@ impl NotesApp {
         let mut changed = false;
         ui.horizontal_top(|ui| {
             egui::Frame::new()
-                .fill(if self.dark {
-                    Color32::from_rgb(38, 38, 38)
-                } else {
-                    Color32::from_rgb(246, 246, 246)
-                })
+                .fill(ui.visuals().panel_fill)
                 .inner_margin(crate::theme::space::margin(crate::theme::space::M, crate::theme::space::M))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
@@ -655,7 +646,9 @@ fn row(
     ui.add_space(crate::theme::space::M);
     // One label column and one control column, so every control starts on the same
     // left edge whatever its label's length.
-    let label_width = (ui.available_width() - 180.0).max(100.0);
+    let label_width =
+        (ui.available_width() - theme::space::SETTINGS_CONTROL_WIDTH - ui.spacing().item_spacing.x)
+            .max(100.0);
     let changed = ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(label_width, 0.0),
@@ -714,7 +707,7 @@ fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> b
     let search_id = egui::Id::unique(id).with("search");
     let response = egui::ComboBox::from_id_salt(id)
         .icon(theme::combo_chevron)
-        .width(180.0)
+        .width(theme::space::SETTINGS_CONTROL_WIDTH)
         .height(320.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .selected_text(if value.is_empty() {
@@ -794,22 +787,25 @@ fn text(
 }
 
 fn navigation_row(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 25.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::space::ROW),
+        egui::Sense::click(),
+    );
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, page.label())
     });
     if selected || response.hovered() || response.has_focus() {
         ui.painter().rect_filled(
             rect,
-            6,
+            theme::radius::ROW,
             if selected {
-                Color32::from_gray(if ui.visuals().dark_mode { 45 } else { 216 })
+                ui.visuals().selection.bg_fill
             } else {
                 theme::hover_fill(ui)
             },
         );
     }
+    theme::control_feedback(ui, &response);
     let icon = match page {
         Page::Appearance => Icon::Appearance,
         Page::Interface => Icon::SidebarLeft,
@@ -905,7 +901,7 @@ fn choice(
 fn group<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
-        .corner_radius(12)
+        .corner_radius(theme::radius::CARD)
         .inner_margin(crate::theme::space::margin(crate::theme::space::XL, 0.0))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;

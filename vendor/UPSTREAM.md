@@ -90,3 +90,10 @@ Wrapped quote insets (31 Oct 2026)
 paragraph before wrapping and retains it on every row. Indents participate in
 paragraph reuse; the existing method keeps zero insets. Rustidian uses this for
 quotes so narrow wrapped text cannot cross its border or its right edge.
+
+Native scrollbar colors (7 Nov 2026)
+
+`ScrollStyle` accepts optional handle and track colors independently of widget
+text, button fills and focus states. Unset colors retain upstream behavior;
+existing state opacities still apply. Rustidian's `src/theme.rs` owns the colors
+and gutter. The native palette and visual-control checks inspect painted pixels.

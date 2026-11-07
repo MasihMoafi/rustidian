@@ -4937,6 +4937,7 @@ impl NotesApp {
                         select = matches.get(self.dialog_selected).cloned();
                     }
                     ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
+                        theme::list_style(ui);
                         for (index, path) in matches.iter().enumerate() {
                             let row = ui.add(
                                 egui::Button::new(rustidian::paths::display_path(path))
@@ -5007,6 +5008,7 @@ impl NotesApp {
                             self.dialog_selected =
                                 self.dialog_selected.min(matches.len().saturating_sub(1));
                             ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                                theme::list_style(ui);
                                 for (index, path) in matches.iter().enumerate() {
                                     let label = rustidian::paths::display_path(
                                         path.strip_prefix(folder).unwrap_or(path),
@@ -5096,6 +5098,7 @@ impl NotesApp {
                     self.dialog_selected =
                         self.dialog_selected.min(matches.len().saturating_sub(1));
                     ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                        theme::list_style(ui);
                         for (index, command) in matches.iter().enumerate() {
                             let row = ui.add(
                                 egui::Button::new(command.name)

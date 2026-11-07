@@ -1634,18 +1634,21 @@ impl Prepared {
                     1.0
                 };
 
-                let handle_color = if scroll_style.foreground_color {
-                    visuals.fg_stroke.color
-                } else {
-                    visuals.bg_fill
-                };
+                let handle_color = scroll_style.handle_color.unwrap_or_else(|| {
+                    if scroll_style.foreground_color {
+                        visuals.fg_stroke.color
+                    } else {
+                        visuals.bg_fill
+                    }
+                });
 
                 // Background:
                 ui.painter().add(epaint::Shape::rect_filled(
                     outer_scroll_bar_rect,
                     visuals.corner_radius,
-                    ui.visuals()
-                        .extreme_bg_color
+                    scroll_style
+                        .track_color
+                        .unwrap_or(ui.visuals().extreme_bg_color)
                         .gamma_multiply(background_opacity),
                 ));
 

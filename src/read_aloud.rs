@@ -655,28 +655,38 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
     if !status.active && status.error.is_none() {
         return false;
     }
-    let width = area.width().clamp(240.0, 560.0);
+    let width = area.width().clamp(
+        crate::theme::space::PLAYER_MIN_WIDTH,
+        crate::theme::space::PLAYER_MAX_WIDTH,
+    );
     let position = egui::pos2(area.center().x - width / 2.0, area.bottom() + 6.0);
     let shown = egui::Area::new(egui::Id::unique("read-aloud-player"))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
         .show(ctx, |ui| {
-            let frame = egui::Frame::popup(ui.style()).inner_margin(egui::Margin::symmetric(
-                crate::theme::space::M as i8,
-                crate::theme::space::XS as i8,
+            let frame = crate::theme::notice_frame(ctx).inner_margin(crate::theme::space::margin(
+                crate::theme::space::M,
+                crate::theme::space::XS,
             ));
+            let content_width = width - frame.total_margin().sum().x;
             let response = frame.show(ui, |ui| {
-                ui.set_width(width - 20.0);
+                ui.set_width(content_width);
                 ui.horizontal(|ui| {
                     if status.active {
-                        let (rect, stop) =
-                            ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                        let (rect, stop) = ui.allocate_exact_size(
+                            egui::Vec2::splat(crate::theme::space::ROW),
+                            egui::Sense::click(),
+                        );
                         let fill = if stop.hovered() {
                             crate::theme::interactive(ui)
                         } else {
                             crate::theme::interactive(ui).gamma_multiply(0.8)
                         };
-                        ui.painter().circle_filled(rect.center(), 14.0, fill);
+                        ui.painter().circle_filled(
+                            rect.center(),
+                            crate::theme::space::ROW / 2.0,
+                            fill,
+                        );
                         ui.painter().rect_filled(
                             egui::Rect::from_center_size(rect.center(), egui::vec2(10.0, 10.0)),
                             2,
