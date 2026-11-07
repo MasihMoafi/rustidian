@@ -138,11 +138,40 @@ fn speakable(text: &str) -> String {
         lines.push(
             line.split(' ')
                 .filter(|word| !word.starts_with("http://") && !word.starts_with("https://"))
+                .filter_map(slashless)
                 .collect::<Vec<_>>()
                 .join(" "),
         );
     }
     normalize(&lines.join("\n"))
+}
+
+/// A word without spoken slashes (Masih, 7 Nov: it read "slash" aloud). A file path
+/// (`/usr/bin`, `~/notes`, `a/b/c`) is dropped; "and/or" becomes "and or"; "3/4" stays.
+fn slashless(word: &str) -> Option<String> {
+    if !word.contains('/') {
+        return Some(word.to_owned());
+    }
+    let core = word.trim_matches(|c: char| !c.is_alphanumeric() && !matches!(c, '/' | '~' | '.'));
+    let path = core.starts_with('/')
+        || core.starts_with("~/")
+        || core.starts_with("./")
+        || core.starts_with("../")
+        || core.matches('/').count() >= 2;
+    if path {
+        return None;
+    }
+    let digits = |side: Option<&str>| {
+        side.is_some_and(|s| s.chars().last().is_some_and(|c| c.is_ascii_digit()))
+    };
+    let mut parts = core.splitn(2, '/');
+    let (left, right) = (parts.next(), parts.next());
+    if digits(left) && right.is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())) {
+        return Some(word.to_owned());
+    }
+    let spoken = word.replace('/', " ");
+    let spoken = spoken.trim();
+    (!spoken.is_empty()).then(|| spoken.to_owned())
 }
 
 fn inline_speakable(line: &str) -> String {
@@ -377,5 +406,17 @@ mod tests {
         );
         assert_eq!(snap(full, "  It   ends. "), "It ends.");
         assert_eq!(snap(full, "not in the note"), "not in the note");
+    }
+
+    #[test]
+    fn slashes_are_never_spoken() {
+        assert_eq!(
+            chunks("Use and/or here. Open ~/notes/today.md or /usr/bin now. Add 3/4 cup."),
+            vec!["Use and or here.", "Open or now.", "Add 3/4 cup."]
+        );
+        assert_eq!(
+            chunks("Read input/output (a/b)."),
+            vec!["Read input output (a b)."]
+        );
     }
 }
