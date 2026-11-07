@@ -21,6 +21,36 @@ impl NotesApp {
         let before = self.voice.clone();
         settings_ui::voice_row(
             ui,
+            "Dictation",
+            "Choose the WhisperType transcription backend.",
+            |ui| {
+                use rustidian::voice_account::DictationBackend;
+                let mut backend = self.voice.dictation_backend;
+                let label = |backend| match backend {
+                    DictationBackend::Codex => "Codex / ChatGPT",
+                    DictationBackend::Whisper => "Local Whisper",
+                    DictationBackend::Parakeet => "Local Parakeet",
+                };
+                egui::ComboBox::from_id_salt("settings-dictation-backend")
+                    .icon(theme::combo_chevron)
+                    .selected_text(label(backend))
+                    .show_ui(ui, |ui| {
+                        theme::menu_style(ui);
+                        for value in [
+                            DictationBackend::Codex,
+                            DictationBackend::Whisper,
+                            DictationBackend::Parakeet,
+                        ] {
+                            ui.selectable_value(&mut backend, value, label(value));
+                        }
+                    });
+                self.voice.dictation_backend = backend;
+                false
+            },
+        );
+        ui.separator();
+        settings_ui::voice_row(
+            ui,
             "Voice",
             "Local Kokoro, or a hosted voice through your OpenRouter key.",
             |ui| {

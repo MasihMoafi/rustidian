@@ -1144,6 +1144,26 @@ impl Editor {
         self.edit(tab, Edit::NativeHighlight(color));
     }
 
+    pub fn dictation_selection(&self, tab: &Tab) -> Option<CCursorRange> {
+        self.selection
+            .filter(|(id, _)| *id == tab.id())
+            .map(|(_, range)| range)
+    }
+
+    pub fn insert_dictation(&mut self, tab: &Tab, text: String, selection: CCursorRange) {
+        self.pending_edit = Some(PendingEdit {
+            tab: tab.id(),
+            path: tab.document.path.clone(),
+            source: tab.document.text.clone(),
+            operation: Edit::Insert {
+                text,
+                caret_back: 0,
+            },
+            selection: Some(selection),
+        });
+        self.focus = true;
+    }
+
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
         self.edit(
             tab,
@@ -3988,6 +4008,15 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dictation_replaces_the_selected_unicode_characters() {
+        let mut text = "A سلام Z".to_owned();
+        super::replace_chars(&mut text, 2..6, "hello");
+        assert_eq!(text, "A hello Z");
+        super::replace_chars(&mut text, 7..7, "!");
+        assert_eq!(text, "A hello! Z");
+    }
+
     #[test]
     fn heading_menu_toggles_the_lines_of_the_selection() {
         // (text, selection, level) -> (text, selection), selections in characters.

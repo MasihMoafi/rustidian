@@ -55,6 +55,13 @@ enum Pending {
 
 struct DraggedTab(u64);
 
+struct DictationTarget {
+    tab: u64,
+    path: PathBuf,
+    source: String,
+    selection: egui::text::CCursorRange,
+}
+
 struct PreparedVault {
     vault: Vault,
     tree: Tree,
@@ -119,6 +126,9 @@ pub struct NotesApp {
     /// Read aloud's voice choice and OpenRouter accounts (app-wide).
     voice: rustidian::voice_account::Settings,
     voice_form: voice_ui::VoiceForm,
+    recording: Option<crate::dictation::Recording>,
+    dictation_target: Option<DictationTarget>,
+    dictation_result: Option<Receiver<Result<String, String>>>,
     files: rustidian::search::FileMatcher,
     pending: Option<Pending>,
     error: Option<String>,
@@ -249,6 +259,9 @@ impl NotesApp {
                 .map(|base| rustidian::voice_account::Settings::load(&base))
                 .unwrap_or_default(),
             voice_form: Default::default(),
+            recording: None,
+            dictation_target: None,
+            dictation_result: None,
             files: rustidian::search::FileMatcher::new(Vec::new()),
             pending: None,
             error: None,
@@ -3410,12 +3423,7 @@ impl NotesApp {
                                 )
                                 .replace('/', " / ");
                                 let available = ui.available_width();
-                                // Icon buttons on the right: three, or four for images.
-                                let icons = if self.tabs[self.active].document.is_image() {
-                                    4.0
-                                } else {
-                                    3.0
-                                };
+                                let icons = 4.0;
                                 let actions_width = icons * theme::space::CONTROL
                                     + (icons - 1.0) * theme::space::S
                                     + theme::space::S;
@@ -3512,6 +3520,61 @@ impl NotesApp {
                                 {
                                     self.read_aloud(ui.ctx(), true);
                                 }
+                                let (mic_rect, mic) = ui.allocate_exact_size(
+                                    egui::vec2(theme::space::CONTROL, theme::space::CONTROL),
+                                    egui::Sense::click(),
+                                );
+                                let color = if self.recording.is_some() {
+                                    ui.visuals().selection.bg_fill
+                                } else {
+                                    ui.visuals().text_color()
+                                };
+                                let center = mic_rect.center();
+                                let painter = ui.painter();
+                                painter.rect_stroke(
+                                    egui::Rect::from_center_size(
+                                        center + egui::vec2(0.0, -3.0),
+                                        egui::vec2(7.0, 11.0),
+                                    ),
+                                    3.0,
+                                    Stroke::new(1.5, color),
+                                    egui::StrokeKind::Middle,
+                                );
+                                painter.line_segment(
+                                    [
+                                        center + egui::vec2(-6.0, 0.0),
+                                        center + egui::vec2(-6.0, 2.0),
+                                    ],
+                                    Stroke::new(1.5, color),
+                                );
+                                painter.line_segment(
+                                    [center + egui::vec2(6.0, 0.0), center + egui::vec2(6.0, 2.0)],
+                                    Stroke::new(1.5, color),
+                                );
+                                painter.line_segment(
+                                    [
+                                        center + egui::vec2(-6.0, 2.0),
+                                        center + egui::vec2(0.0, 6.0),
+                                    ],
+                                    Stroke::new(1.5, color),
+                                );
+                                painter.line_segment(
+                                    [center + egui::vec2(0.0, 6.0), center + egui::vec2(6.0, 2.0)],
+                                    Stroke::new(1.5, color),
+                                );
+                                painter.line_segment(
+                                    [center + egui::vec2(0.0, 6.0), center + egui::vec2(0.0, 9.0)],
+                                    Stroke::new(1.5, color),
+                                );
+                                crate::ui_probe::record(ui.ctx(), "dictation-toolbar", mic_rect);
+                                let tip = if self.recording.is_some() {
+                                    "Stop recording and transcribe"
+                                } else {
+                                    "Start dictation"
+                                };
+                                if mic.on_hover_text(tip).clicked() {
+                                    self.toggle_dictation();
+                                }
                                 let reading = self.view() == View::Read;
                                 if icon_button(
                                     ui,
@@ -3594,6 +3657,40 @@ impl NotesApp {
                     });
                 self.document_view(ui);
             });
+    }
+
+    fn toggle_dictation(&mut self) {
+        if let Some(recording) = self.recording.take() {
+            self.dictation_result =
+                Some(recording.finish(self.voice.dictation_backend.command(), self.ctx.clone()));
+            return;
+        }
+        if self.dictation_result.is_some() {
+            self.error = Some("Transcription is still in progress.".into());
+            return;
+        }
+        let tab = &self.tabs[self.active];
+        if tab.view == View::Read {
+            self.error = Some("Switch to an editing view to dictate.".into());
+            return;
+        }
+        let Some(selection) = self.editor.dictation_selection(tab) else {
+            self.error = Some("Place the cursor in the editor before dictating.".into());
+            return;
+        };
+        let target = DictationTarget {
+            tab: tab.id(),
+            path: tab.document.path.clone(),
+            source: tab.document.text.clone(),
+            selection,
+        };
+        match crate::dictation::Recording::start() {
+            Ok(recording) => {
+                self.recording = Some(recording);
+                self.dictation_target = Some(target);
+            }
+            Err(error) => self.error = Some(error),
+        }
     }
 
     fn document_view(&mut self, ui: &mut egui::Ui) {
@@ -6114,6 +6211,36 @@ impl eframe::App for NotesApp {
     /// Runs before every `ui` pass and alone while the window is hidden, so
     /// hand-offs, signals and close requests never wait for a drawn frame.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let dictated =
+            self.dictation_result
+                .as_ref()
+                .and_then(|receiver| match receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(mpsc::TryRecvError::Empty) => None,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        Some(Err("Transcription was interrupted.".into()))
+                    }
+                });
+        if let Some(result) = dictated {
+            self.dictation_result = None;
+            let target = self.dictation_target.take();
+            match (result, target, self.tabs.get(self.active)) {
+                (Ok(text), Some(target), Some(tab))
+                    if tab.id() == target.tab
+                        && tab.document.path == target.path
+                        && tab.document.text == target.source
+                        && matches!(tab.view, View::Live | View::Source | View::Split) =>
+                {
+                    self.editor.insert_dictation(tab, text, target.selection);
+                    ctx.request_repaint();
+                }
+                (Ok(_), _, _) => {
+                    self.error =
+                        Some("The note changed while dictating; no text was inserted.".into())
+                }
+                (Err(error), _, _) => self.error = Some(error),
+            }
+        }
         let result = self
             .reveal_result
             .as_ref()

@@ -241,6 +241,26 @@ fn inline_speakable(line: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// The note without its leading YAML properties block (`---` ... `---` or `...`): reading a whole note starts at the
+/// body (7 Nov: it read "type: blog-post", "author: ..." aloud). Text without a closed block comes back unchanged.
+fn without_front_matter(text: &str) -> &str {
+    let rest = text.trim_start_matches('\u{feff}');
+    let Some(after) = rest
+        .strip_prefix("---\n")
+        .or_else(|| rest.strip_prefix("---\r\n"))
+    else {
+        return text;
+    };
+    let mut offset = 0;
+    for line in after.split_inclusive('\n') {
+        offset += line.len();
+        if matches!(line.trim_end(), "---" | "...") {
+            return &after[offset..];
+        }
+    }
+    text
+}
+
 /// Split one long sentence at a comma, semicolon or space, each piece at most `LONGEST`.
 fn split_long(sentence: &str, out: &mut Vec<String>) {
     let mut rest = sentence.trim();
@@ -266,7 +286,7 @@ fn split_long(sentence: &str, out: &mut Vec<String>) {
 
 /// The chunks read aloud in order: one whole sentence each, long ones split.
 pub fn chunks(text: &str) -> Vec<String> {
-    let text = speakable(text);
+    let text = speakable(without_front_matter(text));
     let mut out = Vec::new();
     for range in sentence_ranges(&text) {
         split_long(&text[range], &mut out);
@@ -406,6 +426,18 @@ mod tests {
         );
         assert_eq!(snap(full, "  It   ends. "), "It ends.");
         assert_eq!(snap(full, "not in the note"), "not in the note");
+    }
+
+    #[test]
+    fn whole_note_reading_skips_front_matter() {
+        let note =
+            "---\ntype: blog-post\nauthor: Sydney Runkle\n---\n\n# Agents\n\nThey go async.\n";
+        assert_eq!(chunks(note), vec!["Agents", "They go async."]);
+        assert_eq!(
+            chunks("---\nnot closed\n\nBody."),
+            vec!["not closed", "Body."]
+        );
+        assert_eq!(chunks("Intro.\n---\nLater."), vec!["Intro.", "Later."]);
     }
 
     #[test]

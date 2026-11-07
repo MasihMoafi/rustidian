@@ -2,6 +2,7 @@ mod app;
 mod callout_ui;
 mod code_ui;
 mod diagrams;
+mod dictation;
 mod editor_ui;
 mod explorer_selection;
 mod file_move_ui;

@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -92,6 +92,14 @@ def main():
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
         environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
+        if args.section in ("dictation", "all"):
+            recorder = base / "fake-recorder"
+            recorder.write_text("#!/usr/bin/env python3\nimport signal, sys, time\nsignal.signal(signal.SIGINT, lambda *args: sys.exit(0))\nopen(sys.argv[1], 'wb').write(b'fake wav')\nwhile True: time.sleep(.1)\n")
+            transcriber = base / "fake-transcriber"
+            transcriber.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps({'text': ' dictated text'}))\n")
+            for stub in (recorder, transcriber):
+                stub.chmod(0o755)
+            environment.update(RUSTIDIAN_DICTATION_RECORDER=str(recorder), RUSTIDIAN_DICTATION_COMMAND=str(transcriber))
         if args.section in ("read-aloud", "voice-account", "all"):
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
@@ -7365,6 +7373,8 @@ def main():
                 open_note("Read aloud test")
                 command("Reading view")
                 pause()
+                control_bounds("read-aloud-toolbar")
+                capture("native-read-aloud-reading-toolbar.png")
                 # The paragraph's margin speaker reads it, one sentence at a time, in order.
                 block = control_bounds("reading-block:1")
                 xdo("mousemove", "--sync", str(round(block[0] + 40)), str(round((block[1] + block[3]) / 2)))
@@ -7443,6 +7453,32 @@ def main():
                     assert not any(mark in " ".join(spoken) for mark in ("**", "`", "[", "](", "#")), (view, spoken)
                     results.append(f"In {view}, the toolbar speaker showed and Ctrl+Shift+R read the whole note without Markdown markup: {spoken}")
                 assert marked.read_text().startswith("# Plan"), "Reading aloud must not change the note"
+
+            def dictation_checks():
+                click_control("button:File explorer")
+                close_tabs()
+                note = fixture / "Dictation test.md"
+                note.write_text("First line.\n")
+                command("Refresh vault")
+                open_note("Dictation test")
+                command("Live preview")
+                click_control("editor")
+                key("ctrl+End")
+                click_control("dictation-toolbar")
+                time.sleep(.5)
+                click_control("dictation-toolbar")
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    key("ctrl+s")
+                    if note.read_text() == "First line.\n dictated text":
+                        break
+                    time.sleep(.2)
+                assert note.read_bytes() == b"First line.\n dictated text", note.read_bytes()
+                key("ctrl+z")
+                key("ctrl+s")
+                pause()
+                assert note.read_bytes() == b"First line.\n", note.read_bytes()
+                results.append("Dictation inserted at the caret as one undoable edit and saved the exact note bytes")
 
             def explorer_order_checks():
                 # Masih (6 Nov): arrange files by dragging them between rows, and see each
@@ -11511,6 +11547,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "read-aloud"}))
                 return
+            if args.section == "dictation":
+                dictation_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "dictation"}))
+                return
             if args.section == "explorer-order":
                 explorer_order_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -12187,6 +12228,7 @@ def main():
                 drag_move_checks,
                 explorer_order_checks,
                 read_aloud_checks,
+                dictation_checks,
                 task_checks,
                 task_clip_checks,
                 essential_checks,

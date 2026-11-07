@@ -39,10 +39,29 @@ pub struct Account {
     pub session_only: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DictationBackend {
+    #[default]
+    Codex,
+    Whisper,
+    Parakeet,
+}
+
+impl DictationBackend {
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Whisper => "local",
+            Self::Parakeet => "parakeet",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub engine: Engine,
+    pub dictation_backend: DictationBackend,
     pub model: String,
     pub voice: String,
     pub endpoint: String,
@@ -54,6 +73,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             engine: Engine::Local,
+            dictation_backend: DictationBackend::Codex,
             model: DEFAULT_MODEL.into(),
             voice: DEFAULT_VOICE.into(),
             endpoint: DEFAULT_ENDPOINT.into(),
