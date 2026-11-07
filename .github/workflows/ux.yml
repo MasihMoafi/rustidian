@@ -67,13 +67,14 @@ jobs:
       - name: Install file manager for native Reveal verification
         if: ${{ contains(inputs.sections, 'reveal') }}
         run: sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends nautilus dbus-x11
+      # Before the cache (see native.yml): a formatting failure must not save an empty cache.
+      - name: Formatting
+        run: cargo fmt --all -- --check
       - name: Restore the Rust build cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: gui-only-${{ inputs.gui_only }}-keep-binary-${{ inputs.keep_binary }}
           cache-on-failure: true
-      - name: Formatting
-        run: cargo fmt --all -- --check
       - name: Restore unchanged optimized candidate and native evidence
         if: ${{ inputs.reuse_run != '' }}
         env:

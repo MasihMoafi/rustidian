@@ -25,14 +25,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev
       - name: Install declared Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+      # Before the cache: a run that fails here must not save an empty cache under the
+      # lockfile's key, which every later run would then hit and rebuild from scratch.
+      - name: Check formatting
+        run: cargo +1.95.0 fmt --all -- --check
       - name: Restore the Rust build cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         env:
           RUSTUP_TOOLCHAIN: '1.95.0'
         with:
           cache-on-failure: true
-      - name: Check formatting
-        run: cargo +1.95.0 fmt --all -- --check
       - name: Check every target (the same command as the full run)
         run: cargo +1.95.0 clippy --locked --all-targets -- -D warnings
       - name: Run core and integration tests
