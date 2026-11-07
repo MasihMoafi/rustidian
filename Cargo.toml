@@ -38,6 +38,7 @@ rustix = { version = "1.1", features = ["event", "fs", "process"] }
 trash = "5.2"
 base64 = "0.22"
 percent-encoding = "2.3"
+async-channel = "2"
 serde_yaml_ng = "0.10"
 serde-saphyr = { version = "2.0", default-features = false, features = ["deserialize"] }
 regex = "1.12"
@@ -60,6 +61,10 @@ ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip"
 
 # A launch's activation token raises the running window (src/window.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "file_chooser"] }
+futures-lite = "2"
+zbus = { version = "5.13", default-features = false, features = ["async-io"] }
+url = "2"
 raw-window-handle = { version = "0.6", features = ["std"] }
 wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
