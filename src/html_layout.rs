@@ -239,18 +239,27 @@ pub struct Cell {
 /// Cell bodies retain Markdown and nested HTML, so both views use the same renderer.
 pub fn table_rows(source: &str) -> Vec<Vec<Cell>> {
     let all = elements(source);
-    let rows = outermost(all.into_iter().filter(|element| element.tag.name == "tr"));
+    let rows = outermost(
+        all.iter()
+            .filter(|element| element.tag.name == "tr")
+            .cloned(),
+    );
     rows.into_iter()
         .map(|row| {
-            let body = &source[row.body];
+            // Keep the table's HTML context: reparsing an indented row body as
+            // Markdown would classify its <td> lines as indented code.
             outermost(
-                elements(body)
-                    .into_iter()
-                    .filter(|element| matches!(element.tag.name.as_str(), "td" | "th")),
+                all.iter()
+                    .filter(|element| {
+                        row.body.start <= element.range.start
+                            && element.range.end <= row.body.end
+                            && matches!(element.tag.name.as_str(), "td" | "th")
+                    })
+                    .cloned(),
             )
             .into_iter()
             .map(|element| Cell {
-                source: body[element.body].into(),
+                source: source[element.body].into(),
                 tag: element.tag,
             })
             .collect()

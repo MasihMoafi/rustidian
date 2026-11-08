@@ -4185,6 +4185,9 @@ fn layout(
                 };
                 start >= image.range.start && content_end <= image.range.end
             });
+            // A rendered child owns its breaks and height. Splitting its hidden source
+            // again would reserve the child's full height for every <br>.
+            let html_break = live && style.html_break && image.is_none();
             let hidden = live
                 && (style.html_break
                     || style.task_marker
@@ -4248,7 +4251,7 @@ fn layout(
             let highlighted = matched
                 .is_some_and(|range| character < range.end && character + count > range.start);
             let break_display;
-            let display = if live && style.html_break {
+            let display = if html_break {
                 break_display = section.replace('<', "\n");
                 break_display.as_str()
             } else if live && style.bullet && !active && !style.task_marker {
@@ -4289,7 +4292,7 @@ fn layout(
             let format = egui::TextFormat {
                 font_id: FontId::new(size, family),
                 color,
-                line_height: Some(if live && style.html_break {
+                line_height: Some(if html_break {
                     0.01
                 } else if live && style.callout_header && !active {
                     callout_heights
@@ -4610,6 +4613,49 @@ mod tests {
             document.text, "Agent replacement",
             "Extra Redo must never resurrect the earlier discarded edit"
         );
+    }
+
+    #[test]
+    fn inactive_html_breaks_reserve_the_rendered_child_height_once() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        for breaks in ["<br>", "<br><br>"] {
+            let source = format!("<table><tr><td>Before{breaks}After</td></tr></table>\n\nTail");
+            let end = source.find('\n').unwrap();
+            let parsed = Markdown::parse(&source);
+            let image = LiveImage {
+                range: 0..end,
+                block: Some(0..end),
+                uri: String::new(),
+                size: egui::vec2(916.0, 100.0),
+                html: Some(source[..end].into()),
+                alt: String::new(),
+                math: None,
+                note: None,
+            };
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let job = layout(
+                    ui,
+                    &source,
+                    &parsed,
+                    920.0,
+                    Decorations {
+                        live: true,
+                        active_line: None,
+                        matched: None,
+                        images: std::slice::from_ref(&image),
+                    },
+                );
+                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                assert_eq!(galley.text(), source);
+                let tail = galley.pos_from_cursor(CCursor::new(end + 2));
+                assert!(
+                    (116.0..160.0).contains(&tail.top()),
+                    "HTML child height must be reserved once: {breaks}: {tail:?}"
+                );
+            })
+            .drop_without_applying_deltas();
+        }
     }
 
     #[test]

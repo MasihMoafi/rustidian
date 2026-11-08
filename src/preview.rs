@@ -719,7 +719,7 @@ fn center_rows(galley: &mut Arc<egui::Galley>, fraction: f32) {
 
 /// One image of a paragraph, at its original size up to its `|width` hint and the page width.
 fn show_image(ui: &mut egui::Ui, item: &RowImage) -> egui::Response {
-    let (alt, hint) = item.alt.rsplit_once('|').unwrap_or((&item.alt, ""));
+    let (alt, hint) = item.alt.rsplit_once('|').unwrap_or((&item.alt, &item.alt));
     let (width, height) = hint.split_once('x').unwrap_or((hint, ""));
     let dimension = |value: &str| {
         value

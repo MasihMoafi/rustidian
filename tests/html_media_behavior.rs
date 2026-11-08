@@ -33,6 +33,30 @@ fn readme_html_keeps_cell_layout_media_and_unicode_without_interpreting_code() {
 }
 
 #[test]
+fn readme_indented_image_cells_keep_their_html_table_context() {
+    let readme = include_str!("fixtures/github-readme.md");
+    let rows = html_layout::blocks(readme)
+        .into_iter()
+        .filter(|element| element.tag.name == "table")
+        .map(|element| html_layout::table_rows(&readme[element.range]))
+        .find(|rows| {
+            rows.iter()
+                .flatten()
+                .any(|cell| cell.source.contains("<sub>Teal</sub>"))
+        })
+        .expect("The README's indented palette table must retain its cells");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].len(), 4);
+    for (cell, caption) in rows[0]
+        .iter()
+        .zip(["Teal", "Love Space", "Elpis Gold", "Signature"])
+    {
+        assert!(cell.source.contains(&format!("<sub>{caption}</sub>")));
+        assert_eq!(assets::embedded_images(&cell.source).len(), 1);
+    }
+}
+
+#[test]
 fn picture_chooses_the_matching_theme_and_keeps_fallback_dimensions_and_alt() {
     let picture = "<picture><source media='(prefers-color-scheme: light)' srcset='light.png 1x, light-2x.png 2x'><source media='(prefers-color-scheme: dark)' srcset='dark.png'><img src='fallback.png' width='240' height='120' alt='Notebook'></picture>";
     for (dark, expected) in [(false, "light.png"), (true, "dark.png")] {

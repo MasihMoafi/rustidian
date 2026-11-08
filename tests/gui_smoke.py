@@ -8420,6 +8420,20 @@ def main():
                 def color_count(color):
                     return sum(pixel == color for pixel in pixel_data(ImageGrab.grab(xdisplay=display).convert("RGB")))
 
+                def reveal(name):
+                    # A probe records screen bounds, including clipped controls; scroll before clicking.
+                    for _ in range(16):
+                        controls = probe()
+                        view = controls["document-viewport"]
+                        bounds = controls.get(name)
+                        if bounds and view[1] <= bounds[1] and bounds[3] <= view[3]:
+                            return bounds
+                        direction = "4" if bounds and bounds[1] < view[1] else "5"
+                        xdo("mousemove", str(round((view[0] + view[2]) / 2)), str(round((view[1] + view[3]) / 2)),
+                            "click", "--repeat", "2", "--delay", "30", direction)
+                        pause()
+                    raise AssertionError(f"Cannot reveal {name} in the document viewport")
+
                 originals = {}
                 try:
                     docs = fixture / "docs"; docs.mkdir(exist_ok=True)
@@ -8433,13 +8447,19 @@ def main():
                     capture("native-html-readme-top.png")
                     control_bounds("media-image:Rustidian logo")
                     seen = set()
-                    for step in range(12):
+                    for step in range(20):
                         seen.update(probe()); capture(f"native-html-readme-{step:02}.png")
                         text = [name.removeprefix("reading-text:") for name in probe() if name.startswith("reading-text:")]
                         assert not any(tag in content for content in text for tag in ("<table", "<video", "<picture", "<div", "rust-missing-image:")), text
-                        xdo("mousemove", "1100", "700", "click", "--repeat", "4", "--delay", "30", "5"); pause()
+                        before = probe()["document-scroll-y"][0]
+                        xdo("mousemove", "1100", "700", "click", "--repeat", "2", "--delay", "30", "5"); pause()
+                        if probe()["document-scroll-y"][0] == before:
+                            break
+                    else:
+                        raise AssertionError("The README scan did not reach the bottom")
                     for prefix in ("html-cell:", "video-card:", "html-details:"):
                         assert any(name.startswith(prefix) for name in seen), ("README native content is missing", prefix)
+                    assert "html-cell:0:3" in seen, "The README's four-image palette table must render"
                     results.append("The README copy with its original media draws native tables, video cards and disclosures without literal tags; full-page screenshots retained")
 
                     note = fixture / "HTML media.md"
@@ -8471,6 +8491,7 @@ def main():
                         click_control("media-image:Linked badge")
                         wait_for(lambda: (reports / "browser-requests.txt").exists() and (reports / "browser-requests.txt").read_text() != before, "An HTML image link did not open")
                         assert "https://example.com/?a=1&b=2" in (reports / "browser-requests.txt").read_text()
+                        reveal("html-details:More HTML")
                         click_control("html-details:More HTML"); control_bounds("reading-text:DISCLOSED_TEXT")
                         capture(f"native-html-details-{mode.replace(' ', '-')}.png")
                         command("Source editing"); key("ctrl+s"); assert note.read_bytes() == originals[note]
@@ -8491,13 +8512,17 @@ def main():
                     results.append("An outstanding HTTP image leaves view changes responsive; its completed image draws and is requested once")
 
                     video = fixture / "Video embeds.md"; clip = "docs/videos/rustidian-dictation.mp4"
-                    video.write_text(f"# Video embeds\n\n<video src='{clip}' controls></video>\n\n![Markdown clip]({clip})\n\n![[{clip}]]\n")
+                    # Distinct destinations keep one probe per syntax instead of overwriting a shared URI key.
+                    markdown_clip = "docs/videos/rustidian-read-aloud.mp4"
+                    wiki_clip = "docs/videos/wiki clip.mp4"
+                    shutil.copyfile(fixture / clip, fixture / wiki_clip)
+                    video.write_text(f"# Video embeds\n\n<video src='{clip}' controls></video>\n\n![Markdown clip]({markdown_clip})\n\n![[{wiki_clip}]]\n")
                     originals[video] = video.read_bytes()
                     command("Refresh vault"); open_note(video.name, title=video.stem)
                     for mode in ("Reading view", "Live preview"):
                         command(mode); key("ctrl+Home"); pause()
                         cards = {name: bounds for name, bounds in probe().items() if name.startswith("video-card:")}
-                        assert len(cards) >= 2, (mode, cards)
+                        assert len(cards) == 3, (mode, cards)
                         capture(f"native-html-video-{mode.replace(' ', '-')}.png")
                         player_log = reports / "media-player.jsonl"
                         before = player_log.read_text().splitlines() if player_log.exists() else []
