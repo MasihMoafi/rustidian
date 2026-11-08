@@ -492,3 +492,53 @@ fn backlink_labels_hide_encoded_destinations_and_keep_exact_navigation_ranges() 
         assert_eq!(&source[mention.range], mention.link);
     }
 }
+
+#[test]
+fn preparing_a_new_save_does_no_disk_work_and_the_writer_never_clobbers_a_creation() {
+    let dir = tempdir().unwrap();
+    let vault = Vault::open(dir.path()).unwrap();
+    let mut document = rustidian::vault::Document::new(Path::new("Nested/New.md").to_owned());
+    document.text = "\u{feff}Exact bytes\r\nفارسی\r\n".into();
+    let save = vault.prepare_save(&document).unwrap();
+    let collision = vault.prepare_save(&document).unwrap();
+    assert!(!dir.path().join("Nested").exists());
+    assert_eq!(save.expected_saved_text(), None);
+    let mut writer = rustidian::autosave::Writer::default();
+    writer.submit(1, save, || {});
+    writer.wait().pop().unwrap().result.unwrap();
+    assert_eq!(
+        fs::read(dir.path().join("Nested/New.md")).unwrap(),
+        document.text.as_bytes()
+    );
+    writer.submit(2, collision, || {});
+    assert!(writer.wait().pop().unwrap().result.is_err());
+    assert_eq!(
+        fs::read(dir.path().join("Nested/New.md")).unwrap(),
+        document.text.as_bytes()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_save_revalidates_parent_symlinks_on_the_writer_not_only_when_prepared() {
+    let dir = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    fs::create_dir(dir.path().join("Nested")).unwrap();
+    fs::write(dir.path().join("Nested/Note.md"), "original").unwrap();
+    fs::write(outside.path().join("Note.md"), "outside").unwrap();
+    let vault = Vault::open(dir.path()).unwrap();
+    let mut document = vault.read(Path::new("Nested/Note.md")).unwrap();
+    document.text = "mine".into();
+    let save = vault.prepare_save(&document).unwrap();
+    fs::rename(dir.path().join("Nested"), dir.path().join("Before")).unwrap();
+    std::os::unix::fs::symlink(outside.path(), dir.path().join("Nested")).unwrap();
+    assert!(save.write().unwrap_err().contains("Linked folders"));
+    assert_eq!(
+        fs::read_to_string(outside.path().join("Note.md")).unwrap(),
+        "outside"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("Before/Note.md")).unwrap(),
+        "original"
+    );
+}

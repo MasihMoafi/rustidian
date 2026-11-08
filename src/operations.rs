@@ -67,6 +67,23 @@ pub struct RenameOutcome {
 impl Vault {
     #[cfg(target_os = "linux")]
     pub fn duplicate_folder(&mut self, from: &Path) -> Result<PathBuf> {
+        self.duplicate_folder_cancellable(from, || false)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn duplicate_folder_cancellable(
+        &mut self,
+        from: &Path,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<PathBuf> {
+        let check = || {
+            if cancelled() {
+                Err("Folder copying cancelled.".to_owned())
+            } else {
+                Ok(())
+            }
+        };
+        check()?;
         if from.as_os_str().is_empty() || !self.folders.iter().any(|path| path == from) {
             return Err("Choose an existing folder inside this vault.".into());
         }
@@ -105,6 +122,7 @@ impl Vault {
             .map_err(|error| format!("Cannot copy folder: {error}"))?;
         let copied = (|| -> Result<(PathBuf, Vault)> {
             for (relative, directory, expected) in &snapshot {
+                check()?;
                 if relative.as_os_str().is_empty() {
                     continue;
                 }
@@ -138,6 +156,7 @@ impl Vault {
             }
             // Index only the new tree, while it is still private and unpublished.
             let index = Vault::open(staging.path())?;
+            check()?;
             for (relative, directory, metadata) in snapshot.iter().rev() {
                 if *directory {
                     std::fs::set_permissions(staging.path().join(relative), metadata.permissions())
@@ -145,6 +164,7 @@ impl Vault {
                 }
             }
             for counter in 1..u64::MAX {
+                check()?;
                 // A directory's dots are part of its name, not a file extension.
                 let mut name = filename.to_os_string();
                 name.push(format!(" {counter}"));
@@ -181,13 +201,18 @@ impl Vault {
             }
         };
         let _ = staging.keep();
+        Ok(self.commit_folder_copy(destination, index))
+    }
+
+    /// Merge only the prepared subtree; unrelated notes and guest tabs keep their current state.
+    pub fn commit_folder_copy(&mut self, destination: PathBuf, index: Vault) -> PathBuf {
         self.notes
             .retain(|note| !note.path.starts_with(&destination));
         self.attachments
             .retain(|path| !path.starts_with(&destination));
         self.folders.retain(|path| !path.starts_with(&destination));
         self.notes.extend(index.notes.into_iter().map(|mut note| {
-            note.path = destination.join(note.path);
+            note.path = destination.join(&note.path);
             note
         }));
         self.attachments.extend(
@@ -211,12 +236,21 @@ impl Vault {
         self.folders.sort();
         self.folders.dedup();
         self.rebuild_lookup();
-        Ok(destination)
+        destination
     }
 
     #[cfg(not(target_os = "linux"))]
     pub fn duplicate_folder(&mut self, _from: &Path) -> Result<PathBuf> {
         Err("Guarded folder copying is currently available on Linux.".into())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn duplicate_folder_cancellable(
+        &mut self,
+        from: &Path,
+        _cancelled: impl Fn() -> bool,
+    ) -> Result<PathBuf> {
+        self.duplicate_folder(from)
     }
 
     /// Validate the complete selection before a batch changes anything. A selected

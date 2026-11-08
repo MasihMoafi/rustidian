@@ -24,6 +24,9 @@ pub struct Writer {
 }
 
 impl Writer {
+    pub fn any_busy(&self) -> bool {
+        !self.in_flight.is_empty()
+    }
     pub fn busy(&self, tab: u64) -> bool {
         self.in_flight.contains(&tab)
     }
@@ -56,8 +59,10 @@ impl Writer {
             },
             None => save,
         };
-        // No worker thread: write here rather than lose the edit.
-        let result = save.write();
+        // Keep the draft dirty and report failure; never fall back to disk work in a frame.
+        let result = Err(
+            "Cannot start the save worker. Your changes are still open; try Save again.".into(),
+        );
         self.finished.push(Done { tab, save, result });
     }
 

@@ -185,6 +185,7 @@ fn main() -> eframe::Result {
     // The socket file stays: the next launch finds nobody listening on it and
     // replaces it. Removing it here could remove a newer window's socket.
     // The window is gone; an agent that ignores SIGTERM still gets its SIGKILL.
+    read_aloud::wait_for_closing();
     rustidian::terminal::wait_for_closing();
     result
 }

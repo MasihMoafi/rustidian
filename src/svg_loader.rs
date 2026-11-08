@@ -33,20 +33,309 @@ pub fn svg_options() -> usvg::Options<'static> {
 }
 
 type Entry = Result<Arc<egui::ColorImage>, String>;
+type Key = (String, SizeHint);
+const WORKERS: usize = 2;
+const QUEUED: usize = 8;
+const CACHE_ENTRIES: usize = 128;
+const CACHE_BYTES: usize = 32 * 1024 * 1024;
+const SOURCE_BYTES: usize = 1024 * 1024;
+const MAX_DIMENSION: f32 = 4096.0;
+const MAX_PIXELS: f32 = 4_000_000.0;
 
 enum State {
-    /// A thread is drawing it; the page shows a placeholder until then.
-    Drawing,
+    Drawing(u64),
     Done(Entry),
 }
+struct Cached {
+    state: State,
+    touched: u64,
+}
+#[derive(Default)]
+struct Cache {
+    entries: HashMap<Key, Cached>,
+    generation: u64,
+    clock: u64,
+}
+impl Cache {
+    fn bytes(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|((uri, _), entry)| {
+                uri.len()
+                    + match &entry.state {
+                        State::Done(Ok(image)) => image.pixels.len() * 4,
+                        State::Done(Err(error)) => error.len(),
+                        _ => 0,
+                    }
+            })
+            .sum()
+    }
+    fn trim(&mut self, incoming: usize) {
+        while self.entries.len() >= CACHE_ENTRIES || self.bytes() + incoming > CACHE_BYTES {
+            let oldest = self
+                .entries
+                .iter()
+                .filter(|(_, entry)| matches!(entry.state, State::Done(_)))
+                .min_by_key(|(_, entry)| entry.touched)
+                .map(|(key, _)| key.clone());
+            let Some(oldest) = oldest else { break };
+            self.entries.remove(&oldest);
+        }
+    }
+    fn publish(&mut self, key: &Key, generation: u64, result: Entry) {
+        if !self.entries.get(key).is_some_and(
+            |entry| matches!(entry.state, State::Drawing(token) if token == generation),
+        ) {
+            return;
+        }
+        let bytes = match &result {
+            Ok(image) => image.pixels.len() * 4,
+            Err(error) => error.len(),
+        };
+        self.trim(bytes);
+        self.clock += 1;
+        self.entries.insert(
+            key.clone(),
+            Cached {
+                state: State::Done(result),
+                touched: self.clock,
+            },
+        );
+    }
+}
+struct Job {
+    key: Key,
+    generation: u64,
+    bytes: egui::load::Bytes,
+    ctx: egui::Context,
+}
 
-/// Every SVG the page shows: web badges without an extension, and `.svg` files or addresses.
-/// egui's own SVG loader draws no text (it loads no fonts) and draws on the UI thread; this one
-/// uses Rustidian's fonts (5 Nov: Elpis's diagrams lost every title, legend and axis label) and
-/// draws on a thread, crisp at the size the page asks for.
+fn complete(cache: &Mutex<Cache>, job: Job) {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        render(&job.bytes, job.key.1)
+    }))
+    .unwrap_or_else(|_| Err("SVG rendering failed.".into()))
+    .map(Arc::new);
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .publish(&job.key, job.generation, result);
+    job.ctx.request_repaint();
+}
+
+/// Bounded off-thread SVG rendering, including extensionless README badges.
 #[derive(Default)]
 pub struct WebSvgLoader {
-    cache: Arc<Mutex<HashMap<(String, SizeHint), State>>>,
+    cache: Arc<Mutex<Cache>>,
+    jobs: OnceLock<Result<std::sync::mpsc::SyncSender<Job>, String>>,
+}
+impl WebSvgLoader {
+    fn jobs(&self) -> Result<&std::sync::mpsc::SyncSender<Job>, String> {
+        self.jobs.get_or_init(|| {
+            let (sender, receiver) = std::sync::mpsc::sync_channel::<Job>(QUEUED);
+            let receiver = Arc::new(Mutex::new(receiver));
+            for index in 0..WORKERS {
+                let receiver = receiver.clone();
+                let cache = self.cache.clone();
+                std::thread::Builder::new().name(format!("rustidian-svg-{index}")).spawn(move || {
+                    loop {
+                        let job = receiver.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                        let Ok(job) = job else { break };
+                        let valid = cache.lock().unwrap_or_else(|e| e.into_inner()).entries.get(&job.key)
+                            .is_some_and(|entry| matches!(entry.state, State::Drawing(token) if token == job.generation));
+                        if !valid { continue; }
+                        complete(&cache, job);
+                    }
+                }).map_err(|error| format!("Cannot start SVG rendering: {error}"))?;
+            }
+            Ok(sender)
+        }).as_ref().map_err(Clone::clone)
+    }
+}
+
+fn render(bytes: &[u8], hint: SizeHint) -> Result<egui::ColorImage, String> {
+    if bytes.len() > SOURCE_BYTES {
+        return Err("SVG exceeds the 1 MiB source limit.".into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| "SVG must be uncompressed UTF-8.")?;
+    let xml = usvg::roxmltree::Document::parse_with_options(
+        text,
+        usvg::roxmltree::ParsingOptions {
+            allow_dtd: false,
+            nodes_limit: 16_384,
+        },
+    )
+    .map_err(|error| format!("SVG exceeds its parsing budget or is invalid: {error}"))?;
+    let ids: HashMap<_, _> = xml
+        .descendants()
+        .filter_map(|node| node.attribute("id").map(|id| (id, node)))
+        .collect();
+    let mut expanded = xml.descendants().count();
+    let glyphs = |root: usvg::roxmltree::Node<'_, '_>| {
+        root.descendants()
+            .filter(|node| {
+                node.is_text() && node.ancestors().any(|parent| parent.has_tag_name("text"))
+            })
+            .map(|node| node.text().unwrap_or("").chars().count())
+            .sum::<usize>()
+    };
+    let mut expanded_glyphs = glyphs(xml.root());
+    for node in xml.descendants().filter(|node| node.is_element()) {
+        if node.ancestors().take(34).count() > 32 {
+            return Err("SVG exceeds the nesting limit.".into());
+        }
+        if node.has_tag_name("use") {
+            let target = node
+                .attributes()
+                .find(|attr| attr.name() == "href")
+                .and_then(|attr| attr.value().strip_prefix('#'));
+            if let Some(target) = target.and_then(|id| ids.get(id)) {
+                expanded += target.descendants().count();
+                expanded_glyphs += glyphs(*target);
+                if expanded > 16_384 || target.descendants().any(|node| node.has_tag_name("use")) {
+                    return Err("SVG exceeds the reference expansion budget.".into());
+                }
+            }
+        }
+    }
+    if expanded_glyphs > 32_768 {
+        return Err("SVG exceeds the text shaping budget.".into());
+    }
+    let mut options = svg_options();
+    let resource_error = Arc::new(Mutex::new(false));
+    let failed = resource_error.clone();
+    let decoded_pixels = std::sync::atomic::AtomicU64::new(0);
+    let default = usvg::ImageHrefResolver::default_data_resolver();
+    let decode = Arc::new(
+        move |mime: &str, data: Arc<Vec<u8>>, options: &usvg::Options<'_>| {
+            let dimensions = image::ImageReader::new(std::io::Cursor::new(data.as_slice()))
+                .with_guessed_format()
+                .ok()
+                .and_then(|reader| reader.into_dimensions().ok());
+            let pixels = dimensions.map_or(u64::MAX, |(w, h)| u64::from(w) * u64::from(h));
+            if data.len() > SOURCE_BYTES
+                || dimensions.is_none_or(|(w, h)| {
+                    w > MAX_DIMENSION as u32
+                        || h > MAX_DIMENSION as u32
+                        || pixels > MAX_PIXELS as u64
+                })
+                || decoded_pixels
+                    .fetch_add(pixels, std::sync::atomic::Ordering::Relaxed)
+                    .saturating_add(pixels)
+                    > 16_000_000
+            {
+                *failed.lock().unwrap_or_else(|e| e.into_inner()) = true;
+                None
+            } else {
+                default(mime, data, options)
+            }
+        },
+    );
+    let embedded = decode.clone();
+    options.image_href_resolver.resolve_data =
+        Box::new(move |mime, data, options| embedded(mime, data, options));
+    let failed = resource_error.clone();
+    options.image_href_resolver.resolve_string = Box::new(move |href, options| {
+        use std::io::Read as _;
+        let path = options.get_abs_path(std::path::Path::new(href));
+        let file = std::fs::File::open(path).ok()?;
+        let mut data = Vec::new();
+        if file
+            .take((SOURCE_BYTES + 1) as u64)
+            .read_to_end(&mut data)
+            .is_err()
+            || data.len() > SOURCE_BYTES
+        {
+            *failed.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            return None;
+        }
+        decode("text/plain", Arc::new(data), options)
+    });
+    let tree = usvg::Tree::from_xmltree(&xml, &options).map_err(|error| error.to_string())?;
+    if *resource_error.lock().unwrap_or_else(|e| e.into_inner()) {
+        return Err("SVG image resource exceeds the embedded image budget.".into());
+    }
+    let source = egui::vec2(tree.size().width(), tree.size().height());
+    let size = match hint {
+        SizeHint::Width(w) => source * (w as f32 / source.x),
+        SizeHint::Height(h) => source * (h as f32 / source.y),
+        SizeHint::Size {
+            width,
+            height,
+            maintain_aspect_ratio,
+        } => {
+            let target = egui::vec2(width as f32, height as f32);
+            if maintain_aspect_ratio {
+                source * (target.x / source.x).min(target.y / source.y)
+            } else {
+                target
+            }
+        }
+        SizeHint::Scale(scale) => source * scale.into_inner(),
+    }
+    .round();
+    if !size.is_finite()
+        || size.x < 1.0
+        || size.y < 1.0
+        || size.x > MAX_DIMENSION
+        || size.y > MAX_DIMENSION
+        || size.x * size.y > MAX_PIXELS
+    {
+        return Err("SVG exceeds the 4096 px / 4 million pixel rendering limit.".into());
+    }
+    fn cost(
+        group: &usvg::Group,
+        canvas: f64,
+        count: &mut usize,
+        work: &mut f64,
+        pixels: &mut f64,
+    ) -> bool {
+        *count += group.children().len();
+        *pixels += canvas / 25.0 * group.children().len() as f64;
+        if *count > 16_384 {
+            return false;
+        }
+        if group.should_isolate() {
+            *work += canvas
+                * (1.0
+                    + group
+                        .filters()
+                        .iter()
+                        .map(|filter| filter.primitives().len() as f64)
+                        .sum::<f64>());
+        }
+        let mut valid = *work <= 16_000_000.0 && *pixels <= 256_000_000.0;
+        for node in group.children() {
+            if let usvg::Node::Group(child) = node {
+                valid &= cost(child, canvas, count, work, pixels);
+            }
+            node.subroots(|root| {
+                valid &= cost(root, canvas, count, work, pixels);
+            });
+        }
+        valid
+    }
+    if !cost(
+        tree.root(),
+        f64::from(size.x * size.y) * 25.0,
+        &mut 0,
+        &mut 0.0,
+        &mut 0.0,
+    ) {
+        return Err("SVG exceeds the rendering work and layer memory budget.".into());
+    }
+    let (width, height) = (size.x as u32, size.y as u32);
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
+        .ok_or("Cannot allocate the bounded SVG image.")?;
+    resvg::render(
+        &tree,
+        usvg::Transform::from_scale(size.x / source.x, size.y / source.y),
+        &mut pixmap.as_mut(),
+    );
+    Ok(
+        egui::ColorImage::from_rgba_premultiplied([width as usize, height as usize], pixmap.data())
+            .with_source_size(source),
+    )
 }
 
 fn path_of(uri: &str) -> String {
@@ -77,7 +366,7 @@ fn svg_named(uri: &str) -> bool {
 /// Sizes round up to 256 px steps, so a window being resized does not redraw the diagram at
 /// every width.
 fn coarse(hint: SizeHint) -> SizeHint {
-    let up = |pixels: u32| pixels.div_ceil(256).max(1) * 256;
+    let up = |pixels: u32| pixels.div_ceil(256).max(1).saturating_mul(256);
     match hint {
         SizeHint::Width(width) => SizeHint::Width(up(width)),
         SizeHint::Height(height) => SizeHint::Height(up(height)),
@@ -120,59 +409,90 @@ impl ImageLoader for WebSvgLoader {
         } else {
             SizeHint::default()
         };
-        let key = (uri.to_owned(), hint);
-        match self.cache.lock().unwrap().get(&key) {
-            Some(State::Done(entry)) => {
-                return entry
-                    .clone()
-                    .map(|image| ImagePoll::Ready { image })
-                    .map_err(LoadError::Loading);
-            }
-            Some(State::Drawing) => return Ok(ImagePoll::Pending { size: None }),
-            None => {}
+        if uri.len() > 4096 {
+            return Err(LoadError::Loading(
+                "SVG address exceeds its size limit.".into(),
+            ));
         }
+        let key = (uri.to_owned(), hint);
+        let observed = {
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            cache.clock += 1;
+            let clock = cache.clock;
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                entry.touched = clock;
+                return match &entry.state {
+                    State::Done(result) => result
+                        .clone()
+                        .map(|image| ImagePoll::Ready { image })
+                        .map_err(LoadError::Loading),
+                    State::Drawing(_) => Ok(ImagePoll::Pending { size: None }),
+                };
+            }
+            cache.generation
+        };
         match ctx.try_load_bytes(uri)? {
             BytesPoll::Pending { size } => Ok(ImagePoll::Pending { size }),
             BytesPoll::Ready { bytes, mime, .. } => {
                 if !named && !is_svg(mime.as_deref(), &bytes) {
                     return Err(LoadError::NotSupported);
                 }
-                self.cache
-                    .lock()
-                    .unwrap()
-                    .insert(key.clone(), State::Drawing);
-                let cache = Arc::clone(&self.cache);
-                let ctx = ctx.clone();
-                std::thread::spawn(move || {
-                    let entry =
-                        egui_extras::image::load_svg_bytes_with_size(&bytes, hint, &svg_options())
-                            .map(Arc::new);
-                    cache.lock().unwrap().insert(key, State::Done(entry));
+                if bytes.len() > SOURCE_BYTES {
+                    return Err(LoadError::Loading(
+                        "SVG exceeds the 1 MiB source limit.".into(),
+                    ));
+                }
+                let jobs = self.jobs().map_err(LoadError::Loading)?;
+                let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+                if cache.generation != observed || cache.entries.contains_key(&key) {
                     ctx.request_repaint();
-                });
+                    return Ok(ImagePoll::Pending { size: None });
+                }
+                cache.trim(uri.len());
+                cache.generation += 1;
+                let generation = cache.generation;
+                let touched = cache.clock;
+                cache.entries.insert(
+                    key.clone(),
+                    Cached {
+                        state: State::Drawing(generation),
+                        touched,
+                    },
+                );
+                let job = Job {
+                    key: key.clone(),
+                    generation,
+                    bytes,
+                    ctx: ctx.clone(),
+                };
+                match jobs.try_send(job) {
+                    Ok(()) => {}
+                    Err(std::sync::mpsc::TrySendError::Full(_)) => {
+                        cache.entries.remove(&key);
+                        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+                    }
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                        let error = "SVG rendering service stopped.".to_owned();
+                        cache.publish(&key, generation, Err(error.clone()));
+                        return Err(LoadError::Loading(error));
+                    }
+                }
                 Ok(ImagePoll::Pending { size: None })
             }
         }
     }
-
     fn forget(&self, uri: &str) {
-        self.cache.lock().unwrap().retain(|(key, _), _| key != uri);
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        cache.generation += 1;
+        cache.entries.retain(|(key, _), _| key != uri);
     }
-
     fn forget_all(&self) {
-        self.cache.lock().unwrap().clear();
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        cache.generation += 1;
+        cache.entries.clear();
     }
-
     fn byte_size(&self) -> usize {
-        self.cache
-            .lock()
-            .unwrap()
-            .values()
-            .map(|state| match state {
-                State::Done(Ok(image)) => image.pixels.len() * 4,
-                _ => 0,
-            })
-            .sum()
+        self.cache.lock().unwrap_or_else(|e| e.into_inner()).bytes()
     }
 }
 
@@ -248,3 +568,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "svg_loader_tests.rs"]
+mod service_tests;

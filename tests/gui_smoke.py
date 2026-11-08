@@ -64,6 +64,7 @@ def main():
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
+    parser._option_string_actions["--section"].choices += ["background-io"]
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -152,6 +153,12 @@ def main():
             original_launcher = "[Desktop Entry]\nType=Application\nName=Rustidian\nExec=/usr/bin/true %f\nIcon=old-teal\nStartupWMClass=rustidian\nActions=Example;\n\n[Desktop Action Example]\nName=Keep this action\nExec=/usr/bin/true\nIcon=keep-action-icon\n"
             system_launcher.write_text(original_launcher)
         # Keep native GTK pickers on this test display instead of the user's portal.
+        if args.section in ("background-io", "all"):
+            slow_io = base / "slow-io.so"
+            subprocess.run(["cc", "-shared", "-fPIC", "-O1", "-Wall", "-Wextra", "-Werror",
+                            "-o", str(slow_io), str(ROOT / "tests/slow_io.c"), "-ldl"], check=True)
+            environment["LD_PRELOAD"] = str(slow_io)
+            environment["RUSTIDIAN_TEST_IO_GATE"] = str(base / "io-gate")
         environment.update(GDK_BACKEND="x11", GTK_USE_PORTAL="0",
             DBUS_SESSION_BUS_ADDRESS=f"unix:path=/tmp/rustidian-gui-no-bus-{os.getpid()}")
         file_manager_bus = None
@@ -7877,6 +7884,297 @@ def main():
                     assert wait_played(1) == ["This is bold and code."], (view, lines(played))
                     results.append(f"In {view}, the paragraph and drag-selection speakers read the intended text")
 
+                speech_failure_checks()
+
+            def speech_failure_checks():
+                nonlocal app, window
+                log_root = base / "read-aloud"
+                mode_file, blocked = log_root.with_suffix(".mode"), log_root.with_suffix(".blocked")
+                pids, played = log_root.with_suffix(".pids"), log_root.with_suffix(".played")
+                original_worker = voice.read_bytes()
+                probe_worker = (ROOT / "tests/fixtures/speech-probe.py").read_bytes()
+                note = fixture / "Speech lifecycle.md"
+                note.write_text("First worker sentence. Second worker sentence.\n")
+                original = note.read_bytes()
+
+                def wait_for(predicate, message, limit=2):
+                    until = time.monotonic() + limit
+                    while time.monotonic() < until:
+                        if predicate(): return
+                        time.sleep(.02)
+                    raise AssertionError(message)
+
+                def stop_app():
+                    nonlocal app
+                    if app.poll() is None:
+                        confirm_quit()
+                        app.wait(timeout=3)
+
+                def restart(mode):
+                    nonlocal app, window
+                    stop_app()
+                    mode_file.write_text(mode)
+                    blocked.unlink(missing_ok=True)
+                    played.unlink(missing_ok=True)
+                    voice.write_bytes(probe_worker)
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                    open_note("Speech lifecycle")
+                    command("Reading view")
+
+                def child_pid():
+                    wait_for(blocked.exists, "The fake worker never reached its blocked pipe")
+                    return int(blocked.read_text())
+
+                def disappeared(pid):
+                    wait_for(lambda: not Path(f"/proc/{pid}").exists(), f"Speech child {pid} survived", 1)
+
+                try:
+                    for mode in ("startup", "reply"):
+                        restart(mode)
+                        click_control("read-aloud-toolbar")
+                        pid = child_pid()
+                        control_bounds("read-aloud-stop")
+                        capture(f"native-speech-{mode}-blocked.png")
+                        if mode == "reply":
+                            for dark in (True, False):
+                                set_theme(dark)
+                                click_control("read-aloud-speed")
+                                click_control("read-aloud-speed:1.25×")
+                                xdo("mousemove", "--sync", "100", "80"); pause()
+                                speed, stop = control_bounds("read-aloud-speed"), control_bounds("read-aloud-stop")
+                                assert abs((speed[3]-speed[1])-(stop[3]-stop[1])) <= 1, (speed, stop)
+                                assert speed[2]-speed[0] <= 64, speed
+                                picture = ImageGrab.grab(xdisplay=display).convert("RGB")
+                                x, y = round(speed[0]+3), round((speed[1]+speed[3])/2)
+                                background = picture.getpixel((round(speed[0]-2), y))
+                                assert max(abs(a-b) for a,b in zip(picture.getpixel((x,y)), background)) < 15
+                                capture("native-player-compact-" + ("dark" if dark else "light") + ".png")
+                                before = picture.crop(tuple(round(v) for v in speed))
+                                xdo("mousemove", "--sync", str(x+8), str(y)); pause()
+                                after = ImageGrab.grab(xdisplay=display).crop(tuple(round(v) for v in speed)).convert("RGB")
+                                assert sum(a != b for a,b in zip(pixel_data(before), pixel_data(after))) > 30
+                        at = time.monotonic()
+                        click_control("read-aloud-stop")
+                        wait_for(lambda: control_bounds("read-aloud-stop", required=False) is None,
+                                 "Stop did not dismiss the player", 1)
+                        disappeared(pid)
+                        assert time.monotonic()-at < 1.5
+                        mode_file.write_text("normal")
+                        played.unlink(missing_ok=True)
+                        at = time.monotonic()
+                        click_control("read-aloud-toolbar")
+                        wait_for(lambda: played.exists() and len(played.read_text().splitlines()) == 2,
+                                 "A later read was blocked behind the stopped worker", 4)
+                        assert played.read_text().splitlines() == ["First worker sentence.", "Second worker sentence."]
+                        wait_for(lambda: control_bounds("read-aloud-stop", required=False) is None,
+                                 "Normal playback did not finish", 3)
+                        results.append(f"{mode}: Stop dismissed the player and reaped the stuck child; a later read played exact sentences")
+                        restart(mode)
+                        click_control("read-aloud-toolbar")
+                        pid = child_pid()
+                        capture(f"native-speech-{mode}-before-exit.png")
+                        at = time.monotonic()
+                        confirm_quit()
+                        app.wait(timeout=3)
+                        disappeared(pid)
+                        assert time.monotonic()-at < 3
+                        results.append(f"{mode}: app exit completed within three seconds and the blocked child disappeared")
+                    assert note.read_bytes() == original
+                    results.append("The player speed is plain, compact and unfilled at the Stop control's height, with visible hover and its working popup in both schemes")
+                except Exception:
+                    capture("native-speech-failure-before-cleanup.png")
+                    raise
+                finally:
+                    if app.poll() is None:
+                        app.kill(); app.wait(timeout=3)
+                    if pids.exists():
+                        for value in pids.read_text().splitlines():
+                            process = Path("/proc") / value
+                            try:
+                                if str(voice).encode() in (process/"cmdline").read_bytes():
+                                    os.kill(int(value), signal.SIGKILL)
+                            except (FileNotFoundError, ProcessLookupError):
+                                pass
+                    voice.write_bytes(original_worker)
+                    mode_file.unlink(missing_ok=True)
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                    open_note("Home")
+                    set_theme(True)
+
+            def background_io_checks():
+                # Real disk syscalls are held by the fixture library; no application test flag.
+                nonlocal app, window
+                gate = base / "io-gate"
+                note = fixture / "Slow save.md"
+                original = b"# Slow save\n\nExact original.\n"
+                note.write_bytes(original)
+                (fixture / "Move destination").mkdir(exist_ok=True)
+                source = fixture / "Slow folder"
+                source.mkdir(exist_ok=True)
+                (source / "Copied.md").write_bytes(b"# Copied\n\nCOPY_EXACT\n")
+                command("Refresh vault")
+                close_tabs()
+                open_note("Slow save")
+                command("Source editing")
+                command("Open settings")
+                states = [json.loads(path.read_text()) for path in (base/"state/rustidian").glob("*.json")]
+                current = next((state["autosave_enabled"] for state in states if "autosave_enabled" in state), True)
+                if current: click_control("settings-autosave")
+                key("Escape")
+
+                def wait_for(predicate, message, limit=3):
+                    until = time.monotonic()+limit
+                    while time.monotonic()<until:
+                        if predicate(): return
+                        time.sleep(.02)
+                    raise AssertionError(message)
+
+                def block(kind):
+                    (base/f"io-gate.entered-{kind}").unlink(missing_ok=True)
+                    (base/f"io-gate.{kind}").write_text("hold")
+
+                def entered(kind):
+                    wait_for(lambda: (base/f"io-gate.entered-{kind}").exists(), f"No controlled {kind} operation started")
+
+                def release(kind):
+                    (base/f"io-gate.{kind}").unlink(missing_ok=True)
+
+                def ui_action_while_pending(kind):
+                    at = time.monotonic()
+                    xdo("key", "--clearmodifiers", "ctrl+o")
+                    wait_for(lambda: control_bounds("dialog-input-focused", required=False) is not None,
+                             f"Quick open blocked behind {kind}", 1)
+                    assert (base/f"io-gate.{kind}").exists()
+                    assert time.monotonic()-at < 1.5
+                    capture(f"native-{kind}-pending-quick-open.png")
+                    key("Escape")
+
+                try:
+                    editor_end(); type_text("FIRST_EDIT")
+                    expected = original + b"FIRST_EDIT"
+                    block("save")
+                    key("ctrl+s")
+                    entered("save")
+                    assert note.read_bytes() == original
+                    ui_action_while_pending("save")
+                    editor_end(); type_text("_SECOND_EDIT")
+                    key("ctrl+s")
+                    release("save")
+                    expected += b"_SECOND_EDIT"
+                    wait_for(lambda: note.read_bytes() == expected, "A later edit was lost or saved out of order")
+                    results.append("Delayed fsync left Quick open responsive; Ctrl+S during the write saved both edits in exact order")
+
+                    editor_end(); type_text("_CLOSE_EDIT")
+                    expected += b"_CLOSE_EDIT"
+                    block("save"); key("ctrl+w"); entered("save")
+                    assert control_bounds("tab-full:Slow save.md")
+                    key("Escape")  # Cancel the close continuation, retaining the ongoing save.
+                    release("save")
+                    wait_for(lambda: note.read_bytes() == expected, "Cancelled close lost its saved bytes")
+                    assert control_bounds("tab-full:Slow save.md")
+                    key("ctrl+w")
+                    wait_for(lambda: control_bounds("tab-full:Slow save.md", required=False) is None,
+                             "A completed save did not release tab close")
+                    command("Undo close tab"); title_contains("Slow save")
+                    results.append("Escape cancelled a pending close; exact bytes survived and Undo close restored the saved tab")
+
+                    editor_end(); type_text("_CONFLICT")
+                    block("save"); key("ctrl+s"); entered("save")
+                    note.write_bytes(b"EXTERNAL_DISK_VERSION\n")
+                    release("save")
+                    wait_for(lambda: control_bounds("error-notice", required=False) is not None,
+                             "The conflicting save had no visible error")
+                    assert note.read_bytes() == b"EXTERNAL_DISK_VERSION\n"
+                    key("ctrl+q"); control_bounds("pending-save"); key("Escape")
+                    assert app.poll() is None
+                    # Recover the draft through the existing Save a copy workflow.
+                    command("Save a copy")
+                    key("ctrl+a"); type_text("Conflict recovered.md"); key("Return")
+                    recovered = fixture / "Conflict recovered.md"
+                    wait_for(recovered.exists, "Save a copy did not complete")
+                    assert recovered.read_bytes() == expected + b"_CONFLICT"
+                    results.append("A conflict stayed visible and dirty, Cancel kept the app open, and Save a copy recovered exact draft bytes")
+
+                    click_control("tab-full:Slow save.md")
+                    key("ctrl+w"); control_bounds("pending-discard"); click_control("pending-discard")
+                    open_note("Conflict recovered")
+                    command("Source editing"); editor_end(); type_text("_MOVE_EDIT")
+                    block("save")
+                    command("Move current file to another folder")
+                    type_text("Move destination"); key("Return"); entered("save")
+                    assert recovered.exists() and not (fixture/"Move destination/Conflict recovered.md").exists()
+                    # The picker can be dismissed while its required save is pending.
+                    key("Escape")
+                    assert control_bounds("move-input", required=False) is None
+                    release("save")
+                    moved_bytes = expected + b"_CONFLICT_MOVE_EDIT"
+                    wait_for(lambda: recovered.read_bytes() == moved_bytes, "The move's required save lost bytes")
+                    assert not (fixture/"Move destination/Conflict recovered.md").exists()
+                    command("Move current file to another folder"); type_text("Move destination"); key("Return")
+                    moved = fixture/"Move destination/Conflict recovered.md"
+                    wait_for(moved.exists, "The resumed move did not finish")
+                    assert not recovered.exists() and moved.read_bytes() == moved_bytes
+                    command("Move current file to another folder"); type_text("/"); key("Return")
+                    wait_for(recovered.exists, "Moving back did not finish")
+                    assert recovered.read_bytes() == moved_bytes
+                    results.append("A move waited for its exact saved bytes, its picker cancelled during the wait, and a later move preserved the saved content in both directions")
+
+                    click_control("button:File explorer")
+                    click_control("file-collapse")
+                    block("copy")
+                    click_control("folder:Slow folder", button="3")
+                    click_control("copy:Slow folder")
+                    entered("copy")
+                    ui_action_while_pending("copy")
+                    assert not (fixture/"Slow folder 1").exists()
+                    release("copy")
+                    wait_for(lambda: (fixture/"Slow folder 1/Copied.md").exists(), "Folder copy never completed")
+                    assert (fixture/"Slow folder 1/Copied.md").read_bytes() == (source/"Copied.md").read_bytes()
+                    results.append("A held folder copy left Quick open responsive, kept staging private, then published the exact bytes")
+
+                    # Newest query and a later vault own the visible result set.
+                    key("ctrl+shift+f"); key("ctrl+a")
+                    queued_text("content:EXTERNAL", "ctrl+a")
+                    type_text("file:Conflict recovered")
+                    control_bounds("search:Conflict recovered.md")
+                    assert control_bounds("search:Slow save.md", required=False) is None
+                    other = base / "Later search vault"
+                    other.mkdir(exist_ok=True)
+                    (other/"Home.md").write_text("# Other generation\n")
+                    command("Open vault")
+                    if control_bounds("pending-discard", required=False): click_control("pending-discard")
+                    key("ctrl+a"); paste_text(str(other), held=True); key("Return")
+                    title_contains(other.name)
+                    key("ctrl+shift+f"); key("ctrl+a"); type_text("Other generation")
+                    control_bounds("search:Home.md")
+                    assert control_bounds("search:Conflict recovered.md", required=False) is None
+                    results.append("Latest-query and later-vault results excluded obsolete matches")
+                    command("Open vault"); key("ctrl+a"); paste_text(str(fixture), held=True); key("Return")
+                    title_contains(fixture.name)
+                    open_note("Conflict recovered"); command("Source editing"); editor_end(); type_text("_QUIT_EDIT")
+                    block("save"); key("ctrl+q"); click_control("pending-save"); entered("save")
+                    click_control("pending-cancel")
+                    assert app.poll() is None
+                    release("save")
+                    wait_for(lambda: recovered.read_bytes() == moved_bytes + b"_QUIT_EDIT", "Cancelled quit lost saved bytes")
+                    assert app.poll() is None
+                    confirm_quit(); app.wait(timeout=3)
+                    app = launch_app(launch_command); window = ready_window()
+                    assert recovered.read_bytes() == moved_bytes + b"_QUIT_EDIT"
+                    results.append("Save & continue kept Quit cancellable during a held fsync; a later clean exit/restart retained exact bytes")
+                finally:
+                    release("save"); release("copy")
+                command("Open settings")
+                states = [json.loads(path.read_text()) for path in (base/"state/rustidian").glob("*.json")]
+                # Restore the setting in the current vault without assuming another vault's state.
+                current = next((state["autosave_enabled"] for state in states if "autosave_enabled" in state and
+                                any("Slow save" in str(tab) for tab in state.get("tabs", []))), False)
+                if not current: click_control("settings-autosave")
+                key("Escape")
+                open_note("Home")
+
             def dictation_checks():
                 click_control("button:File explorer")
                 close_tabs()
@@ -12262,6 +12560,11 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "background-io":
+                background_io_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "background-io"}))
+                return
             if args.section == "system-theme":
                 system_theme_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -13042,6 +13345,7 @@ def main():
                 workflow_results.append({"workflow":name,"checks":completed,"status":"passed"})
                 (reports/"gui-all-workflows.json").write_text(json.dumps(workflow_results,indent=2)+"\n")
             run_checks([
+                background_io_checks,
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,

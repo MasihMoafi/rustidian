@@ -25,12 +25,29 @@ pub fn is_ignored_path(relative: &Path) -> bool {
 }
 
 #[derive(Clone, Debug)]
-pub struct Note {
+pub struct Note(std::sync::Arc<NoteData>);
+
+/// Immutable search snapshots share note data; a move copies only the changed note.
+#[derive(Clone, Debug)]
+pub struct NoteData {
     pub path: PathBuf,
     pub text: String,
     pub aliases: Vec<String>,
     pub tags: Vec<String>,
     folded: std::sync::OnceLock<String>,
+}
+
+impl std::ops::Deref for Note {
+    type Target = NoteData;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Note {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        std::sync::Arc::make_mut(&mut self.0)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -79,13 +96,13 @@ impl LinkedMention {
 impl Note {
     pub(crate) fn new(path: PathBuf, text: String) -> Self {
         let metadata = crate::metadata::analyze(&text);
-        Self {
+        Self(std::sync::Arc::new(NoteData {
             path,
             text,
             aliases: metadata.aliases,
             tags: metadata.tags,
             folded: std::sync::OnceLock::new(),
-        }
+        }))
     }
     pub fn folded_text(&self) -> &str {
         self.folded.get_or_init(|| self.text.to_lowercase())
@@ -314,55 +331,7 @@ impl Vault {
     }
 
     pub(crate) fn safe_file_path(&self, relative: &Path, create_parents: bool) -> Result<PathBuf> {
-        if relative.as_os_str().is_empty()
-            || relative
-                .components()
-                .any(|c| !matches!(c, Component::Normal(_)))
-        {
-            return Err("Notes must stay inside the vault. Use a relative Markdown path.".into());
-        }
-        let mut parent = self.root.clone();
-        if let Some(parents) = relative.parent() {
-            for part in parents.components() {
-                parent.push(part);
-                match fs::symlink_metadata(&parent) {
-                    Ok(metadata) if metadata.file_type().is_symlink() => {
-                        return Err("Linked folders cannot be edited.".into());
-                    }
-                    Ok(metadata) if !metadata.is_dir() => {
-                        return Err("A parent path is not a folder.".into());
-                    }
-                    Ok(_) => {}
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::NotFound && !create_parents =>
-                    {
-                        parent.pop();
-                        break;
-                    }
-                    Err(error)
-                        if error.kind() == std::io::ErrorKind::NotFound && create_parents =>
-                    {
-                        fs::create_dir(&parent)
-                            .map_err(|e| format!("Cannot create folder: {e}"))?;
-                    }
-                    Err(error) => return Err(format!("Cannot access folder: {error}")),
-                }
-            }
-        }
-        if !parent
-            .canonicalize()
-            .map_err(|e| e.to_string())?
-            .starts_with(&self.root)
-        {
-            return Err("Path is outside this vault.".into());
-        }
-        let absolute = self.root.join(relative);
-        if let Ok(metadata) = fs::symlink_metadata(&absolute)
-            && metadata.file_type().is_symlink()
-        {
-            return Err("Linked files cannot be edited.".into());
-        }
-        Ok(absolute)
+        safe_file_path(&self.root, relative, create_parents)
     }
 
     pub fn read(&self, path: &Path) -> Result<Document> {
@@ -510,38 +479,29 @@ impl Vault {
     }
 
     pub fn save(&mut self, document: &mut Document) -> Result<()> {
-        if document.is_image() {
-            return Err("Images cannot be edited as Markdown.".into());
-        }
-        if document.original.is_some() {
-            let pending = self.prepare_save(document)?;
-            pending.write()?;
-            self.commit_save(document, pending.text);
-            return Ok(());
-        }
-        let absolute = self.safe_path(&document.path, true)?;
-        if absolute.exists() {
-            return Err("A note already exists at this path. Choose a different name.".into());
-        }
-        prepare_file(&absolute, document.text.as_bytes(), None)?
-            .persist_noclobber(&absolute)
-            .map_err(|e| format!("Cannot create note: {}", e.error))?;
-        self.commit_save(document, document.text.clone());
+        let pending = self.prepare_save(document)?;
+        pending.write()?;
+        self.commit_save(document, pending.text);
         Ok(())
     }
 
-    /// The checks and bytes for saving a note that is already on disk. Its
-    /// `write` borrows nothing from the vault, so autosave runs it off the UI thread.
+    /// Capture save bytes without disk work. The writer validates paths and performs
+    /// an atomic create or conflict-checked replacement before the UI commits it.
     pub fn prepare_save(&self, document: &Document) -> Result<PendingSave> {
         if document.is_image() {
             return Err("Images cannot be edited as Markdown.".into());
         }
-        let original = document
-            .original
-            .clone()
-            .ok_or("This note is not on disk yet.")?;
+        if !is_text_document(&document.path) {
+            return Err("Choose a supported Markdown, text or source-code file.".into());
+        }
+        let guest = document.path.is_absolute();
+        if guest && !self.guests.contains(&document.path) {
+            return Err("Notes must stay inside the vault. Use a relative Markdown path.".into());
+        }
+        let original = document.original.clone();
         Ok(PendingSave {
-            absolute: self.document_path(&document.path, false)?,
+            root: self.root.clone(),
+            guest,
             path: document.path.clone(),
             text: document.text.clone(),
             original,
@@ -995,44 +955,109 @@ impl Vault {
     }
 }
 
-/// A save of an existing note: `Vault::prepare_save`, `write`, then `Vault::commit_save`.
+/// A note save: `Vault::prepare_save`, `write`, then `Vault::commit_save`.
 pub struct PendingSave {
     pub path: PathBuf,
     pub text: String,
-    absolute: PathBuf,
-    original: String,
+    root: PathBuf,
+    guest: bool,
+    original: Option<String>,
 }
 
 impl PendingSave {
     /// The saved text the write expects to replace.
-    pub fn original(&self) -> &str {
-        &self.original
+    pub fn expected_saved_text(&self) -> Option<&str> {
+        self.original.as_deref()
     }
 
     /// Atomically replaces the note, keeping its permissions, unless it no longer
     /// holds the text it was loaded or last saved with.
     pub fn write(&self) -> Result<()> {
-        let current = fs::read_to_string(&self.absolute).map_err(|e| {
+        let absolute = if self.guest {
+            let metadata = fs::symlink_metadata(&self.path).map_err(|error| error.to_string())?;
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return Err("Linked or removed files cannot be edited.".into());
+            }
+            self.path.clone()
+        } else {
+            safe_file_path(&self.root, &self.path, self.original.is_none())?
+        };
+        let Some(original) = &self.original else {
+            if absolute.exists() {
+                return Err("A note already exists at this path. Choose a different name.".into());
+            }
+            prepare_file(&absolute, self.text.as_bytes(), None)?
+                .persist_noclobber(&absolute)
+                .map_err(|error| format!("Cannot create note: {}", error.error))?;
+            return Ok(());
+        };
+        let current = fs::read_to_string(&absolute).map_err(|e| {
             format!("Note was removed or cannot be read. Your changes are still open: {e}")
         })?;
-        if current != self.original {
+        if &current != original {
             return Err("This note changed outside Rustidian. Save your edits to a new note, or keep them here while reviewing the disk version. Nothing was overwritten.".into());
         }
-        let permissions = fs::metadata(&self.absolute)
+        let permissions = fs::metadata(&absolute)
             .map_err(|e| e.to_string())?
             .permissions();
-        let temporary = prepare_file(&self.absolute, self.text.as_bytes(), Some(permissions))?;
-        // Recheck after writing the temporary file to catch changes during a long write.
-        if fs::read_to_string(&self.absolute).ok().as_ref() != Some(&self.original) {
+        let temporary = prepare_file(&absolute, self.text.as_bytes(), Some(permissions))?;
+        if fs::read_to_string(&absolute).ok().as_ref() != Some(original) {
             return Err(
                 "This note changed outside Rustidian during save. Nothing was overwritten.".into(),
             );
         }
         temporary
-            .persist(&self.absolute)
+            .persist(&absolute)
             .map_err(|e| format!("Cannot finish save: {}", e.error))?;
         Ok(())
     }
+}
+
+fn safe_file_path(root: &Path, relative: &Path, create_parents: bool) -> Result<PathBuf> {
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        return Err("Notes must stay inside the vault. Use a relative Markdown path.".into());
+    }
+    let mut parent = root.to_owned();
+    if let Some(parents) = relative.parent() {
+        for part in parents.components() {
+            parent.push(part);
+            match fs::symlink_metadata(&parent) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err("Linked folders cannot be edited.".into());
+                }
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err("A parent path is not a folder.".into());
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create_parents => {
+                    parent.pop();
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && create_parents => {
+                    fs::create_dir(&parent).map_err(|e| format!("Cannot create folder: {e}"))?;
+                }
+                Err(error) => return Err(format!("Cannot access folder: {error}")),
+            }
+        }
+    }
+    if !parent
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .starts_with(root)
+    {
+        return Err("Path is outside this vault.".into());
+    }
+    let absolute = root.join(relative);
+    if let Ok(metadata) = fs::symlink_metadata(&absolute)
+        && metadata.file_type().is_symlink()
+    {
+        return Err("Linked files cannot be edited.".into());
+    }
+    Ok(absolute)
 }
 
 fn prepare_file(

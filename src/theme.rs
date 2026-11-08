@@ -1151,6 +1151,27 @@ pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
     response
 }
 
+/// Quiet text actions share toolbar hover and keyboard focus feedback.
+pub fn compact_text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let font = FontId::proportional(13.0);
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.into(), font, ui.visuals().text_color());
+    let size = egui::vec2(text.size().x + space::S * 2.0, space::ROW);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    control_feedback(ui, &response);
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - text.size().x / 2.0,
+            rect.center().y - text.size().y / 2.0,
+        ),
+        text,
+        ui.visuals().text_color(),
+    );
+    response
+}
+
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
     icon_toggle(ui, icon, tooltip, false)
 }

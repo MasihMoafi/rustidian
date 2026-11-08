@@ -10,11 +10,14 @@
 use base64::Engine as _;
 use eframe::egui;
 use rustidian::voice_account;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, mpsc};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
+
+#[path = "read_aloud/worker.rs"]
+mod worker;
 use std::time::{Duration, Instant};
 
 pub const SPEEDS: [(f32, &str, &str); 7] = [
@@ -47,23 +50,33 @@ pub fn speed_menu(ui: &mut egui::Ui, speed: &mut Option<f32>, id: &str) {
             || format!("{current}×"),
             |(_, _, label)| (*label).to_owned(),
         );
-    let response = egui::ComboBox::from_id_salt(id)
-        .selected_text(label)
-        .show_ui(ui, |ui| {
-            crate::theme::menu_style(ui);
-            for (value, name, _) in SPEEDS {
-                let response = ui.selectable_label(
-                    current == value,
-                    format!("{} {name}", if current == value { "✓" } else { "　" }),
-                );
-                crate::ui_probe::record(ui.ctx(), format!("{id}:{name}"), response.rect);
-                if response.clicked() {
-                    *speed = Some(value);
-                    ui.close();
-                }
+    let choices = |ui: &mut egui::Ui| {
+        crate::theme::menu_style(ui);
+        for (value, name, _) in SPEEDS {
+            let response = ui.selectable_label(
+                current == value,
+                format!("{} {name}", if current == value { "✓" } else { "　" }),
+            );
+            crate::ui_probe::record(ui.ctx(), format!("{id}:{name}"), response.rect);
+            if response.clicked() {
+                *speed = Some(value);
+                ui.close();
             }
-        });
-    crate::ui_probe::record(ui.ctx(), id, response.response.rect);
+        }
+    };
+    let response = if id == "read-aloud-speed" {
+        let response = ui
+            .push_id(id, |ui| crate::theme::compact_text_button(ui, &label))
+            .inner;
+        egui::Popup::menu(&response).show(choices);
+        response
+    } else {
+        egui::ComboBox::from_id_salt(id)
+            .selected_text(label)
+            .show_ui(ui, choices)
+            .response
+    };
+    crate::ui_probe::record(ui.ctx(), id, response.rect);
 }
 
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
@@ -87,33 +100,32 @@ pub struct Status {
     pub device: Option<String>,
 }
 
-struct Worker {
-    child: Child,
-    input: ChildStdin,
-    output: BufReader<ChildStdout>,
-    next_id: u64,
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 struct Shared {
     session: AtomicU64,
     status: Mutex<Status>,
-    worker: Mutex<Option<Worker>>,
-    last_used: Mutex<Instant>,
 }
 
 static SHARED: LazyLock<Shared> = LazyLock::new(|| Shared {
     session: AtomicU64::new(0),
     status: Mutex::new(Status::default()),
-    worker: Mutex::new(None),
-    last_used: Mutex::new(Instant::now()),
 });
+static SERVICE: OnceLock<Result<worker::Service, String>> = OnceLock::new();
+
+fn service() -> Result<&'static worker::Service, String> {
+    SERVICE
+        .get_or_init(|| {
+            worker::Service::start(
+                worker_command,
+                worker::Policy {
+                    startup: Duration::from_secs(60),
+                    reply: Duration::from_secs(60),
+                    idle: IDLE,
+                },
+            )
+        })
+        .as_ref()
+        .map_err(Clone::clone)
+}
 
 fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(PathBuf::new, PathBuf::from)
@@ -162,108 +174,57 @@ pub fn unavailable() -> Option<String> {
         .then(|| format!("Read aloud needs Kokoro: missing {}", missing.join(", ")))
 }
 
-fn start_worker() -> Result<Worker, String> {
+fn worker_command() -> Result<Command, String> {
     let folder = scratch();
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let script = folder.join("kokoro_worker.py");
     std::fs::write(&script, WORKER).map_err(|error| error.to_string())?;
-    let mut child = Command::new(python())
+    let mut command = Command::new(python());
+    command
         .arg("-u")
-        .arg(&script)
+        .arg(script)
         .arg(model())
         .arg(voices())
         .env_remove("RUSTIDIAN_KOKORO_LIBS")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("Cannot start the voice: {error}"))?;
-    let input = child.stdin.take().ok_or("The voice has no input")?;
-    let mut output = BufReader::new(child.stdout.take().ok_or("The voice has no output")?);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        if output
-            .read_line(&mut line)
-            .map_err(|error| error.to_string())?
-            == 0
-        {
-            return Err("The voice stopped while loading.".into());
-        }
-        if let Ok(message) = serde_json::from_str::<serde_json::Value>(&line)
-            && message["ready"] == true
-        {
-            let device = message["device"].as_str().unwrap_or("cpu").to_owned();
-            eprintln!("read aloud: Kokoro ready on {device}");
-            SHARED
-                .status
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .device = Some(device);
-            break;
-        }
-    }
-    Ok(Worker {
-        child,
-        input,
-        output,
-        next_id: 0,
-    })
+        .stderr(Stdio::null());
+    Ok(command)
 }
 
-/// Voice one piece as mono 16-bit PCM.
-fn synthesize(text: &str, speed: Option<f32>) -> Result<Vec<u8>, String> {
-    let mut slot = SHARED.worker.lock().unwrap_or_else(|e| e.into_inner());
-    if slot.is_none() {
-        *slot = Some(start_worker()?);
+/// Only the producer waits; cancellation and exit never wait on this receiver.
+fn synthesize(text: &str, speed: Option<f32>, session: u64, epoch: u64) -> Result<Vec<u8>, String> {
+    if !current(session) {
+        return Err("Reading cancelled.".into());
     }
-    let worker = slot.as_mut().expect("worker started above");
-    worker.next_id += 1;
-    let id = worker.next_id;
-    let mut request = serde_json::json!({"id": id, "text": text});
+    let service = service()?;
+    let mut request = serde_json::json!({"text": text});
     if let Some(speed) = speed {
-        request["speed"] = serde_json::json!(speed);
+        request["speed"] = speed.into();
     }
-    let reply = (|| -> Result<serde_json::Value, String> {
-        writeln!(worker.input, "{request}").map_err(|error| error.to_string())?;
-        worker.input.flush().map_err(|error| error.to_string())?;
-        let mut line = String::new();
-        loop {
-            line.clear();
-            if worker
-                .output
-                .read_line(&mut line)
-                .map_err(|error| error.to_string())?
-                == 0
-            {
-                return Err("The voice stopped.".into());
-            }
-            if let Ok(message) = serde_json::from_str::<serde_json::Value>(&line)
-                && message["id"] == id
-            {
-                return Ok(message);
-            }
-        }
-    })();
-    *SHARED.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
-    match reply {
-        Ok(message) if message["ok"] == true => {
-            if message["rate"].as_u64() != Some(24_000) {
-                return Err("The voice returned an unsupported sample rate.".into());
-            }
-            base64::engine::general_purpose::STANDARD
-                .decode(message["pcm"].as_str().unwrap_or(""))
-                .map_err(|error| error.to_string())
-        }
-        Ok(message) => Err(message["error"]
+    let message = service
+        .submit(epoch, Some(request))
+        .recv()
+        .map_err(|_| "Reading cancelled.")??;
+    if let Some(device) = message["device"].as_str() {
+        SHARED
+            .status
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .device = Some(device.into());
+    }
+    if message["ok"] != true {
+        return Err(message["error"]
             .as_str()
             .unwrap_or("The voice could not say this.")
-            .to_owned()),
-        Err(error) => {
-            *slot = None;
-            Err(error)
-        }
+            .into());
     }
+    if message["rate"].as_u64() != Some(24_000) {
+        return Err("The voice returned an unsupported sample rate.".into());
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(message["pcm"].as_str().unwrap_or(""))
+        .map_err(|error| error.to_string())
 }
 
 fn current(session: u64) -> bool {
@@ -280,33 +241,22 @@ fn update(ctx: &egui::Context, session: u64, change: impl FnOnce(&mut Status)) {
 /// Start the model in the background when the pointer reaches a speaker, so the click that
 /// follows does not wait for it; a note that is only read never loads it (about 1.3 GB).
 pub fn warm_up() {
-    static WARMING: AtomicBool = AtomicBool::new(false);
-    if WARMING.load(Ordering::SeqCst) {
-        return;
+    if unavailable().is_none()
+        && let Ok(service) = service()
+    {
+        let _ = service.submit(service.epoch(), None);
     }
-    match SHARED.worker.try_lock() {
-        Ok(slot) if slot.is_some() => return,
-        Err(std::sync::TryLockError::WouldBlock) => return,
-        _ => {}
-    }
-    if unavailable().is_some() || WARMING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    std::thread::spawn(|| {
-        let mut slot = SHARED.worker.lock().unwrap_or_else(|e| e.into_inner());
-        if slot.is_none() {
-            *slot = start_worker().ok();
-        }
-        *SHARED.last_used.lock().unwrap_or_else(|e| e.into_inner()) = Instant::now();
-        drop(slot);
-        WARMING.store(false, Ordering::SeqCst);
-        schedule_idle_exit();
-    });
 }
 
 /// Read a selection through one continuous mono PCM player.
 pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     let session = SHARED.session.fetch_add(1, Ordering::SeqCst) + 1;
+    if status().active
+        && let Some(Ok(service)) = SERVICE.get()
+    {
+        service.cancel();
+    }
+    let epoch = service().map_or(0, worker::Service::epoch);
     ctx.data_mut(|data| {
         data.remove::<(String, Instant)>(egui::Id::unique("read-aloud-error-seen"));
     });
@@ -446,7 +396,7 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
                                     voice_account::speak(route, piece, effective_speed(speed))?;
                                 Ok(wav.get(44..).ok_or("Invalid hosted audio")?.to_vec())
                             }
-                            None => synthesize(piece, speed),
+                            None => synthesize(piece, speed, session, epoch),
                         })();
                         if !current(session) {
                             return;
@@ -494,7 +444,6 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
             }
             Ok(())
         })();
-        schedule_idle_exit();
         update(&ctx, session, |status| {
             if let Err(error) = result {
                 status.error = Some(error);
@@ -508,6 +457,9 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
 /// Stop reading at once: the sentence playing and the ones being voiced.
 pub fn stop(ctx: &egui::Context) {
     SHARED.session.fetch_add(1, Ordering::SeqCst);
+    if let Some(Ok(service)) = SERVICE.get() {
+        service.cancel();
+    }
     let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
     status.active = false;
     status.preparing = false;
@@ -522,35 +474,17 @@ pub fn status() -> Status {
         .clone()
 }
 
-/// Close the worker once it has been idle for `IDLE`.
-fn schedule_idle_exit() {
-    std::thread::spawn(|| {
-        std::thread::sleep(IDLE + Duration::from_secs(1));
-        let idle = SHARED
-            .last_used
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .elapsed()
-            >= IDLE;
-        let reading = SHARED
-            .status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .active;
-        if idle
-            && !reading
-            && let Ok(mut slot) = SHARED.worker.try_lock()
-        {
-            *slot = None;
-        }
-    });
-}
-
-/// End the worker with the app.
+/// The exit callback only requests cancellation. Reaping stays outside the UI.
 pub fn shutdown() {
     SHARED.session.fetch_add(1, Ordering::SeqCst);
-    if let Ok(mut slot) = SHARED.worker.lock() {
-        *slot = None;
+    if let Some(Ok(service)) = SERVICE.get() {
+        service.shutdown();
+    }
+}
+
+pub fn wait_for_closing() {
+    if let Some(Ok(service)) = SERVICE.get() {
+        let _ = service.wait_shutdown(Duration::from_secs(2));
     }
     let _ = std::fs::remove_dir_all(scratch());
 }

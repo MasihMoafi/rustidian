@@ -3824,6 +3824,7 @@ dependencies = [
  "raw-window-handle",
  "redb",
  "regex",
+ "resvg",
  "rustix 1.1.5",
  "serde",
  "serde-saphyr",
