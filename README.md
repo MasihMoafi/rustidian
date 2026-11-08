@@ -29,6 +29,8 @@ Opens your Obsidian vaults as they are. Started in **0.61 s vs Obsidian's 3.77 s
 
 I built Rustidian for myself because every note editor I tried felt too slow. **Speed and stability** guide it: ordinary Markdown folders, native editing, linked notes and graphs. Contributors are welcome.
 
+<img src="docs/images/rustidian-graph.gif" width="100%" alt="Rustidian's graph animation revealing linked notes and highlighting their connections">
+
 ## New in 0.1.7: listen and dictate
 
 <table>
@@ -61,8 +63,6 @@ https://github.com/user-attachments/assets/f63fccee-77ce-4d7c-96f2-584041b21f45
 <p align="center"><sub>The microphone turns red while recording; the transcript appears at the cursor.</sub></p>
 
 ### 🎨 Four palettes, logo included
-
-<img src="docs/images/rustidian-themes.gif" width="100%" alt="Switching between Rustidian's four palettes in Settings">
 
 <table>
   <tr>
