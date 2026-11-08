@@ -128,3 +128,19 @@ Try one useful workflow: open a copied vault, edit and save a note, follow a lin
 Rust/egui contributors can start with Markdown rendering, keyboard access or Linux/Wayland testing. [CONTRIBUTING.md](CONTRIBUTING.md) explains setup and checks; the [coverage ledger](docs/PARITY.md) records remaining work. If Rustidian is useful to you, a [GitHub star](https://github.com/MasihMoafi/rustidian) helps others discover it.
 
 [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.txt) · Independent, not affiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.
+
+<!-- more-projects:start -->
+## More projects
+
+- [Elpis](https://github.com/MasihMoafi/Elpis): a coding agent for the terminal and desktop, with explicit context control
+- [rag-mcp](https://github.com/MasihMoafi/rag-mcp): local hybrid search over your documents, as a CLI and MCP server
+- [Skills](https://github.com/MasihMoafi/skills): SKILL.md workflows for coding agents
+- [WhisperType](https://github.com/MasihMoafi/WhisperType): local voice input for developers
+- [Read Aloud](https://github.com/MasihMoafi/read-aloud): select text, press Super+R, hear it in a local voice
+- [Love Spot](https://github.com/MasihMoafi/love-spot): a shared drawing board where characters talk, draw and compete with you
+- [SVG Studio](https://svg.masihmoafi.com): high-quality image vectorization
+- [Pin](https://github.com/MasihMoafi/pin): an always-on-top priority note, saved as plain Markdown
+- [Clocki](https://github.com/MasihMoafi/clocki): a floating desktop timer for tracking focus hours
+
+All of them: [masihmoafi.com](https://masihmoafi.com/projects)
+<!-- more-projects:end -->
