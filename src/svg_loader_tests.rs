@@ -131,7 +131,8 @@ fn oversized_and_expanding_svgs_complete_as_visible_loader_errors() {
             match loader.load(&ctx, &uri, SizeHint::default()) {
                 Err(LoadError::Loading(error)) => { assert!(!error.is_empty()); break; }
                 Ok(ImagePoll::Pending { .. }) if Instant::now() < until => std::thread::sleep(Duration::from_millis(5)),
-                result => panic!("expected a completed visible error, got {result:?}"),
+                Ok(_) => panic!("expected a completed visible error, got an image poll"),
+                Err(error) => panic!("expected a completed visible error, got {error}"),
             }
         }
     }
