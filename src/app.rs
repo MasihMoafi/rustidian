@@ -2776,6 +2776,10 @@ impl NotesApp {
                                 ),
                             );
                         }
+                        // Float the bar over the row's right edge so the viewport
+                        // keeps its width when results start or stop scrolling.
+                        let scrollbar_allocation = ui.spacing().scroll.floating_allocated_width;
+                        ui.spacing_mut().scroll.floating_allocated_width = 0.0;
                         let scroll = search_scroll
                             .max_height((ui.available_height() - 64.0).max(0.0))
                             .show_rows(ui, 52.0, results.len(), |ui, rows| {
@@ -2789,7 +2793,9 @@ impl NotesApp {
                                             // One clickable row; title and path share its inset.
                                             let (rect, _) = ui.allocate_exact_size(
                                                 egui::vec2(
-                                                    ui.available_width(),
+                                                    (ui.available_width()
+                                                        - theme::space::SCROLL_WIDTH)
+                                                        .max(0.0),
                                                     52.0 - theme::space::XS,
                                                 ),
                                                 egui::Sense::hover(),
@@ -2867,6 +2873,7 @@ impl NotesApp {
                                     }
                                 }
                             });
+                        ui.spacing_mut().scroll.floating_allocated_width = scrollbar_allocation;
                         crate::ui_probe::record(ui.ctx(), "search-viewport", scroll.inner_rect);
                     }
                 } else {

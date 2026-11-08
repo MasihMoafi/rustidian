@@ -6571,6 +6571,30 @@ def main():
                     (bulk / f"Note{number:04d}.md").write_text(f"# Bulk note {number}\nCommon content.\n")
                 time.sleep(1)
                 key("ctrl+shift+f")
+                def expect_no_first_result():
+                    deadline = time.monotonic() + 3
+                    while control_bounds("search:Bulk/Note0000.md", required=False) is not None:
+                        assert time.monotonic() < deadline, "No-match search kept the previous result"
+                        time.sleep(.05)
+                key("ctrl+a")
+                type_text("path:NoSuchSearchTarget")
+                expect_no_first_result()
+                empty_viewport = control_bounds("search-viewport")
+                empty_input = control_bounds("search-input")
+                assert abs(empty_viewport[2] - empty_input[2]) <= 12, ("No matches use the sidebar width", empty_input, empty_viewport)
+                capture("native-search-no-matches.png")
+                key("ctrl+a")
+                type_text("path:Bulk/Note0000")
+                assert control_bounds("search:Bulk/Note0000.md")
+                assert control_bounds("search:Bulk/Note0001.md", required=False) is None
+                single_viewport = control_bounds("search-viewport")
+                assert abs(single_viewport[2] - empty_viewport[2]) <= 1, ("One result keeps the empty viewport width", empty_viewport, single_viewport)
+                capture("native-search-one-result.png")
+                key("ctrl+a")
+                type_text("path:NoSuchSearchTarget")
+                expect_no_first_result()
+                no_match_viewport = control_bounds("search-viewport")
+                assert abs(no_match_viewport[2] - empty_viewport[2]) <= 1, ("No matches keep the empty viewport width", empty_viewport, no_match_viewport)
                 key("ctrl+a")
                 type_text("path:Bulk/")
                 assert control_bounds("search:Bulk/Note0000.md")
@@ -6578,7 +6602,33 @@ def main():
                 search_input = control_bounds("search-input")
                 viewport = control_bounds("search-viewport")
                 assert abs(viewport[2] - search_input[2]) <= 12, ("Search scrollbar belongs at the sidebar edge", search_input, viewport)
+                assert abs(viewport[2] - empty_viewport[2]) <= 1, ("Many results keep the empty viewport width", empty_viewport, viewport)
                 capture("native-search-sidebar-alignment.png")
+                scrollbar_x = round(search_input[2] - 3)
+                def drag_scrollbar(start_y, end_y):
+                    xdo("mousemove", "--sync", str(scrollbar_x), str(start_y), "mousedown", "1")
+                    pause()
+                    xdo("mousemove", "--sync", str(scrollbar_x), str(end_y))
+                    pause()
+                    xdo("mouseup", "1")
+                    pause()
+                drag_scrollbar(round(viewport[1] + 12), round(viewport[3] - 8))
+                assert control_bounds("search:Bulk/Note0549.md"), "Dragging the scrollbar must reach the last match"
+                drag_scrollbar(round(viewport[3] - 8), round(viewport[1] + 8))
+                assert control_bounds("search:Bulk/Note0000.md"), "Dragging the scrollbar back must reach the first match"
+                title_contains("Home")
+                click_control("search-input")
+                key("ctrl+a")
+                type_text("path:NoSuchSearchTarget")
+                expect_no_first_result()
+                after_scroll = control_bounds("search-viewport")
+                assert abs(after_scroll[2] - empty_viewport[2]) <= 1, ("No matches keep their width after scrolling", empty_viewport, after_scroll)
+                capture("native-search-empty-after-scrolling.png")
+                key("ctrl+a")
+                type_text("path:Bulk/")
+                assert control_bounds("search:Bulk/Note0000.md")
+                viewport = control_bounds("search-viewport")
+                assert abs(viewport[2] - empty_viewport[2]) <= 1, ("Many results keep their width after reappearing", empty_viewport, viewport)
                 last = None
                 for _ in range(12):
                     last = control_bounds("search:Bulk/Note0549.md", required=False)
@@ -6590,7 +6640,7 @@ def main():
                 capture("native-large-search.png")
                 click_control("search:Bulk/Note0549.md")
                 title_contains("Note0549")
-                results.append("Search results use the full sidebar width with its scrollbar at the edge; all 550 matches remain reachable and the last note opens")
+                results.append("Search results keep the sidebar width; the edge scrollbar drags in both directions, and all 550 matches remain reachable by wheel and the last note opens")
             def bookmark_checks():
                 nonlocal app, window
                 folder = fixture / "Bookmark folder"
