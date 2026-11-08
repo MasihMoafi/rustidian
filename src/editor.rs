@@ -95,8 +95,10 @@ pub struct Markdown {
     pub maths: Vec<crate::math::Span>,
     /// Byte ranges inside `align="center"` HTML.
     pub html_centered: Vec<Range<usize>>,
+    pub html_right: Vec<Range<usize>>,
     /// Lines made only of HTML wrapper tags, each with its newline.
     pub html_tag_lines: Vec<Range<usize>>,
+    pub html_blocks: Vec<crate::html_layout::Element>,
 }
 
 #[derive(Clone, Debug)]
@@ -552,6 +554,10 @@ impl Markdown {
             }
         }
         let html = crate::html_layout::scan(text);
+        let html_blocks = crate::html_layout::live_blocks(text);
+        for block in &html_blocks {
+            styles.patch(block.range.clone(), |style| style.image = true);
+        }
         for range in &html.hidden {
             styles.patch(range.clone(), |style| {
                 style.hidden = true;
@@ -563,6 +569,16 @@ impl Markdown {
         }
         for range in &html.italic {
             styles.patch(range.clone(), |style| style.italic = true);
+        }
+        for (range, script) in &html.scripts {
+            styles.patch(range.clone(), |style| style.html.script = Some(*script));
+        }
+        for range in &html.breaks {
+            styles.patch(range.clone(), |style| {
+                style.hidden = true;
+                style.marker = true;
+                style.html_break = true;
+            });
         }
         let mut quotes = Vec::new();
         let mut offset = 0;
@@ -634,7 +650,9 @@ impl Markdown {
             highlights,
             maths,
             html_centered: html.centered,
+            html_right: html.right,
             html_tag_lines: html.tag_lines,
+            html_blocks,
         }
     }
 }

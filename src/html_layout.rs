@@ -1,7 +1,14 @@
 //! The HTML that READMEs use for layout, read as GitHub shows it: `<img>` is an image,
 //! `align="center"` (or `<center>`) centres what it wraps, and wrapper tags such as `<div>`,
-//! `<p>`, `<picture>` or `<a>` are not text. Nothing is executed; unknown tags stay literal.
+//! `<p>`, `<picture>` or `<a>` are not text. Nothing is executed; unknown tags keep their text.
 use std::ops::Range;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Alignment {
+    Left,
+    Center,
+    Right,
+}
 
 /// One tag, its byte range within the scanned text, and its attributes.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,12 +39,14 @@ impl HtmlTag {
         self.name == "img" && !self.closing
     }
 
-    pub fn centres(&self) -> bool {
-        !self.closing
-            && (self.name == "center"
-                || self
-                    .attribute("align")
-                    .is_some_and(|align| align.trim().eq_ignore_ascii_case("center")))
+    pub fn alignment(&self) -> Option<Alignment> {
+        match self.attribute("align").map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("center") => Some(Alignment::Center),
+            Some(value) if value.eq_ignore_ascii_case("right") => Some(Alignment::Right),
+            Some(value) if value.eq_ignore_ascii_case("left") => Some(Alignment::Left),
+            _ if self.name == "center" => Some(Alignment::Center),
+            _ => None,
+        }
     }
 
     /// An image's size in pixels; a percentage or unit other than px is ignored.
@@ -49,6 +58,18 @@ impl HtmlTag {
             .ok()
             .filter(|value| value.is_finite() && *value > 0.0)
     }
+
+    pub fn length(&self, name: &str, available: f32) -> Option<f32> {
+        let value = self.attribute(name)?.trim();
+        if let Some(percent) = value.strip_suffix('%') {
+            return percent
+                .parse::<f32>()
+                .ok()
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .map(|value| available * value / 100.0);
+        }
+        self.pixels(name)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -56,6 +77,185 @@ pub enum Token {
     Text(Range<usize>),
     Tag(HtmlTag),
     Comment(Range<usize>),
+}
+
+/// A balanced element in the original source. Offsets stay in UTF-8 bytes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Element {
+    pub tag: HtmlTag,
+    pub range: Range<usize>,
+    pub body: Range<usize>,
+}
+
+/// Elements recognized by Markdown's HTML tokenizer, excluding code and properties.
+pub fn elements(source: &str) -> Vec<Element> {
+    use pulldown_cmark::{Event, Options, Parser};
+    if !source.contains('<') {
+        return Vec::new();
+    }
+    let body = crate::metadata::frontmatter(source)
+        .ok()
+        .flatten()
+        .map_or(0, |properties| properties.range.end);
+    let mut opened: Vec<HtmlTag> = Vec::new();
+    let mut result = Vec::new();
+    for (event, range) in Parser::new_ext(&source[body..], Options::ENABLE_MATH).into_offset_iter()
+    {
+        if !matches!(event, Event::Html(_) | Event::InlineHtml(_)) {
+            continue;
+        }
+        let offset = body + range.start;
+        for token in tokens(&source[offset..body + range.end]) {
+            let Token::Tag(mut tag) = token else { continue };
+            tag.range = offset + tag.range.start..offset + tag.range.end;
+            if tag.closing {
+                if let Some(index) = opened.iter().rposition(|open| open.name == tag.name) {
+                    let open = opened.remove(index);
+                    opened.truncate(index);
+                    result.push(Element {
+                        range: open.range.start..tag.range.end,
+                        body: open.range.end..tag.range.start,
+                        tag: open,
+                    });
+                }
+            } else if matches!(
+                tag.name.as_str(),
+                "img" | "source" | "br" | "hr" | "input" | "wbr"
+            ) || source[tag.range.clone()].trim_end().ends_with("/>")
+            {
+                result.push(Element {
+                    range: tag.range.clone(),
+                    body: tag.range.end..tag.range.end,
+                    tag,
+                });
+            } else {
+                opened.push(tag);
+            }
+        }
+    }
+    for tag in opened {
+        // An unfinished media element still gets a card while it is being edited.
+        if tag.name == "video" {
+            result.push(Element {
+                range: tag.range.clone(),
+                body: tag.range.end..tag.range.end,
+                tag,
+            });
+        }
+    }
+    result.sort_by_key(|element| (element.range.start, std::cmp::Reverse(element.range.end)));
+    result
+}
+
+/// HTML requiring a native child layout rather than inline text shaping.
+pub fn blocks(source: &str) -> Vec<Element> {
+    outermost(elements(source).into_iter().filter(|element| {
+        matches!(
+            element.tag.name.as_str(),
+            "table" | "picture" | "video" | "details"
+        )
+    }))
+}
+
+/// Live preview also renders complete HTML paragraphs and image links as children.
+pub fn live_blocks(source: &str) -> Vec<Element> {
+    outermost(elements(source).into_iter().filter(|element| {
+        matches!(
+            element.tag.name.as_str(),
+            "table" | "picture" | "video" | "details" | "p" | "a"
+        )
+    }))
+}
+
+fn outermost(elements: impl Iterator<Item = Element>) -> Vec<Element> {
+    let mut end = 0;
+    elements
+        .filter(|element| {
+            if element.range.start < end {
+                return false;
+            }
+            end = element.range.end;
+            true
+        })
+        .collect()
+}
+
+/// Select the first supported source for the current appearance; fall back to `<img>`.
+pub fn picture_image(source: &str, dark: bool) -> Option<HtmlTag> {
+    let tags: Vec<_> = tokens(source)
+        .into_iter()
+        .filter_map(|token| match token {
+            Token::Tag(tag) if !tag.closing => Some(tag),
+            _ => None,
+        })
+        .collect();
+    let mut image = tags.iter().find(|tag| tag.is_image())?.clone();
+    for tag in tags.iter().filter(|tag| tag.name == "source") {
+        if tag.attribute("type").is_some_and(|mime| {
+            !matches!(
+                mime,
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp" | "image/svg+xml"
+            )
+        }) {
+            continue;
+        }
+        let matches = match tag.attribute("media").map(str::trim) {
+            None | Some("") => true,
+            Some(media) => {
+                let compact: String = media
+                    .chars()
+                    .filter(|ch| !ch.is_whitespace())
+                    .flat_map(char::to_lowercase)
+                    .collect();
+                compact
+                    == if dark {
+                        "(prefers-color-scheme:dark)"
+                    } else {
+                        "(prefers-color-scheme:light)"
+                    }
+            }
+        };
+        if matches && let Some(srcset) = tag.attribute("srcset") {
+            let candidate = if srcset.trim_start().starts_with("data:") {
+                srcset
+            } else {
+                srcset.split(',').next()?
+            };
+            let src = candidate.split_whitespace().next()?;
+            image.attributes.retain(|(name, _)| name != "src");
+            image.attributes.push(("src".into(), src.into()));
+            break;
+        }
+    }
+    Some(image)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cell {
+    pub tag: HtmlTag,
+    pub source: String,
+}
+
+/// Cell bodies retain Markdown and nested HTML, so both views use the same renderer.
+pub fn table_rows(source: &str) -> Vec<Vec<Cell>> {
+    let all = elements(source);
+    let rows = outermost(all.into_iter().filter(|element| element.tag.name == "tr"));
+    rows.into_iter()
+        .map(|row| {
+            let body = &source[row.body];
+            outermost(
+                elements(body)
+                    .into_iter()
+                    .filter(|element| matches!(element.tag.name.as_str(), "td" | "th")),
+            )
+            .into_iter()
+            .map(|element| Cell {
+                source: body[element.body].into(),
+                tag: element.tag,
+            })
+            .collect()
+        })
+        .collect()
 }
 
 /// Split an HTML fragment into text, tags and comments.
@@ -69,6 +269,8 @@ pub fn tokens(html: &str) -> Vec<Token> {
             html[start + 4..]
                 .find("-->")
                 .map(|end| (start + 4 + end + 3, None))
+        } else if html[start..].starts_with("<!") || html[start..].starts_with("<?") {
+            tag_end(html, start).map(|end| (end, None))
         } else {
             tag_end(html, start)
                 .and_then(|end| parse_tag(&html[start..end], start).map(|tag| (end, Some(tag))))
@@ -119,7 +321,11 @@ fn parse_tag(source: &str, start: usize) -> Option<HtmlTag> {
         .find(|ch: char| ch.is_ascii_whitespace())
         .unwrap_or(inner.len());
     let name = &inner[..name_end];
-    if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+    if !name.starts_with(|ch: char| ch.is_ascii_alphabetic())
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | ':'))
+    {
         return None;
     }
     let mut attributes = Vec::new();
@@ -174,7 +380,7 @@ pub fn decode(text: &str) -> String {
     while let Some(start) = rest.find('&') {
         output.push_str(&rest[..start]);
         rest = &rest[start..];
-        let Some(end) = rest[..rest.len().min(12)].find(';') else {
+        let Some(end) = rest.find(';').filter(|end| *end <= 32) else {
             output.push('&');
             rest = &rest[1..];
             continue;
@@ -232,9 +438,12 @@ pub struct Layout {
     pub tag_lines: Vec<Range<usize>>,
     /// Text inside `align="center"` or `<center>`.
     pub centered: Vec<Range<usize>>,
+    pub right: Vec<Range<usize>>,
     /// Text inside `<b>`/`<strong>` and `<i>`/`<em>`; their tags are in `hidden`.
     pub bold: Vec<Range<usize>>,
     pub italic: Vec<Range<usize>>,
+    pub scripts: Vec<(Range<usize>, i8)>,
+    pub breaks: Vec<Range<usize>>,
 }
 
 /// Read the layout HTML of a Markdown note, skipping its properties and code.
@@ -248,11 +457,14 @@ pub fn scan(source: &str) -> Layout {
         .ok()
         .flatten()
         .map_or(0, |properties| properties.range.end);
-    let mut open: Vec<(String, usize, bool)> = Vec::new();
+    let mut open: Vec<(String, usize, Option<Alignment>)> = Vec::new();
     let mut emphasis: Vec<(String, usize)> = Vec::new();
     let parser = Parser::new_ext(
         &source[body..],
-        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS,
+        Options::ENABLE_STRIKETHROUGH
+            | Options::ENABLE_TABLES
+            | Options::ENABLE_TASKLISTS
+            | Options::ENABLE_MATH,
     );
     for (event, range) in parser.into_offset_iter() {
         let block = match event {
@@ -279,16 +491,21 @@ pub fn scan(source: &str) -> Layout {
                             if let Some(index) =
                                 open.iter().rposition(|(name, _, _)| *name == tag.name)
                             {
-                                let (_, opened, centres) = open.remove(index);
+                                let (_, opened, alignment) = open.remove(index);
                                 open.truncate(index);
-                                if centres {
+                                if alignment == Some(Alignment::Center) {
                                     layout.centered.push(opened..tag.range.end);
+                                } else if alignment == Some(Alignment::Right) {
+                                    layout.right.push(opened..tag.range.end);
                                 }
                             }
                         } else if !matches!(tag.name.as_str(), "source") {
-                            open.push((tag.name.clone(), tag.range.start, tag.centres()));
+                            open.push((tag.name.clone(), tag.range.start, tag.alignment()));
                         }
-                    } else if matches!(tag.name.as_str(), "b" | "strong" | "i" | "em") {
+                    } else if matches!(
+                        tag.name.as_str(),
+                        "b" | "strong" | "i" | "em" | "sub" | "sup"
+                    ) {
                         layout.hidden.push(tag.range.clone());
                         if !tag.closing {
                             emphasis.push((tag.name.clone(), tag.range.end));
@@ -299,12 +516,20 @@ pub fn scan(source: &str) -> Layout {
                             let inside = opened..tag.range.start;
                             if matches!(name.as_str(), "b" | "strong") {
                                 layout.bold.push(inside);
-                            } else {
+                            } else if matches!(name.as_str(), "i" | "em") {
                                 layout.italic.push(inside);
+                            } else {
+                                layout
+                                    .scripts
+                                    .push((inside, if name == "sup" { 1 } else { -1 }));
                             }
                         }
-                    } else {
+                    } else if tag.name == "br" {
+                        layout.breaks.push(tag.range);
                         line_only_tags = false;
+                    } else {
+                        line_has_tag = true;
+                        layout.hidden.push(tag.range);
                     }
                 }
                 Token::Comment(range) => {
@@ -342,9 +567,11 @@ pub fn scan(source: &str) -> Layout {
         }
     }
     // An unclosed centring element lasts to the end of the note, as in a browser.
-    for (_, opened, centres) in open {
-        if centres {
+    for (_, opened, alignment) in open {
+        if alignment == Some(Alignment::Center) {
             layout.centered.push(opened..source.len());
+        } else if alignment == Some(Alignment::Right) {
+            layout.right.push(opened..source.len());
         }
     }
     layout.centered.sort_by_key(|range| range.start);
@@ -399,10 +626,16 @@ mod tests {
     }
 
     #[test]
-    fn code_and_unknown_tags_are_left_alone() {
-        let source = "```html\n<div align=\"center\"><img src=\"x.png\"></div>\n```\n\n<table><tr><td>x</td></tr></table>\n";
+    fn code_stays_literal_and_unknown_elements_keep_their_text() {
+        let source = "```html\n<div align=\"center\"><img src=\"x.png\"></div>\n```\n\n<custom-box>x</custom-box>\n";
         let layout = scan(source);
-        assert!(layout.images.is_empty() && layout.centered.is_empty() && layout.hidden.is_empty());
+        assert!(layout.images.is_empty() && layout.centered.is_empty());
+        let hidden: Vec<_> = layout
+            .hidden
+            .iter()
+            .map(|range| &source[range.clone()])
+            .collect();
+        assert_eq!(hidden, ["<custom-box>", "</custom-box>"]);
         assert!(layout.tag_lines.is_empty());
     }
 

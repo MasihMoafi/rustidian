@@ -10,6 +10,7 @@ Rustidian implements selected Obsidian-style workflows in native Rust. Full pari
 | Graph | Global/local views, filters, groups/colors, node dragging, camera/preferences persistence |
 | Workspace | Tabs, tab dragging, focused-tab navigation, saved layouts, palettes and recent vaults |
 | Appearance | Four palettes with matching icons, light/dark appearance and shared native controls |
+| Native HTML and media in Markdown | Candidate parser/rendering changes and `html-media` / `image-import` GUI checks prepared for README layouts, theme pictures, image placeholders and system-player video cards; compiled tests, exact-binary GUI checks and the Obsidian comparison remain pending |
 | Existing Obsidian plugins | Unsupported; requires a JavaScript/browser runtime and API adapters |
 | Browser-rendered HTML, PDF and agent tab | Not included |
 | Canvas, Bases, mathematics and complete Settings/graph parity | Missing or incomplete |

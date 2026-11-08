@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
@@ -195,6 +195,16 @@ def main():
             browser.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nwith Path(" + repr(str(reports / "browser-requests.txt")) + ").open('a') as f: f.write(repr(sys.argv[1:])+'\\n')\n")
             browser.chmod(0o700)
             environment["BROWSER"] = str(browser)
+        if args.section in ("html-media", "all"):
+            browser = base / "media-browser"
+            shutil.copyfile(ROOT / "tests/fixtures/media-player.py", browser)
+            browser.chmod(0o700)
+            handlers = base / "media-handlers"; handlers.mkdir()
+            shutil.copyfile(browser, handlers / "xdg-open"); (handlers / "xdg-open").chmod(0o700)
+            environment.update(BROWSER=str(browser), MEDIA_BROWSER_LOG=str(reports / "browser-requests.txt"),
+                               MEDIA_PLAYER_LOG=str(reports / "media-player.jsonl"))
+            environment["PATH"] = str(handlers) + os.pathsep + environment["PATH"]
+            environment["NO_PROXY"] = environment.get("NO_PROXY", "") + ",127.0.0.1,localhost"
         if args.section == "chrome":
             for path in ["__pycache__", ".git", "Notes/__pycache__"]:
                 folder = fixture / path
@@ -8356,6 +8366,152 @@ def main():
                 assert all((fixture / name).read_bytes() == data for name, data in untouched.items())
                 results.append("Taken names got a number, as the Move dialog and Obsidian do: Notes/Drag source 1.md and Projects/Drag folder 1; the occupied note and the demo notes kept their bytes")
 
+            def html_media_checks():
+                import http.server
+                import threading
+
+                assert shutil.which("ffplay"), "HTML media playback checks require ffplay"
+                requests = {}
+                pending = threading.Event(); release = threading.Event(); responded = threading.Event()
+                badge = b'<svg xmlns="http://www.w3.org/2000/svg" width="144" height="32"><rect width="144" height="32" fill="#e62896"/></svg>'
+
+                class MediaServer(http.server.BaseHTTPRequestHandler):
+                    def do_GET(self):
+                        requests[self.path] = requests.get(self.path, 0) + 1
+                        if self.path == "/delayed.svg":
+                            pending.set(); release.wait(timeout=15)
+                            responded.set()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/svg+xml")
+                        self.send_header("Content-Length", str(len(badge)))
+                        self.end_headers(); self.wfile.write(badge)
+
+                    def log_message(self, *_): pass
+
+                media = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MediaServer)
+                media.daemon_threads = True
+                thread = threading.Thread(target=media.serve_forever, daemon=True); thread.start()
+                origin = f"http://127.0.0.1:{media.server_port}"
+
+                def probe(): return json.loads((base / "ui-probe.json").read_text())
+
+                def wait_for(predicate, message, timeout=8):
+                    deadline = time.monotonic() + timeout
+                    while time.monotonic() < deadline:
+                        if predicate(): return
+                        time.sleep(.05)
+                    raise AssertionError(message)
+
+                def color_count(color):
+                    return sum(pixel == color for pixel in pixel_data(ImageGrab.grab(xdisplay=display).convert("RGB")))
+
+                originals = {}
+                try:
+                    docs = fixture / "docs"; docs.mkdir(exist_ok=True)
+                    for name in ("brand", "images"):
+                        shutil.copytree(ROOT / "docs" / name, docs / name, dirs_exist_ok=True)
+                    shutil.copytree(ROOT / "tests/fixtures/readme-media", docs / "videos", dirs_exist_ok=True)
+                    sample = fixture / "README sample.md"
+                    source = (ROOT / "tests/fixtures/github-readme.md").read_text().replace("https://img.shields.io/", origin + "/badge/")
+                    sample.write_text(source); originals[sample] = sample.read_bytes()
+                    command("Refresh vault"); open_note(sample.name, title=sample.stem); command("Reading view")
+                    capture("native-html-readme-top.png")
+                    control_bounds("media-image:Rustidian logo")
+                    seen = set()
+                    for step in range(12):
+                        seen.update(probe()); capture(f"native-html-readme-{step:02}.png")
+                        text = [name.removeprefix("reading-text:") for name in probe() if name.startswith("reading-text:")]
+                        assert not any(tag in content for content in text for tag in ("<table", "<video", "<picture", "<div", "rust-missing-image:")), text
+                        xdo("mousemove", "1100", "700", "click", "--repeat", "4", "--delay", "30", "5"); pause()
+                    for prefix in ("html-cell:", "video-card:", "html-details:"):
+                        assert any(name.startswith(prefix) for name in seen), ("README native content is missing", prefix)
+                    results.append("The README copy with its original media draws native tables, video cards and disclosures without literal tags; full-page screenshots retained")
+
+                    note = fixture / "HTML media.md"
+                    Image.new("RGB", (160, 80), (30, 180, 110)).save(fixture / "Assets/HTML dark.png")
+                    Image.new("RGB", (160, 80), (240, 170, 40)).save(fixture / "Assets/HTML light.png")
+                    source = ("# HTML media\n\n"
+                        "<table><tr><td width='50%' valign='top'><b>LEFT_CELL</b><br><sub>H2O</sub></td>"
+                        "<td width='50%' align='right'><i>RIGHT_CELL</i><sup>2</sup></td></tr></table>\n\n"
+                        "<picture><source media='(prefers-color-scheme: light)' srcset='Assets/HTML%20light.png'>"
+                        "<img src='Assets/HTML%20dark.png' width='160' height='80' alt='Theme image'></picture>\n\n"
+                        f"<a href='https://example.com/?a=1&amp;b=2'><img src='{origin}/badge.svg' alt='Linked badge'></a>\n\n"
+                        "![Lost badge](Assets/absent.png)\n\n"
+                        "<details><summary>More HTML</summary>DISCLOSED_TEXT</details>\n\n"
+                        "<custom-box>UNKNOWN_TEXT</custom-box>\n")
+                    note.write_text(source); originals[note] = note.read_bytes()
+                    command("Refresh vault"); open_note(note.name, title=note.stem)
+                    for mode in ("Reading view", "Live preview"):
+                        command(mode); key("ctrl+Home")
+                        for dark, color in ((True, (30, 180, 110)), (False, (240, 170, 40))):
+                            set_theme(dark)
+                            wait_for(lambda: color_count(color) > 4000, "The picture did not switch with the theme")
+                            capture(f"native-html-{mode.replace(' ', '-')}-{'dark' if dark else 'light'}.png")
+                        left = control_bounds("html-cell:0:0"); right = control_bounds("html-cell:0:1")
+                        assert left[2] <= right[0] + 2 and abs(left[1] - right[1]) < 2, (left, right)
+                        broken = control_bounds("broken-image:Lost badge")
+                        assert 12 <= broken[3] - broken[1] <= 40 and broken[2] - broken[0] < 300, broken
+                        wait_for(lambda: color_count((230, 40, 150)) > 1000, "The remote badge did not draw")
+                        before = (reports / "browser-requests.txt").read_text() if (reports / "browser-requests.txt").exists() else ""
+                        click_control("media-image:Linked badge")
+                        wait_for(lambda: (reports / "browser-requests.txt").exists() and (reports / "browser-requests.txt").read_text() != before, "An HTML image link did not open")
+                        assert "https://example.com/?a=1&b=2" in (reports / "browser-requests.txt").read_text()
+                        click_control("html-details:More HTML"); control_bounds("reading-text:DISCLOSED_TEXT")
+                        capture(f"native-html-details-{mode.replace(' ', '-')}.png")
+                        command("Source editing"); key("ctrl+s"); assert note.read_bytes() == originals[note]
+                    assert requests.get("/badge.svg") == 1, requests
+                    results.append("Reading and Live draw aligned cells, theme-selected pictures, clickable HTML badges, compact missing-image placeholders and working details; source bytes stay exact and the remote image is cached")
+
+                    delayed = fixture / "Delayed image.md"
+                    delayed.write_text(f"![Delayed]({origin}/delayed.svg)\n"); originals[delayed] = delayed.read_bytes()
+                    command("Refresh vault"); open_note(delayed.name, title=delayed.stem); command("Reading view")
+                    wait_for(pending.is_set, "The HTTP image request did not start")
+                    started = time.monotonic()
+                    command("Source editing"); control_bounds("view-mode:Source mode")
+                    assert time.monotonic() - started < 3.5 and not responded.is_set(), "The app must change view before the pending HTTP response finishes"
+                    release.set(); command("Reading view")
+                    wait_for(lambda: color_count((230, 40, 150)) > 1000, "The delayed image did not finish")
+                    assert requests.get("/delayed.svg") == 1, requests
+                    capture("native-html-delayed-image.png")
+                    results.append("An outstanding HTTP image leaves view changes responsive; its completed image draws and is requested once")
+
+                    video = fixture / "Video embeds.md"; clip = "docs/videos/rustidian-dictation.mp4"
+                    video.write_text(f"# Video embeds\n\n<video src='{clip}' controls></video>\n\n![Markdown clip]({clip})\n\n![[{clip}]]\n")
+                    originals[video] = video.read_bytes()
+                    command("Refresh vault"); open_note(video.name, title=video.stem)
+                    for mode in ("Reading view", "Live preview"):
+                        command(mode); key("ctrl+Home"); pause()
+                        cards = {name: bounds for name, bounds in probe().items() if name.startswith("video-card:")}
+                        assert len(cards) >= 2, (mode, cards)
+                        capture(f"native-html-video-{mode.replace(' ', '-')}.png")
+                        player_log = reports / "media-player.jsonl"
+                        before = player_log.read_text().splitlines() if player_log.exists() else []
+                        click_control(next(name for name in probe() if name.startswith("video-play:")))
+                        wait_for(lambda: player_log.exists() and len(player_log.read_text().splitlines()) > len(before), "Play did not start a player")
+                        event = json.loads(player_log.read_text().splitlines()[len(before)])
+                        assert event["event"] == "started" and event["uri"].endswith("rustidian-dictation.mp4"), event
+                        assert event["handler"] == "xdg-open", "Play must use the desktop's media handler"
+                        wait_for(lambda: subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(event["pid"])], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0, "The player has no video window")
+                        time.sleep(.3); capture(f"native-html-playback-{mode.replace(' ', '-')}.png")
+                        def completed():
+                            return [json.loads(line) for line in player_log.read_text().splitlines() if json.loads(line).get("event") == "finished" and json.loads(line).get("pid") == event["pid"]]
+                        wait_for(completed, "The clip did not finish", timeout=35)
+                        assert completed()[-1]["code"] == 0, completed()
+                        xdo("windowfocus", "--sync", window); pause()
+                    results.append("HTML, Markdown and wiki MP4 embeds show Play cards; Play in each mode starts a real silent player on the private display and the clip completes")
+                    for path, original in originals.items(): assert path.read_bytes() == original, path.name
+                finally:
+                    release.set(); media.shutdown(); media.server_close(); thread.join(timeout=5)
+                    player_log = reports / "media-player.jsonl"
+                    if player_log.exists():
+                        for line in player_log.read_text().splitlines():
+                            event = json.loads(line)
+                            if event.get("event") != "started": continue
+                            pid = event["pid"]
+                            try:
+                                if Path(f"/proc/{pid}/exe").resolve().name == "ffplay": os.kill(pid, signal.SIGTERM)
+                            except (FileNotFoundError, ProcessLookupError): pass
+
             def narrow_html_checks():
                 close_tabs()
                 words = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November".split()
@@ -9051,6 +9207,37 @@ def main():
                 saved(dropped, expected + "![[Dropped picture 1.png]]"); assert pngs() == before
                 key("ctrl+z"); saved(dropped, expected)
                 results.append("Native Xdnd multi-image drop inserted at the pointer instead of the old caret, copied exact bytes, preserved a filename collision, escaped ]]/# names, rendered both images, reused an existing vault attachment and supported Undo")
+                attachment_settings = fixture / ".obsidian/app.json"
+                attachment_settings.parent.mkdir(exist_ok=True)
+                previous_settings = attachment_settings.read_bytes() if attachment_settings.exists() else None
+                configured = fixture / "Configured image drop.md"
+                configured_source = "# Configured drop\n\nDROP_HERE"
+                configured.write_text(configured_source)
+                try:
+                    options = json.loads(previous_settings) if previous_settings else {}
+                    options["attachmentFolderPath"] = "Assets/Dropped"
+                    attachment_settings.write_text(json.dumps(options))
+                    command("Refresh vault"); open_note(configured.name, title=configured.stem); command("Source editing"); editor_end()
+                    left, top, right, bottom = control_bounds("editor-caret")
+                    drop_files([first], (right + 8, (top + bottom) / 2))
+                    link = "![[Assets/Dropped/Dropped picture.png]]"
+                    key("ctrl+s")
+                    deadline = time.monotonic() + 4
+                    while link not in configured.read_text() and time.monotonic() < deadline: time.sleep(.05)
+                    actual = configured.read_text()
+                    assert link in actual and actual.replace(link, "") == configured_source, actual
+                    assert (fixture / "Assets/Dropped/Dropped picture.png").read_bytes() == first.read_bytes()
+                    assert collision.read_bytes() == occupied
+                    command("Live preview"); pause(); capture("native-image-drop-configured-folder.png")
+                    screen = ImageGrab.grab(xdisplay=display).convert("RGB")
+                    assert sum(pixel == (230, 40, 150) for pixel in pixel_data(screen)) > 1000, "The configured-folder drop must render"
+                    key("ctrl+z"); saved(configured, configured_source)
+                    key("ctrl+y"); saved(configured, actual)
+                    results.append("Native image drop copied exact bytes into the configured attachment folder, preserved a root filename collision, inserted a rendered link and survived Undo/Redo")
+                finally:
+                    if previous_settings is None: attachment_settings.unlink()
+                    else: attachment_settings.write_bytes(previous_settings)
+                open_note(dropped.name, title=dropped.stem); command("Source editing"); editor_end()
                 left, top, right, bottom = control_bounds("image-drop-target"); before = pngs()
                 key("ctrl+o"); drop_files([first], ((left + right) / 2, bottom - 30))
                 assert pngs() == before, "A drop behind Quick Open must not create an attachment"
@@ -12135,6 +12322,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"section": "folder-copy", "checks": len(results), "status": "passed"}))
                 return
+            if args.section == "html-media":
+                html_media_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "narrow-html":
                 narrow_html_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -12790,6 +12982,7 @@ def main():
                 image_checks,
                 attachment_tab_checks,
                 narrow_html_checks,
+                html_media_checks,
                 html_import_checks,
                 file_copy_checks,
                 file_move_checks,

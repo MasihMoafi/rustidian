@@ -669,7 +669,7 @@ impl NotesApp {
                                     | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
                             ) || event.paths.iter().any(|p| {
                                 p.is_dir()
-                                    || rustidian::assets::is_image(p)
+                                    || rustidian::assets::is_media(p)
                                     || rustidian::vault::is_text_document(p)
                                     || p.extension().is_none()
                             })) =>
@@ -708,6 +708,10 @@ impl NotesApp {
                             .filter(|path| rustidian::assets::is_image(path))
                         {
                             ctx.forget_image(&format!("file://{}", path.display()));
+                            ctx.forget_image(&format!(
+                                "file://{}",
+                                rustidian::paths::markdown_destination(Path::new(""), path)
+                            ));
                         }
                         self.refresh_paths.extend(event.paths);
                         self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
@@ -1279,6 +1283,15 @@ impl NotesApp {
                 })
         });
         if uri {
+            if target.starts_with("file://")
+                && rustidian::paths::decode(target.trim_start_matches("file://"))
+                    .is_some_and(|path| rustidian::assets::is_video(Path::new(&path)))
+            {
+                if let Err(error) = crate::media_ui::open_video(target) {
+                    self.error = Some(error);
+                }
+                return;
+            }
             let local = target
                 .strip_prefix("file://")
                 .and_then(rustidian::paths::decode)

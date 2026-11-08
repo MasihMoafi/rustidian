@@ -282,7 +282,7 @@ impl Vault {
                 continue;
             }
             if !is_markdown(entry.path()) {
-                if is_text_document(entry.path()) || crate::assets::is_image(entry.path()) {
+                if is_text_document(entry.path()) || crate::assets::is_media(entry.path()) {
                     attachments.push(entry.path().strip_prefix(&self.root).unwrap().into());
                 }
                 continue;
@@ -694,6 +694,15 @@ impl Vault {
 
     /// Save a new image without replacing an existing vault entry.
     pub fn import_attachment(&mut self, name: &Path, bytes: &[u8]) -> Result<PathBuf> {
+        self.import_attachment_from(Path::new(""), name, bytes)
+    }
+
+    pub fn import_attachment_from(
+        &mut self,
+        from: &Path,
+        name: &Path,
+        bytes: &[u8],
+    ) -> Result<PathBuf> {
         if name.components().count() != 1
             || !matches!(name.components().next(), Some(Component::Normal(_)))
             || is_ignored_path(name)
@@ -709,19 +718,34 @@ impl Vault {
             .extension()
             .and_then(|s| s.to_str())
             .ok_or("Invalid image extension.")?;
+        let settings: serde_json::Value = crate::paths::read_obsidian(&self.root, "app.json")?;
+        let folder = settings
+            .get("attachmentFolderPath")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let folder = match folder {
+            "" | "/" => PathBuf::new(),
+            "." | "./" => from.parent().unwrap_or(Path::new("")).to_owned(),
+            folder if folder.starts_with("./") => {
+                from.parent().unwrap_or(Path::new("")).join(&folder[2..])
+            }
+            folder => PathBuf::from(folder),
+        };
+        let folder = crate::paths::normalise(&folder)
+            .ok_or("The attachment folder must stay inside the vault.")?;
         for number in 0.. {
-            let relative = if number == 0 {
+            let relative = folder.join(if number == 0 {
                 name.to_path_buf()
             } else {
                 PathBuf::from(format!("{stem} {number}.{extension}"))
-            };
+            });
             let absolute = self.root.join(&relative);
             match fs::symlink_metadata(&absolute) {
                 Ok(_) => continue,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(format!("Cannot access attachment: {error}")),
             }
-            let absolute = self.safe_file_path(&relative, false)?;
+            let absolute = self.safe_file_path(&relative, true)?;
             let temporary = prepare_file(&absolute, bytes, None)?;
             match temporary.persist_noclobber(&absolute) {
                 Ok(_) => {

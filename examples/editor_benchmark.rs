@@ -25,6 +25,10 @@ mod math_inline;
 mod math_ui;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
+#[path = "../src/media_ui.rs"]
+mod media_ui;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/note_embed_ui.rs"]
 mod note_embed_ui;
 #[cfg(not(test))]

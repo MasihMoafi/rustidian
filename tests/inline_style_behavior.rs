@@ -178,6 +178,7 @@ fn overlay_retains_parent_values_and_applies_explicit_false() {
         italic: Some(true),
         strike: Some(true),
         underline: Some(true),
+        script: Some(-1),
     };
     style.overlay(Style {
         color: Some([255, 255, 255, 255]),
@@ -195,6 +196,7 @@ fn overlay_retains_parent_values_and_applies_explicit_false() {
             italic: Some(true),
             strike: Some(false),
             underline: Some(false),
+            script: Some(-1),
         },
     );
 }

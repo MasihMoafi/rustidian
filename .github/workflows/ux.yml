@@ -67,6 +67,9 @@ jobs:
       - name: Install file manager for native Reveal verification
         if: ${{ contains(inputs.sections, 'reveal') }}
         run: sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends nautilus dbus-x11
+      - name: Install the system player for HTML media verification
+        if: ${{ contains(inputs.sections, 'html-media') || !inputs.gui_only }}
+        run: sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends ffmpeg
       # Before the cache (see native.yml): a formatting failure must not save an empty cache.
       - name: Formatting
         run: cargo fmt --all -- --check
@@ -138,6 +141,13 @@ jobs:
       - name: HTML import behavior checks
         if: ${{ contains(inputs.sections, 'html-import') }}
         run: cargo test --locked --test html_import_behavior 2>&1 | tee reports/html-import-tests.log
+      - name: HTML media parser and resolver checks
+        if: ${{ contains(inputs.sections, 'html-media') }}
+        run: |
+          cargo test --locked --test html_media_behavior --test attachment_behavior --test inline_style_behavior 2>&1 | tee reports/html-media-tests.log
+          cargo test --locked --lib html_layout::tests 2>&1 | tee reports/html-layout-tests.log
+          cargo test --locked --lib assets::tests 2>&1 | tee reports/html-asset-tests.log
+          cargo test --locked --bin rustidian preview::tests 2>&1 | tee reports/html-preview-tests.log
       - name: Narrow Markdown renderer checks
         if: ${{ contains(inputs.sections, 'narrow-html') }}
         run: |

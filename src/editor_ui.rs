@@ -397,6 +397,8 @@ struct LiveImage {
     size: egui::Vec2,
     math: Option<usize>,
     note: Option<crate::note_embed_ui::Embed>,
+    html: Option<String>,
+    alt: String,
 }
 
 // Keep the original allocation alive so its pointer identifies the font
@@ -602,6 +604,11 @@ fn embedded_images(
     rustidian::assets::embedded_images(text)
         .into_iter()
         .filter_map(|image| {
+            if text[image.range.clone()].starts_with("![[")
+                && crate::note_embed_ui::is_note(&image.target)
+            {
+                return None;
+            }
             if maths.iter().any(|math| {
                 math.range.start < image.range.end && math.range.end > image.range.start
             }) {
@@ -610,7 +617,9 @@ fn embedded_images(
             if text[image.range.clone()].contains('\n') {
                 return None;
             }
-            let uri = rustidian::assets::image_uri(vault, from, &image.target)?;
+            let uri = rustidian::assets::image_uri(vault, from, &image.target)
+                .unwrap_or_else(|| format!("rust-missing-image:{}", image.target));
+            let mut failed = false;
             let natural = match ui
                 .ctx()
                 .try_load_image(&uri, egui::load::SizeHint::Width(width_limit.ceil() as u32))
@@ -619,17 +628,38 @@ fn embedded_images(
                     egui::vec2(image.size[0] as f32, image.size[1] as f32)
                 }
                 Ok(egui::load::ImagePoll::Pending { size: Some(size) }) => size,
+                Err(_) => {
+                    failed = true;
+                    egui::vec2(240.0, 26.0)
+                }
                 _ => egui::vec2(image.width.unwrap_or(180.0), image.height.unwrap_or(120.0)),
             };
-            let width = image.width.unwrap_or(natural.x).min(width_limit);
-            let height = image
-                .height
-                .unwrap_or(natural.y * width / natural.x.max(1.0));
+            let width = if image.html {
+                rustidian::html_layout::tokens(&text[image.range.clone()])
+                    .into_iter()
+                    .find_map(|token| match token {
+                        rustidian::html_layout::Token::Tag(tag) => tag.length("width", width_limit),
+                        _ => None,
+                    })
+            } else {
+                image.width
+            };
+            let size = if failed || uri.starts_with("rust-missing-image:") {
+                egui::vec2(width_limit.min(240.0), 26.0)
+            } else {
+                crate::media_ui::size(natural, width, image.height, width_limit)
+            };
             Some(LiveImage {
                 range: image.range,
                 block: None,
-                uri,
-                size: egui::vec2(width, height),
+                uri: if failed {
+                    format!("rust-missing-image:{}", image.target)
+                } else {
+                    uri
+                },
+                size,
+                html: None,
+                alt: image.alt,
                 math: None,
                 note: None,
             })
@@ -647,6 +677,92 @@ fn live_images(
     open_notes: &[(&std::path::Path, &str)],
 ) -> Vec<LiveImage> {
     let mut images = embedded_images(ui, text, vault, from, &parsed.maths);
+    let blocks = &parsed.html_blocks;
+    images.retain(|image| {
+        !blocks
+            .iter()
+            .any(|block| block.range.contains(&image.range.start))
+            && !rustidian::assets::is_video(std::path::Path::new(
+                image
+                    .uri
+                    .strip_prefix("rust-missing-image:")
+                    .unwrap_or(&image.uri),
+            ))
+    });
+    let width = (ui.available_width() - 4.0).max(1.0);
+    for block in blocks {
+        if active_line
+            .is_some_and(|line| line.start < block.range.end && line.end >= block.range.start)
+        {
+            continue;
+        }
+        let first_end = text[block.range.clone()]
+            .find('\n')
+            .map_or(block.range.end, |offset| block.range.start + offset);
+        let source = text[block.range.clone()].to_owned();
+        let source = if parsed
+            .html_right
+            .iter()
+            .any(|range| range.contains(&block.range.start))
+        {
+            format!("<div align='right'>\n\n{source}\n\n</div>")
+        } else if parsed
+            .html_centered
+            .iter()
+            .any(|range| range.contains(&block.range.start))
+        {
+            format!("<div align='center'>\n\n{source}\n\n</div>")
+        } else {
+            source
+        };
+        let id = ui.make_persistent_id((
+            "live-html",
+            from,
+            block.range.start,
+            width.to_bits(),
+            ui.visuals().dark_mode,
+        ));
+        images.push(LiveImage {
+            range: block.range.start..first_end,
+            block: Some(block.range.clone()),
+            uri: String::new(),
+            size: egui::vec2(width, crate::preview::fragment_height(ui.ctx(), id)),
+            math: None,
+            note: None,
+            html: Some(source),
+            alt: String::new(),
+        });
+    }
+    for image in rustidian::assets::embedded_images(text) {
+        if !rustidian::assets::is_video(std::path::Path::new(&image.target))
+            || image.html
+            || active_line
+                .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start)
+        {
+            continue;
+        }
+        let target = image.target.replace('&', "&amp;").replace('"', "&quot;");
+        let first_end = text[image.range.clone()]
+            .find('\n')
+            .map_or(image.range.end, |offset| image.range.start + offset);
+        let id = ui.make_persistent_id((
+            "live-html",
+            from,
+            image.range.start,
+            width.to_bits(),
+            ui.visuals().dark_mode,
+        ));
+        images.push(LiveImage {
+            range: image.range.start..first_end,
+            block: Some(image.range),
+            uri: String::new(),
+            size: egui::vec2(width, crate::preview::fragment_height(ui.ctx(), id)),
+            math: None,
+            note: None,
+            html: Some(format!("<video src=\"{target}\"></video>")),
+            alt: image.alt,
+        });
+    }
     if let Some(vault) = vault {
         let mut occurrences = HashMap::new();
         for image in rustidian::assets::embedded_images(text) {
@@ -666,6 +782,8 @@ fn live_images(
                 range: image.range,
                 block: None,
                 uri: String::new(),
+                html: None,
+                alt: String::new(),
                 math: None,
                 size: egui::vec2(width, crate::note_embed_ui::height(ui.ctx(), id, width)),
                 note: Some(crate::note_embed_ui::Embed {
@@ -700,6 +818,8 @@ fn live_images(
                 block: Some(block.range.clone()),
                 uri,
                 size,
+                html: None,
+                alt: String::new(),
                 math: None,
                 note: None,
             });
@@ -761,6 +881,8 @@ fn live_images(
                 block: math.display.then(|| math.range.clone()),
                 uri: formula.uri,
                 size: formula.size * scale,
+                html: None,
+                alt: String::new(),
                 math: Some(ordinal),
                 note: None,
             });
@@ -1388,7 +1510,11 @@ impl Editor {
                                 "Pasted image {}.png",
                                 chrono::Local::now().format("%Y%m%d%H%M%S")
                             );
-                            vault.import_attachment(std::path::Path::new(&name), &png)
+                            vault.import_attachment_from(
+                                &tab.document.path,
+                                std::path::Path::new(&name),
+                                &png,
+                            )
                         })();
                         *event = match saved {
                             Ok(path) => egui::Event::Paste(format!(
@@ -1418,7 +1544,11 @@ impl Editor {
                     }
                     let bytes = file.bytes()?;
                     let name = file.path().file_name().ok_or("Invalid image name.")?;
-                    vault.import_attachment(std::path::Path::new(name), &bytes)
+                    vault.import_attachment_from(
+                        &tab.document.path,
+                        std::path::Path::new(name),
+                        &bytes,
+                    )
                 })();
                 match saved {
                     Ok(path) => links.push(format!(
@@ -2150,6 +2280,15 @@ impl Editor {
                 }
                 // A line of only wrapper tags (`<div align="center">`) takes no room unless edited.
                 for line in &parsed.html_tag_lines {
+                    if images.iter().any(|image| {
+                        image.html.is_some()
+                            && image
+                                .block
+                                .as_ref()
+                                .is_some_and(|block| block.contains(&line.start))
+                    }) {
+                        continue;
+                    }
                     if !active_line
                         .as_ref()
                         .is_some_and(|active| active.start < line.end && active.end >= line.start)
@@ -2275,7 +2414,8 @@ impl Editor {
                 collapse_rows(&mut galley, hidden);
             }
             if live && !plain_text {
-                center_rows(&mut galley, text, &parsed.html_centered);
+                center_rows(&mut galley, text, &parsed.html_centered, 0.5);
+                center_rows(&mut galley, text, &parsed.html_right, 1.0);
             }
             *layout_cache = Some(LayoutCache {
                 key,
@@ -2667,6 +2807,59 @@ impl Editor {
                         );
                     }
                 }
+                continue;
+            }
+            if let Some(source) = &image.html {
+                let id = ui.make_persistent_id((
+                    "live-html",
+                    &tab.document.path,
+                    image.range.start,
+                    image.size.x.to_bits(),
+                    ui.visuals().dark_mode,
+                ));
+                // Keep measuring off-screen children too: their heights place everything after them.
+                let mut child = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(
+                    egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), f32::INFINITY)),
+                ));
+                child.set_clip_rect(ui.clip_rect());
+                if let Some(link) = crate::preview::show_fragment(
+                    &mut child,
+                    &mut self.embed_cache,
+                    source,
+                    &tab.document.path,
+                    id,
+                    vault,
+                ) {
+                    follow = Some(link);
+                }
+                if rect.contains(ui.input(|input| input.pointer.hover_pos().unwrap_or_default())) {
+                    let edit = ui.put(
+                        egui::Rect::from_min_size(
+                            rect.right_top() - egui::vec2(82.0, 0.0),
+                            egui::vec2(82.0, crate::theme::space::ROW),
+                        ),
+                        egui::Button::new("Edit HTML"),
+                    );
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("html-edit:{}", image.range.start),
+                        edit.rect,
+                    );
+                    if edit.clicked() {
+                        let source_range = image.block.as_ref().unwrap_or(&image.range);
+                        let start = tab.document.text[..source_range.start].chars().count();
+                        self.focus_range =
+                            Some((output.response.id, CCursorRange::one(CCursor::new(start))));
+                        output.response.request_focus();
+                        ui.ctx().request_repaint();
+                    }
+                }
+                crate::ui_probe::record(ui.ctx(), format!("html-live:{}", image.range.start), rect);
+                continue;
+            }
+            if image.uri.starts_with("rust-missing-image:") {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                crate::media_ui::broken(&mut child, &image.alt, false);
                 continue;
             }
             let widget = egui::Image::new(&image.uri)
@@ -3283,7 +3476,12 @@ fn collapse_rows(galley: &mut Arc<egui::Galley>, hidden: &[Range<usize>]) {
 }
 
 /// Rows inside `align="center"` HTML sit in the middle of the page, as GitHub shows them.
-fn center_rows(galley: &mut Arc<egui::Galley>, text: &str, centered: &[Range<usize>]) {
+fn center_rows(
+    galley: &mut Arc<egui::Galley>,
+    text: &str,
+    centered: &[Range<usize>],
+    fraction: f32,
+) {
     let width = galley.job.wrap.max_width;
     if centered.is_empty() || !width.is_finite() {
         return;
@@ -3301,7 +3499,7 @@ fn center_rows(galley: &mut Arc<egui::Galley>, text: &str, centered: &[Range<usi
     for row in &mut galley.rows {
         let length = row.char_count_including_newline().0;
         if ranges.iter().any(|range| range.contains(&character)) {
-            row.pos.x += ((width - row.row.size.x) / 2.0).max(0.0);
+            row.pos.x += ((width - row.row.size.x) * fraction).max(0.0);
             right = right.max(row.pos.x + row.row.size.x);
         }
         if row.row.size.y > 0.0 {
@@ -3980,7 +4178,7 @@ fn layout(
                 })
             });
             let image = images.iter().find(|image| {
-                let content_end = if image.math.is_some() && image.block.is_some() {
+                let content_end = if image.block.is_some() {
                     start + section.trim_end_matches(['\r', '\n']).len()
                 } else {
                     end
@@ -4009,7 +4207,13 @@ fn layout(
             } else {
                 18.0
             };
-            let size = size * font_scale;
+            let size = size
+                * font_scale
+                * if live && style.html.script.is_some() {
+                    0.75
+                } else {
+                    1.0
+                };
             let family = if style.code || style.math {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
@@ -4109,7 +4313,11 @@ fn layout(
                 } else {
                     29.16 * font_scale
                 }),
-                valign: if image.is_some() && active {
+                valign: if live && style.html.script == Some(1) {
+                    egui::Align::Min
+                } else if live && style.html.script == Some(-1) {
+                    egui::Align::Max
+                } else if image.is_some() && active {
                     egui::Align::Min
                 } else {
                     egui::Align::Center
@@ -4413,6 +4621,8 @@ mod tests {
             block: Some(8..17),
             uri: "bytes://math-layout-test.svg".into(),
             size: egui::vec2(80.0, 40.0),
+            html: None,
+            alt: String::new(),
             math: Some(0),
             note: None,
         };
