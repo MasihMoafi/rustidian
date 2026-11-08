@@ -307,6 +307,9 @@ pub fn warm_up() {
 /// Read a selection through one continuous mono PCM player.
 pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     let session = SHARED.session.fetch_add(1, Ordering::SeqCst) + 1;
+    ctx.data_mut(|data| {
+        data.remove::<(String, Instant)>(egui::Id::unique("read-aloud-error-seen"));
+    });
     if chunks.is_empty() {
         return;
     }
@@ -740,12 +743,19 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
                                 .small()
                                 .color(ui.visuals().error_fg_color),
                         );
-                        if ui.small_button("Close").clicked() {
+                        let close = ui.small_button("Close");
+                        crate::ui_probe::record(ctx, "read-aloud-error-close", close.rect);
+                        if close.clicked() {
                             SHARED
                                 .status
                                 .lock()
                                 .unwrap_or_else(|e| e.into_inner())
                                 .error = None;
+                            ctx.data_mut(|data| {
+                                data.remove::<(String, Instant)>(egui::Id::unique(
+                                    "read-aloud-error-seen",
+                                ));
+                            });
                         }
                     }
                 });

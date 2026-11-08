@@ -470,3 +470,80 @@ fn transcription_model_menu_uses_the_filtered_models_api() {
             .starts_with("GET /api/v1/models?output_modalities=transcription ")
     );
 }
+
+#[test]
+fn testing_a_key_reports_provider_results_without_exposing_the_key() {
+    let candidate = format!("example-{:016x}", fastrand::u64(..));
+    for (status, body, expected) in [
+        ("200 OK", r#"{"data":{}}"#, None),
+        ("401 Unauthorized", candidate.as_str(), Some("refused")),
+        ("402 Payment Required", candidate.as_str(), Some("credit")),
+        (
+            "500 Internal Server Error",
+            candidate.as_str(),
+            Some("HTTP 500"),
+        ),
+        ("200 OK", "not json", Some("invalid")),
+        ("302 Found", r#"{"data":{}}"#, Some("HTTP 302")),
+    ] {
+        let (endpoint, server) = json_server(status, body);
+        let result = rustidian::voice_account::test_key(&endpoint, &candidate);
+        if let Some(expected) = expected {
+            let error = result.unwrap_err();
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains(&candidate));
+        } else {
+            assert!(result.is_ok());
+        }
+        assert!(server.join().unwrap().starts_with("GET /api/v1/key "));
+    }
+    assert!(
+        rustidian::voice_account::test_key("https://unrelated.example/speech", &candidate).is_err()
+    );
+    assert!(rustidian::voice_account::test_key("http://127.0.0.1:1/speech", " ").is_err());
+}
+
+#[test]
+fn speech_does_not_forward_a_key_across_redirects() {
+    let destination = TcpListener::bind("127.0.0.1:0").unwrap();
+    destination.set_nonblocking(true).unwrap();
+    let target = format!("http://{}/stolen", destination.local_addr().unwrap());
+    let source = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!(
+        "http://{}/api/v1/audio/speech",
+        source.local_addr().unwrap()
+    );
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = source.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        let mut ignored = vec![0; length];
+        reader.read_exact(&mut ignored).unwrap();
+        write!(stream, "HTTP/1.1 302 Found\r\nLocation: {target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+    });
+    let (keyring, session) = (Memory::default(), Memory::default());
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut voice = settings(&endpoint);
+    let candidate = format!("example-{:016x}", fastrand::u64(..));
+    voice
+        .save_key(stores, None, "Mine", &candidate, false)
+        .unwrap();
+    assert!(speak(&voice.route(stores).unwrap(), "Hello", 1.0).is_err());
+    server.join().unwrap();
+    assert!(
+        matches!(destination.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+    );
+}

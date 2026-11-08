@@ -6691,6 +6691,13 @@ def main():
                     assert control_bounds(f"bookmark:{relative}", required=False) is None
                     assert control_bounds("error-save-copy", required=False) is None
                     capture("native-bookmark-state-error.png")
+                    xdo("mousemove", "--sync", "5", "5")
+                    deadline = time.monotonic() + 10
+                    while control_bounds("error-notice", required=False) and time.monotonic() < deadline:
+                        time.sleep(.1)
+                    assert control_bounds("error-notice", required=False) is None
+                    assert control_bounds("status:Ready"), "The failed bookmark status stayed on screen"
+                    capture("native-bookmark-state-error-cleared.png")
                 finally:
                     state_path.rmdir()
                     displaced_state.rename(state_path)
@@ -7440,8 +7447,19 @@ def main():
                 import threading
                 canary = "sk-or-v1-CANARY-7f3e9a1c55d0"
                 heard = []
+                key_tests = []
+                key_test_status = [200]
 
                 class Speech(http.server.BaseHTTPRequestHandler):
+                    def do_GET(self):
+                        key_tests.append((self.path, self.headers.get("Authorization") == "Bearer " + canary))
+                        body = b'{"data":{}}'
+                        self.send_response(key_test_status[0])
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+
                     def do_POST(self):
                         heard.append(self.headers.get("Authorization", ""))
                         self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -7501,6 +7519,26 @@ def main():
                     type_text("Personal")
                     key("Tab")
                     type_text(canary)
+                    for code in (401, 402, 500, 200):
+                        key_test_status[0] = code
+                        count = len(key_tests)
+                        click_control("settings-voice-test")
+                        wait(lambda: len(key_tests) > count, "The key test sent no request")
+                        assert key_tests[-1] == ("/api/v1/key", True)
+                        wait(lambda: control_bounds("settings-voice-message", required=False), "The key test showed no result")
+                        message = control_bounds("settings-voice-message")
+                        actions = control_bounds("settings-voice-save")
+                        assert message[3] <= actions[1] + 2, ("The message overlaps the actions", message, actions)
+                        capture(f"native-voice-test-{code}.png")
+                        if code == 500:
+                            xdo("mousemove", "--sync", "5", "5")
+                            wait(lambda: control_bounds("settings-voice-message", required=False) is None,
+                                 "The key test error stayed on screen", limit=10)
+                            time.sleep(1)
+                            assert control_bounds("settings-voice-message", required=False) is None
+                        else:
+                            click_control("settings-voice-message-dismiss")
+                    results.append("Testing the typed key used the local provider; refusals and success were dismissible, and the server error faded without returning")
                     capture("native-voice-key-typed.png")
                     click_control("settings-voice-save")
                     # This display has no keyring: the key may be kept for this session only.
@@ -7510,6 +7548,22 @@ def main():
                     control_bounds("settings-voice-disconnect:Personal")
                     assert control_bounds("settings-voice-session", required=False) is None
                     capture("native-voice-connected.png")
+                    click_control("settings-dictation-backend")
+                    click_control("settings-dictation-backend:OpenRouter")
+                    key_test_status[0] = 500
+                    click_control("settings-dictation-model")
+                    wait(lambda: control_bounds("settings-dictation-model-error", required=False),
+                         "The failed model list showed no error")
+                    model_count = len(key_tests)
+                    capture("native-voice-model-error.png")
+                    key("Escape")
+                    xdo("mousemove", "--sync", "5", "5")
+                    wait(lambda: control_bounds("settings-dictation-model-error", required=False) is None,
+                         "The model list error stayed on screen", limit=10)
+                    time.sleep(1)
+                    assert control_bounds("settings-dictation-model-error", required=False) is None
+                    assert len(key_tests) == model_count, "The model list was retried without another click"
+                    results.append("A failed transcription model list showed one dismissible error that faded without another request")
                     key("Escape")
                     results.append("Settings → Read aloud: chose OpenRouter, typed a name, Tab reached the masked key field, the locked keyring offered session-only keeping, and the account showed as in use")
 
@@ -7536,6 +7590,22 @@ def main():
                     xdo("mousemove", "--sync", "5", "5")
                     wait(lambda: control_bounds("read-aloud-player", required=False) is None, "The refused-key message stayed on screen", limit=10)
                     results.append("A replaced key was used at once; the refusal showed a message that faded by itself")
+
+                    count = len(heard)
+                    read_paragraph()
+                    wait(lambda: len(heard) > count, "The first repeat did not reach the provider")
+                    click_control("read-aloud-error-close")
+                    xdo("mousemove", "--sync", "5", "5")
+                    time.sleep(7)
+                    count = len(heard)
+                    read_paragraph()
+                    wait(lambda: len(heard) > count, "The next attempt did not reach the provider")
+                    wait(lambda: control_bounds("read-aloud-error-close", required=False), "The repeated error disappeared immediately")
+                    time.sleep(1)
+                    assert control_bounds("read-aloud-error-close", required=False), "The repeated error reused the previous timer"
+                    capture("native-voice-refusal-after-dismiss.png")
+                    click_control("read-aloud-error-close")
+                    results.append("Dismissing a refusal does not shorten the next attempt's error notice")
 
                     settings_page()
                     click_control("settings-voice-disconnect:Personal")

@@ -11,15 +11,70 @@ pub(crate) struct VoiceForm {
     pub key: String,
     /// The account whose key is being replaced.
     pub replacing: Option<String>,
-    pub message: Option<String>,
+    message: Option<Feedback>,
+    scroll_message: bool,
     /// The keyring failed: offer to keep the typed key for this session only.
     pub offer_session: bool,
     pub setup: bool,
     pub focus_key: bool,
     models: Vec<String>,
     models_endpoint: Option<String>,
-    model_error: Option<String>,
+    model_error: Option<Feedback>,
     model_request: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>>,
+    key_test: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+}
+
+struct Feedback {
+    text: String,
+    shown: std::time::Instant,
+}
+
+impl Feedback {
+    fn new(text: String) -> Self {
+        Self {
+            text,
+            shown: std::time::Instant::now(),
+        }
+    }
+}
+
+impl VoiceForm {
+    fn message(&mut self, text: impl Into<String>) {
+        self.message = Some(Feedback::new(text.into()));
+        self.scroll_message = true;
+    }
+}
+
+/// A settings message has its own row so actions never cover its text.
+fn feedback_row(ui: &mut egui::Ui, feedback: &mut Option<Feedback>, probe: &str) {
+    let Some(shown) = feedback.as_ref() else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    let remaining = super::ERROR_NOTICE_TIME.saturating_sub(now.duration_since(shown.shown));
+    if remaining.is_zero() {
+        *feedback = None;
+        return;
+    }
+    let row = ui.scope(|ui| {
+        settings_ui::voice_row(ui, "", &shown.text, |ui| {
+            let dismiss = theme::button(ui, "Dismiss", theme::Kind::Ghost);
+            crate::ui_probe::record(ui.ctx(), format!("{probe}-dismiss"), dismiss.rect);
+            dismiss.clicked()
+        })
+    });
+    crate::ui_probe::record(ui.ctx(), probe, row.response.rect);
+    if row.inner {
+        *feedback = None;
+    } else if row.response.contains_pointer() {
+        if let Some(shown) = feedback.as_mut() {
+            shown.shown = now;
+        }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(250));
+    } else {
+        ui.ctx().request_repaint_after(remaining);
+    }
 }
 
 impl NotesApp {
@@ -135,6 +190,7 @@ impl NotesApp {
             || self.voice_form.setup
         {
             ui.separator();
+            let previous_endpoint = self.voice.endpoint.clone();
             self.voice_text(
                 ui,
                 "Endpoint",
@@ -142,6 +198,10 @@ impl NotesApp {
                 "settings-voice-endpoint",
                 |v| &mut v.endpoint,
             );
+            if self.voice.endpoint != previous_endpoint {
+                self.voice_form.key_test = None;
+                self.voice_form.message = None;
+            }
             ui.separator();
             self.voice_accounts(ui);
         }
@@ -165,58 +225,68 @@ impl NotesApp {
                     self.voice_form.model_request = None;
                 }
                 Ok(Err(error)) => {
-                    self.voice_form.model_error = Some(error);
+                    self.voice_form.model_error = Some(Feedback::new(error));
                     self.voice_form.model_request = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    self.voice_form.model_error =
-                        Some("The model list could not be loaded.".into());
+                    self.voice_form.model_error = Some(Feedback::new(
+                        "The model list could not be loaded. Open it to try again.".into(),
+                    ));
                     self.voice_form.model_request = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
-        let description = self
-            .voice_form
-            .model_error
-            .as_deref()
-            .unwrap_or("Choose from OpenRouter's transcription models.");
         let mut fetch = false;
-        settings_ui::voice_row(ui, "Transcription model", description, |ui| {
-            let response = egui::ComboBox::from_id_salt("settings-dictation-model")
-                .icon(theme::combo_chevron)
-                .selected_text(&self.voice.transcription_model)
-                .show_ui(ui, |ui| {
-                    theme::menu_style(ui);
-                    if self.voice_form.models.is_empty() {
-                        ui.label(if self.voice_form.model_request.is_some() {
-                            "Loading models…"
-                        } else {
-                            "Open to load models"
-                        });
-                    }
-                    for model in &self.voice_form.models {
-                        let option = ui.selectable_value(
-                            &mut self.voice.transcription_model,
-                            model.clone(),
-                            model,
-                        );
-                        crate::ui_probe::record(
-                            ui.ctx(),
-                            format!("settings-dictation-model:{model}"),
-                            option.rect,
-                        );
-                    }
-                });
-            crate::ui_probe::record(ui.ctx(), "settings-dictation-model", response.response.rect);
-            if response.response.clicked()
-                && self.voice_form.models.is_empty()
-                && self.voice_form.model_request.is_none()
-            {
-                fetch = true;
-            }
-            false
-        });
+        settings_ui::voice_row(
+            ui,
+            "Transcription model",
+            "Choose from OpenRouter's transcription models.",
+            |ui| {
+                let response = egui::ComboBox::from_id_salt("settings-dictation-model")
+                    .icon(theme::combo_chevron)
+                    .selected_text(&self.voice.transcription_model)
+                    .show_ui(ui, |ui| {
+                        theme::menu_style(ui);
+                        if self.voice_form.models.is_empty() {
+                            ui.label(if self.voice_form.model_request.is_some() {
+                                "Loading models…"
+                            } else {
+                                "Open to load models"
+                            });
+                        }
+                        for model in &self.voice_form.models {
+                            let option = ui.selectable_value(
+                                &mut self.voice.transcription_model,
+                                model.clone(),
+                                model,
+                            );
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("settings-dictation-model:{model}"),
+                                option.rect,
+                            );
+                        }
+                    });
+                crate::ui_probe::record(
+                    ui.ctx(),
+                    "settings-dictation-model",
+                    response.response.rect,
+                );
+                if response.response.clicked()
+                    && self.voice_form.models.is_empty()
+                    && self.voice_form.model_request.is_none()
+                {
+                    fetch = true;
+                }
+                false
+            },
+        );
+        feedback_row(
+            ui,
+            &mut self.voice_form.model_error,
+            "settings-dictation-model-error",
+        );
         if fetch {
             let endpoint = self.voice.endpoint.clone();
             let ctx = ui.ctx().clone();
@@ -250,10 +320,31 @@ impl NotesApp {
 
     fn voice_accounts(&mut self, ui: &mut egui::Ui) {
         let stores = Stores::app();
+        let tested =
+            self.voice_form
+                .key_test
+                .as_ref()
+                .and_then(|request| match request.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        Some(Err("The key test was interrupted. Try again.".into()))
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                });
+        if let Some(result) = tested {
+            self.voice_form.key_test = None;
+            self.voice_form.message(match result {
+                Ok(()) => "Key accepted. Save it to use this account.".to_string(),
+                Err(error) => error,
+            });
+        }
         let accounts = self.voice.accounts.clone();
         let status = match self.voice.selected_account() {
             Some(account) if account.endpoint == self.voice.endpoint => {
-                format!("Using \"{}\" (key …{}).", account.label, account.ending)
+                format!(
+                    "Selected \"{}\" (key …{}). Saving a key does not verify it.",
+                    account.label, account.ending
+                )
             }
             Some(account) => format!(
                 "\"{}\" was saved for {}; add a key for this endpoint.",
@@ -287,11 +378,10 @@ impl NotesApp {
                 );
                 if disconnect.clicked() {
                     match self.voice.disconnect(stores, id) {
-                        Ok(()) => {
-                            self.voice_form.message =
-                                Some(format!("Disconnected \"{}\".", account.label))
-                        }
-                        Err(error) => self.voice_form.message = Some(error),
+                        Ok(()) => self
+                            .voice_form
+                            .message(format!("Disconnected \"{}\".", account.label)),
+                        Err(error) => self.voice_form.message(error),
                     }
                 }
                 let replace = theme::button(ui, "Replace key", theme::Kind::Outline);
@@ -305,6 +395,8 @@ impl NotesApp {
                     self.voice_form.label = account.label.clone();
                     self.voice_form.key.clear();
                     self.voice_form.offer_session = false;
+                    self.voice_form.key_test = None;
+                    self.voice_form.message = None;
                 }
                 if !selected {
                     let select = theme::button(ui, "Use", theme::Kind::Outline);
@@ -358,6 +450,10 @@ impl NotesApp {
                     .desired_width(ui.available_width()),
                 );
                 crate::ui_probe::record(ui.ctx(), "settings-voice-key", response.rect);
+                if response.changed() {
+                    self.voice_form.key_test = None;
+                    self.voice_form.message = None;
+                }
                 if self.voice_form.setup {
                     crate::ui_probe::record(ui.ctx(), "settings-voice-setup", response.rect);
                 }
@@ -381,9 +477,17 @@ impl NotesApp {
             },
         );
         let mut save = None;
-        let message = self.voice_form.message.clone().unwrap_or_default();
-        settings_ui::voice_row(ui, "", &message, |ui| {
+        let mut test = false;
+        feedback_row(ui, &mut self.voice_form.message, "settings-voice-message");
+        let actions = ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let typed = !self.voice_form.key.trim().is_empty();
+            let store = ui.add_enabled_ui(typed, |ui| {
+                theme::button(ui, "Save key", theme::Kind::Primary)
+            });
+            crate::ui_probe::record(ui.ctx(), "settings-voice-save", store.inner.rect);
+            if store.inner.clicked() {
+                save = Some(false);
+            }
             if self.voice_form.offer_session {
                 let keep = ui.add_enabled_ui(typed, |ui| {
                     theme::button(ui, "Keep for this session only", theme::Kind::Outline)
@@ -393,12 +497,17 @@ impl NotesApp {
                     save = Some(true);
                 }
             }
-            let store = ui.add_enabled_ui(typed, |ui| {
-                theme::button(ui, "Save key", theme::Kind::Primary)
+            let pending = self.voice_form.key_test.is_some();
+            let check = ui.add_enabled_ui(typed && !pending, |ui| {
+                theme::button(
+                    ui,
+                    if pending { "Testing…" } else { "Test key" },
+                    theme::Kind::Outline,
+                )
             });
-            crate::ui_probe::record(ui.ctx(), "settings-voice-save", store.inner.rect);
-            if store.inner.clicked() {
-                save = Some(false);
+            crate::ui_probe::record(ui.ctx(), "settings-voice-test", check.inner.rect);
+            if check.inner.clicked() {
+                test = true;
             }
             if replacing.is_some() {
                 let cancel = theme::button(ui, "Cancel", theme::Kind::Ghost);
@@ -406,8 +515,23 @@ impl NotesApp {
                     self.voice_form = VoiceForm::default();
                 }
             }
-            false
         });
+        if self.voice_form.scroll_message {
+            actions.response.scroll_to_me(Some(egui::Align::BOTTOM));
+            self.voice_form.scroll_message = false;
+        }
+        if test {
+            let endpoint = self.voice.endpoint.clone();
+            let key = self.voice_form.key.clone();
+            let ctx = ui.ctx().clone();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            self.voice_form.message = None;
+            self.voice_form.key_test = Some(receiver);
+            std::thread::spawn(move || {
+                let _ = sender.send(rustidian::voice_account::test_key(&endpoint, &key));
+                ctx.request_repaint();
+            });
+        }
         if let Some(session_only) = save {
             let key = std::mem::take(&mut self.voice_form.key);
             match self.voice.save_key(
@@ -418,26 +542,25 @@ impl NotesApp {
                 session_only,
             ) {
                 Ok(_) => {
-                    self.voice_form = VoiceForm {
-                        message: Some(if session_only {
-                            "Key kept until Rustidian closes.".into()
-                        } else {
-                            "Key saved in the system keyring.".into()
-                        }),
-                        ..VoiceForm::default()
-                    };
+                    self.voice_form = VoiceForm::default();
+                    self.voice_form.message(if session_only {
+                        "Key kept until Rustidian closes."
+                    } else {
+                        "Key saved in the system keyring."
+                    });
                 }
                 Err(SaveError::Invalid(reason)) => {
                     self.voice_form.key = key;
-                    self.voice_form.message = Some(reason);
+                    self.voice_form.message(reason);
                 }
                 Err(SaveError::Keyring(reason)) => {
                     self.voice_form.key = key;
                     self.voice_form.offer_session = true;
-                    self.voice_form.message =
-                        Some(format!("{reason} Keep the key for this session only?"));
+                    self.voice_form
+                        .message(format!("{reason} Keep the key for this session only?"));
                 }
             }
+            ui.ctx().request_repaint();
         }
     }
 
@@ -445,7 +568,10 @@ impl NotesApp {
         if let Some(base) = rustidian::voice_account::state_base()
             && let Err(error) = self.voice.save(&base)
         {
-            self.voice_form.message = Some(error);
+            self.voice_form.message(format!(
+                "Voice settings were not saved: {error}. Try again."
+            ));
+            self.ctx.request_repaint();
         }
     }
 }

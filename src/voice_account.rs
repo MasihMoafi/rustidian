@@ -125,9 +125,9 @@ impl Keyring {
 fn keyring_error(error: keyring::Error) -> String {
     match error {
         keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_) => {
-            "The system keyring is locked or not available.".into()
+            "The system keyring is locked or unavailable. Unlock it and try again.".into()
         }
-        _ => "The system keyring refused the key.".into(),
+        _ => "The system keyring refused access. Unlock it and try again.".into(),
     }
 }
 
@@ -300,12 +300,7 @@ impl Settings {
         key: &str,
         session_only: bool,
     ) -> Result<String, SaveError> {
-        let key = key.trim();
-        if key.is_empty() || key.chars().any(char::is_whitespace) {
-            return Err(SaveError::Invalid(
-                "Paste the whole key, without spaces.".into(),
-            ));
-        }
+        let key = validate_key(key).map_err(SaveError::Invalid)?;
         endpoint_allowed(&self.endpoint).map_err(SaveError::Invalid)?;
         let id = replace.map_or_else(|| format!("{:016x}", fastrand::u64(..)), str::to_owned);
         let store = if session_only {
@@ -410,19 +405,30 @@ impl Settings {
     }
 }
 
+fn validate_key(key: &str) -> Result<&str, String> {
+    let key = key.trim();
+    if key.is_empty() || key.chars().any(char::is_whitespace) {
+        Err("Paste the whole key, without spaces.".into())
+    } else {
+        Ok(key)
+    }
+}
+
 /// HTTPS anywhere; plain HTTP only to this machine.
 pub fn endpoint_allowed(endpoint: &str) -> Result<(), String> {
-    let local = [
-        "http://127.0.0.1:",
-        "http://127.0.0.1/",
-        "http://localhost:",
-        "http://localhost/",
-    ];
-    if endpoint.starts_with("https://") || local.iter().any(|prefix| endpoint.starts_with(prefix)) {
-        Ok(())
-    } else {
-        Err("The voice endpoint must start with https://.".into())
+    let uri = endpoint.parse::<ureq::http::Uri>();
+    if let Ok(uri) = uri
+        && let Some(authority) = uri.authority()
+        && !authority.as_str().contains('@')
+        && !authority.host().is_empty()
+    {
+        match uri.scheme_str() {
+            Some("https") => return Ok(()),
+            Some("http") if transcription_origin(endpoint).is_ok() => return Ok(()),
+            _ => {}
+        }
     }
+    Err("Use an HTTPS endpoint, or a local HTTP endpoint for testing.".into())
 }
 
 /// Voice `text` through the route; returns a WAV file's bytes. Error messages never hold
@@ -436,17 +442,7 @@ pub fn speak(route: &Route, text: &str, speed: f32) -> Result<Vec<u8>, String> {
         "speed": speed,
     })
     .to_string();
-    // A proxy from the environment carries hosted requests; this machine is reached directly.
-    let local = route.endpoint.starts_with("http://");
-    let agent = ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            .proxy(if local {
-                None
-            } else {
-                ureq::Proxy::try_from_env()
-            })
-            .build(),
-    );
+    let agent = provider_agent(&route.endpoint);
     let response = agent
         .post(&route.endpoint)
         .header("Authorization", &format!("Bearer {}", route.key))
@@ -455,15 +451,25 @@ pub fn speak(route: &Route, text: &str, speed: f32) -> Result<Vec<u8>, String> {
         .header("X-Title", "Rustidian")
         .send(body.as_str());
     let mut response = match response {
-        Ok(response) => response,
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            return Err(format!(
+                "OpenRouter could not voice this (HTTP {}). Try again.",
+                response.status()
+            ));
+        }
         Err(ureq::Error::StatusCode(401 | 403)) => {
             return Err("OpenRouter refused this key. Replace it in Settings → Read aloud.".into());
         }
         Err(ureq::Error::StatusCode(402)) => {
-            return Err("OpenRouter: this key has no credit left.".into());
+            return Err(
+                "OpenRouter: this key has no credit left. Add credit, then try again.".into(),
+            );
         }
         Err(ureq::Error::StatusCode(code)) => {
-            return Err(format!("OpenRouter could not voice this (HTTP {code})."));
+            return Err(format!(
+                "OpenRouter could not voice this (HTTP {code}). Try again."
+            ));
         }
         Err(_) => {
             return Err(
@@ -503,7 +509,7 @@ fn transcription_origin(endpoint: &str) -> Result<String, String> {
     Ok(format!("http://{authority}"))
 }
 
-fn transcription_agent(endpoint: &str) -> ureq::Agent {
+fn provider_agent(endpoint: &str) -> ureq::Agent {
     ureq::Agent::new_with_config(
         ureq::Agent::config_builder()
             .proxy(if endpoint.starts_with("http://") {
@@ -517,11 +523,65 @@ fn transcription_agent(endpoint: &str) -> ureq::Agent {
     )
 }
 
+/// Check a typed key without saving it or exposing the provider's response.
+pub fn test_key(endpoint: &str, key: &str) -> Result<(), String> {
+    let key = validate_key(key)?;
+    let origin = transcription_origin(endpoint).map_err(|_| {
+        "Key testing is available for OpenRouter or a local endpoint. Check the endpoint."
+            .to_string()
+    })?;
+    let url = format!("{origin}/api/v1/key");
+    let mut response = match provider_agent(&url)
+        .get(&url)
+        .header("Authorization", &format!("Bearer {key}"))
+        .call()
+    {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            return Err(format!(
+                "OpenRouter could not test the key (HTTP {}). Try again.",
+                response.status()
+            ));
+        }
+        Err(ureq::Error::StatusCode(401 | 403)) => {
+            return Err("OpenRouter refused this key. Check it and try again.".into());
+        }
+        Err(ureq::Error::StatusCode(402)) => {
+            return Err(
+                "OpenRouter: this key has no credit left. Add credit, then try again.".into(),
+            );
+        }
+        Err(ureq::Error::StatusCode(code)) => {
+            return Err(format!(
+                "OpenRouter could not test the key (HTTP {code}). Try again."
+            ));
+        }
+        Err(_) => {
+            return Err("OpenRouter cannot be reached. Check the connection and try again.".into());
+        }
+    };
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(1 << 20)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read the key test response. Try again.")?;
+    let valid = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .is_some_and(|value| value.get("data").is_some_and(serde_json::Value::is_object));
+    if valid {
+        Ok(())
+    } else {
+        Err("OpenRouter returned an invalid key test response. Try again.".into())
+    }
+}
+
 /// Available transcription model IDs, fetched without credentials.
 pub fn transcription_models(endpoint: &str) -> Result<Vec<String>, String> {
     let origin = transcription_origin(endpoint)?;
     let url = format!("{origin}/api/v1/models?output_modalities=transcription");
-    let mut response = transcription_agent(&url)
+    let mut response = provider_agent(&url)
         .get(&url)
         .call()
         .map_err(|_| "Could not load OpenRouter transcription models. Check the connection.")?;
@@ -575,7 +635,7 @@ pub fn transcribe(route: &Route, model: &str, wav: &[u8]) -> Result<String, Stri
         }
     })
     .to_string();
-    let mut response = match transcription_agent(&endpoint)
+    let mut response = match provider_agent(&endpoint)
         .post(&endpoint)
         .header("Authorization", &format!("Bearer {}", route.key))
         .header("Content-Type", "application/json")
@@ -586,11 +646,13 @@ pub fn transcribe(route: &Route, model: &str, wav: &[u8]) -> Result<String, Stri
             return Err("OpenRouter refused this key. Replace it in Settings → Read aloud.".into());
         }
         Err(ureq::Error::StatusCode(402)) => {
-            return Err("OpenRouter: this key has no credit left.".into());
+            return Err(
+                "OpenRouter: this key has no credit left. Add credit, then try again.".into(),
+            );
         }
         Err(ureq::Error::StatusCode(code)) => {
             return Err(format!(
-                "OpenRouter could not transcribe this (HTTP {code})."
+                "OpenRouter could not transcribe this (HTTP {code}). Try again."
             ));
         }
         Err(_) => return Err("OpenRouter cannot be reached. Check the connection.".into()),
@@ -644,5 +706,29 @@ mod speed_tests {
         settings.speed = Some(1.3);
         settings.save(state.path()).unwrap();
         assert_eq!(Settings::load(state.path()).speed, Some(1.3));
+    }
+}
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::endpoint_allowed;
+
+    #[test]
+    fn local_http_endpoints_cannot_hide_another_host_in_the_authority() {
+        for endpoint in [
+            "http://localhost:8000@outside.example/speech",
+            "http://127.0.0.1:8000@outside.example/speech",
+            "http://localhost.outside.example/speech",
+            "https://user:password@outside.example/speech",
+        ] {
+            assert!(endpoint_allowed(endpoint).is_err(), "accepted {endpoint}");
+        }
+        for endpoint in [
+            "http://127.0.0.1:8000/speech",
+            "http://localhost/speech",
+            "https://openrouter.ai/api/v1/audio/speech",
+        ] {
+            assert!(endpoint_allowed(endpoint).is_ok(), "rejected {endpoint}");
+        }
     }
 }

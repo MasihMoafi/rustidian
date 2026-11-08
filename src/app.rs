@@ -2014,7 +2014,7 @@ impl NotesApp {
                     if self.editable_note() {
                         self.ask(Dialog::InsertTemplate);
                     } else {
-                        self.status = "Open a note to insert a template.".into();
+                        self.error = Some("Open a note to insert a template.".into());
                     }
                 }
                 ui.allocate_ui_with_layout(
@@ -2173,7 +2173,7 @@ impl NotesApp {
         self.ctx.request_repaint();
         if let Err(error) = self.write_session() {
             self.bookmarks = before;
-            self.status = "Bookmarks not saved".into();
+            self.status = "Ready".into();
             self.error = Some(format!("Bookmark changes weren't saved. {error}"));
             return false;
         }
@@ -3918,7 +3918,7 @@ impl NotesApp {
             && let Some(base) = rustidian::voice_account::state_base()
             && let Err(error) = self.voice.save(&base)
         {
-            self.voice_form.message = Some(error);
+            self.error = Some(format!("Voice speed was not saved: {error}. Try again."));
         }
         self.page_pan.viewport(&scroll);
         crate::ui_probe::metric(
@@ -5923,7 +5923,8 @@ impl NotesApp {
                 {
                     self.open_note(&path);
                 } else {
-                    self.status = "No Markdown notes in this vault.".into();
+                    self.error =
+                        Some("No Markdown notes in this vault. Create a note first.".into());
                 }
             }
             "Templates: Insert template" if self.editable_note() => {
@@ -6495,7 +6496,12 @@ impl eframe::App for NotesApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(theme::space::S);
-                    ui.label(RichText::new(&self.status).size(11.0).weak());
+                    let message = ui.label(RichText::new(&self.status).size(11.0).weak());
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("status:{}", self.status),
+                        message.rect,
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(theme::space::M);
                         if self
