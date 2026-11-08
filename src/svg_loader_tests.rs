@@ -52,9 +52,12 @@ fn an_invalidated_render_cannot_resurrect_or_overwrite_the_new_image() {
         entered.wait();
         if forget_all {
             loader.forget_all();
+            ctx.forget_all_images();
         } else {
             loader.forget(uri);
+            ctx.forget_image(uri);
         }
+        // egui's byte store keeps the first bytes for a URI until it is forgotten.
         ctx.include_bytes(uri, svg("blue", 16));
         assert!(matches!(
             loader.load(&ctx, uri, SizeHint::default()).unwrap(),
