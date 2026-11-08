@@ -190,6 +190,11 @@ def main():
             browser.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nwith Path(" + repr(str(reports / "browser-requests.txt")) + ").open('a') as f: f.write(repr(sys.argv[1:])+'\\n')\n")
             browser.chmod(0o700)
             environment["BROWSER"] = str(browser)
+        if args.section == "dictation":
+            browser = base / "browser-stub"
+            browser.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nwith Path(" + repr(str(reports / "browser-requests.txt")) + ").open('a') as f: f.write(repr(sys.argv[1:])+'\\n')\n")
+            browser.chmod(0o700)
+            environment["BROWSER"] = str(browser)
         if args.section == "chrome":
             for path in ["__pycache__", ".git", "Notes/__pycache__"]:
                 folder = fixture / path
@@ -7889,10 +7894,29 @@ def main():
                         assert time.monotonic() < deadline, message
                         time.sleep(.1)
 
+                first_hosted_dictation = [True]
                 def record_and_save(expected):
                     click_control("editor")
                     key("ctrl+End")
                     click_control("dictation-toolbar")
+                    if first_hosted_dictation[0]:
+                        control_bounds("voice-fallback-use-openrouter")
+                        first_hosted_dictation[0] = False
+                    if control_bounds("voice-fallback-use-openrouter", required=False):
+                        before_choice = len(transcription_requests)
+                        capture("native-dictation-paid-choice.png")
+                        assert control_bounds("voice-fallback-setup")
+                        time.sleep(.4)
+                        assert len(transcription_requests) == before_choice, "Dictation sent a request before the user chose OpenRouter"
+                        click_control("voice-fallback-setup")
+                        wait_for(lambda: (reports / "browser-requests.txt").exists() and "WhisperType" in (reports / "browser-requests.txt").read_text(), "WhisperType setup was not offered")
+                        assert len(transcription_requests) == before_choice
+                        click_control("dictation-toolbar")
+                        assert len(transcription_requests) == before_choice, "Dictation sent a request before consent on retry"
+                        click_control("voice-fallback-use-openrouter")
+                        state = json.loads((base / "state/rustidian/voice.json").read_text())
+                        assert state["dictation_backend"] == "OpenRouter"
+                        results.append("Missing WhisperType sent no request before consent; setup opened its guide and OpenRouter was remembered")
                     time.sleep(.5)
                     click_control("dictation-toolbar")
                     def saved():
@@ -7924,9 +7948,41 @@ def main():
                     key("Escape")
                     results.append("Missing Kokoro and WhisperType opened the key field with the setup message; the key was kept for this session")
 
+                    for backend in ("Codex / ChatGPT", "Local Whisper", "Local Parakeet"):
+                        command("Open settings")
+                        click_control("settings-page:Read aloud")
+                        click_control("settings-dictation-backend")
+                        click_control("settings-dictation-backend:" + backend)
+                        key("Escape")
+                        before_choice = len(transcription_requests)
+                        click_control("dictation-toolbar")
+                        control_bounds("voice-fallback-use-openrouter")
+                        control_bounds("voice-fallback-setup")
+                        assert len(transcription_requests) == before_choice, f"{backend} sent a request without consent"
+                        click_control("error-dismiss")
+                    command("Open settings")
+                    click_control("settings-page:Read aloud")
+                    click_control("settings-dictation-backend")
+                    click_control("settings-dictation-backend:Codex / ChatGPT")
+                    key("Escape")
+                    results.append("All three local dictation choices asked before using OpenRouter")
+
                     played = base / "read-aloud.played"
                     played_bytes = played.stat().st_size if played.exists() else 0
                     click_control("read-aloud-toolbar")
+                    control_bounds("voice-fallback-use-openrouter")
+                    control_bounds("voice-fallback-setup")
+                    capture("native-read-aloud-paid-choice.png")
+                    assert not transcription_requests, "Read aloud sent a request before the user chose OpenRouter"
+                    click_control("voice-fallback-setup")
+                    wait_for(lambda: (reports / "browser-requests.txt").exists() and "kokoro-onnx" in (reports / "browser-requests.txt").read_text(), "Kokoro setup was not offered")
+                    assert not transcription_requests
+                    click_control("read-aloud-toolbar")
+                    assert not transcription_requests, "Read aloud sent a request before consent on retry"
+                    click_control("voice-fallback-use-openrouter")
+                    state = json.loads((base / "state/rustidian/voice.json").read_text())
+                    assert state["engine"] == "OpenRouter"
+                    results.append("Missing Kokoro sent no request before consent; setup opened its guide and OpenRouter was remembered")
                     wait_for(lambda: any(path == "/api/v1/audio/speech" for path, _, _ in transcription_requests), "Missing Kokoro did not use hosted voice")
                     speech = next(request for request in transcription_requests if request[0] == "/api/v1/audio/speech")
                     assert speech[1] == "Bearer " + canary
@@ -7949,6 +8005,11 @@ def main():
                     results.append("A missing local voice and transcriber used the selected account; hosted dictation sent the recorded WAV, inserted the response, and undid as one edit")
 
                     disabled_transcriber.rename(transcriber)
+                    command("Open settings")
+                    click_control("settings-page:Read aloud")
+                    click_control("settings-dictation-backend")
+                    click_control("settings-dictation-backend:Codex / ChatGPT")
+                    key("Escape")
                     before = len(transcription_requests)
                     record_and_save(b"First line.\n dictated text")
                     assert len(transcription_requests) == before, "A local preference sent a hosted request"

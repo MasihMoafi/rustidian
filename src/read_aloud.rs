@@ -322,13 +322,24 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
         unavailable().is_none(),
         settings.selected_account().is_some(),
     );
-    if choice == voice_account::VoiceChoice::Setup {
+    if matches!(
+        choice,
+        voice_account::VoiceChoice::Setup | voice_account::VoiceChoice::OfferHosted
+    ) {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         status.active = false;
         status.preparing = false;
         status.error = None;
         drop(status);
-        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("voice-setup"), true));
+        ctx.data_mut(|data| match choice {
+            voice_account::VoiceChoice::Setup => {
+                data.insert_temp(egui::Id::unique("voice-setup"), true);
+            }
+            voice_account::VoiceChoice::OfferHosted => {
+                data.insert_temp(egui::Id::unique("voice-fallback-speech"), chunks);
+            }
+            _ => unreachable!(),
+        });
         ctx.request_repaint();
         return;
     }

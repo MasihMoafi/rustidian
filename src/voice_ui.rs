@@ -120,8 +120,7 @@ impl NotesApp {
                 false
             },
         );
-        let hosted_dictation = self.voice.dictation_backend == DictationBackend::OpenRouter
-            || (!crate::dictation::available() && self.voice.selected_account().is_some());
+        let hosted_dictation = self.voice.dictation_backend == DictationBackend::OpenRouter;
         if hosted_dictation || self.voice_form.setup {
             ui.separator();
             self.transcription_model_picker(ui);
@@ -187,6 +186,7 @@ impl NotesApp {
         if self.voice.engine == Engine::OpenRouter
             || hosted_dictation
             || self.voice.selected_account().is_some()
+            || !self.voice.pending_secret_removal.is_empty()
             || self.voice_form.setup
         {
             ui.separator();
@@ -203,10 +203,10 @@ impl NotesApp {
                 self.voice_form.message = None;
             }
             ui.separator();
+            self.save_voice_changes(&before);
             self.voice_accounts(ui);
-        }
-        if self.voice != before {
-            self.save_voice();
+        } else {
+            self.save_voice_changes(&before);
         }
     }
 
@@ -320,6 +320,32 @@ impl NotesApp {
 
     fn voice_accounts(&mut self, ui: &mut egui::Ui) {
         let stores = Stores::app();
+        if !self.voice.pending_secret_removal.is_empty() {
+            settings_ui::voice_row(
+                ui,
+                "Key removal pending",
+                "An old or unused key could not be removed. Unlock the keyring and retry.",
+                |ui| {
+                    let retry = theme::button(ui, "Retry key removal", theme::Kind::Outline);
+                    crate::ui_probe::record(ui.ctx(), "settings-voice-retry-removal", retry.rect);
+                    if retry.clicked() {
+                        let result = rustidian::voice_account::state_base()
+                            .ok_or_else(|| "No voice settings folder is available.".to_string())
+                            .and_then(|base| self.voice.cleanup_pending(&base, stores));
+                        let message = match result {
+                            Ok(()) => "Old keys removed.".to_string(),
+                            Err(error) => {
+                                self.reload_voice_on_conflict(&error);
+                                format!("Key removal is still pending: {error}")
+                            }
+                        };
+                        self.voice_form.message(message);
+                    }
+                    false
+                },
+            );
+            ui.separator();
+        }
         let tested =
             self.voice_form
                 .key_test
@@ -377,11 +403,21 @@ impl NotesApp {
                     disconnect.rect,
                 );
                 if disconnect.clicked() {
-                    match self.voice.disconnect(stores, id) {
-                        Ok(()) => self
+                    let result = rustidian::voice_account::state_base()
+                        .ok_or_else(|| "No voice settings folder is available; the account and key are unchanged.".to_string())
+                        .and_then(|base| self.voice.disconnect(&base, stores, id));
+                    match result {
+                        Ok(()) if self.voice.pending_secret_removal.is_empty() => self
                             .voice_form
                             .message(format!("Disconnected \"{}\".", account.label)),
-                        Err(error) => self.voice_form.message(error),
+                        Ok(()) => self.voice_form.message(format!(
+                            "Disconnected \"{}\"; key removal is pending. Retry above.",
+                            account.label
+                        )),
+                        Err(error) => {
+                            self.reload_voice_on_conflict(&error);
+                            self.voice_form.message(error);
+                        }
                     }
                 }
                 let replace = theme::button(ui, "Replace key", theme::Kind::Outline);
@@ -534,20 +570,34 @@ impl NotesApp {
         }
         if let Some(session_only) = save {
             let key = std::mem::take(&mut self.voice_form.key);
-            match self.voice.save_key(
-                stores,
-                replacing.as_deref(),
-                &self.voice_form.label,
-                &key,
-                session_only,
-            ) {
+            let result = rustidian::voice_account::state_base()
+                .ok_or_else(|| {
+                    SaveError::Settings(
+                        "No voice settings folder is available; the account and key are unchanged."
+                            .into(),
+                    )
+                })
+                .and_then(|base| {
+                    self.voice.save_key(
+                        &base,
+                        stores,
+                        replacing.as_deref(),
+                        &self.voice_form.label,
+                        &key,
+                        session_only,
+                    )
+                });
+            match result {
                 Ok(_) => {
                     self.voice_form = VoiceForm::default();
-                    self.voice_form.message(if session_only {
-                        "Key kept until Rustidian closes."
-                    } else {
-                        "Key saved in the system keyring."
-                    });
+                    self.voice_form
+                        .message(if !self.voice.pending_secret_removal.is_empty() {
+                            "Key saved; an old key could not be removed. Retry key removal above."
+                        } else if session_only {
+                            "Key kept until Rustidian closes."
+                        } else {
+                            "Key saved in the system keyring."
+                        });
                 }
                 Err(SaveError::Invalid(reason)) => {
                     self.voice_form.key = key;
@@ -556,22 +606,50 @@ impl NotesApp {
                 Err(SaveError::Keyring(reason)) => {
                     self.voice_form.key = key;
                     self.voice_form.offer_session = true;
-                    self.voice_form
-                        .message(format!("{reason} Keep the key for this session only?"));
+                    let pending = if self.voice.pending_secret_removal.is_empty() {
+                        ""
+                    } else {
+                        " An unused key is queued for removal; retry above."
+                    };
+                    self.voice_form.message(format!(
+                        "{reason} The previous account and key are unchanged.{pending} Keep the key for this session only?"
+                    ));
+                }
+                Err(SaveError::Settings(reason)) => {
+                    self.reload_voice_on_conflict(&reason);
+                    self.voice_form.key = key;
+                    self.voice_form.message(reason);
                 }
             }
             ui.ctx().request_repaint();
         }
     }
 
-    fn save_voice(&mut self) {
-        if let Some(base) = rustidian::voice_account::state_base()
-            && let Err(error) = self.voice.save(&base)
-        {
-            self.voice_form.message(format!(
-                "Voice settings were not saved: {error}. Try again."
-            ));
-            self.ctx.request_repaint();
+    fn save_voice_changes(&mut self, before: &Settings) {
+        if self.voice != *before {
+            let result = rustidian::voice_account::state_base()
+                .ok_or_else(|| "No voice settings folder is available.".to_string())
+                .and_then(|base| self.voice.save(&base));
+            if let Err(error) = result {
+                if !self.reload_voice_on_conflict(&error) {
+                    self.voice = before.clone();
+                }
+                crate::read_aloud::set_speed(self.voice.speed);
+                self.voice_form.message(format!(
+                    "Voice settings were not saved; the previous settings are unchanged: {error}"
+                ));
+                self.ctx.request_repaint();
+            }
         }
+    }
+
+    pub(super) fn reload_voice_on_conflict(&mut self, error: &str) -> bool {
+        if error.contains("changed in another window")
+            && let Some(base) = rustidian::voice_account::state_base()
+        {
+            self.voice = Settings::load(&base);
+            return true;
+        }
+        false
     }
 }

@@ -30,6 +30,10 @@ pub enum Engine {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub id: String,
+    /// Replacements use a fresh secret slot, so the old key stays usable until
+    /// the settings file has committed. Older accounts use their account ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_id: Option<String>,
     pub label: String,
     /// The endpoint the key was saved for; no other endpoint ever receives it.
     pub endpoint: String,
@@ -37,6 +41,19 @@ pub struct Account {
     pub ending: String,
     /// Held in memory only; gone when Rustidian closes.
     #[serde(default)]
+    pub session_only: bool,
+}
+
+impl Account {
+    pub fn secret_id(&self) -> &str {
+        self.secret_id.as_deref().unwrap_or(&self.id)
+    }
+}
+
+/// A disconnected or replaced key that still needs removing from its store.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingSecret {
+    pub id: String,
     pub session_only: bool,
 }
 
@@ -63,6 +80,8 @@ impl DictationBackend {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
+    /// Detect settings saved by another Rustidian window.
+    pub revision: u64,
     pub engine: Engine,
     pub dictation_backend: DictationBackend,
     pub transcription_model: String,
@@ -72,11 +91,14 @@ pub struct Settings {
     pub endpoint: String,
     pub accounts: Vec<Account>,
     pub selected: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_secret_removal: Vec<PendingSecret>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            revision: 0,
             engine: Engine::Local,
             dictation_backend: DictationBackend::Codex,
             transcription_model: DEFAULT_TRANSCRIPTION_MODEL.into(),
@@ -86,22 +108,25 @@ impl Default for Settings {
             endpoint: DEFAULT_ENDPOINT.into(),
             accounts: Vec::new(),
             selected: None,
+            pending_secret_removal: Vec::new(),
         }
     }
 }
 
-/// The configured choice wins when available; a missing local engine may use the key.
+/// A hosted route is used only after it has been chosen explicitly.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoiceChoice {
     Local,
     Hosted,
+    OfferHosted,
     Setup,
 }
 
 pub fn choose_engine(preferred: Engine, local_available: bool, key_available: bool) -> VoiceChoice {
     match (preferred, local_available, key_available) {
         (Engine::Local, true, _) => VoiceChoice::Local,
-        (_, _, true) => VoiceChoice::Hosted,
+        (Engine::Local, false, true) => VoiceChoice::OfferHosted,
+        (Engine::OpenRouter, _, true) => VoiceChoice::Hosted,
         _ => VoiceChoice::Setup,
     }
 }
@@ -222,6 +247,7 @@ impl std::fmt::Debug for Route {
 pub enum SaveError {
     Invalid(String),
     Keyring(String),
+    Settings(String),
 }
 
 /// `$XDG_STATE_HOME`, else `~/.local/state`.
@@ -244,7 +270,7 @@ impl Settings {
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
         settings.accounts.retain(|account| {
-            !account.session_only || SESSION.get(&account.id).ok().flatten().is_some()
+            !account.session_only || SESSION.get(account.secret_id()).ok().flatten().is_some()
         });
         if settings
             .selected
@@ -256,16 +282,60 @@ impl Settings {
         settings
     }
 
+    fn lock(state_base: &Path) -> Result<std::fs::File, String> {
+        let folder = crate::paths::app_directory(state_base);
+        std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(folder.join("voice.lock"))
+            .map_err(|error| error.to_string())?;
+        lock.lock().map_err(|error| error.to_string())?;
+        Ok(lock)
+    }
+
     /// Write the settings file (owner-only, never through a symlink).
-    pub fn save(&self, state_base: &Path) -> Result<(), String> {
+    pub fn save(&mut self, state_base: &Path) -> Result<(), String> {
+        let _lock = Self::lock(state_base)?;
+        self.save_locked(state_base)
+    }
+
+    fn check_current(&self, state_base: &Path) -> Result<(), String> {
         let file = Self::file(state_base);
-        let folder = file.parent().ok_or("No settings folder")?;
-        std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
         if std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink()) {
             return Err(
                 "The voice settings file is a link; Rustidian will not write through it.".into(),
             );
         }
+        let revision = match std::fs::read(&file) {
+            Ok(bytes) => {
+                serde_json::from_slice::<Settings>(&bytes)
+                    .map_err(|_| "The voice settings file could not be read.")?
+                    .revision
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(error.to_string()),
+        };
+        if revision != self.revision {
+            return Err(
+                "Voice settings changed in another window. Reopen Settings and try again.".into(),
+            );
+        }
+        Ok(())
+    }
+
+    fn save_locked(&mut self, state_base: &Path) -> Result<(), String> {
+        self.check_current(state_base)?;
+        let file = Self::file(state_base);
+        let folder = file.parent().ok_or("No settings folder")?;
+        let revision = self
+            .revision
+            .checked_add(1)
+            .ok_or("Voice settings revision overflowed.")?;
+        let mut next = self.clone();
+        next.revision = revision;
         let mut temporary =
             tempfile::NamedTempFile::new_in(folder).map_err(|error| error.to_string())?;
         #[cfg(unix)]
@@ -276,12 +346,13 @@ impl Settings {
         }
         std::io::Write::write_all(
             &mut temporary,
-            &serde_json::to_vec_pretty(self).map_err(|error| error.to_string())?,
+            &serde_json::to_vec_pretty(&next).map_err(|error| error.to_string())?,
         )
         .map_err(|error| error.to_string())?;
         temporary
             .persist(&file)
             .map_err(|error| error.error.to_string())?;
+        self.revision = revision;
         Ok(())
     }
 
@@ -290,10 +361,11 @@ impl Settings {
         self.accounts.iter().find(|account| &account.id == id)
     }
 
-    /// Save a new key (`replace` = None) or a replacement for an account, then select it.
-    /// The key goes to `secrets`; only its last four characters reach the settings.
+    /// Save a new key or replace one without changing the active key until the
+    /// settings file has been committed. Only the last four characters are saved there.
     pub fn save_key(
         &mut self,
+        state_base: &Path,
         stores: Stores<'_>,
         replace: Option<&str>,
         label: &str,
@@ -302,21 +374,42 @@ impl Settings {
     ) -> Result<String, SaveError> {
         let key = validate_key(key).map_err(SaveError::Invalid)?;
         endpoint_allowed(&self.endpoint).map_err(SaveError::Invalid)?;
+        let _lock = Self::lock(state_base).map_err(|error| SaveError::Settings(format!(
+            "Voice settings were not saved; the previous account and key are unchanged: {error}."
+        )))?;
+        let previous = match replace {
+            Some(id) => Some(
+                self.accounts
+                    .iter()
+                    .find(|account| account.id == id)
+                    .cloned()
+                    .ok_or_else(|| SaveError::Invalid("That account no longer exists.".into()))?,
+            ),
+            None => None,
+        };
         let id = replace.map_or_else(|| format!("{:016x}", fastrand::u64(..)), str::to_owned);
+        let secret_id = format!("{}-{:016x}", id, fastrand::u64(..));
         let store = if session_only {
             stores.session
         } else {
             stores.keyring
         };
-        store.set(&id, key).map_err(SaveError::Keyring)?;
-        if replace.is_some() {
-            // A replaced key must not linger in the store it is leaving.
-            let other = if session_only {
-                stores.keyring
-            } else {
-                stores.session
-            };
-            let _ = other.delete(&id);
+        // Journal the temporary slot before touching the keyring. Even if the
+        // process exits or deleting this slot fails, it can be cleaned later.
+        let mut staged = self.clone();
+        staged.pending_secret_removal.push(PendingSecret {
+            id: secret_id.clone(),
+            session_only,
+        });
+        staged.save_locked(state_base).map_err(|error| {
+            SaveError::Settings(format!(
+                "Voice settings were not saved; the previous account and key are unchanged: {error}."
+            ))
+        })?;
+        *self = staged;
+        if let Err(error) = store.set(&secret_id, key) {
+            let _ = self.cleanup_pending_locked(state_base, stores);
+            return Err(SaveError::Keyring(error));
         }
         let ending: String = key
             .chars()
@@ -332,12 +425,16 @@ impl Settings {
         };
         let account = Account {
             id: id.clone(),
+            secret_id: Some(secret_id.clone()),
             label,
             endpoint: self.endpoint.clone(),
             ending,
             session_only,
         };
-        match self.accounts.iter_mut().find(|a| a.id == id) {
+        let mut next = self.clone();
+        next.pending_secret_removal
+            .retain(|pending| pending.id != secret_id || pending.session_only != session_only);
+        match next.accounts.iter_mut().find(|a| a.id == id) {
             Some(existing) => {
                 // A replacement keeps its name unless a new one was typed.
                 let label = if replace.is_some() && account.label.starts_with("OpenRouter ") {
@@ -347,28 +444,93 @@ impl Settings {
                 };
                 *existing = Account { label, ..account };
             }
-            None => self.accounts.push(account),
+            None => next.accounts.push(account),
         }
-        self.selected = Some(id.clone());
+        next.selected = Some(id.clone());
+        if let Some(previous) = previous {
+            next.pending_secret_removal.push(PendingSecret {
+                id: previous.secret_id().to_owned(),
+                session_only: previous.session_only,
+            });
+        }
+        if let Err(error) = next.save_locked(state_base) {
+            let cleanup = self.cleanup_pending_locked(state_base, stores);
+            let suffix = if cleanup.is_err() {
+                " Removing the unused new key is pending; retry in Settings."
+            } else {
+                ""
+            };
+            return Err(SaveError::Settings(format!(
+                "Voice settings were not saved; the previous account and key are unchanged: {error}.{suffix}"
+            )));
+        }
+        *self = next;
+        let _ = self.cleanup_pending_locked(state_base, stores);
         Ok(id)
     }
 
-    /// Forget an account and delete its key from `secrets`.
-    pub fn disconnect(&mut self, stores: Stores<'_>, id: &str) -> Result<(), String> {
-        let session_only = self
+    /// Commit the disconnection before removing the old key. If removal fails,
+    /// its secret-free pending record remains for a retry.
+    pub fn disconnect(
+        &mut self,
+        state_base: &Path,
+        stores: Stores<'_>,
+        id: &str,
+    ) -> Result<(), String> {
+        let _lock = Self::lock(state_base).map_err(|error| {
+            format!("Voice settings were not saved; the account and key are unchanged: {error}.")
+        })?;
+        let account = self
             .accounts
             .iter()
             .find(|account| account.id == id)
-            .is_some_and(|account| account.session_only);
-        if session_only {
-            stores.session.delete(id)?;
-        } else {
-            stores.keyring.delete(id)?;
+            .cloned()
+            .ok_or("That account no longer exists.")?;
+        let mut next = self.clone();
+        next.accounts.retain(|account| account.id != id);
+        if next.selected.as_deref() == Some(id) {
+            next.selected = None;
         }
-        self.accounts.retain(|account| account.id != id);
-        if self.selected.as_deref() == Some(id) {
-            self.selected = None;
+        next.pending_secret_removal.push(PendingSecret {
+            id: account.secret_id().to_owned(),
+            session_only: account.session_only,
+        });
+        next.save_locked(state_base).map_err(|error| {
+            format!("Voice settings were not saved; the account and key are unchanged: {error}.")
+        })?;
+        *self = next;
+        let _ = self.cleanup_pending_locked(state_base, stores);
+        Ok(())
+    }
+
+    /// Retry committed removals. A failed cleanup remains recorded on disk;
+    /// deleting an already-removed key is harmless.
+    pub fn cleanup_pending(&mut self, state_base: &Path, stores: Stores<'_>) -> Result<(), String> {
+        let _lock = Self::lock(state_base)?;
+        self.cleanup_pending_locked(state_base, stores)
+    }
+
+    fn cleanup_pending_locked(
+        &mut self,
+        state_base: &Path,
+        stores: Stores<'_>,
+    ) -> Result<(), String> {
+        self.check_current(state_base)?;
+        if self.pending_secret_removal.is_empty() {
+            return Ok(());
         }
+        for pending in &self.pending_secret_removal {
+            let store = if pending.session_only {
+                stores.session
+            } else {
+                stores.keyring
+            };
+            store.delete(&pending.id)?;
+        }
+        let mut next = self.clone();
+        next.pending_secret_removal.clear();
+        next.save_locked(state_base)?;
+        *self = next;
         Ok(())
     }
 
@@ -390,7 +552,7 @@ impl Settings {
         } else {
             stores.keyring
         };
-        let key = store.get(&account.id)?.ok_or_else(|| {
+        let key = store.get(account.secret_id())?.ok_or_else(|| {
             format!(
                 "The key \"{}\" is no longer in the keyring; add it again.",
                 account.label

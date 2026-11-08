@@ -79,6 +79,7 @@ fn settings(endpoint: &str) -> Settings {
 /// a changed endpoint receives no old key.
 #[test]
 fn a_key_is_used_replaced_disconnected_and_never_sent_to_another_endpoint() {
+    let state = tempfile::tempdir().unwrap();
     let (keyring, session) = (Memory::default(), Memory::default());
     let stores = Stores {
         keyring: &keyring,
@@ -88,7 +89,7 @@ fn a_key_is_used_replaced_disconnected_and_never_sent_to_another_endpoint() {
     let mut voice = settings(&url);
 
     let id = voice
-        .save_key(stores, None, "Mine", "sk-first", false)
+        .save_key(state.path(), stores, None, "Mine", "sk-first", false)
         .unwrap();
     let audio = speak(&voice.route(stores).unwrap(), "Hello", 1.0).unwrap();
     assert_eq!(&audio[..4], b"RIFF");
@@ -96,14 +97,16 @@ fn a_key_is_used_replaced_disconnected_and_never_sent_to_another_endpoint() {
     assert_eq!(heard.recv().unwrap(), "Bearer sk-first");
 
     voice
-        .save_key(stores, Some(&id), "", "sk-second", false)
+        .save_key(state.path(), stores, Some(&id), "", "sk-second", false)
         .unwrap();
     assert_eq!(voice.accounts.len(), 1);
     assert_eq!(voice.accounts[0].label, "Mine");
     speak(&voice.route(stores).unwrap(), "Hello", 1.0).unwrap();
     assert_eq!(heard.recv().unwrap(), "Bearer sk-second");
 
-    voice.save_key(stores, Some(&id), "", "bad", false).unwrap();
+    voice
+        .save_key(state.path(), stores, Some(&id), "", "bad", false)
+        .unwrap();
     let refused = speak(&voice.route(stores).unwrap(), "Hello", 1.0).unwrap_err();
     assert!(refused.contains("refused this key"), "{refused}");
     assert!(!refused.contains("bad"));
@@ -118,9 +121,10 @@ fn a_key_is_used_replaced_disconnected_and_never_sent_to_another_endpoint() {
     assert!(other_heard.try_recv().is_err());
 
     voice.endpoint = url;
-    voice.disconnect(stores, &id).unwrap();
+    let secret_id = voice.selected_account().unwrap().secret_id().to_owned();
+    voice.disconnect(state.path(), stores, &id).unwrap();
     assert!(voice.route(stores).is_err());
-    assert_eq!(keyring.get(&id).unwrap(), None);
+    assert_eq!(keyring.get(&secret_id).unwrap(), None);
 }
 
 /// Check 4: a locked keyring refuses the save and the key can be kept for this session
@@ -135,12 +139,14 @@ fn a_locked_keyring_offers_session_only_and_the_key_stays_out_of_files() {
     };
     let mut voice = settings("https://openrouter.ai/api/v1/audio/speech");
 
-    match voice.save_key(locked, None, "Mine", CANARY, false) {
+    match voice.save_key(state.path(), locked, None, "Mine", CANARY, false) {
         Err(SaveError::Keyring(reason)) => assert!(!reason.contains(CANARY)),
         other => panic!("expected a keyring refusal, got {other:?}"),
     }
     assert!(voice.accounts.is_empty());
-    voice.save_key(locked, None, "Mine", CANARY, true).unwrap();
+    voice
+        .save_key(state.path(), locked, None, "Mine", CANARY, true)
+        .unwrap();
     assert!(voice.route(locked).is_ok());
     voice.save(state.path()).unwrap();
 
@@ -182,10 +188,10 @@ fn two_accounts_stay_apart_and_the_choice_survives_a_restart() {
     let (url, heard) = server();
     let mut voice = settings(&url);
     let work = voice
-        .save_key(stores, None, "Work", "sk-work", false)
+        .save_key(state.path(), stores, None, "Work", "sk-work", false)
         .unwrap();
     let home = voice
-        .save_key(stores, None, "Home", "sk-home", false)
+        .save_key(state.path(), stores, None, "Home", "sk-home", false)
         .unwrap();
 
     speak(&voice.route(stores).unwrap(), "Hi", 1.0).unwrap();
@@ -199,7 +205,8 @@ fn two_accounts_stay_apart_and_the_choice_survives_a_restart() {
     assert_eq!(heard.recv().unwrap(), "Bearer sk-work");
 
     // The selected key is missing from the keyring: no fallback to the other account.
-    keyring.delete(&work).unwrap();
+    let work_secret = restarted.selected_account().unwrap().secret_id().to_owned();
+    keyring.delete(&work_secret).unwrap();
     assert!(restarted.route(stores).unwrap_err().contains("Work"));
     let _ = home;
 
@@ -210,9 +217,10 @@ fn two_accounts_stay_apart_and_the_choice_survives_a_restart() {
         closed.local_addr().unwrap()
     );
     drop(closed);
+    let offline_state = tempfile::tempdir().unwrap();
     let mut offline = settings(&dead);
     offline
-        .save_key(stores, None, "Home", "sk-home", false)
+        .save_key(offline_state.path(), stores, None, "Home", "sk-home", false)
         .unwrap();
     let outage = speak(&offline.route(stores).unwrap(), "Hi", 1.0).unwrap_err();
     assert!(outage.contains("cannot be reached"), "{outage}");
@@ -220,6 +228,7 @@ fn two_accounts_stay_apart_and_the_choice_survives_a_restart() {
 
 #[test]
 fn only_https_or_this_machine_may_receive_a_key() {
+    let state = tempfile::tempdir().unwrap();
     let (keyring, session) = (Memory::default(), Memory::default());
     let stores = Stores {
         keyring: &keyring,
@@ -227,13 +236,14 @@ fn only_https_or_this_machine_may_receive_a_key() {
     };
     let mut voice = settings("http://example.com/speech");
     assert!(matches!(
-        voice.save_key(stores, None, "", "sk-x", false),
+        voice.save_key(state.path(), stores, None, "", "sk-x", false),
         Err(SaveError::Invalid(_))
     ));
 }
 
 #[test]
 fn transcription_sends_wav_and_reads_the_returned_text() {
+    let state = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let endpoint = format!(
         "http://{}/api/v1/audio/speech",
@@ -285,7 +295,7 @@ fn transcription_sends_wav_and_reads_the_returned_text() {
     };
     let mut voice = settings(&endpoint);
     voice
-        .save_key(stores, None, "Mine", "sk-test", false)
+        .save_key(state.path(), stores, None, "Mine", "sk-test", false)
         .unwrap();
     assert_eq!(
         transcribe(&voice.route(stores).unwrap(), "example/model", b"RIFF").unwrap(),
@@ -295,13 +305,13 @@ fn transcription_sends_wav_and_reads_the_returned_text() {
 }
 
 #[test]
-fn voice_choice_preserves_preferences_and_only_falls_back_when_local_is_missing() {
+fn voice_choice_requires_an_explicit_hosted_selection() {
     use Engine::{Local, OpenRouter};
-    use VoiceChoice::{Hosted, Local as UseLocal, Setup};
+    use VoiceChoice::{Hosted, Local as UseLocal, OfferHosted, Setup};
     for (preference, local_available, key_available, expected) in [
         (Local, true, true, UseLocal),
         (Local, true, false, UseLocal),
-        (Local, false, true, Hosted),
+        (Local, false, true, OfferHosted),
         (Local, false, false, Setup),
         (OpenRouter, true, true, Hosted),
         (OpenRouter, false, true, Hosted),
@@ -359,6 +369,7 @@ fn json_server(status: &str, body: &str) -> (String, std::thread::JoinHandle<Str
 
 #[test]
 fn transcription_reports_provider_and_response_failures_without_secrets() {
+    let state = tempfile::tempdir().unwrap();
     let (keyring, session) = (Memory::default(), Memory::default());
     let stores = Stores {
         keyring: &keyring,
@@ -378,9 +389,12 @@ fn transcription_reports_provider_and_response_failures_without_secrets() {
         ("200 OK", r#"{"text":"  "}"#, "No speech"),
         ("200 OK", r#"{"error":"missing"}"#, "No speech"),
     ] {
+        let state = tempfile::tempdir().unwrap();
         let (endpoint, server) = json_server(status, body);
         let mut voice = settings(&endpoint);
-        voice.save_key(stores, None, "Mine", CANARY, false).unwrap();
+        voice
+            .save_key(state.path(), stores, None, "Mine", CANARY, false)
+            .unwrap();
         let error = transcribe(&voice.route(stores).unwrap(), "test/model", b"wav").unwrap_err();
         assert!(error.contains(expected), "{error}");
         assert!(!error.contains(CANARY));
@@ -399,13 +413,16 @@ fn transcription_reports_provider_and_response_failures_without_secrets() {
     );
     drop(listener);
     let mut voice = settings(&endpoint);
-    voice.save_key(stores, None, "Mine", CANARY, false).unwrap();
+    voice
+        .save_key(state.path(), stores, None, "Mine", CANARY, false)
+        .unwrap();
     let error = transcribe(&voice.route(stores).unwrap(), "test/model", b"wav").unwrap_err();
     assert!(error.contains("cannot be reached") && !error.contains(CANARY));
 }
 
 #[test]
 fn transcription_does_not_forward_a_key_on_redirect_or_to_an_unrelated_origin() {
+    let state = tempfile::tempdir().unwrap();
     let destination = TcpListener::bind("127.0.0.1:0").unwrap();
     destination.set_nonblocking(true).unwrap();
     let target = format!("http://{}/stolen", destination.local_addr().unwrap());
@@ -438,7 +455,9 @@ fn transcription_does_not_forward_a_key_on_redirect_or_to_an_unrelated_origin() 
         session: &session,
     };
     let mut voice = settings(&endpoint);
-    voice.save_key(stores, None, "Mine", CANARY, false).unwrap();
+    voice
+        .save_key(state.path(), stores, None, "Mine", CANARY, false)
+        .unwrap();
     let error = transcribe(&voice.route(stores).unwrap(), "test/model", b"wav").unwrap_err();
     assert!(!error.contains(CANARY));
     server.join().unwrap();
@@ -446,9 +465,10 @@ fn transcription_does_not_forward_a_key_on_redirect_or_to_an_unrelated_origin() 
         matches!(destination.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
     );
 
+    let other_state = tempfile::tempdir().unwrap();
     let mut other = settings("https://unrelated.example/api/v1/audio/speech");
     other
-        .save_key(stores, None, "Other", CANARY, false)
+        .save_key(other_state.path(), stores, None, "Other", CANARY, false)
         .unwrap();
     assert!(transcribe(&other.route(stores).unwrap(), "test/model", b"wav").is_err());
 }
@@ -505,6 +525,7 @@ fn testing_a_key_reports_provider_results_without_exposing_the_key() {
 
 #[test]
 fn speech_does_not_forward_a_key_across_redirects() {
+    let state = tempfile::tempdir().unwrap();
     let destination = TcpListener::bind("127.0.0.1:0").unwrap();
     destination.set_nonblocking(true).unwrap();
     let target = format!("http://{}/stolen", destination.local_addr().unwrap());
@@ -539,11 +560,289 @@ fn speech_does_not_forward_a_key_across_redirects() {
     let mut voice = settings(&endpoint);
     let candidate = format!("example-{:016x}", fastrand::u64(..));
     voice
-        .save_key(stores, None, "Mine", &candidate, false)
+        .save_key(state.path(), stores, None, "Mine", &candidate, false)
         .unwrap();
     assert!(speak(&voice.route(stores).unwrap(), "Hello", 1.0).is_err());
     server.join().unwrap();
     assert!(
         matches!(destination.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
     );
+}
+
+#[derive(Default)]
+struct FailingStore {
+    keys: Memory,
+    fail_set: std::sync::atomic::AtomicBool,
+    fail_after_set: std::sync::atomic::AtomicBool,
+    fail_delete: std::sync::atomic::AtomicBool,
+    #[cfg(unix)]
+    lock_folder_after_set: std::sync::Mutex<Option<std::path::PathBuf>>,
+}
+
+impl Secrets for FailingStore {
+    fn get(&self, id: &str) -> Result<Option<String>, String> {
+        self.keys.get(id)
+    }
+
+    fn set(&self, id: &str, key: &str) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        if self.fail_set.load(Ordering::SeqCst) {
+            return Err("injected key write failure".into());
+        }
+        self.keys.set(id, key)?;
+        #[cfg(unix)]
+        if let Some(folder) = self.lock_folder_after_set.lock().unwrap().take() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+        }
+        if self.fail_after_set.load(Ordering::SeqCst) {
+            return Err("injected uncertain key write".into());
+        }
+        Ok(())
+    }
+
+    fn delete(&self, id: &str) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        if self.fail_delete.load(Ordering::SeqCst) {
+            return Err("injected key removal failure".into());
+        }
+        self.keys.delete(id)
+    }
+}
+
+fn assert_account_file_matches(state: &std::path::Path, voice: &Settings) {
+    let saved: Settings =
+        serde_json::from_slice(&std::fs::read(Settings::file(state)).unwrap()).unwrap();
+    assert_eq!(&saved, voice);
+}
+
+#[test]
+fn account_changes_journal_failed_secret_writes_and_removals() {
+    use std::sync::atomic::Ordering;
+    let state = tempfile::tempdir().unwrap();
+    let keyring = FailingStore::default();
+    let session = Memory::default();
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut voice = settings("https://openrouter.ai/api/v1/audio/speech");
+    let id = voice
+        .save_key(state.path(), stores, None, "Mine", "old-key", false)
+        .unwrap();
+    let old = voice.selected_account().unwrap().clone();
+
+    let invalid_base = state.path().join("not-a-directory");
+    std::fs::write(&invalid_base, "file").unwrap();
+    assert!(matches!(
+        voice.save_key(&invalid_base, stores, Some(&id), "", "new-key", false),
+        Err(SaveError::Settings(_))
+    ));
+    assert_eq!(voice.selected_account(), Some(&old));
+    assert_account_file_matches(state.path(), &voice);
+
+    keyring.fail_set.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        voice.save_key(state.path(), stores, Some(&id), "", "new-key", false),
+        Err(SaveError::Keyring(_))
+    ));
+    keyring.fail_set.store(false, Ordering::SeqCst);
+    assert_eq!(voice.selected_account(), Some(&old));
+    assert_eq!(
+        keyring.get(old.secret_id()).unwrap().as_deref(),
+        Some("old-key")
+    );
+    assert_account_file_matches(state.path(), &voice);
+
+    // Even a store which writes before reporting failure leaves a recorded,
+    // retryable cleanup rather than an untracked key.
+    keyring.fail_after_set.store(true, Ordering::SeqCst);
+    keyring.fail_delete.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        voice.save_key(state.path(), stores, Some(&id), "", "new-key", false),
+        Err(SaveError::Keyring(_))
+    ));
+    assert_eq!(voice.selected_account(), Some(&old));
+    let staged = voice.pending_secret_removal[0].id.clone();
+    assert_eq!(keyring.get(&staged).unwrap().as_deref(), Some("new-key"));
+    assert_account_file_matches(state.path(), &voice);
+    keyring.fail_after_set.store(false, Ordering::SeqCst);
+    keyring.fail_delete.store(false, Ordering::SeqCst);
+    voice.cleanup_pending(state.path(), stores).unwrap();
+    assert_eq!(keyring.get(&staged).unwrap(), None);
+
+    // A committed replacement remains coherent when removing the old key
+    // fails; the old key is recorded until a later retry removes it.
+    keyring.fail_delete.store(true, Ordering::SeqCst);
+    voice
+        .save_key(state.path(), stores, Some(&id), "", "replacement", false)
+        .unwrap();
+    let replacement = voice.selected_account().unwrap().clone();
+    assert_eq!(
+        keyring.get(replacement.secret_id()).unwrap().as_deref(),
+        Some("replacement")
+    );
+    assert_eq!(
+        keyring.get(old.secret_id()).unwrap().as_deref(),
+        Some("old-key")
+    );
+    assert_eq!(voice.pending_secret_removal.len(), 1);
+    assert_account_file_matches(state.path(), &voice);
+    keyring.fail_delete.store(false, Ordering::SeqCst);
+    voice.cleanup_pending(state.path(), stores).unwrap();
+    assert_eq!(keyring.get(old.secret_id()).unwrap(), None);
+    assert_account_file_matches(state.path(), &voice);
+
+    keyring.fail_delete.store(true, Ordering::SeqCst);
+    voice.disconnect(state.path(), stores, &id).unwrap();
+    assert!(voice.selected_account().is_none());
+    assert_eq!(voice.pending_secret_removal.len(), 1);
+    assert_account_file_matches(state.path(), &voice);
+    keyring.fail_delete.store(false, Ordering::SeqCst);
+    voice.cleanup_pending(state.path(), stores).unwrap();
+    assert_eq!(keyring.get(replacement.secret_id()).unwrap(), None);
+    assert_account_file_matches(state.path(), &voice);
+}
+
+#[test]
+fn replacing_keys_between_session_and_keyring_preserves_the_old_key_on_failure() {
+    use std::sync::atomic::Ordering;
+    for (old_session, new_session) in [(false, true), (true, false), (true, true)] {
+        let state = tempfile::tempdir().unwrap();
+        let keyring = FailingStore::default();
+        let session = FailingStore::default();
+        let stores = Stores {
+            keyring: &keyring,
+            session: &session,
+        };
+        let mut voice = settings("https://openrouter.ai/api/v1/audio/speech");
+        let id = voice
+            .save_key(state.path(), stores, None, "Mine", "old-key", old_session)
+            .unwrap();
+        let old = voice.selected_account().unwrap().clone();
+        let source = if old_session { &session } else { &keyring };
+        let target = if new_session { &session } else { &keyring };
+        target.fail_set.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            voice.save_key(state.path(), stores, Some(&id), "", "new-key", new_session),
+            Err(SaveError::Keyring(_))
+        ));
+        target.fail_set.store(false, Ordering::SeqCst);
+        assert_eq!(voice.selected_account(), Some(&old));
+        assert_eq!(
+            source.get(old.secret_id()).unwrap().as_deref(),
+            Some("old-key")
+        );
+        assert_account_file_matches(state.path(), &voice);
+
+        voice
+            .save_key(state.path(), stores, Some(&id), "", "new-key", new_session)
+            .unwrap();
+        assert_eq!(source.get(old.secret_id()).unwrap(), None);
+        assert_eq!(
+            target
+                .get(voice.selected_account().unwrap().secret_id())
+                .unwrap()
+                .as_deref(),
+            Some("new-key")
+        );
+        assert_account_file_matches(state.path(), &voice);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_write_failure_keeps_previous_account_and_key() {
+    use std::os::unix::fs::PermissionsExt;
+    let state = tempfile::tempdir().unwrap();
+    let keyring = FailingStore::default();
+    let session = Memory::default();
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut voice = settings("https://openrouter.ai/api/v1/audio/speech");
+    let id = voice
+        .save_key(state.path(), stores, None, "Mine", "old-key", false)
+        .unwrap();
+    let old = voice.selected_account().unwrap().clone();
+    let folder = Settings::file(state.path()).parent().unwrap().to_owned();
+    *keyring.lock_folder_after_set.lock().unwrap() = Some(folder.clone());
+    let result = voice.save_key(state.path(), stores, Some(&id), "", "replacement", false);
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(result, Err(SaveError::Settings(_))));
+    assert_eq!(voice.selected_account(), Some(&old));
+    assert_eq!(
+        keyring.get(old.secret_id()).unwrap().as_deref(),
+        Some("old-key")
+    );
+    assert_account_file_matches(state.path(), &voice);
+    voice.cleanup_pending(state.path(), stores).unwrap();
+
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let result = voice.disconnect(state.path(), stores, &id);
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
+    assert_eq!(voice.selected_account(), Some(&old));
+    assert_eq!(
+        keyring.get(old.secret_id()).unwrap().as_deref(),
+        Some("old-key")
+    );
+    assert_account_file_matches(state.path(), &voice);
+}
+
+#[test]
+fn stale_windows_cannot_overwrite_a_new_account_or_remove_its_key() {
+    let state = tempfile::tempdir().unwrap();
+    let keyring = Memory::default();
+    let session = Memory::default();
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut current = settings("https://openrouter.ai/api/v1/audio/speech");
+    let id = current
+        .save_key(state.path(), stores, None, "Mine", "old-key", false)
+        .unwrap();
+    let mut stale = Settings::load(state.path());
+    current
+        .save_key(state.path(), stores, Some(&id), "", "key", false)
+        .unwrap();
+    assert!(matches!(
+        stale.save_key(state.path(), stores, None, "Other", "other", false),
+        Err(SaveError::Settings(_))
+    ));
+    assert!(stale.disconnect(state.path(), stores, &id).is_err());
+    assert_account_file_matches(state.path(), &current);
+    assert_eq!(
+        keyring
+            .get(current.selected_account().unwrap().secret_id())
+            .unwrap()
+            .as_deref(),
+        Some("key")
+    );
+}
+
+#[test]
+fn legacy_accounts_still_use_their_existing_key_and_can_be_replaced() {
+    let state = tempfile::tempdir().unwrap();
+    let keyring = Memory::default();
+    let session = Memory::default();
+    let stores = Stores {
+        keyring: &keyring,
+        session: &session,
+    };
+    let mut voice: Settings = serde_json::from_str(
+        r#"{"accounts":[{"id":"legacy","label":"Mine","endpoint":"https://openrouter.ai/api/v1/audio/speech","ending":"-key"}],"selected":"legacy"}"#,
+    )
+    .unwrap();
+    keyring.set("legacy", "old-key").unwrap();
+    assert!(voice.route(stores).is_ok());
+    voice.save(state.path()).unwrap();
+    voice
+        .save_key(state.path(), stores, Some("legacy"), "", "new-key", false)
+        .unwrap();
+    assert_eq!(keyring.get("legacy").unwrap(), None);
+    assert!(voice.route(stores).is_ok());
+    assert_account_file_matches(state.path(), &voice);
 }

@@ -77,6 +77,36 @@ const ATTENTION_DELAY: Duration = Duration::from_millis(1500);
 /// How long an error notice stays once the pointer leaves it.
 const ERROR_NOTICE_TIME: Duration = Duration::from_secs(6);
 
+#[derive(Clone)]
+enum VoiceFallback {
+    Dictation,
+    Speech(Vec<String>),
+}
+
+impl VoiceFallback {
+    fn message(&self) -> &'static str {
+        match self {
+            Self::Dictation => {
+                "WhisperType is missing. Use OpenRouter (paid), or set up WhisperType."
+            }
+            Self::Speech(_) => "Kokoro is missing. Use OpenRouter (paid), or set up Kokoro.",
+        }
+    }
+
+    fn setup(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::Dictation => (
+                "Set up WhisperType",
+                "https://github.com/MasihMoafi/WhisperType",
+            ),
+            Self::Speech(_) => (
+                "Set up Kokoro",
+                "https://github.com/thewh1teagle/kokoro-onnx",
+            ),
+        }
+    }
+}
+
 type SharedWatch = Arc<Mutex<rustidian::watcher::Watch>>;
 
 struct Monitoring {
@@ -134,6 +164,7 @@ pub struct NotesApp {
     error: Option<String>,
     /// The notice on screen and when its fade timer last started.
     error_seen: Option<(String, Instant)>,
+    voice_fallback: Option<VoiceFallback>,
     status: String,
     allow_close: bool,
     started: Instant,
@@ -266,6 +297,7 @@ impl NotesApp {
             pending: None,
             error: None,
             error_seen: None,
+            voice_fallback: None,
             status: "Ready".into(),
             allow_close: false,
             started,
@@ -3686,6 +3718,10 @@ impl NotesApp {
                 self.open_voice_setup();
                 return;
             }
+            VoiceChoice::OfferHosted => {
+                self.offer_voice_fallback(VoiceFallback::Dictation);
+                return;
+            }
             VoiceChoice::Local => {
                 crate::dictation::Transcriber::WhisperType(self.voice.dictation_backend)
             }
@@ -3737,6 +3773,46 @@ impl NotesApp {
         self.dialog_focus = false;
         self.voice_form.setup = true;
         self.voice_form.focus_key = true;
+    }
+
+    fn offer_voice_fallback(&mut self, fallback: VoiceFallback) {
+        self.error = Some(fallback.message().into());
+        self.error_seen = None;
+        self.voice_fallback = Some(fallback);
+        self.ctx.request_repaint();
+    }
+
+    fn use_hosted_voice(&mut self, fallback: VoiceFallback) {
+        let mut next = self.voice.clone();
+        match &fallback {
+            VoiceFallback::Dictation => {
+                next.dictation_backend = rustidian::voice_account::DictationBackend::OpenRouter;
+            }
+            VoiceFallback::Speech(_) => {
+                next.engine = rustidian::voice_account::Engine::OpenRouter;
+            }
+        }
+        let result = rustidian::voice_account::state_base()
+            .ok_or_else(|| "No voice settings folder is available.".to_string())
+            .and_then(|base| next.save(&base));
+        self.voice_fallback = None;
+        match result {
+            Ok(()) => {
+                self.voice = next;
+                self.error = None;
+                match fallback {
+                    VoiceFallback::Dictation => self.toggle_dictation(),
+                    VoiceFallback::Speech(chunks) => crate::read_aloud::speak(&self.ctx, chunks),
+                }
+            }
+            Err(error) => {
+                self.reload_voice_on_conflict(&error);
+                self.error = Some(format!(
+                    "OpenRouter was not selected; the previous voice choice is unchanged: {error}"
+                ));
+                self.error_seen = None;
+            }
+        }
     }
 
     fn document_view(&mut self, ui: &mut egui::Ui) {
@@ -3914,11 +3990,18 @@ impl NotesApp {
             }
         });
         crate::ui_probe::record(ui.ctx(), "document-viewport", scroll.inner_rect);
-        if crate::read_aloud::player_bar(ui.ctx(), scroll.inner_rect, &mut self.voice.speed)
-            && let Some(base) = rustidian::voice_account::state_base()
-            && let Err(error) = self.voice.save(&base)
-        {
-            self.error = Some(format!("Voice speed was not saved: {error}. Try again."));
+        let previous_speed = self.voice.speed;
+        if crate::read_aloud::player_bar(ui.ctx(), scroll.inner_rect, &mut self.voice.speed) {
+            let result = rustidian::voice_account::state_base()
+                .ok_or_else(|| "No voice settings folder is available.".to_string())
+                .and_then(|base| self.voice.save(&base));
+            if let Err(error) = result {
+                if !self.reload_voice_on_conflict(&error) {
+                    self.voice.speed = previous_speed;
+                }
+                crate::read_aloud::set_speed(self.voice.speed);
+                self.error = Some(format!("Voice speed was not saved: {error}. Try again."));
+            }
         }
         self.page_pan.viewport(&scroll);
         crate::ui_probe::metric(
@@ -6280,6 +6363,15 @@ impl eframe::App for NotesApp {
         if setup {
             self.open_voice_setup();
         }
+        let speech_fallback = ctx.data_mut(|data| {
+            let id = egui::Id::unique("voice-fallback-speech");
+            let chunks = data.get_temp::<Vec<String>>(id);
+            data.remove::<Vec<String>>(id);
+            chunks
+        });
+        if let Some(chunks) = speech_fallback {
+            self.offer_voice_fallback(VoiceFallback::Speech(chunks));
+        }
         let dictated =
             self.dictation_result
                 .as_ref()
@@ -6539,16 +6631,28 @@ impl eframe::App for NotesApp {
         crate::ui_probe::record(ui.ctx(), "status-bar", status.response.rect);
         if self.error.is_none() {
             self.error_seen = None;
+            self.voice_fallback = None;
         } else if self.error_seen.as_ref().is_some_and(|(seen, at)| {
             self.error.as_ref() == Some(seen) && at.elapsed() >= ERROR_NOTICE_TIME
         }) {
             // Expire before drawing, so the last painted frame has no notice.
             self.error = None;
             self.error_seen = None;
+            self.voice_fallback = None;
         }
         if self.dialog.is_none()
             && let Some(error) = self.error.clone()
         {
+            if self
+                .voice_fallback
+                .as_ref()
+                .is_some_and(|fallback| fallback.message() != error)
+            {
+                self.voice_fallback = None;
+            }
+            let fallback = self.voice_fallback.clone();
+            let mut use_hosted = false;
+            let mut set_up = false;
             let now = Instant::now();
             if self
                 .error_seen
@@ -6575,6 +6679,32 @@ impl eframe::App for NotesApp {
                                 let message = ui
                                     .add(egui::Label::new(RichText::new(&error).size(13.0)).wrap());
                                 crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
+                                if let Some(fallback) = &fallback {
+                                    ui.horizontal_wrapped(|ui| {
+                                        let hosted = theme::button(
+                                            ui,
+                                            "Use OpenRouter",
+                                            theme::Kind::Primary,
+                                        );
+                                        crate::ui_probe::record(
+                                            ui.ctx(),
+                                            "voice-fallback-use-openrouter",
+                                            hosted.rect,
+                                        );
+                                        use_hosted = hosted.clicked();
+                                        let setup = theme::button(
+                                            ui,
+                                            fallback.setup().0,
+                                            theme::Kind::Outline,
+                                        );
+                                        crate::ui_probe::record(
+                                            ui.ctx(),
+                                            "voice-fallback-setup",
+                                            setup.rect,
+                                        );
+                                        set_up = setup.clicked();
+                                    });
+                                }
                                 if self
                                     .tabs
                                     .get(self.active)
@@ -6595,6 +6725,15 @@ impl eframe::App for NotesApp {
                         });
                     });
                 });
+            if let Some(fallback) = fallback {
+                if use_hosted {
+                    self.use_hosted_voice(fallback);
+                } else if set_up {
+                    ctx.open_url(egui::OpenUrl::new_tab(fallback.setup().1));
+                    self.error = None;
+                    self.voice_fallback = None;
+                }
+            }
             // Notices fade like Obsidian's; the pointer resting on one keeps it.
             if notice.response.contains_pointer() {
                 // Recheck often so a still pointer keeps renewing the timer.
