@@ -3996,7 +3996,7 @@ impl NotesApp {
                 .ok_or_else(|| "No voice settings folder is available.".to_string())
                 .and_then(|base| self.voice.save(&base));
             if let Err(error) = result {
-                if !self.reload_voice_on_conflict(&error) {
+                if !voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error) {
                     self.voice.speed = previous_speed;
                 }
                 crate::read_aloud::set_speed(self.voice.speed);

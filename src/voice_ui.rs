@@ -644,12 +644,18 @@ impl NotesApp {
     }
 
     pub(super) fn reload_voice_on_conflict(&mut self, error: &str) -> bool {
-        if error.contains("changed in another window")
-            && let Some(base) = rustidian::voice_account::state_base()
-        {
-            self.voice = Settings::load(&base);
-            return true;
-        }
-        false
+        reload_voice_settings_on_conflict(&mut self.voice, error)
     }
+}
+
+/// Reload voice settings another window changed; true when `error` was that conflict. Takes only the
+/// settings so callers holding other parts of the app (an open tab) can still use it.
+pub(crate) fn reload_voice_settings_on_conflict(voice: &mut Settings, error: &str) -> bool {
+    if error.contains("changed in another window")
+        && let Some(base) = rustidian::voice_account::state_base()
+    {
+        *voice = Settings::load(&base);
+        return true;
+    }
+    false
 }
