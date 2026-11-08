@@ -82,16 +82,17 @@ impl SearchWorker {
                     let current =
                         || thread.version.load(std::sync::atomic::Ordering::Acquire) == job.version;
                     let result = Query::parse(&job.query).map(|query| {
-                        let mut paths = Vec::new();
+                        let mut matches = Vec::new();
                         for note in job.index.iter() {
                             if !current() {
                                 break;
                             }
                             if query.matches(note) {
-                                paths.push(note.path.clone());
+                                matches.push(note);
                             }
                         }
-                        paths
+                        query.sort_matches(&mut matches);
+                        matches.into_iter().map(|note| note.path.clone()).collect()
                     });
                     let mut queue = thread.queue.lock().unwrap_or_else(|e| e.into_inner());
                     if current() && !queue.shutdown {
@@ -225,12 +226,42 @@ impl Query {
         self.expression
             .matches(note, &note.text, note.folded_text())
     }
+    pub(crate) fn sort_matches(&self, notes: &mut [&Note]) {
+        let mut terms = Vec::new();
+        self.expression.title_terms(&mut terms);
+        if terms.is_empty() {
+            return;
+        }
+        let phrase = terms.join(" ");
+        notes.sort_by_cached_key(|note| {
+            let title = note.title().to_lowercase();
+            if title == phrase {
+                0
+            } else if terms.iter().all(|term| title.contains(*term)) {
+                1
+            } else {
+                2
+            }
+        });
+    }
     pub fn count(&self, notes: &[Note]) -> usize {
         notes.iter().filter(|note| self.matches(note)).count()
     }
 }
 
 impl Expression {
+    fn title_terms<'a>(&'a self, terms: &mut Vec<&'a str>) {
+        match self {
+            Self::And(expressions) => {
+                for expression in expressions {
+                    expression.title_terms(terms);
+                }
+            }
+            Self::Term(Term::Text(value) | Term::File(value)) => terms.push(value),
+            _ => {}
+        }
+    }
+
     fn matches(&self, note: &Note, text: &str, folded: &str) -> bool {
         match self {
             Self::And(terms) => terms.iter().all(|term| term.matches(note, text, folded)),

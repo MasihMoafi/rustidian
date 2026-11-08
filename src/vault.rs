@@ -721,11 +721,13 @@ impl Vault {
 
     pub fn query(&self, query: &str) -> Result<Vec<&Note>> {
         let query = crate::query::Query::parse(query)?;
-        Ok(self
+        let mut matches: Vec<_> = self
             .notes
             .iter()
             .filter(|note| query.matches(note))
-            .collect())
+            .collect();
+        query.sort_matches(&mut matches);
+        Ok(matches)
     }
 
     pub fn resolve(&self, from: &Path, target: &str) -> Option<PathBuf> {

@@ -2,6 +2,62 @@ use rustidian::{query::Query, vault::Vault};
 use std::fs;
 
 #[test]
+fn exact_and_full_title_matches_precede_body_matches() {
+    use rustidian::query::Cache;
+    use std::{path::PathBuf, sync::mpsc, time::Duration};
+
+    let root = tempfile::tempdir().unwrap();
+    for (name, text) in [
+        ("A body match.md", "Good code. Good code. Good code."),
+        ("B Good.md", "Code belongs in this body."),
+        ("Good Code.md", "The intended note."),
+        ("Y Code that stays Good.md", "A full title match."),
+        ("Z Good Code Practices.md", "Another full title match."),
+        ("Unrelated.md", "Neither term appears here."),
+    ] {
+        fs::write(root.path().join(name), text).unwrap();
+    }
+    let vault = Vault::open(root.path()).unwrap();
+    let mut cache = Cache::default();
+    for source in ["good code", " GOOD   CODE ", "good code -path:Missing"] {
+        let expected: Vec<_> = [
+            "Good Code.md",
+            "Y Code that stays Good.md",
+            "Z Good Code Practices.md",
+            "A body match.md",
+            "B Good.md",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let (wake, done) = mpsc::sync_channel(1);
+        cache.update(source, &vault, move || {
+            let _ = wake.send(());
+        });
+        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        cache.update(source, &vault, || {});
+        assert!(cache.error.is_none(), "{source}: {:?}", cache.error);
+        assert_eq!(cache.paths, expected, "Sidebar search: {source}");
+        let paths: Vec<_> = vault
+            .query(source)
+            .unwrap()
+            .iter()
+            .map(|note| note.path.clone())
+            .collect();
+        assert_eq!(paths, expected, "Vault query: {source}");
+    }
+    assert_eq!(
+        vault.query("\"good code\"").unwrap()[0].path,
+        PathBuf::from("Good Code.md")
+    );
+    assert_eq!(
+        vault.query("content:\"good code\"").unwrap()[0].path,
+        PathBuf::from("A body match.md")
+    );
+    assert_eq!(vault.query("").unwrap().len(), 6);
+}
+
+#[test]
 fn search_composes_phrases_groups_negation_tags_paths_regex_and_properties() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("Notes")).unwrap();

@@ -135,7 +135,7 @@ def main():
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
             voice = base / "fake-kokoro"
-            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    open(os.environ['READ_ALOUD_LOG'] + '.requests', 'a').write(json.dumps(r) + '\\n')\n    time.sleep(.3)\n    pcm = base64.b64encode((r['text'] + '\\n').encode()).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
+            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nfrom pathlib import Path\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    open(os.environ['READ_ALOUD_LOG'] + '.requests', 'a').write(json.dumps(r) + '\\n')\n    hold = Path(os.environ['READ_ALOUD_LOG'] + '.hold')\n    while hold.exists() and hold.read_text() == r['text']:\n        hold.with_suffix('.blocked').write_text(r['text'])\n        time.sleep(.02)\n    time.sleep(.3)\n    pcm = base64.b64encode((r['text'] + '\\n').encode()).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
             player = base / "fake-player"
             player.write_text("#!/usr/bin/env python3\nimport os, sys, time\nf = open(os.environ['READ_ALOUD_LOG'] + '.played', 'ab', buffering=0)\nwhile True:\n    line = sys.stdin.buffer.readline()\n    if not line: break\n    f.write(line)\n    time.sleep(.4)\n")
             for stub in (voice, player):
@@ -6565,6 +6565,29 @@ def main():
                 capture("native-folder-move.png")
                 results.append("Moving a nested folder updated note/image links and open tabs/history, preserved immediate editing and read-only mode, retained empty folders/images, and refused unsafe destinations")
             def large_search_checks():
+                ranking_notes = {
+                    "A body match.md": "Good code belongs in this body.\n",
+                    "B Good.md": "Code belongs in this body.\n",
+                    "Good Code.md": "The intended note.\n",
+                    "Y Code that stays Good.md": "A full title match.\n",
+                    "Z Good Code Practices.md": "Another full title match.\n",
+                }
+                for name, text in ranking_notes.items():
+                    (fixture / name).write_text(text)
+                command("Refresh vault")
+                key("ctrl+shift+f")
+                type_text("good code")
+                rows = {name: control_bounds(f"search:{name}") for name in ranking_notes}
+                ranked = sorted(rows, key=lambda name: rows[name][1])
+                assert ranked == ["Good Code.md", "Y Code that stays Good.md", "Z Good Code Practices.md",
+                                  "A body match.md", "B Good.md"], ranked
+                capture("native-search-title-ranking.png")
+                click_control("search:Good Code.md")
+                title_contains("Good Code")
+                for name, text in ranking_notes.items():
+                    assert (fixture / name).read_text() == text
+                results.append("Searching good code put Good Code first, full title matches before body matches, and clicking opened the intended unchanged note")
+                open_note("Home")
                 bulk = fixture / "Bulk"
                 bulk.mkdir(exist_ok=True)
                 for number in range(550):
@@ -7768,6 +7791,9 @@ def main():
                 control_bounds("read-aloud-toolbar")
                 capture("native-read-aloud-reading-toolbar.png")
                 # The paragraph's margin speaker reads it, one sentence at a time, in order.
+                hold = log.with_suffix(".hold")
+                blocked = log.with_suffix(".blocked")
+                hold.write_text("Second sentence follows.")
                 block = control_bounds("reading-block:1")
                 xdo("mousemove", "--sync", str(round(block[0] + 40)), str(round((block[1] + block[3]) / 2)))
                 pause()
@@ -7777,6 +7803,17 @@ def main():
                 player_box, page_box = control_bounds("read-aloud-player"), control_bounds("document-viewport")
                 assert player_box[1] >= page_box[3], ("The player must sit under the note, not over its text", player_box, page_box)
                 capture("native-read-aloud-playing.png")
+                try:
+                    assert wait_played(1, limit=5) == ["First sentence here."], lines(played)
+                    deadline = time.monotonic() + 5
+                    while not blocked.exists() and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert blocked.read_text() == "Second sentence follows."
+                    assert lines(played) == ["First sentence here."], lines(played)
+                    capture("native-read-aloud-before-section-ready.png")
+                finally:
+                    hold.unlink(missing_ok=True)
+                results.append("The first sentence reached playback while the second sentence was still blocked in synthesis")
                 assert wait_played(3) == ["First sentence here.", "Second sentence follows.", "Third one ends it."], lines(played)
                 assert lines(voiced) == lines(played)
                 deadline = time.monotonic() + 3
@@ -7815,25 +7852,26 @@ def main():
                 assert note.read_bytes() == before
                 results.append("Clicking a hidden former paragraph speaker did not start reading or change the note")
                 # A speed change reaches a new request during the same reading and is saved.
-                reset()
                 requests = log.with_suffix(".requests")
-                requests.unlink(missing_ok=True)
-                key("ctrl+a")
-                click_control("read-aloud-selection")
-                click_control("read-aloud-speed")
-                capture("native-read-aloud-speed-menu.png")
-                click_control("read-aloud-speed:1.3×")
-                count = len(lines(requests))
-                deadline = time.monotonic() + 5
-                while len(lines(requests)) <= count and time.monotonic() < deadline:
-                    time.sleep(.05)
-                later = [json.loads(line) for line in lines(requests)[count:]]
-                assert later and abs(later[0]["speed"] - 1.3) < .0001, later
-                state = base / "state" / "rustidian" / "voice.json"
-                assert abs(json.loads(state.read_text())["speed"] - 1.3) < .0001
-                click_control("read-aloud-stop")
-                key("Escape")
-                results.append("Speed menu selected 1.3×, the next worker request used it, and voice settings saved it")
+                for speed in (1.3, 1.4):
+                    reset()
+                    requests.unlink(missing_ok=True)
+                    key("ctrl+a")
+                    click_control("read-aloud-selection")
+                    click_control("read-aloud-speed")
+                    capture(f"native-read-aloud-speed-{speed}-menu.png")
+                    click_control(f"read-aloud-speed:{speed}×")
+                    count = len(lines(requests))
+                    deadline = time.monotonic() + 5
+                    while len(lines(requests)) <= count and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    later = [json.loads(line) for line in lines(requests)[count:]]
+                    assert later and abs(later[0]["speed"] - speed) < .0001, later
+                    state = base / "state" / "rustidian" / "voice.json"
+                    assert abs(json.loads(state.read_text())["speed"] - speed) < .0001
+                    click_control("read-aloud-stop")
+                    key("Escape")
+                    results.append(f"Speed menu selected {speed}×, the next worker request used it, and voice settings saved it")
                 # A double-clicked word reads its whole sentence.
                 reset()
                 block = control_bounds("reading-block:1")
