@@ -388,6 +388,18 @@ def main():
                         "File recovery" if name.startswith("settings-recovery-") else None)
                 if page and control_bounds("settings-page:"+page, required=False):
                     click_control("settings-page:"+page)
+            direction = ("4" if name == "settings-dictation-backend" else
+                         "5" if name.startswith(("settings-voice-replace:", "settings-voice-disconnect:")) else None)
+            if direction:
+                # The top dictation row and lower account rows can be completely
+                # off screen, leaving no probe bounds for the usual scroll below.
+                for _ in range(20):
+                    view = control_bounds("settings-viewport", required=False)
+                    if not view or control_bounds(name, required=False):
+                        break
+                    xdo("mousemove", "--sync", str(round((view[0] + view[2]) / 2)), str(round((view[1] + view[3]) / 2)))
+                    xdo("click", direction)
+                    time.sleep(.1)
             if name.startswith("settings-") and not name.startswith("settings-page:"):
                 # Scroll a settings row into view as a user would.
                 for _ in range(20):
@@ -6725,7 +6737,10 @@ def main():
                 open_note("Home")
                 home_before = (fixture / "Home.md").read_bytes()
                 missing = path.with_name("Temporarily elsewhere.md")
+                # An in-vault rename is tracked; move outside to leave a missing target.
+                missing = base / missing.name
                 path.rename(missing)
+                assert not path.exists() and missing.is_file()
                 time.sleep(.8)
                 click_control(f"bookmark:{relative}")
                 title_contains("Home")
