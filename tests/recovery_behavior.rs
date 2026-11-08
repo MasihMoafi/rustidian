@@ -195,58 +195,57 @@ fn restore_preserves_displaced_bytes_and_refuses_dirty_stale_or_missing_destinat
 
 #[test]
 fn background_capture_coalesces_to_latest_saved_bytes_and_clear_cancels_deferred_versions() {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     let base = tempfile::tempdir().unwrap();
     let store = history(base.path());
     let config = Config::default();
-    let (wake, events) = std::sync::mpsc::channel();
+    let timeout = Duration::from_secs(15);
     let mut recorder =
-        rustidian::recovery_capture::Recorder::start(store.clone(), config.clone(), move || {
-            let _ = wake.send(());
-        });
-    let wait_for = |text: &str| {
-        let until = Instant::now() + Duration::from_secs(5);
-        loop {
-            if store
-                .versions(Path::new("Home.md"))
-                .unwrap()
-                .first()
-                .is_some_and(|v| store.content(Path::new("Home.md"), v.id).unwrap() == text)
-            {
-                break;
-            }
-            assert!(
-                Instant::now() < until,
-                "Background snapshot was not stored: {text}"
-            );
-            let _ = events.recv_timeout(Duration::from_millis(20));
-        }
+        rustidian::recovery_capture::Recorder::start(store.clone(), config.clone(), || {});
+    let wait_for = |recorder: &rustidian::recovery_capture::Recorder, path: &Path, text: &str| {
+        let captured = recorder
+            .events
+            .recv_timeout(timeout)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Background snapshot was not stored: {text}; {error}; capture errors: {:?}",
+                    recorder.errors.try_iter().collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(captured, path);
+        let versions = store.versions(path).unwrap();
+        assert_eq!(store.content(path, versions[0].id).unwrap(), text);
     };
     assert!(recorder.capture(Path::new("Home.md"), "first", &config));
-    wait_for("first");
+    wait_for(&recorder, Path::new("Home.md"), "first");
     assert!(recorder.capture(Path::new("Home.md"), "superseded", &config));
     assert!(recorder.capture(Path::new("Home.md"), "latest\r\nسلام", &config));
     // Release the queued replacements explicitly, independent of CI scheduling
     // and database latency consuming a short snapshot interval.
-    assert!(recorder.configure(&Config {
+    let immediate = Config {
         interval_minutes: 0.0,
         ..config.clone()
-    }));
-    wait_for("latest\r\nسلام");
-    assert_eq!(store.versions(Path::new("Home.md")).unwrap().len(), 2);
-    let deferred_config = Config {
-        interval_minutes: 0.01,
-        ..config
     };
-    assert!(recorder.capture(Path::new("Home.md"), "deferred", &deferred_config));
+    assert!(recorder.configure(&immediate));
+    wait_for(&recorder, Path::new("Home.md"), "latest\r\nسلام");
+    assert_eq!(store.versions(Path::new("Home.md")).unwrap().len(), 2);
+    assert!(recorder.configure(&config));
+    assert!(recorder.capture(Path::new("Home.md"), "deferred", &config));
     recorder
         .clear()
         .unwrap()
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(timeout)
         .unwrap()
         .unwrap();
-    std::thread::sleep(Duration::from_millis(700));
     assert!(store.files().unwrap().is_empty());
+    // A later immediate capture proves the worker processed the configuration
+    // after Clear; an uncancelled deferred version would be recorded first.
+    assert!(recorder.configure(&immediate));
+    let barrier = Path::new("Barrier.md");
+    assert!(recorder.capture(barrier, "barrier", &immediate));
+    wait_for(&recorder, barrier, "barrier");
+    assert_eq!(store.files().unwrap(), vec![barrier.to_path_buf()]);
+    assert!(store.versions(Path::new("Home.md")).unwrap().is_empty());
     assert!(recorder.errors.try_recv().is_err());
 }
 

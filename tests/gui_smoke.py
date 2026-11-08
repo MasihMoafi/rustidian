@@ -3371,12 +3371,30 @@ def main():
                 def same_widths(actual, expected):
                     return all(a is not None and b is not None and abs(a[index] - b[index]) < 2 for a, b in zip(actual, expected) for index in (0, 2))
 
+                def frame_stamp():
+                    stat = (base / "ui-probe.json").stat()
+                    return (stat.st_ino, stat.st_mtime_ns)
+
+                def wait_for_frame(previous):
+                    deadline = time.monotonic() + 5
+                    while frame_stamp() == previous:
+                        assert app.poll() is None, "App exited while waiting for a table input frame"
+                        assert time.monotonic() < deadline, "App did not process a table input frame"
+                        time.sleep(.01)
+
                 def drag_divider(column, target, cancel=False):
                     rect = control_bounds(f"table-resize:0:{column}")
                     x, y = round((rect[0] + rect[2]) / 2), round((rect[1] + rect[3]) / 2)
                     xdo("mousemove", "--sync", str(x), str(y))
                     pause()
+                    # Keep the press on the handle until the app has drawn it;
+                    # a busy runner can otherwise queue the whole drag in one frame.
+                    pressed_frame = frame_stamp()
                     xdo("mousedown", "1")
+                    wait_for_frame(pressed_frame)
+                    move_frame = frame_stamp()
+                    xdo("mousemove", "--sync", str(x + (1 if target >= x else -1)), str(y))
+                    wait_for_frame(move_frame)
                     time.sleep(.1)
                     try:
                         for step in range(1, 11):
@@ -3385,7 +3403,9 @@ def main():
                         if cancel:
                             key("Escape")
                     finally:
+                        released_frame = frame_stamp()
                         xdo("mouseup", "1")
+                        wait_for_frame(released_frame)
                     pause()
 
                 before_edge = columns()
