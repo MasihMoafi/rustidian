@@ -6228,6 +6228,19 @@ def main():
                     used = (ticks() - before) / ticks_per_second
                     return round(100 * used / (time.monotonic() - started), 1), len(frame_times()) - drawn
 
+                def caret_blinks(label):
+                    caret = control_bounds("editor-caret")
+                    box = (round(caret[0]) - 2, round(caret[1]), round(caret[2]) + 2, round(caret[1]) + 28)
+                    first = ImageGrab.grab(xdisplay=display)
+                    for _ in range(12):
+                        time.sleep(.15)
+                        next_frame = ImageGrab.grab(xdisplay=display)
+                        if ImageChops.difference(first.crop(box), next_frame.crop(box)).getbbox():
+                            first.save(reports / f"native-idle-{label}-caret-first.png")
+                            next_frame.save(reports / f"native-idle-{label}-caret-second.png")
+                            return True
+                    return False
+
                 def unfocus():
                     xdo("windowfocus", "0")
                     deadline = time.monotonic() + 3
@@ -6252,12 +6265,23 @@ def main():
                 if numbers["own_save_read_bytes"] >= bulk_bytes / 10:
                     failures.append(f"An autosave read {numbers['own_save_read_bytes']} bytes: the vault ({bulk_bytes} bytes) was re-indexed")
                 # 2. A focused window with a blinking caret, for comparison only.
+                # This measurement also enforces the focused idle CPU budget.
+                if not caret_blinks("note"):
+                    failures.append("The focused caret in the note did not visibly blink")
                 numbers["focused_cpu"], numbers["focused_frames"] = measure(20)
+                if numbers["focused_cpu"] > 2.0:
+                    failures.append(f"A focused idle note used {numbers['focused_cpu']}% CPU in 20 s (limit 2.0%)")
                 # 3. A caret on an image line does not redraw a background window
                 #    (egui's has_focus already includes window focus; this guards it).
                 open_note("Idle image")
                 click_control("embed:0")
                 assert control_bounds("embed-source:0"), "The caret did not reach the image line"
+                if not caret_blinks("image"):
+                    failures.append("The focused caret on an image line did not visibly blink")
+                numbers["image_focused_cpu"], numbers["image_focused_frames"] = measure(5)
+                if numbers["image_focused_frames"] > 16:
+                    failures.append(f"A focused image-line caret drew {numbers['image_focused_frames']} frames in 5 s (limit 16)")
+                assert not failures, (failures, numbers)
                 unfocus()
                 time.sleep(1)
                 numbers["image_caret_cpu"], numbers["image_caret_frames"] = measure(5)

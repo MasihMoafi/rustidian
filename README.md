@@ -149,8 +149,10 @@ Edits autosave after 600 ms of inactivity; **Ctrl+S** saves at once. If another 
 | --- | ---: | ---: |
 | [Startup to a complete note](docs/performance/startup-2026-10-22/README.md) | **0.61 s** | Obsidian 1.14.4: 3.77 s |
 | [Edit-and-save acknowledgement](https://github.com/MasihMoafi/rustidian/actions/runs/39817952278) | **78.57 ms** | Ferrite 0.3.0: 439.32 ms |
+| [Memory with a note open](docs/performance/footprint-2026-11-08/README.md) | **98 MB** | Obsidian 1.5.12: 284 MB |
+| [Linux download](docs/performance/footprint-2026-11-08/README.md) | **28 MB** | Obsidian 1.5.12: 108 MB |
 
-<sub>Both measured on older builds, one Linux setup each; the current release has not been re-benchmarked. Method and limits are in the linked reports and the [comparison script](scripts/compare-editors.py).</sub>
+<sub>Startup and save were measured on older builds; memory (whole process tree, PSS) and download on 8 Nov 2026 with the same vault on one Linux machine. Method and limits are in the linked reports and the [comparison script](scripts/compare-editors.py).</sub>
 
 ## Status
 

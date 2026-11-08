@@ -2484,6 +2484,8 @@ impl Editor {
                 if active_image {
                     ui.visuals_mut().selection.bg_fill = Color32::TRANSPARENT;
                     ui.visuals_mut().text_cursor.stroke.color = Color32::TRANSPARENT;
+                    // The image line paints its own caret below.
+                    ui.visuals_mut().text_cursor.blink = false;
                 }
                 TextEdit::multiline(&mut tab.document.text)
                     .id(id)
@@ -2945,16 +2947,29 @@ impl Editor {
                     self.image_cursor_time = now;
                 }
                 let cycle = (cursor_style.on_duration + cursor_style.off_duration) as f64;
-                if !cursor_style.blink
-                    || (now - self.image_cursor_time) % cycle < cursor_style.on_duration as f64
-                {
+                let phase = if cycle > 0.0 {
+                    (now - self.image_cursor_time).max(0.0) % cycle
+                } else {
+                    0.0
+                };
+                let on = cursor_style.on_duration as f64;
+                if !cursor_style.blink || cycle <= 0.0 || phase < on {
                     let caret = output.galley.pos_from_cursor(range.primary);
                     let top = output.galley_pos + caret.min.to_vec2();
                     ui.painter()
                         .line_segment([top, top + egui::vec2(0.0, 29.16)], cursor_style.stroke);
                 }
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(100));
+                if cursor_style.blink && cycle > 0.0 {
+                    let until_transition = if phase < on {
+                        on - phase
+                    } else {
+                        cycle - phase
+                    };
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs_f64(
+                            until_transition.max(0.001),
+                        ));
+                }
             }
         }
         cp.at(2534);
