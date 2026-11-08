@@ -4007,6 +4007,14 @@ def main():
                 time.sleep(.6)
                 open_note("prod-dash", title="prod-dash")
                 command("Live preview")
+                dash_source, day_source = dash.read_text(), day.read_text()
+                click_control("edit-table-cell:0:1:0", hold=.2)
+                title_contains("2026-11-07")
+                capture("native-table-day-link-held-0.2.png")
+                assert dash.read_text() == dash_source
+                assert day.read_text() == day_source
+                open_note("prod-dash", title="prod-dash")
+                command("Live preview")
                 click_control("edit-table-cell:0:1:0")
                 pause()
                 capture("native-table-day-link.png")
@@ -4014,6 +4022,57 @@ def main():
                 assert dash.read_text().startswith("# Prod dash"), dash.read_text()
                 assert day.read_text().endswith("Ruthlessly prioritize.\n"), day.read_text()
                 results.append("A plain click on a prod-dash day cell opened that day's page")
+
+                open_note("prod-dash", title="prod-dash")
+                command("Live preview")
+                click_control("edit-table-cell:0:1:0", hold=1.1)
+                title_contains("2026-11-07")
+                capture("native-table-day-link-held-1.1.png")
+                assert dash.read_text() == dash_source
+                assert day.read_text() == day_source
+                results.append("Held clicks, including one longer than egui's click timeout, opened the linked day without changing either note")
+
+                open_note("prod-dash", title="prod-dash")
+                command("Live preview")
+                first = control_bounds("edit-table-cell:0:1:0")
+                second = control_bounds("edit-table-cell:0:1:1")
+                start = (round((first[0] + first[2]) / 2), round((first[1] + first[3]) / 2))
+                end = (round((second[0] + second[2]) / 2), round((second[1] + second[3]) / 2))
+                xdo("mousemove", "--sync", *map(str, start)); xdo("mousedown", "1")
+                for step in range(1, 6):
+                    xdo("mousemove", "--sync", str(start[0] + (end[0] - start[0]) * step // 5), str(start[1] + (end[1] - start[1]) * step // 5))
+                    time.sleep(.05)
+                xdo("mouseup", "1"); pause()
+                time.sleep(.35)
+                title_contains("prod-dash")
+                assert control_bounds("edit-table-selection:0"), "Dragging from a link must select cells"
+                capture("native-table-day-link-drag.png")
+                assert dash.read_text() == dash_source
+                results.append("Dragging from a sole-link cell selected cells without opening the link")
+
+                key("Escape")
+                xdo("mousemove", "--sync", *map(str, start)); xdo("mousedown", "1")
+                for destination in (end, start):
+                    xdo("mousemove", "--sync", *map(str, destination)); time.sleep(.15)
+                xdo("mouseup", "1"); pause(); time.sleep(.35)
+                title_contains("prod-dash")
+                assert control_bounds("edit-table-selection:0"), "Dragging out and back must remain a selection"
+                assert dash.read_text() == dash_source
+                results.append("Dragging out of a sole-link cell and back did not open its link")
+
+                open_note("prod-dash", title="prod-dash")
+                command("Live preview")
+                first = control_bounds("edit-table-cell:0:1:0")
+                xdo("mousemove", "--sync", str(round((first[0] + first[2]) / 2)), str(round((first[1] + first[3]) / 2)), "click", "--repeat", "2", "--delay", "100", "1")
+                pause(); time.sleep(.35)
+                title_contains("prod-dash")
+                key("ctrl+a")
+                type_text("Edited link")
+                key("ctrl+s")
+                assert dash.read_text() == dash_source.replace("[Sat · Nov 7](Journal/2026-11-07.md)", "Edited link"), dash.read_text()
+                assert day.read_text() == day_source
+                capture("native-table-day-link-double-click.png")
+                results.append("Double-clicking the sole-link cell kept it open for editing")
 
             def table_edit_checks():
                 source = "# Visual table GUI\n\n| Item | Value |\n| :--- | ---: |\n| **Alpha** | 2 |\n| Beta | 1 |\n\nAfter table π\n"
