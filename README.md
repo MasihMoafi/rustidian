@@ -1,55 +1,98 @@
 <div align="center">
 
+<img src="docs/brand/rustidian.png" width="128" height="128" alt="Rustidian logo">
+
 # Rustidian
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/brand/rustidian.png" width="112" height="112" alt="Rustidian teal logo"><br><sub>Main · Teal</sub></td>
-    <td align="center"><img src="docs/brand/themes/love-space.png" width="112" height="112" alt="Rustidian Love Space logo"><br><sub>Love Space</sub></td>
-    <td align="center"><img src="docs/brand/themes/elpis-gold.png" width="112" height="112" alt="Rustidian Elpis Gold logo"><br><sub>Elpis Gold</sub></td>
-    <td align="center"><img src="docs/brand/themes/signature.png" width="112" height="112" alt="Rustidian website-gradient logo"><br><sub>Website gradient</sub></td>
-  </tr>
-</table>
+### Like Obsidian, but fast.<br>A native Markdown notebook for Linux. Your files, no account.
 
-**A native Markdown notebook for Linux. Your files, your folders, no account.**
+[![Latest release](https://img.shields.io/github/v/release/MasihMoafi/rustidian?style=flat-square&color=0f766e&label=release)](https://github.com/MasihMoafi/rustidian/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-x86__64-0f766e?style=flat-square&logo=linux&logoColor=white)](#quick-start)
+[![Written in Rust](https://img.shields.io/badge/written_in-Rust-b7410e?style=flat-square&logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![MIT license](https://img.shields.io/badge/license-MIT-555?style=flat-square)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/MasihMoafi/rustidian?style=flat-square&color=c9a227)](https://github.com/MasihMoafi/rustidian/stargazers)
 
-Opens Obsidian-format vaults and started faster than Obsidian in our [paired test](docs/performance/startup-2026-10-22/README.md) (0.61 s vs 3.77 s, earlier build, one setup). Independent, not affiliated with Obsidian.
+<a href="https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb"><img src="https://img.shields.io/badge/Download_.deb-Ubuntu_24.04+-0f766e?style=for-the-badge&logo=ubuntu&logoColor=white" alt="Download the .deb"></a>
+&nbsp;
+<a href="#quick-start"><img src="https://img.shields.io/badge/Snap_·_AppImage_·_AUR-more_installs-333?style=for-the-badge&logo=snapcraft&logoColor=white" alt="Other ways to install"></a>
 
-**[Install for Linux — download .deb](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb)**
-
-[Portable Linux download](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) · [Quick start](#quick-start) · [Report a bug](https://github.com/MasihMoafi/rustidian/issues/new/choose) · [Contribute](CONTRIBUTING.md)
-
-Linux desktop · Plain files · Native Rust
+Opens your Obsidian vaults as they are. Started in **0.61 s vs Obsidian's 3.77 s** in our [paired test](docs/performance/startup-2026-10-22/README.md).<br><sub>Independent project, not affiliated with Obsidian.</sub>
 
 </div>
 
-I built Rustidian for myself because every note editor I tried felt too slow. **Speed and stability** guide the project: ordinary Markdown folders, native editing, linked notes and graphs.
-
-**Try Rustidian for Linux. Contributors are welcome.**
+<br>
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/rustidian-light.png">
   <img src="docs/images/rustidian.png" alt="Rustidian showing its bundled Markdown notebook">
 </picture>
 
-## Listen and dictate
+I built Rustidian for myself because every note editor I tried felt too slow. **Speed and stability** guide it: ordinary Markdown folders, native editing, linked notes and graphs. Contributors are welcome.
 
-Rustidian reads your notes aloud. The toolbar speaker reads the whole note; select a passage and the speaker beside it
-reads only those sentences; hover a paragraph to hear just that one. Markdown symbols are skipped, and the player
-offers speeds from Normal to 2×. The microphone takes dictation: click, speak, click again, and the text lands at your
-cursor as one undoable edit.
+## New in 0.1.7: listen and dictate
 
-Both work with your own [OpenRouter](https://openrouter.ai) key (Settings → Read aloud; the key stays in your system
-keyring), or fully locally with [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) for the voice and
-[WhisperType](https://github.com/MasihMoafi/WhisperType) for dictation.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-<img src="docs/images/rustidian-themes.gif" width="720" alt="Switching between Rustidian's four palettes in Settings">
+### 🔊 Hear any passage
+
+Select text and a red speaker appears beside it: it reads only those sentences. The toolbar speaker reads the whole note, in reading and editing views. Markdown symbols are skipped, at speeds up to 2×.
+
+</td>
+<td width="50%" valign="top">
+
+### 🎙️ Dictate into a note
+
+Click the microphone, speak, click again. The text lands at your cursor as one edit you can undo.
+
+Both run on your own [OpenRouter](https://openrouter.ai) key, kept in your system keyring, or fully on your machine with [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) and [WhisperType](https://github.com/MasihMoafi/WhisperType).
+
+</td>
+</tr>
+</table>
+
+https://github.com/user-attachments/assets/ffa86f67-2869-4b31-a748-9938c9ab750f
+
+<p align="center"><sub>Three sentences selected in turn; each red speaker reads only its sentence. Turn the sound on.</sub></p>
+
+https://github.com/user-attachments/assets/f63fccee-77ce-4d7c-96f2-584041b21f45
+
+<p align="center"><sub>The microphone turns red while recording; the transcript appears at the cursor.</sub></p>
+
+### 🎨 Four palettes, logo included
+
+<img src="docs/images/rustidian-themes.gif" width="100%" alt="Switching between Rustidian's four palettes in Settings">
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/brand/rustidian.png" width="72" alt=""><br><sub>Teal</sub></td>
+    <td align="center"><img src="docs/brand/themes/love-space.png" width="72" alt=""><br><sub>Love Space</sub></td>
+    <td align="center"><img src="docs/brand/themes/elpis-gold.png" width="72" alt=""><br><sub>Elpis Gold</sub></td>
+    <td align="center"><img src="docs/brand/themes/signature.png" width="72" alt=""><br><sub>Signature</sub></td>
+  </tr>
+</table>
+
+## Why Rustidian?
+
+<table>
+<tr>
+<td width="33%" valign="top"><b>⚡ Native throughout</b><br>Rust powers the interface, editor, Markdown renderer, search and vault operations.</td>
+<td width="33%" valign="top"><b>✍️ Write your way</b><br>Live, source and reading modes. Tables, callouts, images, LaTeX math and native Mermaid diagrams.</td>
+<td width="33%" valign="top"><b>🔗 Follow your ideas</b><br>Wiki links, backlinks, tags, aliases, properties, bookmarks and vault-wide search.</td>
+</tr>
+<tr>
+<td valign="top"><b>📅 Return to your rhythm</b><br>Daily notes, templates, pinned tabs, named workspaces and tab restoration.</td>
+<td valign="top"><b>🤖 Work beside an agent</b><br>The Agent tab (Ctrl+Shift+A) runs Codex, Claude Code or Elpis in your vault folder.</td>
+<td valign="top"><b>🛡️ Keep control of your files</b><br>Plain Markdown, atomic saves, external-change protection, recovery snapshots and a recoverable Trash.</td>
+</tr>
+</table>
 
 ## Quick start
 
-**Requirements:** Linux x86_64 with **glibc 2.39 or newer** (Ubuntu 24.04 or newer; check with `ldd --version`) and an X11 or Wayland desktop. The Open dialogs use `zenity`, which the package installs; with the portable archive, install `zenity` with your package manager. Native UI checks use X11; Wayland is enabled, with broader coverage still open.
+Needs Linux x86_64 with **glibc 2.39 or newer** (Ubuntu 24.04+; check with `ldd --version`) and an X11 or Wayland desktop.
 
-Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb)** and [checksums](https://github.com/MasihMoafi/rustidian/releases/latest/download/SHA256SUMS), then run:
+Download the **[Debian/Ubuntu package](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-amd64.deb)** and its [checksums](https://github.com/MasihMoafi/rustidian/releases/latest/download/SHA256SUMS), then:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
@@ -57,31 +100,26 @@ sudo apt install ./rustidian-linux-amd64.deb
 rustidian
 ```
 
-**Other ways to install.** Snap: `sudo snap install rustidian`; the snap is confined, so it reads vaults in your home folder, and `sudo snap connect rustidian:removable-media` lets it open vaults on other drives. AppImage: download `Rustidian-0.1.6-x86_64.AppImage` from the [release](https://github.com/MasihMoafi/rustidian/releases/latest), run `chmod +x` on it and start it. Arch and Omarchy: `git clone https://github.com/MasihMoafi/rustidian && cd rustidian/packaging/aur-bin && makepkg -si` builds a native package from the release's exact executable.
+The first launch opens a writable demo vault. To use your own notes, try a copy of your vault first: **File → Open folder…**, no import or account needed.
 
-The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. The installer is built and checked on Ubuntu 24.04.
+<details>
+<summary><b>Other ways to install</b>: Snap, AppImage, Arch, portable archive</summary>
 
-For a portable installation, download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) and the same checksums:
+- **Snap:** `sudo snap install rustidian`. It reads vaults in your home folder; `sudo snap connect rustidian:removable-media` opens vaults on other drives.
+- **AppImage:** download it from the [latest release](https://github.com/MasihMoafi/rustidian/releases/latest), `chmod +x` it and run it.
+- **Arch and Omarchy:** `git clone https://github.com/MasihMoafi/rustidian && cd rustidian/packaging/aur-bin && makepkg -si` builds a native package from the release's exact executable.
+- **Portable:** download the [tar archive](https://github.com/MasihMoafi/rustidian/releases/latest/download/rustidian-linux-x86_64.tar.gz) and the checksums. The Open dialogs need `zenity`.
 
-```sh
-sha256sum --check --ignore-missing SHA256SUMS
-mkdir rustidian && tar -xzf rustidian-linux-x86_64.tar.gz -C rustidian
-cd rustidian && ./rustidian
-```
+  ```sh
+  sha256sum --check --ignore-missing SHA256SUMS
+  mkdir rustidian && tar -xzf rustidian-linux-x86_64.tar.gz -C rustidian
+  cd rustidian && ./rustidian            # python3 install.py adds it to your menu
+  ```
 
-The bundled demo opens immediately. To add Rustidian to your applications menu, run `python3 install.py`; it installs for your user without root. You can also run it from the extracted folder:
+</details>
 
-```sh
-./rustidian "/path/to/vault copy"
-./rustidian "/path/to/note.md"
-./rustidian --version
-```
-
-**Opens Obsidian-format vaults.** Try a copy of your vault first. Open the folder directly with **File → Open folder…**; no import or account is needed. Rustidian reads ordinary Markdown files and selected Obsidian settings. Community plugins do not run; Canvas, Bases and other gaps are listed below. Keep Obsidian available for other workflows.
-
-**Why don't Obsidian plugins work?** Rustidian's interface is native Rust with egui/eframe. Obsidian plugins require Obsidian's JavaScript API and often its browser DOM and CSS. Running them needs a compatibility runtime or individual feature ports; copying plugin folders is insufficient.
-
-Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If another program changes a note, Rustidian retains your buffer and refuses to overwrite the external change. Use **Save a copy** from the command palette to preserve your version.
+<details>
+<summary><b>Keyboard shortcuts</b></summary>
 
 | Shortcut | Action |
 | --- | --- |
@@ -94,50 +132,44 @@ Edits autosave after 600 ms of inactivity; **Ctrl+S** saves immediately. If anot
 | Ctrl+Shift+F | Search the vault |
 | Ctrl+S | Save |
 
-## Why Rustidian?
+</details>
 
-- **Native throughout.** Rust powers the interface, text editor, Markdown renderer, search, and vault operations.
-- **Write your way.** Live editing, source and reading modes, folding, formatting, find/replace, and undo. Tables, callouts, images, syntax highlighting, LaTeX math and native Mermaid diagrams bring your notes to life.
-- **Follow your ideas.** Wiki links, backlinks, tags, aliases, properties, bookmarks, a quick switcher, and vault-wide search keep your knowledge connected.
-- **Return to your rhythm.** Daily notes, templates, pinned tabs, named workspaces, recent vaults, and tab restoration after a clean exit.
-- **Work beside an agent.** The Agent tab (Ctrl+Shift+A) runs Codex, Claude Code or Elpis in a terminal in your vault folder, whichever is installed.
-- **Keep control of your files.** Plain UTF-8 Markdown and text, atomic saves, external-change protection, recovery snapshots, and recoverable Trash. Workspace state lives outside the vault.
+<details>
+<summary><b>Coming from Obsidian?</b> Why plugins don't run, and how saving works</summary>
 
-## Development status
+Rustidian reads ordinary Markdown files and selected Obsidian settings. Its interface is native Rust (egui/eframe); Obsidian plugins need Obsidian's JavaScript API and often its browser DOM, so they do not run. Canvas and Bases are missing; keep Obsidian for those.
 
-Rustidian is a work in progress toward full support for Obsidian-format vaults. The current build covers a subset of that goal.
+Edits autosave after 600 ms of inactivity; **Ctrl+S** saves at once. If another program changes a note, Rustidian keeps your buffer and refuses to overwrite the outside change; **Save a copy** keeps your version.
 
-| Area | Current state |
+</details>
+
+## Speed
+
+| Test | Rustidian | Other |
+| --- | ---: | ---: |
+| [Startup to a complete note](docs/performance/startup-2026-10-22/README.md) | **0.61 s** | Obsidian 1.14.4: 3.77 s |
+| [Edit-and-save acknowledgement](https://github.com/MasihMoafi/rustidian/actions/runs/39817952278) | **78.57 ms** | Ferrite 0.3.0: 439.32 ms |
+
+<sub>Both measured on older builds, one Linux setup each; the current release has not been re-benchmarked. Method and limits are in the linked reports and the [comparison script](scripts/compare-editors.py).</sub>
+
+## Status
+
+A work in progress toward full support for Obsidian-format vaults.
+
+| Area | State |
 | --- | --- |
-| Markdown editing, links, tasks, tables, Mermaid, LaTeX math | Implemented workflows with ongoing parity work |
-| Vaults, daily notes, templates, workspaces, recovery | Implemented workflows with remaining gaps |
-| Global and local graph | Native views verified; graph parity work continues |
-| Canvas, Bases, full settings and hotkeys | Missing or incomplete |
-| Existing Obsidian community plugins | Unsupported; compatibility design remains open |
+| Markdown editing, links, tasks, tables, Mermaid, LaTeX math | ✅ Works; parity work continues |
+| Vaults, daily notes, templates, workspaces, recovery | ✅ Works, with gaps |
+| Global and local graph | ✅ Works; parity work continues |
+| Canvas, Bases, full settings and hotkeys | 🚧 Missing or incomplete |
+| Obsidian community plugins | ❌ Unsupported |
 
-The [coverage ledger](docs/PARITY.md) records implemented workflows and remaining work. Full parity and existing Obsidian plugin compatibility are unfinished.
+The [coverage ledger](docs/PARITY.md) lists what works and what is left.
 
-## Performance
+## Contribute
 
-These measurements use older builds. The current release has not yet been benchmarked against Obsidian.
+Open a copied vault, edit and save a note, follow a link, then reopen it. [Report what broke](https://github.com/MasihMoafi/rustidian/issues/new?template=bug_report.yml) with `rustidian --version` and your Linux setup, or a [difference from Obsidian](https://github.com/MasihMoafi/rustidian/issues/new?template=parity_gap.yml). Rust/egui contributors can start with Markdown rendering, keyboard access or Wayland testing; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-A [paired startup comparison](docs/performance/startup-2026-10-22/README.md) measured a median complete matching note frame at **0.61 s for the verified Rustidian baseline versus 3.77 s for Obsidian 1.14.4**. Ten balanced warmed pairs used 100 synthetic notes, a 1440×960 software display and screenshot/OCR sampling. The measured baseline precedes the later graph update. Exact versions, original paired screenshots, raw results and limits accompany this bounded result.
+If Rustidian is useful to you, a ⭐ helps others find it.
 
-A [verified same-host comparison](https://github.com/MasihMoafi/rustidian/actions/runs/39817952278) measured serial edit/save acknowledgement:
-
-| Editor | Median |
-| --- | ---: |
-| **Rustidian measured baseline** | **78.57 ms** |
-| Ferrite 0.3.0 | 439.32 ms |
-
-**About 5.6× faster in this edit-and-save test.** Both editors used the same 103,300-byte document in source mode on one Linux/Xvfb host. Four alternating rounds collected 100 timed samples plus 20 warmups. Timings cover synthetic input through observing the exact saved bytes, including keyboard-driver and file-polling overhead. Overall speed varies by workload.
-
-The linked run contains the verification evidence. See the [comparison script](scripts/compare-editors.py) for the method and the [workflow](.github/workflows/native.yml) for the checks.
-
-## Contributors welcome
-
-Try one useful workflow: open a copied vault, edit and save a note, follow a link, then reopen it. [Report what broke](https://github.com/MasihMoafi/rustidian/issues/new?template=bug_report.yml) with `rustidian --version`, your Linux/display setup and a small example. For a difference from Obsidian, use the [workflow gap form](https://github.com/MasihMoafi/rustidian/issues/new?template=parity_gap.yml).
-
-Rust/egui contributors can start with Markdown rendering, keyboard access or Linux/Wayland testing. [CONTRIBUTING.md](CONTRIBUTING.md) explains setup and checks; the [coverage ledger](docs/PARITY.md) records remaining work. If Rustidian is useful to you, a [GitHub star](https://github.com/MasihMoafi/rustidian) helps others discover it.
-
-[MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.txt) · Independent, not affiliated with Obsidian. Existing Obsidian JavaScript plugins are unsupported; full feature and visual parity remain unfinished.
+<div align="center"><sub><a href="LICENSE">MIT license</a> · <a href="THIRD_PARTY_NOTICES.txt">Third-party notices</a> · Independent, not affiliated with Obsidian.</sub></div>
