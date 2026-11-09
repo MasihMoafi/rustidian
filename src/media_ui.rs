@@ -28,14 +28,22 @@ pub fn open_video(uri: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn broken(ui: &mut egui::Ui, alt: &str, _clickable: bool) -> egui::Response {
+pub fn broken(ui: &mut egui::Ui, alt: &str, clickable: bool) -> egui::Response {
     let label = if alt.is_empty() { "Missing image" } else { alt };
-    crate::notices::once(
-        ui.ctx(),
-        ("missing-embed", alt),
-        format!("Could not display embed: {label}"),
-    );
-    ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
+    let short: String = label.chars().take(72).collect();
+    let response = ui
+        .add(
+            egui::Label::new(egui::RichText::new(format!("▧ {short}")).weak()).sense(
+                if clickable {
+                    egui::Sense::click()
+                } else {
+                    egui::Sense::hover()
+                },
+            ),
+        )
+        .on_hover_text(label);
+    crate::ui_probe::record(ui.ctx(), format!("broken-image:{alt}"), response.rect);
+    response
 }
 
 pub fn image(

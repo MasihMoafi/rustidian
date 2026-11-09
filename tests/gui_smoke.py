@@ -2115,7 +2115,7 @@ def main():
                 time.sleep(.7)
                 open_note("Invalid diagram")
                 command("Reading view")
-                control_bounds("mermaid-error")
+                control_bounds("error-notice")
                 assert invalid.read_text() == "```mermaid\nnot a diagram\n```\n"
                 results.append("Tables and native Mermaid render in Reading and Live, stay literal in Source, reuse the same diagram through hover/scroll, and invalid syntax retains its source")
 
@@ -2340,7 +2340,7 @@ def main():
                 before_paths = {path.relative_to(fixture) for path in fixture.rglob("*")}
                 for value in ["../Outside ZQ907", str(outside), ".hidden/New ZQ908", "vendor/New ZQ909"]:
                     query(value); control_bounds("quick-create"); key("Return")
-                    control_bounds("dialog-error"); assert not outside.exists()
+                    control_bounds("error-notice"); assert not outside.exists()
                     assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
                     key("Escape")
                 query("Cancelled ZQ910"); control_bounds("quick-create"); key("Escape")
@@ -2350,7 +2350,7 @@ def main():
                 results.append("Absolute, escaping and ignored paths failed visibly; cancelled, empty and whitespace queries created no files or folders")
                 query("Denied ZQ911"); mode = fixture.stat().st_mode
                 try:
-                    fixture.chmod(0o555); key("Return"); control_bounds("dialog-error")
+                    fixture.chmod(0o555); key("Return"); control_bounds("error-notice")
                     capture("native-quick-create-error.png")
                     assert {path.relative_to(fixture) for path in fixture.rglob("*")} == before_paths
                 finally: fixture.chmod(mode)
@@ -5433,7 +5433,7 @@ def main():
                 field("vault-name", created.name)
                 field("vault-folder", str(base))
                 click_control("vault-confirm")
-                assert control_bounds("vault-error")
+                assert control_bounds("error-notice")
                 capture("native-vault-collision.png")
                 assert (created / "Home.md").read_bytes() == created_source,((created/"Home.md").read_bytes(),created_source)
                 click_control("vault-manager-close")
@@ -5580,7 +5580,7 @@ def main():
                 moved = base / "Moved browsed vault"
                 opened.rename(moved)
                 click_control(f"vault-recent:{opened}")
-                assert control_bounds("vault-error")
+                assert control_bounds("error-notice")
                 title_contains(fixture.name)
                 assert (fixture / "Home.md").read_bytes() == original
                 assert (moved / "Home.md").read_text() == "# Browsed vault\n\nBROWSE_ORIGINAL\n"
@@ -6410,10 +6410,10 @@ def main():
                 capture("native-folder-created-nested.png")
                 results.append("Name-only folder input stayed bound to the clicked folder, nested folders accepted both commands, and repeated note creation preserved existing Untitled files")
                 new_folder(nested, "Nested child"); key("Return")
-                control_bounds("dialog-error"); assert (nested / "Nested child").is_dir()
-                fill_dialog("../Must not escape"); key("Return"); control_bounds("dialog-error")
+                control_bounds("error-notice"); assert (nested / "Nested child").is_dir()
+                fill_dialog("../Must not escape"); key("Return"); control_bounds("error-notice")
                 assert not (parent / "Must not escape").exists() and not (fixture / "Must not escape").exists()
-                fill_dialog(""); key("Return"); control_bounds("dialog-error")
+                fill_dialog(""); key("Return"); control_bounds("error-notice")
                 capture("native-folder-create-error.png"); key("Escape")
                 before = {p.relative_to(fixture) for p in fixture.rglob("*")}
                 new_folder(parent, "Cancelled child"); key("Escape")
@@ -7659,19 +7659,19 @@ def main():
                         click_control("settings-voice-test")
                         wait(lambda: len(key_tests) > count, "The key test sent no request")
                         assert key_tests[-1] == ("/api/v1/key", True)
-                        wait(lambda: control_bounds("settings-voice-message", required=False), "The key test showed no result")
-                        message = control_bounds("settings-voice-message")
-                        actions = control_bounds("settings-voice-save")
-                        assert message[3] <= actions[1] + 2, ("The message overlaps the actions", message, actions)
+                        wait(lambda: control_bounds("error-notice", required=False), "The key test showed no result")
+                        message = control_bounds("error-notice")
+                        bar = control_bounds("status-bar")
+                        assert bar[1] <= message[1] < message[3] <= bar[3], ("The message must stay in the status strip", message, bar)
                         capture(f"native-voice-test-{code}.png")
                         if code == 500:
                             xdo("mousemove", "--sync", "5", "5")
-                            wait(lambda: control_bounds("settings-voice-message", required=False) is None,
+                            wait(lambda: control_bounds("error-notice", required=False) is None,
                                  "The key test error stayed on screen", limit=10)
                             time.sleep(1)
-                            assert control_bounds("settings-voice-message", required=False) is None
+                            assert control_bounds("error-notice", required=False) is None
                         else:
-                            click_control("settings-voice-message-dismiss")
+                            click_control("error-dismiss")
                     results.append("Testing the typed key used the local provider; refusals and success were dismissible, and the server error faded without returning")
                     capture("native-voice-key-typed.png")
                     click_control("settings-voice-save")
@@ -7685,17 +7685,18 @@ def main():
                     click_control("settings-dictation-backend")
                     click_control("settings-dictation-backend:OpenRouter")
                     key_test_status[0] = 500
+                    if control_bounds("error-dismiss", required=False): click_control("error-dismiss")
                     click_control("settings-dictation-model")
-                    wait(lambda: control_bounds("settings-dictation-model-error", required=False),
+                    wait(lambda: control_bounds("error-notice", required=False),
                          "The failed model list showed no error")
                     model_count = len(key_tests)
                     capture("native-voice-model-error.png")
                     key("Escape")
                     xdo("mousemove", "--sync", "5", "5")
-                    wait(lambda: control_bounds("settings-dictation-model-error", required=False) is None,
+                    wait(lambda: control_bounds("error-notice", required=False) is None,
                          "The model list error stayed on screen", limit=10)
                     time.sleep(1)
-                    assert control_bounds("settings-dictation-model-error", required=False) is None
+                    assert control_bounds("error-notice", required=False) is None
                     assert len(key_tests) == model_count, "The model list was retried without another click"
                     results.append("A failed transcription model list showed one dismissible error that faded without another request")
                     key("Escape")
@@ -7715,30 +7716,31 @@ def main():
                     click_control("settings-voice-session")
                     key("Escape")
                     count = len(heard)
+                    if control_bounds("error-dismiss", required=False): click_control("error-dismiss")
                     read_paragraph()
                     wait(lambda: len(heard) > count, "The replaced key was not used")
                     assert heard[-1] == "Bearer bad-key", heard
                     pause()
                     capture("native-voice-refused.png")
-                    control_bounds("read-aloud-player")
+                    control_bounds("error-notice")
                     xdo("mousemove", "--sync", "5", "5")
-                    wait(lambda: control_bounds("read-aloud-player", required=False) is None, "The refused-key message stayed on screen", limit=10)
+                    wait(lambda: control_bounds("error-notice", required=False) is None, "The refused-key message stayed on screen", limit=10)
                     results.append("A replaced key was used at once; the refusal showed a message that faded by itself")
 
                     count = len(heard)
                     read_paragraph()
                     wait(lambda: len(heard) > count, "The first repeat did not reach the provider")
-                    click_control("read-aloud-error-close")
+                    click_control("error-dismiss")
                     xdo("mousemove", "--sync", "5", "5")
                     time.sleep(7)
                     count = len(heard)
                     read_paragraph()
                     wait(lambda: len(heard) > count, "The next attempt did not reach the provider")
-                    wait(lambda: control_bounds("read-aloud-error-close", required=False), "The repeated error disappeared immediately")
+                    wait(lambda: control_bounds("error-dismiss", required=False), "The repeated error disappeared immediately")
                     time.sleep(1)
-                    assert control_bounds("read-aloud-error-close", required=False), "The repeated error reused the previous timer"
+                    assert control_bounds("error-dismiss", required=False), "The repeated error reused the previous timer"
                     capture("native-voice-refusal-after-dismiss.png")
-                    click_control("read-aloud-error-close")
+                    click_control("error-dismiss")
                     results.append("Dismissing a refusal does not shorten the next attempt's error notice")
 
                     settings_page()
@@ -8418,6 +8420,43 @@ def main():
                         folder.chmod(0o755)
                     results.append("A failed save kept the exact unsaved draft and a Save a copy route after the warning faded; the copy recovered every byte")
 
+                def template_failure():
+                    home = fixture / "Home.md"
+                    original = home.read_bytes()
+                    command("Open settings")
+                    click_control("settings-page:Editor")
+                    click_control("settings-inline-title")
+                    click_control("settings-inline-title")
+                    click_control("settings-page:Templates")
+                    state = next(json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json") if "tabs" in json.loads(path.read_text()))
+                    folder = state["note_aids"]["templates"]["folder"]
+                    click_control("settings-template-folder")
+                    key("ctrl+a")
+                    type_text("Quiet missing templates")
+                    key("Tab")
+                    key("Escape")
+                    try:
+                        for attempt in range(2):
+                            command("Templates: Insert template")
+                            small_notice()
+                            assert not control_bounds("template-error", required=False)
+                            capture(f"native-quiet-errors-template-{attempt}.png")
+                            faded()
+                            control_bounds("template-configure")
+                            key("Escape")
+                    finally:
+                        command("Open settings")
+                        click_control("settings-page:Templates")
+                        click_control("settings-template-folder")
+                        key("ctrl+a")
+                        key("BackSpace")
+                        if folder:
+                            type_text(folder)
+                        key("Tab")
+                        key("Escape")
+                    assert home.read_bytes() == original
+                    results.append("A missing template folder warned once per explicit chooser attempt and expired while the chooser stayed open, with note bytes unchanged")
+
                 def background_tab_reloads():
                     nonlocal app, window
                     app.terminate()
@@ -8585,7 +8624,7 @@ def main():
                             click_control("error-dismiss")
 
                 run_checks([missing_embed, settings_failure, consecutive_errors, background_during_action, narrow_notice, recovery_failure, workspace_failure,
-                            external_change, failed_save, background_tab_reloads, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
+                            external_change, failed_save, template_failure, background_tab_reloads, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
 
             def background_io_checks():
                 # Real disk syscalls are held by the fixture library; no application test flag.
@@ -9840,7 +9879,7 @@ def main():
                 editor_settings();held=base/"held-editor-settings.json";path.rename(held);path.mkdir()
                 try:
                     click_control("settings-inline-title")
-                    assert control_bounds("dialog-error")
+                    assert control_bounds("error-notice")
                     capture("native-settings-editor-write-error.png")
                 finally:path.rmdir();held.rename(path)
                 assert json.loads(path.read_text())["editor_preferences"]["inline_title"] is False
@@ -10718,9 +10757,9 @@ def main():
                         if repeats>=3: return rect
                         time.sleep(.1)
                     raise AssertionError(('Embed layout did not settle',query,previous))
-                def open_host(name):
+                def open_host(name, rendered=True):
                     open_note('Embed Hosts/'+name+'.md',title=name); command('Live preview'); control_bounds('view-mode:Live preview'); editor_end()
-                    return stable(queries[name])
+                    return stable(queries[name]) if rendered else None
                 def present(path,value):
                     prefix='note-embed-text:'+path+':'; deadline=time.monotonic()+5
                     while time.monotonic()<deadline:
@@ -10751,18 +10790,18 @@ def main():
                 assert sections.read_text()==section_original.replace('- [ ] BLOCK TASK','- [x] BLOCK TASK')
                 assert '- [ ] OUTSIDE TASK' in sections.read_text() and (hosts/'Task.md').read_text()==host_bytes['Task']
                 results.append('Heading embeds included descendants and stopped at the next peer heading; whole list/quote block embeds rendered; a task block edited the right checkbox in the full target while preserving outside tasks and host bytes')
-                open_note('Embed Hosts/Self section.md',title='Self section'); command('Live preview'); editor_end(); stable('#Reference Section'); present('Embed Hosts/Self section.md','SELF CONTENT'); assert not control_bounds('note-embed-cycle',required=False)
-                open_host('Rich'); control_bounds('code-block:0'); control_bounds('table:0'); control_bounds('mermaid-diagram'); assert not control_bounds('mermaid-error',required=False)
+                open_note('Embed Hosts/Self section.md',title='Self section'); command('Live preview'); editor_end(); stable('#Reference Section'); present('Embed Hosts/Self section.md','SELF CONTENT'); assert not control_bounds('error-notice',required=False)
+                open_host('Rich'); control_bounds('code-block:0'); control_bounds('table:0'); control_bounds('mermaid-diagram'); assert not control_bounds('error-notice',required=False)
                 image_names=[name for name in controls() if name.startswith('note-embed-image:Embed Targets/Rich.md:')]; assert image_names
                 capture('native-note-embed-rich.png'); xdo('mousemove','900','760'); xdo('click','--repeat','4','--delay','60','5'); pause(); capture('native-note-embed-rich-bottom.png')
                 results.append('Same-note nonrecursive heading embeds worked; embedded callout, highlighted Rust code, table, relative image and Mermaid used the reading renderer')
                 for name in ['Missing','Missing heading']:
-                    open_host(name); control_bounds('note-embed-error:'+queries[name]); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png')
+                    open_host(name, rendered=False); control_bounds('error-notice'); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png'); click_control('error-dismiss')
                 for name in ['Cycle','Self cycle']:
-                    open_host(name); control_bounds('note-embed-cycle'); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png')
+                    open_host(name, rendered=False); control_bounds('error-notice'); capture('native-note-embed-'+name.replace(' ','-').lower()+'.png'); click_control('error-dismiss')
                 open_host('Whole'); updated=original+'\nEXTERNAL UPDATED\n'; note.write_text(updated); present('Embed Targets/Note.md','EXTERNAL UPDATED'); stable(queries['Whole']); capture('native-note-embed-external-update.png')
                 assert (hosts/'Whole.md').read_text()==host_bytes['Whole']
-                results.append('Missing notes/headings and direct/mutual recursive embeds showed visible cards without a hang; external target edits reflected in the unchanged host')
+                results.append('Missing notes/headings and direct/mutual recursive embeds showed status warnings without a hang; external target edits reflected in the unchanged host')
                 command('Source editing'); control_bounds('view-mode:Source mode'); assert not control_bounds('note-embed:'+queries['Whole'],required=False)
                 command('Live preview'); editor_end(); stable(queries['Whole']); click_control('note-embed-edit:'+queries['Whole']); control_bounds('editor-focused'); key('ctrl+c'); assert copied()=='![[Embed Targets/Note]]'
                 paste_text('![[Embed Targets/Sections#Pick café]]'); editor_end(); stable(queries['Heading']); key('ctrl+s')
@@ -11485,9 +11524,9 @@ def main():
                 setting("settings-template-folder", "Missing templates")
                 key("Escape")
                 command("Templates: Insert template")
-                assert control_bounds("template-error")
+                assert control_bounds("error-notice")
                 key("Return")
-                assert control_bounds("template-error") and journal.read_text() == kept
+                assert control_bounds("error-notice") and journal.read_text() == kept
                 click_control("template-configure",hold=.15)
                 control_bounds("settings-template-folder")
                 assert control_bounds("template-error",required=False) is None
@@ -11506,7 +11545,7 @@ def main():
                 target.write_text("# External replacement\nKeep this source.\n")
                 time.sleep(1)
                 click_control("template:Templates/Meeting.md", hold=.15)
-                assert control_bounds("dialog-error")
+                assert control_bounds("error-notice")
                 assert target.read_text() == "# External replacement\nKeep this source.\n"
                 capture("native-template-changed-note.png")
                 key("Escape")
@@ -11787,13 +11826,13 @@ def main():
                 missing["entries"][0]["layout"]["tabs"][0]["path"] = "Missing workspace note.md"
                 layout_path.write_text(json.dumps(missing))
                 manager();click_control("workspace-load:Writing",hold=.15)
-                assert control_bounds("workspace-error")
+                assert control_bounds("error-notice")
                 title_contains("Workspace A")
                 assert first.read_text() == first_source
                 key("Escape")
                 layout_path.write_text("{unfinished")
                 manager()
-                assert control_bounds("workspace-error")
+                assert control_bounds("error-notice")
                 assert layout_path.read_text() == "{unfinished"
                 key("Escape")
                 layout_path.write_bytes(original_metadata)
@@ -11987,7 +12026,7 @@ def main():
                     store.chmod(0)
                     assert not os.access(store,os.R_OK),"The read-error fixture must actually refuse access"
                     click_control("recovery-version:"+str(initial),hold=.15)
-                    control_bounds("recovery-error")
+                    control_bounds("error-notice")
                     assert control_bounds("recovery-ready",required=False) is None
                     click_control("recovery-copy",hold=.15)
                     assert subprocess.check_output(["xclip","-selection","clipboard","-out"],env=environment)==b"RECOVERY_READ_ERROR_CLIPBOARD"
@@ -12029,7 +12068,7 @@ def main():
                 history(3);choose_version(initial);control_bounds("recovery-ready")
                 target.write_bytes(b"# EXTERNAL_RECOVERY\n")
                 click_control("recovery-restore",hold=.15)
-                assert control_bounds("recovery-error") and target.read_bytes()==b"# EXTERNAL_RECOVERY\n"
+                assert control_bounds("error-notice") and target.read_bytes()==b"# EXTERNAL_RECOVERY\n"
                 assert copy_snapshot()==original
                 capture("native-recovery-conflict.png")
                 key("Escape")
@@ -12047,7 +12086,7 @@ def main():
                 history(3);choose_version(initial);control_bounds("recovery-ready")
                 target.write_bytes(b"# New collision\n")
                 click_control("recovery-restore",hold=.15)
-                assert control_bounds("recovery-error") and target.read_bytes()==b"# New collision\n"
+                assert control_bounds("error-notice") and target.read_bytes()==b"# New collision\n"
                 key("Escape");target.write_bytes(original);command("Refresh vault");pause()
                 results.append("A previously deleted note was recreated from its exact snapshot; a file appearing meanwhile was preserved without overwrite")
 
