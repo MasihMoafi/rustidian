@@ -1011,7 +1011,7 @@ impl NotesApp {
                         .extend(self.recovery_index_paths.drain());
                     let rescan = self.loading_root.take().is_none();
                     self.startup_document = None;
-                    if self.vault_manager.open {
+                    if self.vault_manager.open && !rescan {
                         self.vault_manager.show_error(error.clone());
                     }
                     if rescan {
