@@ -6696,7 +6696,13 @@ impl eframe::App for NotesApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(theme::space::S);
-                    let message = ui.label(RichText::new(&self.status).size(11.0).weak());
+                    let message = ui
+                        .add_sized(
+                            egui::vec2((ctx.content_rect().width() * 0.18).min(200.0), 18.0),
+                            egui::Label::new(RichText::new(&self.status).size(11.0).weak())
+                                .truncate(),
+                        )
+                        .on_hover_text(&self.status);
                     crate::ui_probe::record(
                         ui.ctx(),
                         format!("status:{}", self.status),
@@ -6803,7 +6809,9 @@ impl eframe::App for NotesApp {
             ),
         );
         let notice_action = crate::notices::show(&ctx, notice_rect, fallback);
-        if let Some(fallback) = self.voice_fallback.clone() {
+        if !notice_action.voice {
+            self.voice_fallback = None;
+        } else if let Some(fallback) = self.voice_fallback.clone() {
             if notice_action.hosted {
                 self.use_hosted_voice(fallback);
             } else if notice_action.setup {

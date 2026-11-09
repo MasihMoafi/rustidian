@@ -176,6 +176,7 @@ impl NotesApp {
         } else {
             self.save_voice_changes(&before);
         }
+        feedback_row(ui, &mut self.voice_form.message);
     }
 
     fn transcription_model_picker(&mut self, ui: &mut egui::Ui) {
