@@ -67,7 +67,7 @@ pub struct Action {
 /// entire area is clipped to the strip, including at narrow window widths.
 pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)>) -> Action {
     let rect = rect.intersect(ctx.content_rect());
-    let now = Instant::now();
+    // Warnings expire even while hovered.
     let current = ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
         if state
@@ -145,15 +145,11 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
         if dismiss || action.hosted || action.setup {
             state.current = None;
             Some(Duration::ZERO)
-        } else if let Some(current) = &mut state.current {
-            if shown.response.contains_pointer() {
-                current.since = now;
-                Some(Duration::from_millis(250))
-            } else {
-                Some(LIFETIME.saturating_sub(current.since.elapsed()))
-            }
         } else {
-            None
+            state
+                .current
+                .as_ref()
+                .map(|current| LIFETIME.saturating_sub(current.since.elapsed()))
         }
     });
     if let Some(after) = repaint {

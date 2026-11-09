@@ -8689,6 +8689,20 @@ int rename(const char *source, const char *destination) {
                     key("Escape")
                     results.append("Two different failed actions each received fresh status feedback; the second expired independently, and explicit retry/dismiss worked without recurrence")
 
+                def hovered_notice():
+                    click_control("new-folder")
+                    key("ctrl+a")
+                    key("BackSpace")
+                    key("Return")
+                    left, top, right, bottom = small_notice()
+                    xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)))
+                    time.sleep(8)
+                    capture("native-quiet-errors-hover-expired.png")
+                    assert not control_bounds("error-notice", required=False), "Resting the pointer on the warning kept it alive"
+                    control_bounds("dialog-input")
+                    key("Escape")
+                    results.append("A warning expired after six seconds even with the pointer resting on it; its dialog remained open")
+
                 def recovery_failure():
                     note = fixture / "Quiet history.md"
                     original = b"# Quiet history\n\nKEEP_HISTORY_BYTES\n"
@@ -9142,7 +9156,7 @@ int rename(const char *source, const char *destination) {
                         if control_bounds("error-dismiss", required=False):
                             click_control("error-dismiss")
 
-                run_checks([missing_embed, settings_failure, consecutive_errors, background_during_action, narrow_notice, recovery_failure, workspace_failure,
+                run_checks([missing_embed, settings_failure, consecutive_errors, hovered_notice, background_during_action, narrow_notice, recovery_failure, workspace_failure,
                             external_change, failed_save, template_failure, background_tab_reloads, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
 
             def background_io_checks():
