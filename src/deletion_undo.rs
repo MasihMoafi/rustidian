@@ -169,7 +169,8 @@ impl NotesApp {
                 .is_some_and(|(owner, id)| owner == tab.id() && self.editor.has_focus(ctx, id))
                 || crate::table_layout::has_focus(ctx, &tab.document.path)
         });
-        if ctx.egui_wants_keyboard_input() && !editor_focused {
+        let list_focused = ctx.memory(|memory| memory.has_focus(crate::file_tree::note_list_id()));
+        if ctx.egui_wants_keyboard_input() && !editor_focused && !list_focused {
             return; // Search, find, titles and other text fields keep native undo.
         }
         // Earlier text in this frame must reach the editor before this shortcut.
@@ -225,10 +226,8 @@ impl NotesApp {
             })
             .max_by_key(|(_, at)| *at);
         if let Some((index, _)) = newer {
-            if self.active != index {
-                self.active = index;
-                self.focus_editor();
-            }
+            self.active = index;
+            self.focus_editor();
             return;
         }
         if let Some(tab) = tab.filter(|tab| !tab.document.is_blank() && !tab.document.is_image()) {
