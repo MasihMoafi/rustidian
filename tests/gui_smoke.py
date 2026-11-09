@@ -9071,7 +9071,7 @@ def main():
 
                 plain = b'<!doctype html>\r\n<html><head><style>td {color: teal; padding: 8px}</style></head><body><h1>Standalone table</h1><table><tr><td>Exact bytes</td></tr></table></body></html>\r\n'
                 inner = '<!doctype html><html><head><style>body {background: #eef}</style></head><body><table><tr><td id="value">Before script</td></tr></table><script>document.getElementById("value").textContent = "After script";</script></body></html>'
-                framed = ('<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; frame-src about:"><style>iframe {width: 100%; height: 90vh}</style></head><body><iframe sandbox="allow-scripts" srcdoc="' + html.escape(inner, quote=True) + '"></iframe></body></html>').encode()
+                framed = ('<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; script-src \'unsafe-inline\'; frame-src about:"><style>iframe {width: 100%; height: 90vh}</style></head><body><iframe sandbox="allow-scripts" srcdoc="' + html.escape(inner, quote=True) + '"></iframe></body></html>').encode()
                 originals = {"Standalone table.html": plain, "Framed page.html": framed,
                     "Page with spaces فارسی # 100%.HtM": plain, "Browser failure.html": plain}
                 for name, source in originals.items():
@@ -9119,6 +9119,7 @@ def main():
                     capture("native-html-standalone-responsive.png")
                 finally:
                     hold.unlink(missing_ok=True)
+                assert wait_for(lambda: control_bounds("status:Opened HTML in browser", required=False) is not None, "browser completion"), "The pending launch must complete before the failure case starts"
                 results.append("A pending browser launch left the real mode controls responsive before the browser returned")
 
                 failed = base / "browser-fail"; failed.touch()
@@ -9158,7 +9159,8 @@ def main():
                 results.append("A second CLI launch and a Markdown file link both handed an outside-vault HTML page to the browser without a guest Source tab")
 
                 before = len(requests())
-                file_menu("Standalone table.html"); click_control("menu:Edit source", hold=.15)
+                file_menu("Standalone table.html"); capture("native-html-standalone-menu.png")
+                click_control("menu:Edit source", hold=.15)
                 title_contains("Standalone table"); control_bounds("view-mode:Source mode")
                 key("ctrl+s"); assert (fixture / "Standalone table.html").read_bytes() == plain
                 editor_end(); type_text("<!--SOURCE_EDIT-->"); key("ctrl+s")
