@@ -946,7 +946,7 @@ impl NotesApp {
                                     Ok(document) if document.text != tab.document.text => {
                                         tab.replace(document)
                                     }
-                                    Err(error) => crate::notices::once(ctx, &error, error.clone()),
+                                    Err(error) => crate::notices::once(ctx, FOLDER_ACCESS, error),
                                     _ => {}
                                 }
                             }
@@ -1005,7 +1005,7 @@ impl NotesApp {
                         self.vault_manager.show_error(error.clone());
                     }
                     if rescan {
-                        crate::notices::once(ctx, &error, error.clone());
+                        crate::notices::once(ctx, FOLDER_ACCESS, error);
                     } else {
                         self.error = Some(error);
                     }
