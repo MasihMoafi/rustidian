@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
-    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone"]
+    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo"]
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -824,6 +824,143 @@ def main():
                     assert note.read_text() == original, (mode, "second Undo")
                     results.append(mode + ": paused typing undoes one group at a time, redo restores it and exact original bytes survive")
                 capture("native-undo-groups.png")
+
+            def deletion_undo_checks():
+                original = "# Deleted note\r\n\r\nExact bytes: فارسی π.  \r\n".encode()
+                survivor = fixture / "A undo survivor.md"
+                survivor_bytes = b"# Survivor\n\nKeep earlier edits.\n"
+                survivor.write_bytes(survivor_bytes)
+                time.sleep(.7)
+
+                def prepare(name):
+                    path = fixture / ("A undo " + name + ".md")
+                    path.write_bytes(original)
+                    time.sleep(.7)
+                    open_note(path.stem)
+                    command("Source editing")
+                    return path
+
+                def delete_note(path):
+                    file_menu(str(path.relative_to(fixture)))
+                    click_control("menu:D  Delete")
+                    key("Return")
+                    assert not path.exists(), ("Deletion did not happen", path)
+                    assert any(p.is_file() and p.read_bytes() == original
+                               for p in (base / "data/Trash/files").iterdir()), "Deletion must still use system Trash"
+
+                def restored(path):
+                    assert path.exists(), "Ctrl+Z did not restore " + path.name
+                    assert path.read_bytes() == original, ("Restored bytes changed", path)
+                    control_bounds("tab-full:" + str(path.relative_to(fixture)))
+                    title_contains(path.stem)
+
+                def immediate():
+                    path = prepare("immediate")
+                    delete_note(path)
+                    key("ctrl+z")
+                    restored(path)
+                    capture("native-deletion-undo-immediate.png")
+                    results.append("Explorer delete then immediate Ctrl+Z restores exact CRLF/Unicode bytes and reopens the deleted tab")
+
+                def navigation():
+                    open_note(survivor.stem)
+                    command("Source editing")
+                    editor_end(); type_text("OLDER_TEXT"); key("ctrl+s")
+                    expected = survivor_bytes + b"OLDER_TEXT"
+                    assert survivor.read_bytes() == expected
+                    path = prepare("navigation")
+                    delete_note(path)
+                    click_control("file:A undo survivor.md")
+                    title_contains(survivor.stem)
+                    key("ctrl+z")
+                    restored(path)
+                    assert survivor.read_bytes() == expected, "Deletion must precede older text undo"
+                    capture("native-deletion-undo-navigation.png")
+                    results.append("Delete, click another note with older text history, then Ctrl+Z restores the deletion without undoing the older text")
+
+                def folder():
+                    root = fixture / "A undo folder"
+                    (root / "Nested/Empty").mkdir(parents=True)
+                    (root / ".hidden").mkdir()
+                    expected = {"Child.md": original, "Nested/Deep.md": b"# Deep\r\n",
+                                "Nested/raw.bin": bytes(range(256)), ".hidden/keep": b"\x00\xffhidden\r\n"}
+                    for relative, data in expected.items():
+                        (root / relative).write_bytes(data)
+                    time.sleep(.7)
+                    open_note("A undo folder/Child", title="Child")
+                    key("ctrl+t")
+                    open_note("A undo folder/Nested/Deep", title="Deep")
+                    click_control("folder:A undo folder", "3")
+                    click_control("folder-delete:A undo folder")
+                    key("Return")
+                    assert not root.exists(), "Folder deletion did not happen"
+                    key("ctrl+z")
+                    assert root.is_dir(), "Ctrl+Z did not restore a folder"
+                    assert (root / "Nested/Empty").is_dir()
+                    assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} == expected
+                    control_bounds("tab-full:A undo folder/Child.md")
+                    control_bounds("tab-full:A undo folder/Nested/Deep.md")
+                    capture("native-deletion-undo-folder.png")
+                    results.append("Whole-folder undo preserves every note, binary and hidden file byte, empty directories, and both open child tabs")
+
+                def text_priority():
+                    path = prepare("older deletion")
+                    delete_note(path)
+                    click_control("file:A undo survivor.md")
+                    command("Source editing")
+                    before = survivor.read_bytes()
+                    editor_end(); type_text("NEWER_TEXT"); key("ctrl+s")
+                    assert survivor.read_bytes() == before + b"NEWER_TEXT", "Typing did not reach the editor"
+                    key("ctrl+z"); key("ctrl+s")
+                    assert survivor.read_bytes() == before, "Ctrl+Z did not undo newer typing"
+                    assert not path.exists(), "Text undo resurrected an older deletion"
+                    key("ctrl+y"); key("ctrl+s")
+                    assert survivor.read_bytes() == before + b"NEWER_TEXT", "Text redo changed"
+                    assert not path.exists()
+                    key("ctrl+z"); key("ctrl+s")
+                    assert survivor.read_bytes() == before
+                    key("ctrl+z")
+                    restored(path)
+                    capture("native-deletion-undo-text-priority.png")
+                    results.append("New typing undoes/redoes normally while an older deletion stays deleted; the next Ctrl+Z restores that deletion at its own boundary")
+
+                def collision():
+                    path = prepare("collision")
+                    delete_note(path)
+                    replacement = b"# Replacement\r\nNever overwrite this.\r\n"
+                    path.write_bytes(replacement)
+                    occupied = path.with_stem(path.stem + " (restored 1)")
+                    occupied.write_bytes(b"KEEP NUMBERED CANDIDATE")
+                    time.sleep(.7)
+                    key("ctrl+z")
+                    assert path.read_bytes() == replacement, "Restore overwrote the occupied original path"
+                    assert occupied.read_bytes() == b"KEEP NUMBERED CANDIDATE"
+                    copies = [p for p in fixture.glob("A undo collision*.md") if p.read_bytes() == original]
+                    assert len(copies) == 1, ("No distinct exact-byte restore", copies)
+                    restored(copies[0])
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    assert any(name.startswith("status:") and str(copies[0].relative_to(fixture)) in name and "taken" in name
+                               for name in controls), "Status line did not explain the occupied path and new name"
+                    capture("native-deletion-undo-collision.png")
+                    results.append("An occupied original and numbered candidate both survive; exact deleted bytes and the tab restore to a distinct name announced in the status line")
+
+                def repeated():
+                    first = prepare("stack first")
+                    delete_note(first)
+                    second = prepare("stack second")
+                    delete_note(second)
+                    key("ctrl+z"); restored(second)
+                    assert not first.exists(), "Ctrl+Z restored the older deletion first"
+                    key("ctrl+z"); restored(first)
+                    assert second.read_bytes() == original
+                    results.append("Two consecutive deletions restore newest first without losing either file")
+
+                def failed(name, error):
+                    capture("native-deletion-undo-" + name + "-failure.png")
+                    print("DELETION_UNDO_FAILED: " + name + ": " + str(error), flush=True)
+
+                run_checks([immediate, navigation, folder, text_priority, collision, repeated],
+                           lambda name, error: failed(name, error))
 
             def callout_checks():
                 source = (ROOT / "tests/fixtures/callouts.md").read_text()
@@ -13266,6 +13403,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
                 return
+            if args.section == "deletion-undo":
+                deletion_undo_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"deletion-undo"}))
+                return
             if args.section == "undo":
                 undo_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -13646,6 +13788,7 @@ def main():
                 task_clip_checks,
                 essential_checks,
                 undo_checks,
+                deletion_undo_checks,
                 context_menu_checks,
                 color_checks,
                 native_highlight_checks,
