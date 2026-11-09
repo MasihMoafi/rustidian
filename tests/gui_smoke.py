@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
-    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo", "deletion-storage"]
+    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo", "deletion-storage", "quiet-errors"]
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -8631,6 +8631,134 @@ int rename(const char *source, const char *destination) {
                 finally:
                     locked.chmod(0o755)
 
+            def quiet_errors_checks():
+                # All failures use the status strip, expire, and preserve recovery.
+                observations = []
+
+                def small_notice():
+                    notice, bar = control_bounds("error-notice"), control_bounds("status-bar")
+                    assert bar[0] <= notice[0] < notice[2] <= bar[2], (notice, bar)
+                    assert bar[1] <= notice[1] < notice[3] <= bar[3], (notice, bar)
+                    assert notice[3] - notice[1] <= 22, notice
+                    return notice
+
+                def faded():
+                    xdo("mousemove", "--window", window, "20", "400")
+                    until = time.monotonic() + 8
+                    while control_bounds("error-notice", required=False) and time.monotonic() < until:
+                        time.sleep(.15)
+                    assert not control_bounds("error-notice", required=False), "The error did not expire"
+
+                def missing_embed():
+                    note = fixture / "Quiet embed.md"
+                    original = b"# Quiet embed\n\n![[Missing quiet target]]\n\nKeep this paragraph.\n"
+                    note.write_bytes(original)
+                    open_note("Quiet embed")
+                    command("Live preview")
+                    editor_end()
+                    capture("native-quiet-errors-embed.png")
+                    assert not control_bounds("note-embed-error:Missing quiet target", required=False), "An embed error covered the document"
+                    small_notice()
+                    faded()
+                    # Repainting and re-entering the same note must not re-report it.
+                    command("Source editing")
+                    command("Live preview")
+                    assert not control_bounds("error-notice", required=False), "An embed error recurred on repaint"
+                    assert note.read_bytes() == original
+                    results.append("A missing embed warned once in the status strip, faded, and did not return on a view change; note bytes stayed exact")
+
+                def settings_failure():
+                    open_note("Home")
+                    command("Open settings")
+                    click_control("settings-page:Editor")
+                    click_control("settings-inline-title")
+                    paths = [path for path in (base / "state/rustidian").glob("*.json")
+                             if any(name == "Home.md" for name, _ in json.loads(path.read_text()).get("tabs", []))]
+                    assert len(paths) == 1, paths
+                    path = paths[0]
+                    original = path.read_bytes()
+                    saved = json.loads(original)["editor_preferences"]["inline_title"]
+                    held = base / "quiet-settings.json"
+                    path.rename(held)
+                    path.mkdir()
+                    try:
+                        click_control("settings-inline-title")
+                        capture("native-quiet-errors-settings.png")
+                        small_notice()
+                        assert not control_bounds("dialog-error", required=False), "Settings retained a second error surface"
+                        faded()
+                        assert control_bounds("settings-inline-title"), "Expiry closed Settings"
+                        click_control("settings-inline-title")
+                        small_notice()  # A deliberate retry gets fresh feedback.
+                        faded()
+                    finally:
+                        path.rmdir()
+                        held.rename(path)
+                        key("Escape")
+                    assert json.loads(path.read_text())["editor_preferences"]["inline_title"] == saved
+                    assert path.read_bytes() == original
+                    results.append("A failed Settings write rolled back, warned outside the dialog and faded while Settings stayed open; a deliberate retry warned again")
+
+                def failed_save():
+                    note = fixture / "Quiet draft.md"
+                    original = b"# Quiet draft\n\nKEEP_ORIGINAL\n"
+                    note.write_bytes(original)
+                    open_note("Quiet draft")
+                    command("Source editing")
+                    command("Open settings")
+                    click_control("settings-page:Editor")
+                    paths = list((base / "state/rustidian").glob("*.json"))
+                    state = next((json.loads(path.read_text()) for path in paths
+                                  if any(name == "Quiet draft.md" for name, _ in json.loads(path.read_text()).get("tabs", []))),
+                                 {"autosave_enabled": True})
+                    if state["autosave_enabled"]:
+                        click_control("settings-autosave")
+                    key("Escape")
+                    editor_end()
+                    held = base / "quiet-draft-held.md"
+                    # A directory at the original file path gives a real write failure.
+                    os.kill(app.pid, signal.SIGSTOP)
+                    note.rename(held)
+                    note.mkdir()
+                    xdo("key", "--clearmodifiers", "ctrl+End")
+                    xdo("type", "--clearmodifiers", "--delay", "1", "--", "UNSAVED_QUIET_DRAFT")
+                    os.kill(app.pid, signal.SIGCONT)
+                    pause()
+                    try:
+                        key("ctrl+a")
+                        key("ctrl+c")
+                        draft = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, timeout=3)
+                        assert draft == original + b"UNSAVED_QUIET_DRAFT", ("The fixture did not edit the buffer", draft)
+                        key("ctrl+End")
+                        key("ctrl+s")
+                        small_notice()
+                        control_bounds("error-save-copy")
+                        capture("native-quiet-errors-save.png")
+                        faded()
+                        control_bounds("error-save-copy")
+                        capture("native-quiet-errors-save-expired.png")
+                        click_control("error-save-copy")
+                        key("ctrl+a")
+                        type_text("Quiet recovered.md")
+                        key("Return")
+                        title_contains("Quiet recovered")
+                        assert (fixture / "Quiet recovered.md").read_bytes() == original + b"UNSAVED_QUIET_DRAFT"
+                        assert held.read_bytes() == original
+                    finally:
+                        note.rmdir()
+                        held.rename(note)
+                    results.append("A failed save kept the exact unsaved draft and a Save a copy route after the warning faded; the copy recovered every byte")
+
+                def retain(name, error):
+                    capture("native-quiet-errors-" + name + "-failure.png")
+                    observations.append({"case": name, "error": repr(error), "traceback": traceback.format_exc()})
+                    (reports / "quiet-errors-failures.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    key("Escape")
+                    if control_bounds("error-dismiss", required=False):
+                        click_control("error-dismiss")
+
+                run_checks([missing_embed, settings_failure, failed_save], retain)
+
             def background_io_checks():
                 # Real disk syscalls are held by the fixture library; no application test flag.
                 nonlocal app, window
@@ -13317,6 +13445,11 @@ int rename(const char *source, const char *destination) {
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "quiet-errors":
+                quiet_errors_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "quiet-errors"}))
+                return
             if args.section == "quiet-warning":
                 quiet_warning_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -14124,6 +14257,7 @@ int rename(const char *source, const char *destination) {
             run_checks([
                 background_io_checks,
                 quiet_warning_checks,
+                quiet_errors_checks,
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,
