@@ -886,6 +886,9 @@ def main():
                                 "Nested/raw.bin": bytes(range(256)), ".hidden/keep": b"\x00\xffhidden\r\n"}
                     for relative, data in expected.items():
                         (root / relative).write_bytes(data)
+                    outside = base / "linked outside bytes"
+                    outside.write_bytes(b"KEEP LINK TARGET")
+                    (root / "Outside link").symlink_to(outside)
                     time.sleep(.7)
                     open_note("A undo folder/Child", title="Child")
                     key("ctrl+t")
@@ -897,32 +900,65 @@ def main():
                     key("ctrl+z")
                     assert root.is_dir(), "Ctrl+Z did not restore a folder"
                     assert (root / "Nested/Empty").is_dir()
-                    assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()} == expected
+                    assert {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file() and not p.is_symlink()} == expected
+                    assert (root / "Outside link").readlink() == outside and outside.read_bytes() == b"KEEP LINK TARGET"
                     control_bounds("tab-full:A undo folder/Child.md")
                     control_bounds("tab-full:A undo folder/Nested/Deep.md")
                     capture("native-deletion-undo-folder.png")
                     results.append("Whole-folder undo preserves every note, binary and hidden file byte, empty directories, and both open child tabs")
+                    click_control("folder:A undo folder", "3")
+                    click_control("folder-delete:A undo folder")
+                    key("Return")
+                    assert not root.exists()
+                    root.mkdir()
+                    (root / "Replacement.md").write_bytes(b"KEEP REPLACEMENT FOLDER")
+                    time.sleep(.7)
+                    key("ctrl+z")
+                    assert {p.name: p.read_bytes() for p in root.iterdir()} == {"Replacement.md": b"KEEP REPLACEMENT FOLDER"}
+                    copies = list(fixture.glob("A undo folder (restored *)"))
+                    assert len(copies) == 1
+                    assert {str(p.relative_to(copies[0])): p.read_bytes() for p in copies[0].rglob("*") if p.is_file() and not p.is_symlink()} == expected
+                    assert (copies[0] / "Outside link").readlink() == outside and outside.read_bytes() == b"KEEP LINK TARGET"
+                    control_bounds("tab-full:" + str(copies[0].relative_to(fixture)) + "/Nested/Deep.md")
+                    capture("native-deletion-undo-folder-collision.png")
+                    results.append("An occupied folder is preserved without merging; every deleted byte and child tab restores under a distinct folder name")
 
                 def text_priority():
-                    path = prepare("older deletion")
-                    delete_note(path)
-                    click_control("file:A undo survivor.md")
-                    command("Source editing")
-                    before = survivor.read_bytes()
-                    editor_end(); type_text("NEWER_TEXT"); key("ctrl+s")
-                    assert survivor.read_bytes() == before + b"NEWER_TEXT", "Typing did not reach the editor"
-                    key("ctrl+z"); key("ctrl+s")
-                    assert survivor.read_bytes() == before, "Ctrl+Z did not undo newer typing"
-                    assert not path.exists(), "Text undo resurrected an older deletion"
-                    key("ctrl+y"); key("ctrl+s")
-                    assert survivor.read_bytes() == before + b"NEWER_TEXT", "Text redo changed"
-                    assert not path.exists()
-                    key("ctrl+z"); key("ctrl+s")
-                    assert survivor.read_bytes() == before
-                    key("ctrl+z")
-                    restored(path)
-                    capture("native-deletion-undo-text-priority.png")
-                    results.append("New typing undoes/redoes normally while an older deletion stays deleted; the next Ctrl+Z restores that deletion at its own boundary")
+                    for mode in ("Source editing", "Live preview"):
+                        close_tabs()
+                        path = prepare("older deletion " + mode)
+                        delete_note(path)
+                        click_control("file:A undo survivor.md")
+                        command(mode)
+                        before = survivor.read_bytes()
+                        editor_end()
+                        queued_steps(("text", "QUEUED"), ("key", "ctrl+z"), ("key", "ctrl+s"))
+                        assert survivor.read_bytes() == before and not path.exists(), "Queued text undo restored an older deletion"
+                        editor_end(); type_text("NEWER_TEXT"); key("ctrl+s")
+                        assert survivor.read_bytes() == before + b"NEWER_TEXT", "Typing did not reach the editor"
+                        key("ctrl+z"); key("ctrl+s")
+                        assert survivor.read_bytes() == before, "Ctrl+Z did not undo newer typing"
+                        assert not path.exists(), "Text undo resurrected an older deletion"
+                        key("ctrl+y"); key("ctrl+s")
+                        assert survivor.read_bytes() == before + b"NEWER_TEXT", "Text redo changed"
+                        assert not path.exists()
+                        key("ctrl+t"); open_note("Home")
+                        home_before = (fixture / "Home.md").read_bytes()
+                        key("ctrl+z"); key("ctrl+s")
+                        assert survivor.read_bytes() == before and not path.exists(), "Navigation skipped the most recent text edit"
+                        assert (fixture / "Home.md").read_bytes() == home_before
+                        title_contains(survivor.stem)
+                        editor_end(); type_text("ROUND_TRIP")
+                        key("ctrl+a"); paste_text(before.decode()); key("ctrl+s")
+                        assert survivor.read_bytes() == before
+                        key("ctrl+z"); key("ctrl+s")
+                        assert survivor.read_bytes() == before + b"ROUND_TRIP" and not path.exists(), "Equal bytes hid newer text history"
+                        key("ctrl+z"); key("ctrl+s")
+                        assert survivor.read_bytes() == before and not path.exists()
+                        key("ctrl+z")
+                        restored(path)
+                        capture("native-deletion-undo-text-" + mode.split()[0].lower() + ".png")
+                        results.append(mode + ": queued text, undo/redo, navigation after typing, and a return to identical text preserve action order before deletion undo")
 
                 def collision():
                     path = prepare("collision")
@@ -945,6 +981,7 @@ def main():
                     results.append("An occupied original and numbered candidate both survive; exact deleted bytes and the tab restore to a distinct name announced in the status line")
 
                 def repeated():
+                    close_tabs()
                     first = prepare("stack first")
                     delete_note(first)
                     second = prepare("stack second")
@@ -955,11 +992,102 @@ def main():
                     assert second.read_bytes() == original
                     results.append("Two consecutive deletions restore newest first without losing either file")
 
+                def blocked_restore():
+                    close_tabs()
+                    parent = fixture / "A undo blocked"
+                    parent.mkdir()
+                    path = parent / "Blocked child.md"
+                    path.write_bytes(original)
+                    time.sleep(.7)
+                    open_note("Blocked child")
+                    delete_note(path)
+                    parked = fixture / "A undo blocked kept"
+                    parent.rename(parked)
+                    outside = base / "outside restore target"
+                    outside.mkdir()
+                    parent.symlink_to(outside, target_is_directory=True)
+                    key("ctrl+z")
+                    assert not (outside / path.name).exists(), "Restore followed a substituted parent link"
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    assert any(name.startswith("status:Cannot restore") for name in controls), "Restore failure was not reported"
+                    capture("native-deletion-undo-blocked.png")
+                    parent.rename(fixture / "A undo parked link")
+                    parked.rename(parent)
+                    key("ctrl+z")
+                    restored(path)
+                    assert not (outside / path.name).exists()
+                    capture("native-deletion-undo-retry.png")
+                    results.append("A substituted parent link blocks restoration without writes outside the vault; fixing the parent then retrying Ctrl+Z restores exact bytes and the tab")
+
+                def snapshot_failure():
+                    close_tabs()
+                    root = fixture / "A undo unreadable"
+                    root.mkdir()
+                    (root / "Child.md").write_bytes(original)
+                    hidden = root / ".unreadable"
+                    hidden.write_bytes(b"KEEP UNREADABLE DATA")
+                    time.sleep(.7)
+                    open_note("A undo unreadable/Child", title="Child")
+                    hidden.chmod(0)
+                    try:
+                        click_control("folder:A undo unreadable", "3")
+                        click_control("folder-delete:A undo unreadable")
+                        key("Return")
+                        assert root.is_dir(), "Deletion proceeded without a complete undo copy"
+                        assert (root / "Child.md").read_bytes() == original, "Deletion proceeded without a complete undo copy"
+                        capture("native-deletion-undo-copy-failure.png")
+                    finally:
+                        if hidden.exists(): hidden.chmod(0o600)
+                        key("Escape")
+                    assert hidden.read_bytes() == b"KEEP UNREADABLE DATA"
+                    results.append("An unreadable hidden file prevents deletion before any data is moved or lost")
+
+                def multi_selection():
+                    close_tabs()
+                    command("Open settings")
+                    click_control("settings-autosave")
+                    wait_autosave(base / "state", False)
+                    key("Escape")
+                    first = prepare("batch one")
+                    root = fixture / "A undo batch folder"
+                    root.mkdir()
+                    child = root / "Batch child.md"
+                    child.write_bytes(original)
+                    time.sleep(.7)
+                    key("ctrl+t"); open_note("Batch child")
+                    click_control("tab-full:" + str(first.relative_to(fixture)))
+                    click_control("file:" + str(first.relative_to(fixture)))
+                    command("Source editing")
+                    editor_end(); type_text("BATCH_DRAFT")
+                    assert first.read_bytes() == original, "The test needs an unsaved draft at deletion"
+                    xdo("keydown", "ctrl")
+                    try:
+                        click_control("folder:A undo batch folder")
+                        click_control("file:A undo batch folder/Batch child.md")
+                    finally:
+                        xdo("keyup", "ctrl")
+                    control_bounds("explorer-selected:3")
+                    key("Delete")
+                    click_control("explorer-trash-confirm")
+                    assert not first.exists() and not root.exists(), "Batch deletion did not happen"
+                    key("ctrl+z")
+                    assert first.exists() and child.exists(), "Ctrl+Z did not restore the batch"
+                    assert first.read_bytes() == original + b"BATCH_DRAFT" and child.read_bytes() == original
+                    control_bounds("tab-full:" + str(first.relative_to(fixture)))
+                    control_bounds("tab-full:A undo batch folder/Batch child.md")
+                    capture("native-deletion-undo-batch.png")
+                    command("Open settings")
+                    click_control("settings-autosave")
+                    wait_autosave(base / "state", True)
+                    key("Escape")
+                    results.append("A mixed file/folder/descendant multi-selection saves its dirty draft, deletes once, and one Ctrl+Z restores exact bytes and both open tabs")
+
                 def failed(name, error):
                     capture("native-deletion-undo-" + name + "-failure.png")
                     print("DELETION_UNDO_FAILED: " + name + ": " + str(error), flush=True)
 
-                run_checks([immediate, navigation, folder, text_priority, collision, repeated],
+                run_checks([immediate, navigation, folder, text_priority, collision, repeated,
+                            blocked_restore, snapshot_failure, multi_selection],
                            lambda name, error: failed(name, error))
 
             def callout_checks():
