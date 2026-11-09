@@ -33,6 +33,10 @@ mod media_ui;
 mod note_embed_ui;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
+#[path = "../src/notices.rs"]
+mod notices;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/page_preview.rs"]
 mod page_preview;
 #[cfg(not(test))]

@@ -8929,6 +8929,41 @@ int rename(const char *source, const char *destination) {
                         folder.chmod(0o755)
                     results.append("A failed save kept the exact unsaved draft and a Save a copy route after the warning faded; the copy recovered every byte")
 
+                def background_tab_reloads():
+                    nonlocal app, window
+                    app.terminate()
+                    app.wait(timeout=5)
+                    app = launch_app(launch_command)
+                    window = ready_window()
+                    note = fixture / "Quiet reload.md"
+                    original = b"# Quiet reload\n\nKEEP_RELOADED_BYTES\n"
+                    note.write_bytes(original)
+                    open_note("Quiet reload")
+                    note.chmod(0)
+                    held = base / "quiet-reload-held.md"
+                    try:
+                        assert not os.access(note, os.R_OK)
+                        small_notice()
+                        capture("native-quiet-errors-reload.png")
+                        faded()
+                        # Another kind of read error, without a new app action.
+                        note.chmod(0o644)
+                        note.rename(held)
+                        note.mkdir()
+                        until = time.monotonic() + 4
+                        while time.monotonic() < until:
+                            assert not control_bounds("error-notice", required=False), "A second background read failure repeated the warning"
+                            time.sleep(.1)
+                        title_contains("Quiet reload")
+                        capture("native-quiet-errors-reload-quiet.png")
+                    finally:
+                        if note.is_dir():
+                            note.rmdir()
+                            held.rename(note)
+                        note.chmod(0o644)
+                    assert note.read_bytes() == original
+                    results.append("A clean open file becoming unreadable warned once; replacing it with a directory produced a different read failure without another warning or an app action")
+
                 def startup_and_voice_failures():
                     nonlocal app, window
                     app.terminate()
@@ -9061,7 +9096,7 @@ int rename(const char *source, const char *destination) {
                             click_control("error-dismiss")
 
                 run_checks([missing_embed, settings_failure, consecutive_errors, background_during_action, narrow_notice, recovery_failure, workspace_failure,
-                            external_change, failed_save, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
+                            external_change, failed_save, background_tab_reloads, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
 
             def background_io_checks():
                 # Real disk syscalls are held by the fixture library; no application test flag.
