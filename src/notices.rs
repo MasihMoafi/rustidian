@@ -23,7 +23,7 @@ struct State {
 }
 
 fn state_id() -> egui::Id {
-    egui::Id::new("status-notices")
+    egui::Id::unique("status-notices")
 }
 
 /// An action failed. Calling this again is a new attempt, with a fresh lifetime.
@@ -45,11 +45,11 @@ pub fn report(ctx: &egui::Context, message: impl Into<String>) {
 
 /// A background/render failure is consumed even when another notice occupies the
 /// strip. It must never turn into a delayed warning after that notice expires.
-pub fn once(ctx: &egui::Context, key: impl Hash, message: impl Into<String>) {
+pub fn once(ctx: &egui::Context, key: impl Hash + std::fmt::Debug, message: impl Into<String>) {
     let message = message.into();
     let show = ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
-        state.seen.insert(egui::Id::new(key)) && state.current.is_none()
+        state.seen.insert(egui::Id::unique(key)) && state.current.is_none()
     });
     if show {
         report(ctx, message);
@@ -60,6 +60,7 @@ pub fn once(ctx: &egui::Context, key: impl Hash, message: impl Into<String>) {
 pub struct Action {
     pub hosted: bool,
     pub setup: bool,
+    pub voice: bool,
 }
 
 /// Draw after dialogs so their backdrop cannot hide the status warning. The
@@ -80,11 +81,12 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
     let mut action = Action::default();
     let Some(notice) = current else { return action };
     let fallback = fallback.filter(|(message, _)| *message == notice.message);
+    action.voice = fallback.is_some();
     if rect.width() < 36.0 {
         return action;
     }
     let mut dismiss = false;
-    let shown = egui::Area::new(egui::Id::new("status-warning"))
+    let shown = egui::Area::new(egui::Id::unique("status-warning"))
         .order(egui::Order::Tooltip)
         .constrain(false)
         .pivot(egui::Align2::LEFT_CENTER)
@@ -100,7 +102,7 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
                         .fit_to_exact_size(egui::vec2(12.0, 12.0)),
                 );
                 // Leave space for the close button and optional voice actions.
-                let actions_width = if fallback.is_some() { 225.0 } else { 24.0 };
+                let actions_width = if fallback.is_some() { 150.0 } else { 24.0 };
                 let width = (rect.width() - actions_width - 24.0).max(12.0);
                 let line = notice.message.lines().next().unwrap_or_default();
                 let label = ui
@@ -116,14 +118,16 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
                     label.rect.intersect(rect),
                 );
                 if let Some((_, setup)) = fallback {
-                    let hosted = ui.small_button("Use OpenRouter");
+                    let hosted = ui
+                        .small_button("OpenRouter")
+                        .on_hover_text("Use OpenRouter (paid)");
                     ui_probe::record(
                         ctx,
                         "voice-fallback-use-openrouter",
                         hosted.rect.intersect(rect),
                     );
                     action.hosted = hosted.clicked();
-                    let setup = ui.small_button(setup);
+                    let setup = ui.small_button("Set up").on_hover_text(setup);
                     ui_probe::record(ctx, "voice-fallback-setup", setup.rect.intersect(rect));
                     action.setup = setup.clicked();
                 }
