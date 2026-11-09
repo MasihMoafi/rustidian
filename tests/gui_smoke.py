@@ -1077,6 +1077,8 @@ def main():
 
             def deletion_storage_checks():
                 nonlocal app, window
+                launch_settings = {name: environment.get(name) for name in
+                                   ("TMPDIR", "RUSTIDIAN_FRAME_LOG", "LD_PRELOAD", "TRASH_DELAY_MARKER")}
                 # This real filesystem failure used to stop deletion before Trash.
                 unusable = base / "not-a-temporary-directory"
                 unusable.write_bytes(b"TEMP STORAGE UNAVAILABLE")
@@ -1273,6 +1275,14 @@ int rename(const char *source, const char *destination) {
                 assert not list(base.glob("rustidian-deletion-*"))
                 capture("native-deletion-storage-after-crash.png")
                 results.append("A forced app crash and restart leave the exact large payload in system Trash with no app-held copy or temporary-directory dependency")
+                for name, value in launch_settings.items():
+                    if value is None:
+                        environment.pop(name, None)
+                    else:
+                        environment[name] = value
+                # The 'all' section continues with the normal app environment.
+                confirm_quit(); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
 
             def callout_checks():
                 source = (ROOT / "tests/fixtures/callouts.md").read_text()
