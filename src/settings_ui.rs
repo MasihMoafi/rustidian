@@ -589,11 +589,6 @@ impl NotesApp {
                         }
                     });
                 crate::ui_probe::record(ctx, "settings-viewport", content.inner_rect);
-                if let Some(error) = &self.error {
-                    ui.add_space(crate::theme::space::M);
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                    crate::ui_probe::record(ctx, "dialog-error", ui.min_rect());
-                }
             });
         });
         if changed {

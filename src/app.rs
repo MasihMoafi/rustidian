@@ -76,8 +76,6 @@ struct PreparedVault {
 }
 
 const ATTENTION_DELAY: Duration = Duration::from_millis(1500);
-/// How long an error notice stays once the pointer leaves it.
-const ERROR_NOTICE_TIME: Duration = Duration::from_secs(6);
 /// One unreadable folder trips the indexer, the watcher and history together: one notice.
 const FOLDER_ACCESS: &str = "folder-access";
 
@@ -166,10 +164,6 @@ pub struct NotesApp {
     files: rustidian::search::FileMatcher,
     pending: Option<Pending>,
     error: Option<String>,
-    /// The notice on screen and when its fade timer last started.
-    error_seen: Option<(String, Instant)>,
-    /// Background warnings already shown; none of them comes back this session.
-    warned: std::collections::HashSet<String>,
     voice_fallback: Option<VoiceFallback>,
     status: String,
     allow_close: bool,
@@ -304,8 +298,6 @@ impl NotesApp {
             files: rustidian::search::FileMatcher::new(Vec::new()),
             pending: None,
             error: None,
-            error_seen: None,
-            warned: Default::default(),
             voice_fallback: None,
             status: "Ready".into(),
             allow_close: false,
@@ -644,11 +636,18 @@ impl NotesApp {
         if let Err(error) = spawned {
             self.loading = None;
             self.loading_root = None;
-            self.error = Some(format!("Cannot start vault indexing: {error}"));
+            crate::notices::once(
+                &self.ctx,
+                "index-worker",
+                format!("Cannot start vault indexing: {error}"),
+            );
         }
     }
 
     fn background(&mut self, ctx: &egui::Context) {
+        if let Some(error) = crate::read_aloud::take_error() {
+            crate::notices::report(ctx, error);
+        }
         crate::ui_probe::metric(
             ctx,
             "save-pending",
@@ -747,7 +746,7 @@ impl NotesApp {
                     }
                     Err(error) => {
                         let warning = rustidian::watcher::describe(&error);
-                        warn_once(&mut self.error, &mut self.warned, FOLDER_ACCESS, warning);
+                        crate::notices::once(ctx, FOLDER_ACCESS, warning);
                     }
                     _ => {}
                 }
@@ -802,7 +801,7 @@ impl NotesApp {
                         self.watch_overflow = overflow;
                     }
                     if let Some(warning) = watch_warning {
-                        warn_once(&mut self.error, &mut self.warned, FOLDER_ACCESS, warning);
+                        crate::notices::once(ctx, FOLDER_ACCESS, warning);
                     }
                     let opening = self.loading_root.take().is_some();
                     if opening {
@@ -947,12 +946,7 @@ impl NotesApp {
                                     Ok(document) if document.text != tab.document.text => {
                                         tab.replace(document)
                                     }
-                                    Err(error) => warn_once(
-                                        &mut self.error,
-                                        &mut self.warned,
-                                        &error,
-                                        error.clone(),
-                                    ),
+                                    Err(error) => crate::notices::once(ctx, &error, error.clone()),
                                     _ => {}
                                 }
                             }
@@ -984,9 +978,8 @@ impl NotesApp {
                                 eprintln!("not indexed: {warning}");
                             }
                             let count = vault.warnings.len();
-                            warn_once(
-                                &mut self.error,
-                                &mut self.warned,
+                            crate::notices::once(
+                                ctx,
                                 FOLDER_ACCESS,
                                 format!(
                                     "{count} item{} could not be indexed",
@@ -1012,7 +1005,7 @@ impl NotesApp {
                         self.vault_manager.show_error(error.clone());
                     }
                     if rescan {
-                        warn_once(&mut self.error, &mut self.warned, &error, error.clone());
+                        crate::notices::once(ctx, &error, error.clone());
                     } else {
                         self.error = Some(error);
                     }
@@ -1090,7 +1083,7 @@ impl NotesApp {
                     self.recovery_history = Some(history);
                 }
                 Err(error) => {
-                    self.error = Some(error);
+                    crate::notices::once(ctx, "history-open", error);
                     return;
                 }
             }
@@ -1102,7 +1095,7 @@ impl NotesApp {
             ctx.request_repaint_after(Duration::from_millis(20));
         }
         while let Ok(error) = recorder.errors.try_recv() {
-            warn_once(&mut self.error, &mut self.warned, FOLDER_ACCESS, error);
+            crate::notices::once(ctx, FOLDER_ACCESS, error);
         }
         if recorder.events.try_iter().count() > 0 {
             self.recovery_manager.changed(ctx);
@@ -2774,9 +2767,10 @@ impl NotesApp {
                             paths.clone_from(results);
                         }
                         if let Some(error) = &self.search_cache.error {
-                            ui.colored_label(
-                                Color32::from_rgb(220, 135, 110),
-                                RichText::new(error).size(12.0),
+                            crate::notices::once(
+                                ui.ctx(),
+                                ("search-warning", error),
+                                error.clone(),
                             );
                         }
                         ui.label(
@@ -3883,7 +3877,6 @@ impl NotesApp {
 
     fn offer_voice_fallback(&mut self, fallback: VoiceFallback) {
         self.error = Some(fallback.message().into());
-        self.error_seen = None;
         self.voice_fallback = Some(fallback);
         self.ctx.request_repaint();
     }
@@ -3916,7 +3909,6 @@ impl NotesApp {
                 self.error = Some(format!(
                     "OpenRouter was not selected; the previous voice choice is unchanged: {error}"
                 ));
-                self.error_seen = None;
             }
         }
     }
@@ -4863,7 +4855,6 @@ impl NotesApp {
                     crate::ui_probe::record(ctx, "pending-cancel", cancel.rect);
                     if cancel.clicked() { self.cancel_save_actions(); self.pending = None; }
                 });
-                if let Some(error) = &self.error { ui.colored_label(Color32::from_rgb(235, 157, 132), error); }
             });
             if response.should_close() {
                 self.cancel_save_actions();
@@ -5106,14 +5097,6 @@ impl NotesApp {
             }
             let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
             ui.add_space(theme::space::M);
-            if let Some(error) = &self.error {
-                let label = ui.label(
-                    RichText::new(error)
-                        .size(13.0)
-                        .color(Color32::from_rgb(235, 157, 132)),
-                );
-                crate::ui_probe::record(ctx, "dialog-error", label.rect);
-            }
             match dialog {
                 Dialog::QuickOpen => {
                     let matches = self.files.rank(&self.dialog_input, 100);
@@ -5183,8 +5166,7 @@ impl NotesApp {
                 Dialog::InsertTemplate => {
                     match &mut self.template_choices {
                         Err(error) => {
-                            let label = ui.label(error.as_str());
-                            crate::ui_probe::record(ctx, "template-error", label.rect);
+                            crate::notices::once(ctx, ("templates", &self.note_aids.templates.folder), error.clone());
                             let configure = ui.button("Open Templates settings");
                             crate::ui_probe::record(ctx, "template-configure", configure.rect);
                             configure_templates = configure.clicked();
@@ -6725,6 +6707,15 @@ impl eframe::App for NotesApp {
             self.start_open_picker(kind);
         }
         let mut status_text_right = 0.0;
+        let mut status_controls_left = ctx.content_rect().right();
+        let failed_tab = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| tab.autosave_failed && tab.document.dirty())
+            .min_by_key(|(index, _)| *index != self.active)
+            .map(|(index, _)| index);
+        let mut save_copy = false;
         let status = egui::Panel::bottom("status")
             .exact_size(28.0)
             .resizable(false)
@@ -6748,6 +6739,11 @@ impl eframe::App for NotesApp {
                             ui.label(RichText::new("Image").size(11.0).weak());
                             return;
                         }
+                        if failed_tab.is_some() {
+                            let copy = ui.small_button("Save a copy…");
+                            crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
+                            save_copy = copy.clicked();
+                        }
                         if self.editor_preferences.show_mode {
                             self.show_view_mode(ui);
                         }
@@ -6769,135 +6765,14 @@ impl eframe::App for NotesApp {
                                 );
                             }
                         }
+                        status_controls_left = ui.cursor().right();
                     });
                 });
             });
         crate::ui_probe::record(ui.ctx(), "status-bar", status.response.rect);
-        if self.error.is_none() {
-            self.error_seen = None;
-            self.voice_fallback = None;
-        } else if self.error_seen.as_ref().is_some_and(|(seen, at)| {
-            self.error.as_ref() == Some(seen) && at.elapsed() >= ERROR_NOTICE_TIME
-        }) {
-            // Expire before drawing, so the last painted frame has no notice.
-            self.error = None;
-            self.error_seen = None;
-            self.voice_fallback = None;
-        }
-        if self.dialog.is_none()
-            && let Some(error) = self.error.clone()
-        {
-            if self
-                .voice_fallback
-                .as_ref()
-                .is_some_and(|fallback| fallback.message() != error)
-            {
-                self.voice_fallback = None;
-            }
-            let fallback = self.voice_fallback.clone();
-            let mut use_hosted = false;
-            let mut set_up = false;
-            let now = Instant::now();
-            if self
-                .error_seen
-                .as_ref()
-                .is_none_or(|(seen, _)| *seen != error)
-            {
-                self.error_seen = Some((error.clone(), now));
-            }
-            let notice_width = (ctx.content_rect().width() * 0.4).min(460.0);
-            let notice = egui::Area::new(egui::Id::unique("error"))
-                .order(egui::Order::Foreground)
-                // The status bar can lie past the area egui keeps windows inside.
-                .constrain(false)
-                .pivot(egui::Align2::LEFT_CENTER)
-                .fixed_pos(egui::pos2(
-                    status_text_right + theme::space::L,
-                    status.response.rect.center().y,
-                ))
-                .show(&ctx, |ui| {
-                    egui::Frame::NONE.show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                theme::icon_image(
-                                    theme::Icon::CalloutWarning,
-                                    ui.visuals().warn_fg_color,
-                                )
-                                .fit_to_exact_size(egui::vec2(12.0, 12.0)),
-                            );
-                            ui.horizontal(|ui| {
-                                ui.set_max_width(notice_width);
-                                let line = error.lines().next().unwrap_or_default();
-                                let message = ui
-                                    .add(
-                                        egui::Label::new(RichText::new(line).size(11.0)).truncate(),
-                                    )
-                                    .on_hover_text(&error);
-                                crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
-                                if let Some(fallback) = &fallback {
-                                    ui.horizontal_wrapped(|ui| {
-                                        let hosted = theme::button(
-                                            ui,
-                                            "Use OpenRouter",
-                                            theme::Kind::Primary,
-                                        );
-                                        crate::ui_probe::record(
-                                            ui.ctx(),
-                                            "voice-fallback-use-openrouter",
-                                            hosted.rect,
-                                        );
-                                        use_hosted = hosted.clicked();
-                                        let setup = theme::button(
-                                            ui,
-                                            fallback.setup().0,
-                                            theme::Kind::Outline,
-                                        );
-                                        crate::ui_probe::record(
-                                            ui.ctx(),
-                                            "voice-fallback-setup",
-                                            setup.rect,
-                                        );
-                                        set_up = setup.clicked();
-                                    });
-                                }
-                                if self
-                                    .tabs
-                                    .get(self.active)
-                                    .is_some_and(|tab| tab.document.dirty())
-                                {
-                                    let copy = ui.button("Save a copy…");
-                                    crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
-                                    if copy.clicked() {
-                                        self.ask(Dialog::SaveCopy);
-                                    }
-                                }
-                            });
-                            let dismiss = theme::icon_button(ui, theme::Icon::Close, "Dismiss");
-                            crate::ui_probe::record(ui.ctx(), "error-dismiss", dismiss.rect);
-                            if dismiss.clicked() {
-                                self.error = None;
-                            }
-                        });
-                    });
-                });
-            if let Some(fallback) = fallback {
-                if use_hosted {
-                    self.use_hosted_voice(fallback);
-                } else if set_up {
-                    ctx.open_url(egui::OpenUrl::new_tab(fallback.setup().1));
-                    self.error = None;
-                    self.voice_fallback = None;
-                }
-            }
-            // Notices fade like Obsidian's; the pointer resting on one keeps it.
-            if notice.response.contains_pointer() {
-                // Recheck often so a still pointer keeps renewing the timer.
-                self.error_seen = Some((error, now));
-                ctx.request_repaint_after(Duration::from_millis(250));
-            } else if let Some((_, at)) = &self.error_seen {
-                let left = ERROR_NOTICE_TIME.saturating_sub(now.duration_since(*at));
-                ctx.request_repaint_after(left.max(Duration::from_millis(16)));
-            }
+        if save_copy && let Some(index) = failed_tab {
+            self.active = index;
+            self.ask(Dialog::SaveCopy);
         }
         self.ribbon(ui);
         self.sidebar(ui);
@@ -6935,6 +6810,32 @@ impl eframe::App for NotesApp {
         {
             self.save(self.active);
         }
+        if let Some(error) = self.error.take() {
+            crate::notices::report(&ctx, error);
+        }
+        let fallback = self
+            .voice_fallback
+            .as_ref()
+            .map(|fallback| (fallback.message(), fallback.setup().0));
+        let notice_rect = egui::Rect::from_min_max(
+            egui::pos2(
+                status_text_right + theme::space::L,
+                status.response.rect.top(),
+            ),
+            egui::pos2(
+                status_controls_left - theme::space::S,
+                status.response.rect.bottom(),
+            ),
+        );
+        let notice_action = crate::notices::show(&ctx, notice_rect, fallback);
+        if let Some(fallback) = self.voice_fallback.clone() {
+            if notice_action.hosted {
+                self.use_hosted_voice(fallback);
+            } else if notice_action.setup {
+                ctx.open_url(egui::OpenUrl::new_tab(fallback.setup().1));
+                self.voice_fallback = None;
+            }
+        }
         crate::ui_probe::frame_time(&ctx, frame_started);
         if frame_started.elapsed() > Duration::from_millis(300) {
             eprintln!(
@@ -6953,20 +6854,6 @@ impl eframe::App for NotesApp {
             );
             self.first_frame = false;
         }
-    }
-}
-
-/// Show a background warning at most once per session and never over another notice.
-fn warn_once(
-    error: &mut Option<String>,
-    warned: &mut std::collections::HashSet<String>,
-    key: &str,
-    message: String,
-) {
-    eprintln!("warning: {message}");
-    if error.is_none() && !warned.contains(key) {
-        warned.insert(key.to_owned());
-        *error = Some(message);
     }
 }
 

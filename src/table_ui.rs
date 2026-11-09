@@ -1530,8 +1530,8 @@ impl Tables {
             self.focus = None;
             ui.ctx().request_repaint();
         }
-        if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ui.ctx(), error);
         }
         follow
     }

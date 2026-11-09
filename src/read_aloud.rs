@@ -18,7 +18,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
 
 #[path = "read_aloud/worker.rs"]
 mod worker;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub const SPEEDS: [(f32, &str, &str); 7] = [
     (1.0, "Normal", "1.0×"),
@@ -82,8 +82,6 @@ pub fn speed_menu(ui: &mut egui::Ui, speed: &mut Option<f32>, id: &str) {
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
 /// The worker leaves after this long without a read, to give the GPU memory back.
 const IDLE: Duration = Duration::from_secs(30 * 60);
-/// How long a read-aloud error stays when the pointer is not on it.
-const ERROR_TIME: Duration = Duration::from_secs(6);
 
 /// What the player bar shows.
 #[derive(Clone, Default)]
@@ -257,9 +255,6 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
         service.cancel();
     }
     let epoch = service().map_or(0, worker::Service::epoch);
-    ctx.data_mut(|data| {
-        data.remove::<(String, Instant)>(egui::Id::unique("read-aloud-error-seen"));
-    });
     if chunks.is_empty() {
         return;
     }
@@ -617,17 +612,27 @@ pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &
 /// Height reserved under the document while the player shows, so it never covers note text.
 pub const PLAYER_STRIP: f32 = 52.0;
 
-/// Whether the player shows this frame (a reading or its error).
+/// Consume a completed speech failure even if its document is no longer visible.
+pub fn take_error() -> Option<String> {
+    SHARED
+        .status
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .error
+        .take()
+}
+
+/// Whether speech is playing this frame.
 pub fn player_visible() -> bool {
     let status = status();
-    status.active || status.error.is_some()
+    status.active
 }
 
 /// The player: Stop, which sentence is playing, and its words, in the strip under `area`.
 pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>) -> bool {
     let before = *speed;
     let status = status();
-    if !status.active && status.error.is_none() {
+    if !status.active {
         return false;
     }
     let width = area.width().clamp(
@@ -635,7 +640,7 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
         crate::theme::space::PLAYER_MAX_WIDTH,
     );
     let position = egui::pos2(area.center().x - width / 2.0, area.bottom() + 6.0);
-    let shown = egui::Area::new(egui::Id::unique("read-aloud-player"))
+    egui::Area::new(egui::Id::unique("read-aloud-player"))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
         .show(ctx, |ui| {
@@ -682,26 +687,6 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
                             egui::Label::new(egui::RichText::new(&status.current).small())
                                 .truncate(),
                         );
-                    } else if let Some(error) = &status.error {
-                        ui.label(
-                            egui::RichText::new(error)
-                                .small()
-                                .color(ui.visuals().error_fg_color),
-                        );
-                        let close = ui.small_button("Close");
-                        crate::ui_probe::record(ctx, "read-aloud-error-close", close.rect);
-                        if close.clicked() {
-                            SHARED
-                                .status
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .error = None;
-                            ctx.data_mut(|data| {
-                                data.remove::<(String, Instant)>(egui::Id::unique(
-                                    "read-aloud-error-seen",
-                                ));
-                            });
-                        }
                     }
                 });
             });
@@ -709,33 +694,6 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
             crate::ui_probe::metric(ctx, "read-aloud-index", status.index as f32);
             response.response.contains_pointer()
         });
-    // An error fades like the app's notices: 6 s after it shows, kept while hovered.
-    if !status.active
-        && let Some(error) = status.error
-    {
-        let id = egui::Id::unique("read-aloud-error-seen");
-        let now = Instant::now();
-        let seen = ctx.data(|data| data.get_temp::<(String, Instant)>(id));
-        let since = match seen {
-            Some((shown_error, at)) if shown_error == error && !shown.inner => at,
-            _ => {
-                ctx.data_mut(|data| data.insert_temp(id, (error, now)));
-                now
-            }
-        };
-        let left = ERROR_TIME.saturating_sub(now.duration_since(since));
-        if left.is_zero() {
-            SHARED
-                .status
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .error = None;
-            ctx.data_mut(|data| data.remove::<(String, Instant)>(id));
-            ctx.request_repaint();
-        } else {
-            ctx.request_repaint_after(left.min(Duration::from_millis(250)));
-        }
-    }
     if *speed != before {
         set_speed(*speed);
     }

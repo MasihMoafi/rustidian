@@ -54,7 +54,7 @@ impl Manager {
             .map(|root| root.display().to_string())
             .unwrap_or_default();
         self.name.clear();
-        self.error = None;
+        self.error = self.list.as_ref().err().cloned();
         self.parent_enter_observed = false;
     }
 
@@ -157,12 +157,8 @@ impl Manager {
             ui_probe::record(ctx, "vault-manager-close", button.rect);
             close |= button.clicked();
             let busy = loading || self.picker.active();
-            let has_error = self.error.is_some() || self.list.is_err();
-            let body_height = (ctx.content_rect().height()
-                - 160.0
-                - if busy { 44.0 } else { 0.0 }
-                - if has_error { 84.0 } else { 0.0 })
-            .clamp(120.0, 480.0);
+            let body_height = (ctx.content_rect().height() - 160.0 - if busy { 44.0 } else { 0.0 })
+                .clamp(120.0, 480.0);
             let body = ScrollArea::vertical()
                 .id_salt("vault-manager-body")
                 .max_height(body_height)
@@ -453,21 +449,6 @@ impl Manager {
                 );
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
-            if let Some(error) = self.error.as_ref().or_else(|| self.list.as_ref().err()) {
-                ScrollArea::vertical()
-                    .id_salt("vault-error")
-                    .max_height(72.0)
-                    .show(ui, |ui| {
-                        let label = ui.add(
-                            egui::Label::new(
-                                RichText::new(error).color(ui.visuals().error_fg_color),
-                            )
-                            .wrap()
-                            .selectable(true),
-                        );
-                        ui_probe::record(ctx, "vault-error", label.rect.intersect(ui.clip_rect()));
-                    });
-            }
         });
         ui_probe::record(ctx, "vault-manager", response.response.rect);
         if forget.is_some() || selected.is_some() {
@@ -483,13 +464,17 @@ impl Manager {
             self.close();
             return None;
         }
-        selected.and_then(|root| match vaults::folder(&root) {
+        let selected = selected.and_then(|root| match vaults::folder(&root) {
             Ok(root) => Some(root),
             Err(error) => {
                 self.error = Some(error);
                 None
             }
-        })
+        });
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ctx, error);
+        }
+        selected
     }
 }
 
