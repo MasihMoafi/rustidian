@@ -1000,7 +1000,7 @@ def main():
                     capture("native-deletion-undo-retry.png")
                     results.append("A substituted parent link blocks restoration without writes outside the vault; fixing the parent then retrying Ctrl+Z restores exact bytes and the tab")
 
-                def snapshot_failure():
+                def unreadable():
                     close_tabs()
                     root = fixture / "A undo unreadable"
                     root.mkdir()
@@ -1014,14 +1014,18 @@ def main():
                         click_control("folder:A undo unreadable", "3")
                         click_control("folder-delete:A undo unreadable")
                         key("Return")
-                        assert root.is_dir(), "Deletion proceeded without a complete undo copy"
-                        assert (root / "Child.md").read_bytes() == original, "Deletion proceeded without a complete undo copy"
-                        capture("native-deletion-undo-copy-failure.png")
+                        assert not root.exists(), "An unreadable file must not prevent system Trash deletion"
+                        key("ctrl+z")
+                        assert root.is_dir(), "Ctrl+Z did not restore the unreadable file's folder"
+                        assert (root / "Child.md").read_bytes() == original
+                        capture("native-deletion-undo-unreadable.png")
                     finally:
                         if hidden.exists(): hidden.chmod(0o600)
+                        for trashed in (base / "data/Trash/files").glob("A undo unreadable*"):
+                            if (trashed / ".unreadable").exists(): (trashed / ".unreadable").chmod(0o600)
                         key("Escape")
                     assert hidden.read_bytes() == b"KEEP UNREADABLE DATA"
-                    results.append("An unreadable hidden file prevents deletion before any data is moved or lost")
+                    results.append("An unreadable hidden file still moves to system Trash; Ctrl+Z restores every byte and the open child tab")
 
                 def multi_selection():
                     close_tabs()
@@ -1068,7 +1072,7 @@ def main():
                     print("DELETION_UNDO_FAILED: " + name + ": " + str(error), flush=True)
 
                 run_checks([immediate, navigation, folder, text_priority, collision, repeated,
-                            blocked_restore, snapshot_failure, multi_selection],
+                            blocked_restore, unreadable, multi_selection],
                            lambda name, error: failed(name, error))
 
             def deletion_storage_checks():
@@ -1078,6 +1082,30 @@ def main():
                 unusable.write_bytes(b"TEMP STORAGE UNAVAILABLE")
                 environment["TMPDIR"] = str(unusable)
                 environment["RUSTIDIAN_FRAME_LOG"] = str(base / "deletion-frames.log")
+                # Delay only the real Trash rename of this fixture. The UI must
+                # paint and accept Ctrl+Z while that filesystem operation waits.
+                interceptor = base / "slow-trash.c"
+                interceptor.write_text(r'''
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int rename(const char *source, const char *destination) {
+    int (*next)(const char *, const char *) = dlsym(RTLD_NEXT, "rename");
+    if (strstr(source, "A storage delayed.md")) {
+        int marker = open(getenv("TRASH_DELAY_MARKER"), O_WRONLY|O_CREAT, 0600);
+        if (marker >= 0) close(marker);
+        usleep(2000000);
+    }
+    return next(source, destination);
+}
+''')
+                library = base / "slow-trash.so"
+                subprocess.run(["cc", "-shared", "-fPIC", "-o", str(library), str(interceptor), "-ldl"], check=True)
+                environment["LD_PRELOAD"] = str(library)
+                environment["TRASH_DELAY_MARKER"] = str(base / "trash-delayed")
                 confirm_quit(); app.wait(timeout=10)
                 app = launch_app(launch_command); window = ready_window()
                 expected = "# Storage check\r\n\r\nExact bytes: فارسی π.  \r\n".encode()
@@ -1113,6 +1141,22 @@ def main():
                 control_bounds("tab-full:" + note.name)
                 capture("native-deletion-storage-temp-unavailable.png")
                 results.append("Unusable TMPDIR cannot prevent deletion; system Trash restores the exact note bytes and open tab without an undo copy")
+
+                delayed = fixture / "A storage delayed.md"
+                delayed.write_bytes(expected)
+                time.sleep(.7); open_note(delayed.stem)
+                file_menu(delayed.name); click_control("menu:D  Delete")
+                key("Return")
+                wait_for((base / "trash-delayed").exists, "The actual Trash rename was not delayed")
+                assert delayed.exists(), "The fixture must still be moving when Ctrl+Z arrives"
+                stamp = (base / "ui-probe.json").stat().st_mtime_ns
+                key("ctrl+z")
+                assert (base / "ui-probe.json").stat().st_mtime_ns > stamp, "Delayed Trash blocked UI frames"
+                wait_for(lambda: delayed.exists() and control_bounds("tab-full:" + delayed.name, required=False) is not None,
+                         "Immediate Ctrl+Z was lost during a pending Trash operation")
+                assert delayed.read_bytes() == expected
+                capture("native-deletion-storage-pending-undo.png")
+                results.append("A real two-second Trash rename leaves UI frames responsive; Ctrl+Z during the pending move restores the exact bytes and open tab on completion")
 
                 root = fixture / "A storage unreadable"
                 root.mkdir()
