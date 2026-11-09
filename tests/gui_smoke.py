@@ -8193,6 +8193,11 @@ def main():
                     results.append("A warning expired after six seconds even with the pointer resting on it; its dialog remained open")
 
                 def recovery_failure():
+                    nonlocal app, window
+                    app.terminate()
+                    app.wait(timeout=5)
+                    app = launch_app(launch_command)
+                    window = ready_window()
                     note = fixture / "Quiet history.md"
                     original = b"# Quiet history\n\nKEEP_HISTORY_BYTES\n"
                     note.write_bytes(original)

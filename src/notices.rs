@@ -26,6 +26,10 @@ fn state_id() -> egui::Id {
     egui::Id::unique("status-notices")
 }
 
+fn message_id(message: &str) -> egui::Id {
+    egui::Id::unique(("status-warning-message", message))
+}
+
 /// An action failed. Calling this again is a new attempt, with a fresh lifetime.
 pub fn report(ctx: &egui::Context, message: impl Into<String>) {
     let message = message.into();
@@ -35,6 +39,7 @@ pub fn report(ctx: &egui::Context, message: impl Into<String>) {
     eprintln!("warning: {message}");
     ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
+        state.seen.insert(message_id(&message));
         state.current = Some(Notice {
             message,
             since: Instant::now(),
@@ -49,7 +54,9 @@ pub fn once(ctx: &egui::Context, key: impl Hash + std::fmt::Debug, message: impl
     let message = message.into();
     let show = ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
-        state.seen.insert(egui::Id::unique(key)) && state.current.is_none()
+        let first_key = state.seen.insert(egui::Id::unique(key));
+        let first_message = state.seen.insert(message_id(&message));
+        first_key && first_message && state.current.is_none()
     });
     if show {
         report(ctx, message);
