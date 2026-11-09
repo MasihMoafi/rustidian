@@ -78,6 +78,8 @@ struct PreparedVault {
 const ATTENTION_DELAY: Duration = Duration::from_millis(1500);
 /// How long an error notice stays once the pointer leaves it.
 const ERROR_NOTICE_TIME: Duration = Duration::from_secs(6);
+/// One unreadable folder trips the indexer, the watcher and history together: one notice.
+const FOLDER_ACCESS: &str = "folder-access";
 
 #[derive(Clone)]
 enum VoiceFallback {
@@ -745,7 +747,7 @@ impl NotesApp {
                     }
                     Err(error) => {
                         let warning = rustidian::watcher::describe(&error);
-                        warn_once(&mut self.error, &mut self.warned, &warning, warning.clone());
+                        warn_once(&mut self.error, &mut self.warned, FOLDER_ACCESS, warning);
                     }
                     _ => {}
                 }
@@ -800,7 +802,7 @@ impl NotesApp {
                         self.watch_overflow = overflow;
                     }
                     if let Some(warning) = watch_warning {
-                        warn_once(&mut self.error, &mut self.warned, &warning, warning.clone());
+                        warn_once(&mut self.error, &mut self.warned, FOLDER_ACCESS, warning);
                     }
                     let opening = self.loading_root.take().is_some();
                     if opening {
@@ -985,7 +987,7 @@ impl NotesApp {
                             warn_once(
                                 &mut self.error,
                                 &mut self.warned,
-                                &format!("index:{}", vault.root.display()),
+                                FOLDER_ACCESS,
                                 format!(
                                     "{count} item{} could not be indexed",
                                     if count == 1 { "" } else { "s" }
@@ -1100,7 +1102,7 @@ impl NotesApp {
             ctx.request_repaint_after(Duration::from_millis(20));
         }
         while let Ok(error) = recorder.errors.try_recv() {
-            warn_once(&mut self.error, &mut self.warned, &error, error.clone());
+            warn_once(&mut self.error, &mut self.warned, FOLDER_ACCESS, error);
         }
         if recorder.events.try_iter().count() > 0 {
             self.recovery_manager.changed(ctx);
@@ -6961,6 +6963,7 @@ fn warn_once(
     key: &str,
     message: String,
 ) {
+    eprintln!("warning: {message}");
     if error.is_none() && !warned.contains(key) {
         warned.insert(key.to_owned());
         *error = Some(message);
