@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
-    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning"]
+    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone"]
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -212,6 +212,23 @@ def main():
                                MEDIA_PLAYER_LOG=str(reports / "media-player.jsonl"))
             environment["PATH"] = str(handlers) + os.pathsep + environment["PATH"]
             environment["NO_PROXY"] = environment.get("NO_PROXY", "") + ",127.0.0.1,localhost"
+        if args.section in ("html-standalone", "all") or args.open_file == "html":
+            browser = base / "html-browser"
+            browser.write_text("#!/usr/bin/python3\nimport sys, time\nfrom pathlib import Path\n"
+                "with Path(" + repr(str(reports / "browser-requests.txt")) + ").open('a') as f: f.write(repr(sys.argv[1:])+'\\n')\n"
+                "hold = Path(" + repr(str(base / "browser-hold")) + ")\n"
+                "deadline = time.monotonic() + 15\n"
+                "while hold.exists() and time.monotonic() < deadline: time.sleep(.02)\n"
+                "sys.exit(7 if Path(" + repr(str(base / "browser-fail")) + ").exists() else 0)\n")
+            browser.chmod(0o700)
+            previous_opener = shutil.which("xdg-open", path=environment["PATH"])
+            handlers = base / "html-handlers"; handlers.mkdir()
+            opener = handlers / "xdg-open"
+            opener.write_text("#!/usr/bin/python3\nimport os, sys\n"
+                "target = os.environ['BROWSER'] if sys.argv[1].lower().endswith(('.html', '.htm')) else " + repr(previous_opener) + "\n"
+                "os.execv(target, [target, *sys.argv[1:]])\n")
+            opener.chmod(0o700)
+            environment.update(BROWSER=str(browser), PATH=str(handlers) + os.pathsep + environment["PATH"])
         if args.section == "chrome":
             for path in ["__pycache__", ".git", "Notes/__pycache__"]:
                 folder = fixture / path
@@ -609,7 +626,7 @@ def main():
             assert probe.exists(), "The native window never prepared its first UI"
             xdo("windowfocus", "0")
             time.sleep(.1)
-            if args.open_file:
+            if args.open_file and args.open_file != "html":
                 control_bounds("editor")
                 unfocused_deadline = time.monotonic() + 3
                 while control_bounds("window-focused")[0] != 0 and time.monotonic() < unfocused_deadline:
@@ -625,6 +642,13 @@ def main():
         try:
             window = ready_window()
             if args.open_file:
+                if args.open_file == "html":
+                    deadline = time.monotonic() + 5
+                    while not (reports / "browser-requests.txt").exists() and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert str(startup_path) in (reports / "browser-requests.txt").read_text()
+                    assert control_bounds("tab-full:" + startup_path.name, required=False) is None
+                    click_control("file:" + startup_path.name, "3"); click_control("menu:Edit source", hold=.15)
                 title_contains(startup_path.stem)
                 control_bounds("editor-focused")
                 key("ctrl+End")
@@ -641,6 +665,8 @@ def main():
                 second_path.write_text(second_text)
                 app = launch_app([str(ROOT / args.binary), str(second_path)])
                 window = ready_window()
+                if args.open_file == "html":
+                    click_control("file:" + second_path.name, "3"); click_control("menu:Edit source", hold=.15)
                 title_contains(second_path.stem)
                 control_bounds("editor-focused")
                 key("ctrl+End")
@@ -9038,6 +9064,131 @@ def main():
                 capture("native-narrow-html-editing.png")
                 results.append("A real click after a rendered HTML break edits the intended word; Save, Undo and Redo retain every break tag and source character")
 
+            def html_standalone_checks():
+                import ast
+                import html
+                nonlocal app, window
+
+                plain = b'<!doctype html>\r\n<html><head><style>td {color: teal; padding: 8px}</style></head><body><h1>Standalone table</h1><table><tr><td>Exact bytes</td></tr></table></body></html>\r\n'
+                inner = '<!doctype html><html><head><style>body {background: #eef}</style></head><body><table><tr><td id="value">Before script</td></tr></table><script>document.getElementById("value").textContent = "After script";</script></body></html>'
+                framed = ('<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; frame-src about:"><style>iframe {width: 100%; height: 90vh}</style></head><body><iframe sandbox="allow-scripts" srcdoc="' + html.escape(inner, quote=True) + '"></iframe></body></html>').encode()
+                originals = {"Standalone table.html": plain, "Framed page.html": framed,
+                    "Page with spaces فارسی # 100%.HtM": plain, "Browser failure.html": plain}
+                for name, source in originals.items():
+                    (fixture / name).write_bytes(source)
+                command("Refresh vault"); open_note("Home")
+                browser_log = reports / "browser-requests.txt"
+
+                def requests():
+                    return [ast.literal_eval(line) for line in browser_log.read_text().splitlines()] if browser_log.exists() else []
+
+                def wait_for(predicate, message, timeout=5):
+                    deadline = time.monotonic() + timeout
+                    while time.monotonic() < deadline:
+                        assert app.poll() is None, "The app exited during a browser handoff"
+                        if predicate(): return True
+                        time.sleep(.05)
+                    return False
+
+                def no_html_tabs():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return not any(name.startswith("tab-full:") and name.lower().endswith((".html", ".htm")) for name in controls)
+
+                failures = []
+                for name, kind in [("Standalone table.html", "styled standalone page"), ("Framed page.html", "CSP and scripted iframe-srcdoc"), ("Page with spaces فارسی # 100%.HtM", "spaces, Unicode, percent and hash in an uppercase .HtM path")]:
+                    open_note("Home")
+                    before = len(requests())
+                    click_control("file:" + name)
+                    handed_off = wait_for(lambda: len(requests()) > before, kind)
+                    if not handed_off or requests()[before:] != [[str(fixture / name)]] or not no_html_tabs():
+                        failures.append(kind + ": opening must hand the exact file path to the browser without a source tab")
+                    else:
+                        title_contains("Home")
+                        results.append(kind + " opened from the real file list through the recording browser, retaining Home and exact source bytes")
+                    assert (fixture / name).read_bytes() == originals[name]
+                    capture("native-html-standalone-" + ("frame" if name.startswith("Framed") else "unicode" if name.startswith("Page") else "table") + ".png")
+                assert not failures, "\n".join(failures)
+
+                hold = base / "browser-hold"; hold.touch()
+                try:
+                    before = len(requests()); click_control("file:Standalone table.html")
+                    assert wait_for(lambda: len(requests()) == before + 1, "pending browser"), "The recording browser did not start"
+                    started = time.monotonic()
+                    command("Reading view"); control_bounds("view-mode:Reading")
+                    assert hold.exists() and time.monotonic() - started < 3.5, "Browser launch must not wait on the UI thread"
+                    capture("native-html-standalone-responsive.png")
+                finally:
+                    hold.unlink(missing_ok=True)
+                results.append("A pending browser launch left the real mode controls responsive before the browser returned")
+
+                failed = base / "browser-fail"; failed.touch()
+                try:
+                    before = len(requests()); click_control("file:Browser failure.html")
+                    assert wait_for(lambda: len(requests()) == before + 1, "failed browser"), "The failing browser did not run"
+                    assert wait_for(lambda: control_bounds("error-notice", required=False) is not None, "launch error"), "A nonzero browser exit must show the existing small notice"
+                    notice = control_bounds("error-notice")
+                    assert notice[1] > 900 and notice[3] - notice[1] < 40, notice
+                    assert no_html_tabs()
+                    title_contains("Home"); capture("native-html-standalone-failure.png")
+                finally:
+                    failed.unlink(missing_ok=True)
+                results.append("A failed browser exit showed the small status-line notice, retained Home and opened no raw source")
+
+                outside = base / "Outside pages"; outside.mkdir()
+                guest = outside / "Guest page.html"; guest.write_bytes(framed)
+                before = len(requests())
+                opener = subprocess.Popen([str(ROOT / args.binary), str(guest)], cwd=base, env=environment,
+                    stdout=log, stderr=log, start_new_session=True)
+                try:
+                    assert wait_for(lambda: len(requests()) == before + 1, "file handoff"), "A second CLI launch must hand an outside-vault HTML file to the browser"
+                    assert opener.wait(timeout=8) == 0
+                finally:
+                    if opener.poll() is None:
+                        os.killpg(opener.pid, signal.SIGTERM); opener.wait(timeout=5)
+                assert requests()[before:] == [[str(guest)]] and no_html_tabs()
+                title_contains("Home")
+                link = fixture / "Browser link.md"
+                link.write_text("# Browser link\n\n[Open page](" + guest.as_uri() + ")\n")
+                command("Refresh vault"); open_note(link.name, title=link.stem); command("Reading view")
+                before = len(requests()); click_control("reading-block:1")
+                assert wait_for(lambda: len(requests()) == before + 1, "HTML link"), "An HTML file link must reach the browser rather than a guest Source tab"
+                assert requests()[before:] == [[str(guest)]] and no_html_tabs()
+                title_contains(link.stem); assert guest.read_bytes() == framed
+                capture("native-html-standalone-guest.png")
+                results.append("A second CLI launch and a Markdown file link both handed an outside-vault HTML page to the browser without a guest Source tab")
+
+                before = len(requests())
+                file_menu("Standalone table.html"); click_control("menu:Edit source", hold=.15)
+                title_contains("Standalone table"); control_bounds("view-mode:Source mode")
+                key("ctrl+s"); assert (fixture / "Standalone table.html").read_bytes() == plain
+                editor_end(); type_text("<!--SOURCE_EDIT-->"); key("ctrl+s")
+                assert (fixture / "Standalone table.html").read_bytes() == plain + b"<!--SOURCE_EDIT-->", "Source editing must change only the intended bytes"
+                key("ctrl+z"); key("ctrl+s")
+                assert (fixture / "Standalone table.html").read_bytes() == plain
+                assert len(requests()) == before, "Edit source must not launch the browser"
+                capture("native-html-standalone-source.png")
+                results.append("Edit source opened Source explicitly; no-op Save, a proven edit and Undo/Save preserved every other byte, including CRLF")
+
+                confirm_quit(); app.wait(timeout=5)
+                app = launch_app(launch_command); window = ready_window()
+                title_contains("Standalone table"); control_bounds("view-mode:Source mode")
+                time.sleep(.8)
+                assert len(requests()) == before, "Restoring an HTML source tab must never launch a browser"
+                assert (fixture / "Standalone table.html").read_bytes() == plain
+                capture("native-html-standalone-restored.png")
+                results.append("A real restart restored the explicit HTML Source tab without a browser request or byte changes")
+
+                confirm_quit(); app.wait(timeout=5)
+                app = launch_app([str(ROOT / args.binary), str(fixture / "Page with spaces فارسی # 100%.HtM")]); window = ready_window()
+                assert wait_for(lambda: len(requests()) == before + 1, "startup path"), "Opening HTML by CLI path must launch the browser"
+                assert requests()[before:] == [[str(fixture / "Page with spaces فارسی # 100%.HtM")]]
+                title_contains("Standalone table")
+                assert control_bounds("tab-full:Page with spaces فارسی # 100%.HtM", required=False) is None
+                capture("native-html-standalone-path.png")
+                results.append("An explicit Unicode .HtM startup path reached the browser once while the restored Source tab stayed unchanged")
+                for name, source in originals.items():
+                    assert (fixture / name).read_bytes() == source
+
             def html_import_checks():
                 close_tabs()
                 source = fixture / "Editable.html"
@@ -9045,7 +9196,8 @@ def main():
                 source.write_bytes(original)
                 collision = fixture / "Editable.md"
                 collision.write_bytes(b"KEEP_EXISTING_NOTE\n")
-                command("Refresh vault"); pause(); open_note("Editable.html", title="Editable")
+                command("Refresh vault"); pause()
+                file_menu("Editable.html"); click_control("menu:Edit source", hold=.15)
                 command("Reading view")
                 copied = fixture / "Editable 1.md"
                 assert copied.exists(), "HTML Reading view must convert the page to editable Markdown, not show its HTML source"
@@ -9066,7 +9218,7 @@ def main():
                 capture("native-html-import-editing.png")
                 results.append("HTML Reading view created structured Markdown without page tags, skipped an occupied name, and supported editing, save, Undo and Redo while preserving the HTML")
 
-                open_note("Editable.html", title="Editable")
+                file_menu("Editable.html"); click_control("menu:Edit source", hold=.15)
                 command("Live preview")
                 title_contains("Editable 2")
                 assert (fixture / "Editable 2.md").read_text() == converted
@@ -9075,7 +9227,8 @@ def main():
 
                 empty = fixture / "Empty HTML.html"
                 empty.write_text("<html><head><script>hidden</script></head><body></body></html>")
-                command("Refresh vault"); pause(); open_note("Empty HTML.html", title="Empty HTML")
+                command("Refresh vault"); pause()
+                file_menu("Empty HTML.html"); click_control("menu:Edit source", hold=.15)
                 command("Reading view")
                 assert not (fixture / "Empty HTML.md").exists()
                 assert control_bounds("error-notice", required=False) is not None
@@ -12816,6 +12969,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
+            if args.section == "html-standalone":
+                html_standalone_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "narrow-html":
                 narrow_html_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2) + "\n")
@@ -13474,6 +13632,7 @@ def main():
                 attachment_tab_checks,
                 narrow_html_checks,
                 html_media_checks,
+                html_standalone_checks,
                 html_import_checks,
                 file_copy_checks,
                 file_move_checks,

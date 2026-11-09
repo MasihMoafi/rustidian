@@ -12,6 +12,7 @@ pub enum FileAction {
     NewFolder(PathBuf),
     Open(PathBuf),
     OpenInNewTab(PathBuf),
+    EditSource(PathBuf),
     Copy(PathBuf),
     Move(PathBuf),
     MoveMany(Vec<PathBuf>),
@@ -825,6 +826,12 @@ fn file_entry(ui: &mut egui::Ui, path: &Path, open: &mut Option<FileAction>) -> 
         }
         if theme::menu_item(ui, theme::Icon::NewTab, "Open in new tab").clicked() {
             *open = Some(FileAction::OpenInNewTab(path.to_path_buf()));
+            ui.close();
+        }
+        if rustidian::html_import::is_html(path)
+            && theme::menu_item(ui, theme::Icon::Edit, "Edit source").clicked()
+        {
+            *open = Some(FileAction::EditSource(path.to_path_buf()));
             ui.close();
         }
         ui.separator();

@@ -2,22 +2,25 @@
 use crate::theme::{radius, space};
 use eframe::egui;
 
-/// Use the desktop's media association rather than the browser's URL association.
-pub fn open_video(uri: &str) -> Result<(), String> {
+/// One desktop association path for local media and standalone pages.
+pub(crate) fn desktop_opener() -> std::process::Command {
     use std::process::{Command, Stdio};
-    let opener = match std::env::consts::OS {
+    let mut command = Command::new(match std::env::consts::OS {
         "macos" => "open",
         "windows" => "rundll32",
         _ => "xdg-open",
-    };
-    let mut command = Command::new(opener);
+    });
     if cfg!(target_os = "windows") {
         command.arg("url.dll,FileProtocolHandler");
     }
-    let mut child = command
+    command.stdin(Stdio::null()).stdout(Stdio::null());
+    command
+}
+
+/// Use the desktop's media association rather than the browser's URL association.
+pub fn open_video(uri: &str) -> Result<(), String> {
+    let mut child = desktop_opener()
         .arg(uri)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
         .spawn()
         .map_err(|error| format!("Cannot open the video player: {error}"))?;
     std::thread::spawn(move || {
