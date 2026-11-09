@@ -8270,6 +8270,47 @@ def main():
                         pause()
                     results.append("At 760 by 560 the warning remained one small line inside the status bar and expired with its dialog still open")
 
+                def background_vault_failure():
+                    nonlocal app, window
+                    root = base / "Quiet background vault"
+                    held = base / "Quiet moved background vault"
+                    shutil.copytree(fixture, root)
+                    original = (fixture / "Home.md").read_bytes()
+                    app.terminate()
+                    app.wait(timeout=5)
+                    app = launch_app([str(ROOT / args.binary), str(root)])
+                    window = ready_window()
+                    open_note("Home")
+                    click_control("vault-profile")
+                    control_bounds("vault-manager")
+                    assert not control_bounds("error-notice", required=False)
+                    root.rename(held)
+                    try:
+                        assert not root.exists() and held.is_dir()
+                        small_notice()
+                        pause()
+                        capture("native-quiet-errors-vault-background.png")
+                        faded()
+                        # Child watches survive the root move. No app input follows.
+                        (held / "Notes/Quiet background event.md").write_text("# External event\n")
+                        until = time.monotonic() + 8
+                        while time.monotonic() < until:
+                            if control_bounds("error-notice", required=False):
+                                pause()
+                                capture("native-quiet-errors-vault-background-returned.png")
+                                raise AssertionError("The open vault chooser repeated a background rescan failure")
+                            time.sleep(.1)
+                        control_bounds("vault-manager")
+                        capture("native-quiet-errors-vault-background-quiet.png")
+                    finally:
+                        app.terminate()
+                        app.wait(timeout=5)
+                        held.rename(root)
+                        app = launch_app(launch_command)
+                        window = ready_window()
+                    assert (fixture / "Home.md").read_bytes() == original
+                    results.append("A missing vault root warned once with the vault chooser open; later child-watch events caused no recurring warning or document changes")
+
                 def workspace_failure():
                     storage = base / "state/rustidian/workspaces"
                     storage.mkdir(exist_ok=True)
@@ -8645,7 +8686,7 @@ def main():
                         if control_bounds("error-dismiss", required=False):
                             click_control("error-dismiss")
 
-                run_checks([missing_embed, settings_failure, consecutive_errors, hovered_notice, background_during_action, narrow_notice, recovery_failure, workspace_failure,
+                run_checks([missing_embed, settings_failure, consecutive_errors, hovered_notice, background_during_action, narrow_notice, background_vault_failure, recovery_failure, workspace_failure,
                             external_change, failed_save, template_failure, background_tab_reloads, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
 
             def background_io_checks():
