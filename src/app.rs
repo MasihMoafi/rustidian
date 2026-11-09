@@ -6713,7 +6713,7 @@ impl eframe::App for NotesApp {
             .iter()
             .enumerate()
             .filter(|(_, tab)| tab.autosave_failed && tab.document.dirty())
-            .min_by_key(|(index, _)| *index != self.active)
+            .min_by_key(|(index, tab)| (*index != self.active, std::cmp::Reverse(tab.edited_at)))
             .map(|(index, _)| index);
         let mut save_copy = false;
         let status = egui::Panel::bottom("status")
@@ -6726,6 +6726,7 @@ impl eframe::App for NotesApp {
                         .add_sized(
                             egui::vec2((ctx.content_rect().width() * 0.18).min(200.0), 18.0),
                             egui::Label::new(RichText::new(&self.status).size(11.0).weak())
+                                .halign(egui::Align::Min)
                                 .truncate(),
                         )
                         .on_hover_text(&self.status);
@@ -6737,8 +6738,11 @@ impl eframe::App for NotesApp {
                     status_text_right = message.rect.right();
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(theme::space::M);
-                        if failed_tab.is_some() {
-                            let copy = ui.small_button("Save a copy…");
+                        if let Some(index) = failed_tab {
+                            let copy = ui.small_button("Save a copy…").on_hover_text(format!(
+                                "Save a copy of {}",
+                                self.tabs[index].document.title()
+                            ));
                             crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
                             save_copy = copy.clicked();
                         }

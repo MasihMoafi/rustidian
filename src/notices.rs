@@ -66,6 +66,7 @@ pub struct Action {
 /// Draw after dialogs so their backdrop cannot hide the status warning. The
 /// entire area is clipped to the strip, including at narrow window widths.
 pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)>) -> Action {
+    let rect = rect.intersect(ctx.content_rect());
     let now = Instant::now();
     let current = ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
@@ -94,7 +95,7 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
         .show(ctx, |ui| {
             ui.set_clip_rect(rect);
             ui.set_max_size(rect.size());
-            ui.spacing_mut().button_padding = egui::vec2(3.0, 0.0);
+            ui.spacing_mut().button_padding = egui::vec2(theme::space::XS, 0.0);
             ui.spacing_mut().interact_size.y = 18.0;
             ui.horizontal(|ui| {
                 ui.add(
@@ -103,12 +104,14 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
                 );
                 // Leave space for the close button and optional voice actions.
                 let actions_width = if fallback.is_some() { 150.0 } else { 24.0 };
-                let width = (rect.width() - actions_width - 24.0).max(12.0);
+                let width = (rect.width() - actions_width - 24.0).clamp(12.0, 460.0);
                 let line = notice.message.lines().next().unwrap_or_default();
                 let label = ui
                     .add_sized(
                         egui::vec2(width, 18.0),
-                        egui::Label::new(RichText::new(line).size(11.0)).truncate(),
+                        egui::Label::new(RichText::new(line).size(11.0))
+                            .halign(egui::Align::Min)
+                            .truncate(),
                     )
                     .on_hover_text(&notice.message);
                 ui_probe::record(ctx, "error-notice", label.rect.intersect(rect));
@@ -141,7 +144,7 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
         let state = data.get_temp_mut_or_default::<State>(state_id());
         if dismiss || action.hosted || action.setup {
             state.current = None;
-            None
+            Some(Duration::ZERO)
         } else if let Some(current) = &mut state.current {
             if shown.response.contains_pointer() {
                 current.since = now;
