@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
-    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo"]
+    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo", "deletion-storage"]
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -1096,6 +1096,165 @@ def main():
                 run_checks([immediate, navigation, folder, text_priority, collision, repeated,
                             blocked_restore, snapshot_failure, multi_selection],
                            lambda name, error: failed(name, error))
+
+            def deletion_storage_checks():
+                nonlocal app, window
+                # This real filesystem failure used to stop deletion before Trash.
+                unusable = base / "not-a-temporary-directory"
+                unusable.write_bytes(b"TEMP STORAGE UNAVAILABLE")
+                environment["TMPDIR"] = str(unusable)
+                environment["RUSTIDIAN_FRAME_LOG"] = str(base / "deletion-frames.log")
+                confirm_quit(); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                expected = "# Storage check\r\n\r\nExact bytes: فارسی π.  \r\n".encode()
+
+                def wait_for(check, message):
+                    deadline = time.monotonic() + 10
+                    while not check():
+                        assert app.poll() is None, "App exited: " + message
+                        assert time.monotonic() < deadline, message
+                        time.sleep(.03)
+                    pause()
+
+                def delete(path, folder=False):
+                    relative = str(path.relative_to(fixture))
+                    if folder:
+                        click_control("folder:" + relative, "3")
+                        click_control("folder-delete:" + relative)
+                    else:
+                        file_menu(relative); click_control("menu:D  Delete")
+                    key("Return")
+                    wait_for(lambda: not path.exists(), "Deletion was refused: " + relative)
+
+                def restore(path):
+                    key("ctrl+z")
+                    wait_for(path.exists, "Ctrl+Z did not restore " + path.name)
+
+                note = fixture / "A storage temporary failure.md"
+                note.write_bytes(expected)
+                time.sleep(.7); open_note(note.stem); command("Source editing")
+                delete(note)
+                restore(note)
+                assert note.read_bytes() == expected
+                control_bounds("tab-full:" + note.name)
+                capture("native-deletion-storage-temp-unavailable.png")
+                results.append("Unusable TMPDIR cannot prevent deletion; system Trash restores the exact note bytes and open tab without an undo copy")
+
+                root = fixture / "A storage unreadable"
+                root.mkdir()
+                child = root / "Child.md"
+                child.write_bytes(expected)
+                hidden = root / ".unreadable"
+                hidden_bytes = b"\0\xffUNREADABLE DATA\r\n"
+                hidden.write_bytes(hidden_bytes)
+                time.sleep(.7); open_note("A storage unreadable/Child", title="Child")
+                hidden.chmod(0)
+                try:
+                    delete(root, folder=True)
+                    restore(root)
+                    assert hidden.stat().st_mode & 0o777 == 0, "Trash restore changed unreadable file permissions"
+                finally:
+                    if hidden.exists(): hidden.chmod(0o600)
+                    for trashed in (base / "data/Trash/files").glob("A storage unreadable*"):
+                        if (trashed / ".unreadable").exists(): (trashed / ".unreadable").chmod(0o600)
+                assert child.read_bytes() == expected and hidden.read_bytes() == hidden_bytes
+                control_bounds("tab-full:A storage unreadable/Child.md")
+                capture("native-deletion-storage-unreadable.png")
+                results.append("A folder containing an unreadable file still deletes; Ctrl+Z restores exact bytes, original permissions and the open child tab")
+
+                # FIFO contents cannot be copied as a regular file, but Trash can move it.
+                special = fixture / "A storage no-copy"
+                special.mkdir()
+                (special / "Child.md").write_bytes(expected)
+                os.mkfifo(special / ".pipe")
+                time.sleep(.7); open_note("A storage no-copy/Child", title="Child")
+                delete(special, folder=True); restore(special)
+                import stat
+                assert stat.S_ISFIFO((special / ".pipe").stat().st_mode)
+                assert (special / "Child.md").read_bytes() == expected
+                results.append("A folder with a FIFO, which cannot have a regular undo copy, deletes and restores through Trash with its note bytes intact")
+
+                frames = base / "deletion-frames.log"
+                def measure(action):
+                    offset = frames.stat().st_size
+                    action()
+                    pause(); pause()
+                    with frames.open() as log:
+                        log.seek(offset)
+                        samples = [int(row.split()[1]) / 1000 for row in log if row.strip()]
+                    assert samples, "No real UI frames were measured"
+                    return {"frames": len(samples), "max_ms": round(max(samples), 3),
+                            "median_ms": round(sorted(samples)[len(samples)//2], 3)}
+
+                bulk = fixture / "A storage large folder"
+                (bulk / "Nested").mkdir(parents=True)
+                (bulk / "Child.md").write_bytes(expected)
+                # A 2-GiB logical payload is intentionally larger than an undo-copy budget.
+                # Sparse allocation makes this safe on CI and proves no byte copy occurs.
+                payload = bulk / "Nested/payload.bin"
+                with payload.open("wb") as stream:
+                    stream.write(b"FIRST BYTES")
+                    stream.seek((2 << 30) - 11)
+                    stream.write(b"FINAL BYTES")
+                before = payload.stat()
+                with payload.open("rb") as stream:
+                    expected_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+                time.sleep(.7); open_note("A storage large folder/Child", title="Child")
+                baseline = measure(lambda: [xdo("mousemove", str(650+i*15), "430") for i in range(5)])
+                deleted = measure(lambda: delete(bulk, folder=True))
+                restored_time = measure(lambda: restore(bulk))
+                after = payload.stat()
+                with payload.open("rb") as stream:
+                    actual_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+                assert actual_hash == expected_hash, "Large restored payload bytes changed"
+                assert (before.st_dev, before.st_ino) == (after.st_dev, after.st_ino), "Large payload was copied instead of moved"
+                assert after.st_size == 2 << 30 and after.st_blocks == before.st_blocks
+                assert (bulk / "Child.md").read_bytes() == expected
+                measurements = {"before": baseline, "deleting": deleted, "restoring": restored_time,
+                                "logical_bytes": after.st_size, "allocated_bytes": after.st_blocks*512,
+                                "payload_sha256": actual_hash}
+                (reports / "native-deletion-storage-frames.json").write_text(json.dumps(measurements, indent=2)+"\n")
+                assert deleted["max_ms"] < 100 and restored_time["max_ms"] < 100, measurements
+                capture("native-deletion-storage-large.png")
+                results.append(f"A 2-GiB sparse folder restores exact bytes without copying or allocating its payload; slowest UI frames before/delete/restore were {baseline['max_ms']}/{deleted['max_ms']}/{restored_time['max_ms']} ms")
+
+                # Write+execute permits Trash, while denied listing prevents identification.
+                # Deletion must still succeed and must block undo of an older deletion.
+                older = fixture / "A storage older.md"
+                older.write_bytes(expected)
+                time.sleep(.7); open_note(older.stem); delete(older)
+                untracked = fixture / "A storage untracked.md"
+                untracked.write_bytes(b"UNTRACKED BUT SAFE IN TRASH\r\n")
+                time.sleep(.7); open_note(untracked.stem)
+                info = base / "data/Trash/info"
+                info.chmod(0o300)
+                try:
+                    delete(untracked)
+                    wait_for(lambda: any(name.startswith("status:") and "Ctrl+Z" in name and "cannot" in name.lower()
+                                         for name in json.loads((base / "ui-probe.json").read_text())),
+                             "Unavailable deletion undo was not explained in the small status line")
+                    key("ctrl+z")
+                    assert not untracked.exists() and not older.exists(), "An untracked deletion undid an older action"
+                    capture("native-deletion-storage-tracking-unavailable.png")
+                finally:
+                    info.chmod(0o700)
+                assert any(p.is_file() and p.read_bytes() == b"UNTRACKED BUT SAFE IN TRASH\r\n"
+                           for p in (base / "data/Trash/files").iterdir())
+                results.append("Unreadable Trash metadata does not refuse deletion; exact bytes remain in Trash, a small status explains unavailable Ctrl+Z, and Undo cannot restore an older deletion")
+
+                delete(bulk, folder=True)
+                trashed = next(p for p in (base / "data/Trash/files").glob("A storage large folder*") if (p / "Nested/payload.bin").exists())
+                crash_identity = (trashed / "Nested/payload.bin").stat()
+                app.kill(); app.wait(timeout=10)
+                app = launch_app(launch_command); window = ready_window()
+                assert not bulk.exists()
+                assert (trashed / "Nested/payload.bin").stat().st_ino == crash_identity.st_ino
+                with (trashed / "Nested/payload.bin").open("rb") as stream:
+                    assert hashlib.file_digest(stream, "sha256").hexdigest() == expected_hash
+                assert unusable.read_bytes() == b"TEMP STORAGE UNAVAILABLE"
+                assert not list(base.glob("rustidian-deletion-*"))
+                capture("native-deletion-storage-after-crash.png")
+                results.append("A forced app crash and restart leave the exact large payload in system Trash with no app-held copy or temporary-directory dependency")
 
             def callout_checks():
                 source = (ROOT / "tests/fixtures/callouts.md").read_text()
@@ -13538,6 +13697,11 @@ def main():
                 (reports / "gui-results.json").write_text(json.dumps({"checks":results,"status":"passed"},indent=2)+"\n")
                 print(json.dumps({"status":"passed","checks":len(results),"section":"quick-ranking"}))
                 return
+            if args.section == "deletion-storage":
+                deletion_storage_checks()
+                (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
+                print(json.dumps({"status":"passed","checks":len(results),"section":"deletion-storage"}))
+                return
             if args.section == "deletion-undo":
                 deletion_undo_checks()
                 (reports/"gui-results.json").write_text(json.dumps({"status":"passed","checks":results},indent=2)+"\n")
@@ -13924,6 +14088,7 @@ def main():
                 essential_checks,
                 undo_checks,
                 deletion_undo_checks,
+                deletion_storage_checks,
                 context_menu_checks,
                 color_checks,
                 native_highlight_checks,
