@@ -136,18 +136,25 @@ pub fn show(ctx: &egui::Context, rect: egui::Rect, fallback: Option<(&str, &str)
                 dismiss = close.clicked();
             });
         });
-    ctx.data_mut(|data| {
+    ui_probe::record(ctx, "error-strip", shown.response.rect);
+    let repaint = ctx.data_mut(|data| {
         let state = data.get_temp_mut_or_default::<State>(state_id());
         if dismiss || action.hosted || action.setup {
             state.current = None;
+            None
         } else if let Some(current) = &mut state.current {
             if shown.response.contains_pointer() {
                 current.since = now;
-                ctx.request_repaint_after(Duration::from_millis(250));
+                Some(Duration::from_millis(250))
             } else {
-                ctx.request_repaint_after(LIFETIME.saturating_sub(current.since.elapsed()));
+                Some(LIFETIME.saturating_sub(current.since.elapsed()))
             }
+        } else {
+            None
         }
     });
+    if let Some(after) = repaint {
+        ctx.request_repaint_after(after);
+    }
     action
 }
