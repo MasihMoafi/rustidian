@@ -8789,14 +8789,17 @@ int rename(const char *source, const char *destination) {
                     original = (fixture / "Home.md").read_bytes()
                     app.terminate()
                     app.wait(timeout=5)
-                    app = launch_app([str(ROOT / args.binary), str(root)])
-                    window = ready_window()
-                    open_note("Home")
-                    click_control("vault-profile")
-                    control_bounds("vault-manager")
-                    assert not control_bounds("error-notice", required=False)
-                    root.rename(held)
+                    profile = {name: environment[name] for name in ("XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME")}
+                    for name in profile:
+                        environment[name] = str(base / "quiet-vault-profile" / name.lower())
                     try:
+                        app = launch_app([str(ROOT / args.binary), str(root)])
+                        window = ready_window()
+                        open_note("Home")
+                        click_control("vault-profile")
+                        control_bounds("vault-manager")
+                        assert not control_bounds("error-notice", required=False)
+                        root.rename(held)
                         assert not root.exists() and held.is_dir()
                         small_notice()
                         pause()
@@ -8816,7 +8819,9 @@ int rename(const char *source, const char *destination) {
                     finally:
                         app.terminate()
                         app.wait(timeout=5)
-                        held.rename(root)
+                        if held.exists():
+                            held.rename(root)
+                        environment.update(profile)
                         app = launch_app(launch_command)
                         window = ready_window()
                     assert (fixture / "Home.md").read_bytes() == original
