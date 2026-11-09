@@ -6806,10 +6806,11 @@ impl eframe::App for NotesApp {
             let notice_width = (ctx.content_rect().width() * 0.4).min(460.0);
             let notice = egui::Area::new(egui::Id::unique("error"))
                 .order(egui::Order::Foreground)
-                .anchor(
-                    egui::Align2::LEFT_BOTTOM,
-                    egui::vec2(status_text_right + theme::space::L, -3.0),
-                )
+                .pivot(egui::Align2::LEFT_CENTER)
+                .fixed_pos(egui::pos2(
+                    status_text_right + theme::space::L,
+                    status.response.rect.center().y,
+                ))
                 .show(&ctx, |ui| {
                     egui::Frame::NONE.show(ui, |ui| {
                         ui.horizontal(|ui| {
