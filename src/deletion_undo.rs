@@ -1,4 +1,4 @@
-//! Deletions retain byte-for-byte snapshots until undone (or this vault closes).
+//! Deletions retain system Trash handles, never payload copies.
 //! Text-history markers order them with the editor's existing undo groups.
 use super::NotesApp;
 use eframe::egui::{self, Key, Modifiers};
@@ -7,6 +7,7 @@ use std::{
     collections::HashMap,
     fs, io,
     path::{Component, Path, PathBuf},
+    sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
 
@@ -17,11 +18,23 @@ pub(super) struct History {
     editor: Option<(u64, egui::Id)>,
     edits: HashMap<u64, Instant>,
     notice: Option<(String, Instant)>,
+    pending: Option<Trashing>,
+}
+
+struct Trashing {
+    receiver: Receiver<Trashed>,
+    marker: u64,
+    undo: bool,
+}
+
+struct Trashed {
+    entries: Vec<Entry>,
+    failures: Vec<String>,
 }
 
 struct Deletion {
     root: PathBuf,
-    entries: Vec<Snapshot>,
+    entries: Vec<Entry>,
     tabs: Vec<(usize, Tab)>,
     active: Option<u64>,
     marker: u64,
@@ -29,11 +42,23 @@ struct Deletion {
     at: Instant,
 }
 
-struct Snapshot {
+struct Entry {
     original: PathBuf,
-    copy: tempfile::TempDir,
+    trash: Option<TrashEntry>,
     restored: Option<PathBuf>,
 }
+
+// The Linux Trash identifier names its .trashinfo file. Retain the payload's
+// identity too: emptying/reusing the Trash must never restore a different item.
+#[cfg(target_os = "linux")]
+struct TrashEntry {
+    info: PathBuf,
+    payload: PathBuf,
+    identity: fs::Metadata,
+}
+
+#[cfg(not(target_os = "linux"))]
+struct TrashEntry;
 
 impl History {
     pub(super) fn clear(&mut self) {
@@ -70,60 +95,164 @@ impl History {
 }
 
 impl NotesApp {
-    pub(super) fn trash_for_undo(&mut self, sources: &[PathBuf]) -> (Vec<PathBuf>, Vec<String>) {
-        let Some(vault) = &mut self.vault else {
-            return (Vec::new(), vec!["Open a vault first.".into()]);
+    pub(super) fn trash_for_undo(&mut self, sources: &[PathBuf]) -> Result<(), String> {
+        if self.deletions.pending.is_some() {
+            return Err("A Trash operation is still finishing. Try again in a moment.".into());
+        }
+        let Some(vault) = &self.vault else {
+            return Err("Open a vault first.".into());
         };
-        let paths = match vault.selected_entries(sources) {
-            Ok(paths) => paths,
-            Err(error) => return (Vec::new(), vec![error]),
-        };
-        let mut entries = Vec::new();
-        let mut failures = Vec::new();
-        for original in paths {
-            let saved = (|| {
-                let copy = tempfile::Builder::new()
-                    .prefix("rustidian-deletion-")
-                    .tempdir()
-                    .map_err(|error| error.to_string())?;
-                copy_entry(&vault.root.join(&original), &copy.path().join("entry")).map_err(
-                    |error| format!("Cannot keep an undo copy; nothing deleted: {error}"),
-                )?;
-                vault.trash_entry(&original)?;
-                Ok::<_, String>(Snapshot {
-                    original: original.clone(),
-                    copy,
+        let paths = vault.selected_entries(sources)?;
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let root = vault.root.clone();
+        let mut worker_vault = vault.clone();
+        let worker_paths = paths.clone();
+        let wake = self.ctx.clone();
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("rustidian-trash".into())
+            .spawn(move || {
+                let mut outcome = Trashed {
+                    entries: Vec::new(),
+                    failures: Vec::new(),
+                };
+                let mut before = trash_items();
+                for original in worker_paths {
+                    match worker_vault.trash_entry(&original) {
+                        Ok(()) => {
+                            let after = trash_items();
+                            let trash = track_entry(
+                                &worker_vault.root.join(&original),
+                                before.as_deref(),
+                                after.as_deref(),
+                            );
+                            before = after;
+                            outcome.entries.push(Entry {
+                                original,
+                                trash,
+                                restored: None,
+                            });
+                        }
+                        Err(error) => outcome
+                            .failures
+                            .push(format!("{}: {error}", original.display())),
+                    }
+                }
+                let _ = sender.send(outcome);
+                wake.request_repaint();
+            })
+            .map_err(|error| format!("Cannot start moving to Trash: {error}"))?;
+        self.deletions.sequence += 1;
+        let marker = u64::MAX - self.deletions.sequence;
+        self.deletions.notice = None;
+        self.deletions.records.push(Deletion {
+            root: root.clone(),
+            entries: paths
+                .iter()
+                .map(|path| Entry {
+                    original: path.clone(),
+                    trash: None,
                     restored: None,
                 })
-            })();
-            match saved {
-                Ok(snapshot) => entries.push(snapshot),
-                Err(error) => failures.push(format!("{}: {error}", original.display())),
+                .collect(),
+            tabs: Vec::new(),
+            active: self.tabs.get(self.active).map(Tab::id),
+            // Table layout owns the low, increasing marker numbers.
+            marker,
+            baselines: HashMap::new(),
+            at: Instant::now(),
+        });
+        if self.deletions.records.len() > 100 {
+            self.deletions.records.remove(0);
+        }
+        for tab in &self.tabs {
+            self.deletions
+                .mark_document(&self.ctx, &root, &tab.document);
+        }
+        let active = self.tabs.get(self.active).map(Tab::id);
+        self.keep_deleted_tabs(&paths);
+        if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id()) == active) {
+            self.active = index;
+        } else {
+            self.new_tab();
+        }
+        self.deletions.pending = Some(Trashing {
+            receiver,
+            marker,
+            undo: false,
+        });
+        self.status = format!("Moving {} items to system Trash…", paths.len());
+        self.error = None;
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+        Ok(())
+    }
+
+    pub(super) fn poll_deletions(&mut self) {
+        let Some(pending) = &self.deletions.pending else {
+            return;
+        };
+        let outcome = match pending.receiver.try_recv() {
+            Ok(outcome) => outcome,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => Trashed {
+                entries: Vec::new(),
+                failures: vec!["Trash operation interrupted. Refresh the vault.".into()],
+            },
+        };
+        let pending = self.deletions.pending.take().expect("pending checked");
+        let Some(index) = self
+            .deletions
+            .records
+            .iter()
+            .position(|record| record.marker == pending.marker)
+        else {
+            return; // The user has switched vaults; no app-owned files need cleanup.
+        };
+        let removed: Vec<_> = outcome
+            .entries
+            .iter()
+            .map(|entry| entry.original.clone())
+            .collect();
+        // Keep any view reopened while the system move was in progress as well.
+        self.keep_deleted_tabs(&removed);
+        let mut record = self.deletions.records.remove(index);
+        for entry in &mut record.entries {
+            if !removed.contains(&entry.original) {
+                entry.restored = Some(entry.original.clone());
             }
         }
-        let removed = entries.iter().map(|entry| entry.original.clone()).collect();
-        if !entries.is_empty() {
-            self.deletions.sequence += 1;
-            self.deletions.notice = None;
-            self.deletions.records.push(Deletion {
-                root: vault.root.clone(),
-                entries,
-                tabs: Vec::new(),
-                active: self.tabs.get(self.active).map(Tab::id),
-                // Table layout owns the low, increasing marker numbers.
-                marker: u64::MAX - self.deletions.sequence,
-                baselines: HashMap::new(),
-                at: Instant::now(),
-            });
-            if self.deletions.records.len() > 100 {
-                self.deletions.records.remove(0);
-            }
-            for tab in &self.tabs {
-                self.deletions
-                    .mark_document(&self.ctx, &vault.root, &tab.document);
-            }
+        // Failed deletions reopen their views at the untouched original paths.
+        self.reopen_deleted_tabs(&mut record, false);
+        record.entries = outcome.entries;
+        let unavailable = record.entries.iter().any(|entry| entry.trash.is_none());
+        let root = record.root.clone();
+        if record.entries.is_empty() {
+            self.consume_deletion_marker(&record);
+        } else {
+            self.deletions.records.insert(index, record);
         }
-        (removed, failures)
+        self.status = format!("Moved {} items to system Trash", removed.len());
+        if unavailable {
+            self.status
+                .push_str(" · cannot undo with Ctrl+Z; recover from system Trash");
+        }
+        if !outcome.failures.is_empty() {
+            self.status
+                .push_str(&format!(" · {}", outcome.failures.join("; ")));
+        }
+        self.deletions.notice = Some((self.status.clone(), Instant::now()));
+        self.queue_index(root);
+        self.refresh_file_views();
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+        if pending.undo && !removed.is_empty() {
+            self.restore_deletion();
+        }
     }
 
     pub(super) fn keep_deleted_tabs(&mut self, removed: &[PathBuf]) {
@@ -241,7 +370,12 @@ impl NotesApp {
             }
         }
         if ctx.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::Z)) {
-            self.restore_deletion();
+            if let Some(pending) = &mut self.deletions.pending {
+                pending.undo = true;
+                self.status = "Finishing the move to Trash, then restoring…".into();
+            } else {
+                self.restore_deletion();
+            }
         }
     }
 
@@ -249,6 +383,13 @@ impl NotesApp {
         let Some(mut record) = self.deletions.records.pop() else {
             return;
         };
+        if record.entries.iter().any(|entry| entry.trash.is_none()) {
+            self.status =
+                "Cannot undo with Ctrl+Z; recover the deleted items from system Trash".into();
+            self.deletions.notice = Some((self.status.clone(), Instant::now()));
+            self.deletions.records.push(record);
+            return;
+        }
         let mut notices = Vec::new();
         let mut failure = None;
         for entry in &mut record.entries {
@@ -273,6 +414,31 @@ impl NotesApp {
                 }
             }
         }
+        self.reopen_deleted_tabs(&mut record, true);
+        if let Some(error) = failure {
+            notices.push(error);
+            self.deletions.records.push(record);
+        } else {
+            self.consume_deletion_marker(&record);
+        }
+        self.queue_index(
+            self.vault
+                .as_ref()
+                .expect("vault checked before undo")
+                .root
+                .clone(),
+        );
+        self.refresh_file_views();
+        self.status = notices.join(" · ");
+        self.deletions.notice = Some((self.status.clone(), Instant::now()));
+        self.find = Default::default();
+        self.focus_editor();
+        if let Err(error) = self.write_session() {
+            self.error = Some(error);
+        }
+    }
+
+    fn reopen_deleted_tabs(&mut self, record: &mut Deletion, select_restored: bool) {
         let active_before = self.tabs.get(self.active).map(Tab::id);
         let mut waiting = Vec::new();
         for (index, mut tab) in std::mem::take(&mut record.tabs) {
@@ -309,90 +475,105 @@ impl NotesApp {
         self.active = self
             .tabs
             .iter()
-            .position(|tab| Some(tab.id()) == record.active)
+            .position(|tab| select_restored && Some(tab.id()) == record.active)
             .or_else(|| {
                 self.tabs
                     .iter()
                     .position(|tab| Some(tab.id()) == active_before)
             })
             .unwrap_or(0);
-        if let Some(error) = failure {
-            notices.push(error);
-            self.deletions.records.push(record);
-        } else {
-            // Consume only this deletion's marker, retaining ordinary text/redo.
-            for (path, baseline) in &record.baselines {
-                let mut state = crate::editor_ui::document_history(&self.ctx, &record.root, path);
-                let text = self
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.document.path == *path)
-                    .map_or(baseline, |tab| &tab.document.text);
-                let current = (state.cursor.char_range().unwrap_or_default(), text.clone());
-                let mut history = state.undoer();
-                if history.step_marker(&current, false) == Some(record.marker) {
-                    history.undo(&current);
-                    state.set_undoer(history);
-                }
+    }
+
+    fn consume_deletion_marker(&self, record: &Deletion) {
+        // Consume only this deletion's marker, retaining ordinary text/redo.
+        for (path, baseline) in &record.baselines {
+            let mut state = crate::editor_ui::document_history(&self.ctx, &record.root, path);
+            let text = self
+                .tabs
+                .iter()
+                .find(|tab| tab.document.path == *path)
+                .map_or(baseline, |tab| &tab.document.text);
+            let current = (state.cursor.char_range().unwrap_or_default(), text.clone());
+            let mut history = state.undoer();
+            if history.step_marker(&current, false) == Some(record.marker) {
+                history.undo(&current);
+                state.set_undoer(history);
             }
-        }
-        self.queue_index(
-            self.vault
-                .as_ref()
-                .expect("vault checked before undo")
-                .root
-                .clone(),
-        );
-        self.refresh_file_views();
-        self.status = notices.join(" · ");
-        self.deletions.notice = Some((self.status.clone(), Instant::now()));
-        self.find = Default::default();
-        self.focus_editor();
-        if let Err(error) = self.write_session() {
-            self.error = Some(error);
         }
     }
 }
 
-/// No decoding, filtering or traversal through links: hidden and binary data survive.
-fn copy_entry(source: &Path, destination: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(source)?;
-    if metadata.file_type().is_symlink() {
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(fs::read_link(source)?, destination)?;
-        }
-        #[cfg(windows)]
-        {
-            let link = fs::read_link(source)?;
-            if source.is_dir() {
-                std::os::windows::fs::symlink_dir(link, destination)?;
-            } else {
-                std::os::windows::fs::symlink_file(link, destination)?;
-            }
-        }
-    } else if metadata.is_dir() {
-        fs::create_dir(destination)?;
-        for entry in fs::read_dir(source)? {
-            let entry = entry?;
-            copy_entry(&entry.path(), &destination.join(entry.file_name()))?;
-        }
-    } else if metadata.is_file() {
-        let mut input = fs::File::open(source)?;
-        let mut output = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(destination)?;
-        io::copy(&mut input, &mut output)?;
-        output.set_permissions(metadata.permissions())?;
-        output.sync_all()?;
-    } else {
-        return Err(io::Error::other("A special file cannot be copied safely"));
-    }
-    Ok(())
+#[cfg(target_os = "linux")]
+fn trash_items() -> Option<Vec<trash::TrashItem>> {
+    // Malformed metadata belonging to another program must not stop deletion.
+    std::panic::catch_unwind(trash::os_limited::list).ok()?.ok()
 }
 
-fn restore_entry(root: &Path, entry: &Snapshot) -> io::Result<PathBuf> {
+#[cfg(not(target_os = "linux"))]
+fn trash_items() -> Option<Vec<trash::TrashItem>> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn track_entry(
+    original: &Path,
+    before: Option<&[trash::TrashItem]>,
+    after: Option<&[trash::TrashItem]>,
+) -> Option<TrashEntry> {
+    let before = before?;
+    let mut candidates = after?.iter().filter(|item| {
+        item.original_path() == original && !before.iter().any(|old| old.id == item.id)
+    });
+    let item = candidates.next()?;
+    if candidates.next().is_some() {
+        return None; // Another process trashed the same path: never guess its entry.
+    }
+    let info = PathBuf::from(&item.id);
+    let payload = info
+        .parent()?
+        .parent()?
+        .join("files")
+        .join(info.file_stem()?);
+    let identity = fs::symlink_metadata(&payload).ok()?;
+    Some(TrashEntry {
+        info,
+        payload,
+        identity,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn track_entry(
+    _: &Path,
+    _: Option<&[trash::TrashItem]>,
+    _: Option<&[trash::TrashItem]>,
+) -> Option<TrashEntry> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn restore_entry(root: &Path, entry: &Entry) -> io::Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    let trash = entry
+        .trash
+        .as_ref()
+        .ok_or_else(|| io::Error::other("The system Trash entry could not be identified"))?;
+    let current = fs::symlink_metadata(&trash.payload)?;
+    let expected = &trash.identity;
+    if (
+        current.dev(),
+        current.ino(),
+        current.ctime(),
+        current.ctime_nsec(),
+    ) != (
+        expected.dev(),
+        expected.ino(),
+        expected.ctime(),
+        expected.ctime_nsec(),
+    ) {
+        return Err(io::Error::other("The system Trash entry has changed"));
+    }
     let metadata = fs::symlink_metadata(root)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(io::Error::other("The vault folder is now a file or link"));
@@ -418,13 +599,7 @@ fn restore_entry(root: &Path, entry: &Snapshot) -> io::Result<PathBuf> {
             ));
         }
     }
-    // Prepare a complete copy on the destination filesystem before publishing it.
-    let stage = tempfile::Builder::new()
-        .prefix(".rustidian-restore-")
-        .tempdir_in(&directory)?;
-    let staged = stage.path().join("entry");
-    copy_entry(&entry.copy.path().join("entry"), &staged)?;
-    let folder = fs::symlink_metadata(&staged)?.is_dir();
+    let folder = current.is_dir();
     for number in 0.. {
         let path = if number == 0 {
             entry.original.clone()
@@ -446,8 +621,13 @@ fn restore_entry(root: &Path, entry: &Snapshot) -> io::Result<PathBuf> {
             }
             parent.join(name)
         };
-        match publish(&staged, &root.join(&path)) {
-            Ok(()) => return Ok(path),
+        match publish(&trash.payload, &root.join(&path)) {
+            Ok(()) => {
+                // Once the payload is restored an orphan .trashinfo is harmless.
+                // A metadata-cleanup failure must not make a successful move retry.
+                let _ = fs::remove_file(&trash.info);
+                return Ok(path);
+            }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         }
@@ -468,7 +648,6 @@ fn publish(source: &Path, destination: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn publish(source: &Path, destination: &Path) -> io::Result<()> {
-    // Exclusive creation also protects platforms without rename-noreplace.
-    copy_entry(source, destination)
+fn restore_entry(_: &Path, _: &Entry) -> io::Result<PathBuf> {
+    Err(io::Error::other("Restore this item from the system Trash"))
 }

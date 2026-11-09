@@ -5632,34 +5632,10 @@ impl NotesApp {
         }) {
             return;
         }
-        let paths = match self
-            .vault
-            .as_ref()
-            .ok_or_else(|| "Open a vault first.".to_owned())
-            .and_then(|vault| vault.selected_entries(sources))
-        {
-            Ok(paths) => paths,
-            Err(error) => {
-                self.error = Some(error);
-                return;
-            }
-        };
-        let active = self.tabs.get(self.active).map(Tab::id);
-        let (removed, failures) = self.trash_for_undo(&paths);
-        self.keep_deleted_tabs(&removed);
-        if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id()) == active) {
-            self.active = index;
-        } else {
-            self.new_tab();
-        }
-        self.status = format!("Moved {} items to system Trash", removed.len());
-        self.error = (!failures.is_empty())
-            .then(|| format!("Some items were not deleted: {}", failures.join("; ")));
-        self.refresh_file_views();
-        crate::explorer_selection::reset(ctx);
-        if let Err(error) = self.write_session() {
+        if let Err(error) = self.trash_for_undo(sources) {
             self.error = Some(error);
         }
+        crate::explorer_selection::reset(ctx);
     }
 
     fn reveal_in_file_manager(&mut self, relative: PathBuf) {
@@ -5910,18 +5886,24 @@ impl NotesApp {
                     .ok_or_else(|| "Open a vault first.".to_owned())
                     .and_then(|vault| {
                         let plan = vault.plan_rename(&source, &target)?;
-                        vault.rename_note(plan).map(Some)
+                        vault.rename_note(plan)
                     })
             } else {
-                let (removed, failures) = self.trash_for_undo(std::slice::from_ref(&source));
-                if removed.is_empty() {
-                    Err(failures.join("; "))
-                } else {
-                    Ok(None)
-                }
+                return match self.trash_for_undo(std::slice::from_ref(&source)) {
+                    Ok(()) => {
+                        if self.dialog_skip_trash {
+                            self.confirm_trash = false;
+                        }
+                        true
+                    }
+                    Err(error) => {
+                        self.error = Some(error);
+                        false
+                    }
+                };
             };
             match result {
-                Ok(Some(outcome)) => {
+                Ok(outcome) => {
                     self.relocate_tabs(&source, &outcome.path);
                     self.status = format!(
                         "Renamed to {} · updated {} notes",
@@ -5941,28 +5923,6 @@ impl NotesApp {
                             outcome.warnings.join("; ")
                         ))
                     };
-                }
-                Ok(None) => {
-                    if self.dialog_skip_trash {
-                        self.confirm_trash = false;
-                    }
-                    let active_id = self.tabs.get(self.active).map(Tab::id);
-                    let deleted_active = self
-                        .tabs
-                        .get(self.active)
-                        .is_some_and(|tab| tab.document.path.starts_with(&source));
-                    self.keep_deleted_tabs(std::slice::from_ref(&source));
-                    if deleted_active {
-                        self.new_tab();
-                    } else {
-                        self.active = self
-                            .tabs
-                            .iter()
-                            .position(|tab| Some(tab.id()) == active_id)
-                            .unwrap_or(0);
-                    }
-                    self.status = format!("Moved {} to system Trash", source.display());
-                    self.error = None;
                 }
                 Err(error) => {
                     self.error = Some(error);
@@ -6509,6 +6469,7 @@ impl eframe::App for NotesApp {
         self.commit_saves(finished);
         self.poll_save_actions(ctx);
         self.poll_folder_copy();
+        self.poll_deletions();
         let setup = ctx.data_mut(|data| {
             let id = egui::Id::unique("voice-setup");
             let requested = data.get_temp::<bool>(id).unwrap_or(false);
