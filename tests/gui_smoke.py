@@ -8123,12 +8123,16 @@ def main():
             def quiet_errors_checks():
                 # All failures use the status strip, expire, and preserve recovery.
                 observations = []
+                (reports / "quiet-errors-failures.json").write_text("[]\n")
 
                 def small_notice():
                     notice, bar = control_bounds("error-notice"), control_bounds("status-bar")
                     assert bar[0] <= notice[0] < notice[2] <= bar[2], (notice, bar)
                     assert bar[1] <= notice[1] < notice[3] <= bar[3], (notice, bar)
                     assert notice[3] - notice[1] <= 22, notice
+                    strip = control_bounds("error-strip", required=False)
+                    if strip:
+                        assert bar[0] <= strip[0] < strip[2] <= bar[2] and bar[1] <= strip[1] < strip[3] <= bar[3], (strip, bar)
                     return notice
 
                 def faded():
@@ -8137,6 +8141,186 @@ def main():
                     while control_bounds("error-notice", required=False) and time.monotonic() < until:
                         time.sleep(.15)
                     assert not control_bounds("error-notice", required=False), "The error did not expire"
+
+                def message():
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    return next(name.removeprefix("error-message:") for name in controls if name.startswith("error-message:"))
+
+                def consecutive_errors():
+                    click_control("new-folder")
+                    key("ctrl+a")
+                    key("BackSpace")
+                    key("Return")
+                    small_notice()
+                    first = message()
+                    time.sleep(4)
+                    click_control("dialog-input")
+                    type_text("../Outside quiet vault")
+                    key("Return")
+                    small_notice()
+                    second = message()
+                    assert first != second, (first, second)
+                    assert not (fixture.parent / "Outside quiet vault").exists()
+                    capture("native-quiet-errors-consecutive.png")
+                    time.sleep(3)
+                    small_notice()  # The second failure owns a fresh six seconds.
+                    assert message() == second
+                    faded()
+                    click_control("dialog-input")
+                    key("Return")
+                    small_notice()  # Explicit retry of the same failure.
+                    click_control("error-dismiss")
+                    assert not control_bounds("error-notice", required=False)
+                    time.sleep(1)
+                    assert not control_bounds("error-notice", required=False)
+                    key("Escape")
+                    results.append("Two different failed actions each received fresh status feedback; the second expired independently, and explicit retry/dismiss worked without recurrence")
+
+                def recovery_failure():
+                    note = fixture / "Quiet history.md"
+                    original = b"# Quiet history\n\nKEEP_HISTORY_BYTES\n"
+                    note.write_bytes(original)
+                    open_note("Quiet history")
+                    command("File recovery: Open local history")
+                    control_bounds("recovery-ready")
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    version = next(name for name in controls if name.startswith("recovery-version:"))
+                    stores = list((base / "state/rustidian/recovery").glob("*.redb"))
+                    assert len(stores) == 1, stores
+                    store = stores[0]
+                    mode = store.stat().st_mode & 0o777
+                    store.chmod(0)
+                    try:
+                        assert not os.access(store, os.R_OK)
+                        click_control(version)
+                        small_notice()
+                        assert not control_bounds("recovery-error", required=False)
+                        assert not control_bounds("recovery-ready", required=False), "Stale history remained copyable/restorable"
+                        capture("native-quiet-errors-recovery.png")
+                        faded()
+                        assert control_bounds("recovery-dialog")
+                        for number in range(3):
+                            (fixture / f"Quiet history event {number}.md").write_text("# Another history event\n")
+                            pause()
+                        assert not control_bounds("error-notice", required=False), "History activity repeated a dismissed read failure"
+                    finally:
+                        store.chmod(mode)
+                    click_control(version)
+                    control_bounds("recovery-ready")
+                    click_control("recovery-copy")
+                    copied = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, timeout=3)
+                    assert copied == original and note.read_bytes() == original
+                    key("Escape")
+                    results.append("Unreadable history warned in the status strip, expired without closing recovery, kept stale actions disabled, and a deliberate retry restored exact snapshot bytes")
+
+                def background_during_action():
+                    click_control("new-folder")
+                    key("ctrl+a")
+                    key("BackSpace")
+                    key("Return")
+                    small_notice()
+                    expected = message()
+                    locked = fixture / "Quiet locked folder"
+                    locked.mkdir()
+                    (locked / "Hidden.md").write_text("# Hidden\n")
+                    locked.chmod(0)
+                    try:
+                        time.sleep(1)
+                        assert message() == expected, "A background failure replaced the action's warning"
+                        faded()
+                        key("Escape")
+                        for _ in range(3):
+                            command("Refresh vault")
+                            time.sleep(.4)
+                            assert not control_bounds("error-notice", required=False), "A suppressed background error returned after the action's warning expired"
+                    finally:
+                        locked.chmod(0o755)
+                    results.append("An unreadable folder arriving during another warning stayed silent after that warning expired and through three rescans")
+
+                def narrow_notice():
+                    xdo("windowsize", window, "760", "560")
+                    pause()
+                    try:
+                        click_control("new-folder")
+                        key("ctrl+a")
+                        key("BackSpace")
+                        key("Return")
+                        small_notice()
+                        capture("native-quiet-errors-narrow.png", (760, 560))
+                        faded()
+                        key("Escape")
+                    finally:
+                        xdo("windowsize", window, "1440", "960")
+                        pause()
+                    results.append("At 760 by 560 the warning remained one small line inside the status bar and expired with its dialog still open")
+
+                def workspace_failure():
+                    storage = base / "state/rustidian/workspaces"
+                    storage.mkdir(exist_ok=True)
+                    # The current vault's workspace metadata uses the session's hash.
+                    paths = [path for path in (base / "state/rustidian").glob("*.json") if "tabs" in json.loads(path.read_text())]
+                    assert len(paths) == 1, paths
+                    metadata = storage / paths[0].name
+                    previous = metadata.read_bytes() if metadata.exists() else None
+                    metadata.write_text("not JSON")
+                    try:
+                        command("Workspaces: Manage workspace layouts")
+                        small_notice()
+                        assert not control_bounds("workspace-error", required=False)
+                        capture("native-quiet-errors-workspace.png")
+                        faded()
+                        assert control_bounds("workspace-manager")
+                        assert metadata.read_bytes() == b"not JSON"
+                    finally:
+                        key("Escape")
+                        if previous is None:
+                            metadata.unlink()
+                        else:
+                            metadata.write_bytes(previous)
+                    results.append("Corrupt workspace metadata warned outside its dialog, expired, and was retained without an automatic retry")
+
+                def external_change():
+                    note = fixture / "Quiet external.md"
+                    original = b"# Quiet external\n\nEXTERNAL_ORIGINAL\n"
+                    note.write_bytes(original)
+                    open_note("Quiet external")
+                    command("Source editing")
+                    command("Open settings")
+                    click_control("settings-page:Editor")
+                    state = next(json.loads(path.read_text()) for path in (base / "state/rustidian").glob("*.json") if "tabs" in json.loads(path.read_text()))
+                    if state["autosave_enabled"]:
+                        click_control("settings-autosave")
+                    key("Escape")
+                    editor_end()
+                    type_text("EXTERNAL_UNSAVED")
+                    key("ctrl+a")
+                    key("ctrl+c")
+                    draft = subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], env=environment, timeout=3)
+                    assert draft == original + b"EXTERNAL_UNSAVED", draft
+                    key("ctrl+End")
+                    held = base / "quiet-external-held.md"
+                    note.rename(held)
+                    try:
+                        key("ctrl+s")
+                        small_notice()
+                        assert "No such file" in message() and ("Cannot read note" in message() or "removed or cannot be read" in message()), message()
+                        capture("native-quiet-errors-external.png")
+                        faded()
+                        for _ in range(3):
+                            command("Refresh vault")
+                            time.sleep(.4)
+                            assert not control_bounds("error-notice", required=False), "A vanished open file repeated its error"
+                        control_bounds("error-save-copy")
+                        command("Save a copy")
+                        key("ctrl+a")
+                        type_text("Quiet external recovered.md")
+                        key("Return")
+                        title_contains("Quiet external recovered")
+                        assert (fixture / "Quiet external recovered.md").read_bytes() == original + b"EXTERNAL_UNSAVED"
+                        assert not note.exists() and held.read_bytes() == original
+                    finally:
+                        held.rename(note)
+                    results.append("Removing a file under an edited tab warned once about the unreadable file, faded across three rescans, and Save a copy retained every unsaved byte")
 
                 def missing_embed():
                     note = fixture / "Quiet embed.md"
@@ -8189,7 +8373,9 @@ def main():
                     results.append("A failed Settings write rolled back, warned outside the dialog and faded while Settings stayed open; a deliberate retry warned again")
 
                 def failed_save():
-                    note = fixture / "Quiet draft.md"
+                    folder = fixture / "Quiet save folder"
+                    folder.mkdir()
+                    note = folder / "Quiet draft.md"
                     original = b"# Quiet draft\n\nKEEP_ORIGINAL\n"
                     note.write_bytes(original)
                     open_note("Quiet draft")
@@ -8197,22 +8383,14 @@ def main():
                     command("Open settings")
                     click_control("settings-page:Editor")
                     paths = list((base / "state/rustidian").glob("*.json"))
-                    state = next((json.loads(path.read_text()) for path in paths
-                                  if any(name == "Quiet draft.md" for name, _ in json.loads(path.read_text()).get("tabs", []))),
+                    state = next((json.loads(path.read_text()) for path in paths if "tabs" in json.loads(path.read_text())),
                                  {"autosave_enabled": True})
                     if state["autosave_enabled"]:
                         click_control("settings-autosave")
                     key("Escape")
                     editor_end()
-                    held = base / "quiet-draft-held.md"
-                    # A directory at the original file path gives a real write failure.
-                    os.kill(app.pid, signal.SIGSTOP)
-                    note.rename(held)
-                    note.mkdir()
-                    xdo("key", "--clearmodifiers", "ctrl+End")
-                    xdo("type", "--clearmodifiers", "--delay", "1", "--", "UNSAVED_QUIET_DRAFT")
-                    os.kill(app.pid, signal.SIGCONT)
-                    pause()
+                    type_text("UNSAVED_QUIET_DRAFT")
+                    folder.chmod(0o555)
                     try:
                         key("ctrl+a")
                         key("ctrl+c")
@@ -8226,27 +8404,153 @@ def main():
                         faded()
                         control_bounds("error-save-copy")
                         capture("native-quiet-errors-save-expired.png")
+                        key("ctrl+t")
+                        open_note("Assets/Attachment.png", title="Attachment")
+                        control_bounds("error-save-copy")
                         click_control("error-save-copy")
                         key("ctrl+a")
                         type_text("Quiet recovered.md")
                         key("Return")
                         title_contains("Quiet recovered")
                         assert (fixture / "Quiet recovered.md").read_bytes() == original + b"UNSAVED_QUIET_DRAFT"
-                        assert held.read_bytes() == original
+                        assert note.read_bytes() == original
                     finally:
-                        note.rmdir()
-                        held.rename(note)
+                        folder.chmod(0o755)
                     results.append("A failed save kept the exact unsaved draft and a Save a copy route after the warning faded; the copy recovered every byte")
+
+                def startup_and_voice_failures():
+                    nonlocal app, window
+                    app.terminate()
+                    app.wait(timeout=5)
+                    history = base / "state/rustidian/recovery"
+                    held = base / "quiet-held-history"
+                    history.rename(held)
+                    history.write_text("blocked history directory")
+                    previous = {name: environment.get(name) for name in ("RUSTIDIAN_KOKORO_PYTHON", "RUSTIDIAN_KOKORO_MODEL", "RUSTIDIAN_KOKORO_VOICES", "RUSTIDIAN_READ_ALOUD_PLAYER")}
+                    model, voices = base / "quiet-model.onnx", base / "quiet-voices.bin"
+                    model.touch()
+                    voices.touch()
+                    bin_dir = base / "quiet-bin"
+                    bin_dir.mkdir()
+                    # Fail Rustidian's terminal spawn itself, before a CLI can run.
+                    for name in ("elpis", "setpriv"):
+                        agent = bin_dir / name
+                        agent.write_text("#!/no/such/quiet-interpreter\n")
+                        agent.chmod(0o755)
+                    environment.update(RUSTIDIAN_KOKORO_PYTHON="/usr/bin/false", RUSTIDIAN_KOKORO_MODEL=str(model),
+                                       RUSTIDIAN_KOKORO_VOICES=str(voices), RUSTIDIAN_READ_ALOUD_PLAYER=str(base / "no-quiet-player"),
+                                       PATH=str(bin_dir) + ":/usr/bin:/bin")
+                    try:
+                        app = launch_app(launch_command)
+                        window = ready_window()
+                        small_notice()
+                        capture("native-quiet-errors-startup.png")
+                        faded()
+                        for _ in range(3):
+                            command("Refresh vault")
+                            assert not control_bounds("error-notice", required=False), "History initialization kept refilling the notice"
+                        results.append("Failed history initialization at startup warned once and remained silent through later frames and three rescans")
+                        open_note("Home")
+                        click_control("read-aloud-toolbar")
+                        small_notice()
+                        assert "audio player" in message(), message()
+                        assert not control_bounds("read-aloud-player", required=False)
+                        assert not control_bounds("read-aloud-error-close", required=False)
+                        capture("native-quiet-errors-read-aloud.png")
+                        faded()
+                        results.append("A real read-aloud process failure used the status strip and expired without leaving a floating player")
+                        command("Open settings")
+                        click_control("settings-page:Read aloud")
+                        voice_path = base / "state/rustidian/voice.json"
+                        voice_bytes = voice_path.read_bytes() if voice_path.exists() else None
+                        if voice_path.exists():
+                            voice_path.unlink()
+                        voice_path.mkdir()
+                        try:
+                            click_control("settings-voice-speed")
+                            click_control("settings-voice-speed:1.25×")
+                            small_notice()
+                            capture("native-quiet-errors-voice-settings.png")
+                            faded()
+                            assert control_bounds("settings-voice-speed")
+                        finally:
+                            voice_path.rmdir()
+                            if voice_bytes is not None:
+                                voice_path.write_bytes(voice_bytes)
+                            key("Escape")
+                        results.append("A failed local-voice setting write warned once outside Settings and expired without closing it")
+                        def fail_terminal(action):
+                            import resource
+                            limits = resource.prlimit(app.pid, resource.RLIMIT_NPROC)
+                            before = (reports / "gui-smoke.log").stat().st_size
+                            resource.prlimit(app.pid, resource.RLIMIT_NPROC, (0, limits[1]))
+                            try:
+                                action()
+                                until = time.monotonic() + 3
+                                while time.monotonic() < until:
+                                    if "Couldn’t start" in (reports / "gui-smoke.log").read_bytes()[before:].decode(errors="replace"):
+                                        break
+                                    time.sleep(.05)
+                                else:
+                                    raise AssertionError("The private app did not report the forced terminal launch failure")
+                            finally:
+                                resource.prlimit(app.pid, resource.RLIMIT_NPROC, limits)
+                            xdo("mousemove", "--window", window, "20", "400")
+                            pause()
+                            small_notice()
+                            assert "Couldn’t start" in message(), message()
+
+                        fail_terminal(lambda: xdo("key", "--clearmodifiers", "ctrl+shift+a"))
+                        capture("native-quiet-errors-terminal.png")
+                        faded()
+                        fail_terminal(lambda: click_control("agent-restart"))
+                        faded()
+                        key("ctrl+shift+a")
+                        results.append("A terminal launch failure warned once outside the terminal; Restart gave fresh feedback and both notices expired")
+                    finally:
+                        app.terminate()
+                        app.wait(timeout=5)
+                        history.unlink()
+                        held.rename(history)
+                        for name, value in previous.items():
+                            if value is None:
+                                environment.pop(name, None)
+                            else:
+                                environment[name] = value
+                        app = launch_app(launch_command)
+                        window = ready_window()
+
+                def exhausted_watch_limit():
+                    nonlocal app, window
+                    app.terminate()
+                    app.wait(timeout=5)
+                    limited = ["unshare", "--user", "--map-root-user", "sh", "-c",
+                               'echo 1 > /proc/sys/user/max_inotify_watches && exec "$@"', "sh", *launch_command]
+                    app = launch_app(limited)
+                    window = ready_window()
+                    small_notice()
+                    assert "file-watch limit" in message(), message()
+                    assert Path(f"/proc/{app.pid}/ns/user").stat().st_ino != Path("/proc/self/ns/user").stat().st_ino
+                    capture("native-quiet-errors-watch-limit.png")
+                    faded()
+                    for number in range(3):
+                        (fixture / f"Quiet watch folder {number}").mkdir()
+                        command("Refresh vault")
+                        time.sleep(.4)
+                        assert not control_bounds("error-notice", required=False), "An exhausted watch limit repeated its warning"
+                    results.append("An actually exhausted private inotify limit warned once, faded, and stayed silent through new folders and three rescans")
 
                 def retain(name, error):
                     capture("native-quiet-errors-" + name + "-failure.png")
                     observations.append({"case": name, "error": repr(error), "traceback": traceback.format_exc()})
                     (reports / "quiet-errors-failures.json").write_text(json.dumps(observations, indent=2) + "\n")
-                    key("Escape")
-                    if control_bounds("error-dismiss", required=False):
-                        click_control("error-dismiss")
+                    if app.poll() is None:
+                        key("Escape")
+                        if control_bounds("error-dismiss", required=False):
+                            click_control("error-dismiss")
 
-                run_checks([missing_embed, settings_failure, failed_save], retain)
+                run_checks([missing_embed, settings_failure, consecutive_errors, background_during_action, narrow_notice, recovery_failure, workspace_failure,
+                            external_change, failed_save, startup_and_voice_failures, exhausted_watch_limit], retain, count_checks=lambda: len(results))
 
             def background_io_checks():
                 # Real disk syscalls are held by the fixture library; no application test flag.
