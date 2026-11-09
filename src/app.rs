@@ -1,5 +1,7 @@
 #[path = "settings_ui.rs"]
 pub(crate) mod settings_ui;
+#[path = "standalone_html.rs"]
+mod standalone_html;
 #[path = "app_storage.rs"]
 mod storage;
 #[path = "voice_ui.rs"]
@@ -233,6 +235,7 @@ pub struct NotesApp {
     vault_manager: crate::vault_manager::Manager,
     open_picker: rustidian::native_picker::Picker,
     reveal_result: Option<Receiver<Result<(), String>>>,
+    html_browser: standalone_html::Browser,
     pub(crate) note_aids: rustidian::note_aids::Config,
     template_source: Option<(u64, String)>,
     template_choices: Result<rustidian::search::FileMatcher, String>,
@@ -354,6 +357,7 @@ impl NotesApp {
             vault_manager: Default::default(),
             open_picker: Default::default(),
             reveal_result: None,
+            html_browser: Default::default(),
             note_aids: Default::default(),
             template_source: None,
             template_choices: Err(String::new()),
@@ -649,6 +653,7 @@ impl NotesApp {
     }
 
     fn background(&mut self, ctx: &egui::Context) {
+        self.poll_html_browser();
         crate::ui_probe::metric(
             ctx,
             "save-pending",
@@ -1224,6 +1229,12 @@ impl NotesApp {
     }
 
     fn open_note_at(&mut self, path: &Path, new_tab: bool) {
+        if !self.open_html_in_browser(path) {
+            self.open_source_note_at(path, new_tab);
+        }
+    }
+
+    fn open_source_note_at(&mut self, path: &Path, new_tab: bool) {
         let new_tab = new_tab
             || self
                 .tabs
@@ -1241,7 +1252,7 @@ impl NotesApp {
         }
         if !new_tab {
             let path = path.to_owned();
-            if self.save_active_then(move |app| app.open_note_at(&path, false)) {
+            if self.save_active_then(move |app| app.open_source_note_at(&path, false)) {
                 return;
             }
         }
@@ -2254,6 +2265,9 @@ impl NotesApp {
     /// Open a file of another vault as a tab of this window, where it lies. The
     /// notes already open stay open.
     fn open_guest_tab(&mut self, file: &Path) {
+        if self.open_html_in_browser(file) {
+            return;
+        }
         let Ok(absolute) = file.canonicalize() else {
             self.error = Some(format!("Cannot open {}", file.display()));
             return;
@@ -2289,6 +2303,9 @@ impl NotesApp {
     }
 
     fn open_system_selection(&mut self, kind: rustidian::native_picker::Kind, path: PathBuf) {
+        if kind == rustidian::native_picker::Kind::File && self.open_html_in_browser(&path) {
+            return;
+        }
         match self.resolve_system_selection(kind, &path) {
             Ok((root, document)) => self.request_open_input(root, document),
             Err(error) => {
@@ -3083,6 +3100,7 @@ impl NotesApp {
                     self.dialog_input = "Untitled".into();
                 }
                 FileAction::OpenInNewTab(path) => self.open_note_at(&path, true),
+                FileAction::EditSource(path) => self.edit_html_source(&path),
                 FileAction::Copy(path) => {
                     self.duplicate_file(&path);
                 }
