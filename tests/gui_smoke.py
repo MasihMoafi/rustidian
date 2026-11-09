@@ -968,16 +968,23 @@ def main():
                     occupied = path.with_stem(path.stem + " (restored 1)")
                     occupied.write_bytes(b"KEEP NUMBERED CANDIDATE")
                     time.sleep(.7)
+                    open_note(path.stem)
+                    command("Source editing")
                     key("ctrl+z")
+                    capture("native-deletion-undo-collision.png")
+                    controls = json.loads((base / "ui-probe.json").read_text())
+                    key("ctrl+s")
                     assert path.read_bytes() == replacement, "Restore overwrote the occupied original path"
                     assert occupied.read_bytes() == b"KEEP NUMBERED CANDIDATE"
                     copies = [p for p in fixture.glob("A undo collision*.md") if p.read_bytes() == original]
                     assert len(copies) == 1, ("No distinct exact-byte restore", copies)
                     restored(copies[0])
-                    controls = json.loads((base / "ui-probe.json").read_text())
                     assert any(name.startswith("status:") and str(copies[0].relative_to(fixture)) in name and "taken" in name
                                for name in controls), "Status line did not explain the occupied path and new name"
-                    capture("native-deletion-undo-collision.png")
+                    open_note(path.stem)
+                    command("Source editing")
+                    key("ctrl+z"); key("ctrl+s")
+                    assert path.read_bytes() == replacement and copies[0].read_bytes() == original, "Replacement inherited the deleted note's text history"
                     results.append("An occupied original and numbered candidate both survive; exact deleted bytes and the tab restore to a distinct name announced in the status line")
 
                 def repeated():
