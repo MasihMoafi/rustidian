@@ -1,3 +1,5 @@
+#[path = "deletion_undo.rs"]
+mod deletion_undo;
 #[path = "settings_ui.rs"]
 pub(crate) mod settings_ui;
 #[path = "app_storage.rs"]
@@ -135,6 +137,7 @@ pub struct NotesApp {
     tree: Tree,
     pub(crate) tabs: Vec<Tab>,
     closed_tabs: Vec<ClosedTab>,
+    deletions: deletion_undo::History,
     pub(crate) active: usize,
     search: String,
     search_cache: rustidian::query::Cache,
@@ -271,6 +274,7 @@ impl NotesApp {
             tree: Tree::default(),
             tabs: Vec::new(),
             closed_tabs: Vec::new(),
+            deletions: Default::default(),
             active: 0,
             search: String::new(),
             search_cache: Default::default(),
@@ -814,6 +818,7 @@ impl NotesApp {
                         self.file_move = Default::default();
                         self.page_preview.close();
                         self.closed_tabs.clear();
+                        self.deletions.clear();
                         self.always_update_links = rustidian::paths::read_obsidian::<
                             serde_json::Value,
                         >(
@@ -1978,6 +1983,7 @@ impl NotesApp {
             return;
         }
         if self.dialog.is_none() {
+            self.deletion_shortcut(ctx);
             if ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::R)
             }) {
@@ -3952,6 +3958,7 @@ impl NotesApp {
             .scope_id()
             .with(("note-editor", tab.id(), tab.editor_path()));
         if let Some(vault) = &self.vault {
+            self.deletions.observe(ui.ctx(), &vault.root, tab, id);
             let shared =
                 crate::editor_ui::document_history(ui.ctx(), &vault.root, &tab.document.path);
             let mut state =
@@ -5620,21 +5627,8 @@ impl NotesApp {
             }
         };
         let active = self.tabs.get(self.active).map(Tab::id);
-        let mut removed = Vec::new();
-        let mut failures = Vec::new();
-        if let Some(vault) = &mut self.vault {
-            for path in paths {
-                match vault.trash_entry(&path) {
-                    Ok(()) => removed.push(path),
-                    Err(error) => failures.push(format!("{}: {error}", path.display())),
-                }
-            }
-        }
-        self.tabs.retain(|tab| {
-            !removed
-                .iter()
-                .any(|path| tab.document.path.starts_with(path))
-        });
+        let (removed, failures) = self.trash_for_undo(&paths);
+        self.keep_deleted_tabs(&removed);
         if let Some(index) = self.tabs.iter().position(|tab| Some(tab.id()) == active) {
             self.active = index;
         } else {
@@ -5901,10 +5895,12 @@ impl NotesApp {
                         vault.rename_note(plan).map(Some)
                     })
             } else {
-                self.vault
-                    .as_mut()
-                    .ok_or_else(|| "Open a vault first.".to_owned())
-                    .and_then(|vault| vault.trash_entry(&source).map(|()| None))
+                let (removed, failures) = self.trash_for_undo(std::slice::from_ref(&source));
+                if removed.is_empty() {
+                    Err(failures.join("; "))
+                } else {
+                    Ok(None)
+                }
             };
             match result {
                 Ok(Some(outcome)) => {
@@ -5937,8 +5933,7 @@ impl NotesApp {
                         .tabs
                         .get(self.active)
                         .is_some_and(|tab| tab.document.path.starts_with(&source));
-                    self.tabs
-                        .retain(|tab| !tab.document.path.starts_with(&source));
+                    self.keep_deleted_tabs(std::slice::from_ref(&source));
                     if deleted_active {
                         self.new_tab();
                     } else {
