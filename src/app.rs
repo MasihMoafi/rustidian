@@ -1620,6 +1620,9 @@ impl NotesApp {
                         .map(rustidian::search::FileMatcher::new)
                 })
                 .unwrap_or_else(|| Err("Open a vault first.".into()));
+            if let Err(error) = &self.template_choices {
+                self.error = Some(error.clone());
+            }
         }
         if matches!(dialog, Dialog::SaveCopy | Dialog::AddProperty) && self.view() == View::Graph {
             return;
@@ -5190,8 +5193,7 @@ impl NotesApp {
                 }
                 Dialog::InsertTemplate => {
                     match &mut self.template_choices {
-                        Err(error) => {
-                            crate::notices::once(ctx, ("templates", &self.note_aids.templates.folder), error.clone());
+                        Err(_) => {
                             let configure = ui.button("Open Templates settings");
                             crate::ui_probe::record(ctx, "template-configure", configure.rect);
                             configure_templates = configure.clicked();
