@@ -285,6 +285,7 @@ jobs:
             reports/modal-order-baseline.log
             reports/gui-*-results.json
             reports/gui-failure.png
+            reports/native-quiet-warning.png
             reports/native-table-edge-*.png
             reports/native-table-edge-*.json
             reports/native-graph-state-*.png

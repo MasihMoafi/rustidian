@@ -6806,6 +6806,8 @@ impl eframe::App for NotesApp {
             let notice_width = (ctx.content_rect().width() * 0.4).min(460.0);
             let notice = egui::Area::new(egui::Id::unique("error"))
                 .order(egui::Order::Foreground)
+                // The status bar can lie past the area egui keeps windows inside.
+                .constrain(false)
                 .pivot(egui::Align2::LEFT_CENTER)
                 .fixed_pos(egui::pos2(
                     status_text_right + theme::space::L,
