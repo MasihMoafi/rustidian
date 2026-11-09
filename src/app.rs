@@ -6705,18 +6705,19 @@ impl eframe::App for NotesApp {
                     status_text_right = message.rect.right();
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(theme::space::M);
+                        if failed_tab.is_some() {
+                            let copy = ui.small_button("Save a copy…");
+                            crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
+                            save_copy = copy.clicked();
+                        }
                         if self
                             .tabs
                             .get(self.active)
                             .is_some_and(|tab| tab.document.is_image() && tab.view != View::Graph)
                         {
                             ui.label(RichText::new("Image").size(11.0).weak());
+                            status_controls_left = ui.cursor().right();
                             return;
-                        }
-                        if failed_tab.is_some() {
-                            let copy = ui.small_button("Save a copy…");
-                            crate::ui_probe::record(ui.ctx(), "error-save-copy", copy.rect);
-                            save_copy = copy.clicked();
                         }
                         if self.editor_preferences.show_mode {
                             self.show_view_mode(ui);
