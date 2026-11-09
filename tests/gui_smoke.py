@@ -8423,6 +8423,7 @@ def main():
                 def template_failure():
                     home = fixture / "Home.md"
                     original = home.read_bytes()
+                    open_note("Home")
                     command("Open settings")
                     click_control("settings-page:Editor")
                     click_control("settings-inline-title")
@@ -8601,17 +8602,24 @@ def main():
                     limited = ["unshare", "--user", "--map-root-user", "sh", "-c",
                                'echo 1 > /proc/sys/user/max_inotify_watches && exec "$@"', "sh", *launch_command]
                     app = launch_app(limited)
-                    window = ready_window()
-                    small_notice()
-                    assert "file-watch limit" in message(), message()
-                    assert Path(f"/proc/{app.pid}/ns/user").stat().st_ino != Path("/proc/self/ns/user").stat().st_ino
-                    capture("native-quiet-errors-watch-limit.png")
-                    faded()
-                    for number in range(3):
-                        (fixture / f"Quiet watch folder {number}").mkdir()
-                        command("Refresh vault")
-                        time.sleep(.4)
-                        assert not control_bounds("error-notice", required=False), "An exhausted watch limit repeated its warning"
+                    try:
+                        window = ready_window()
+                        small_notice()
+                        assert "file-watch limit" in message(), message()
+                        assert Path(f"/proc/{app.pid}/ns/user").stat().st_ino != Path("/proc/self/ns/user").stat().st_ino
+                        capture("native-quiet-errors-watch-limit.png")
+                        faded()
+                        for number in range(3):
+                            (fixture / f"Quiet watch folder {number}").mkdir()
+                            command("Refresh vault")
+                            time.sleep(.4)
+                            assert not control_bounds("error-notice", required=False), "An exhausted watch limit repeated its warning"
+                    finally:
+                        app.terminate()
+                        app.wait(timeout=5)
+                        app = launch_app(launch_command)
+                        window = ready_window()
+                    assert Path(f"/proc/{app.pid}/ns/user").stat().st_ino == Path("/proc/self/ns/user").stat().st_ino
                     results.append("An actually exhausted private inotify limit warned once, faded, and stayed silent through new folders and three rescans")
 
                 def retain(name, error):
