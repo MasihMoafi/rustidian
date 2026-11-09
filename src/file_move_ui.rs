@@ -86,6 +86,10 @@ impl Manager {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Action> {
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ctx, error);
+        }
+
         if let Some(paths) = self.trash.clone() {
             let focus = std::mem::take(&mut self.trash_focus);
             let mut confirm = false;
@@ -351,9 +355,7 @@ impl Manager {
                         ui.weak("No existing folders found.");
                     });
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
+
                 ui.add_space(crate::theme::space::S);
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space((ui.available_width() - 380.0).max(0.0) / 2.0);

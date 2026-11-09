@@ -39,7 +39,7 @@ impl Manager {
         self.focus = true;
         self.load_only = load_only;
         self.selected = 0;
-        self.error = None;
+        self.error = self.list.as_ref().err().cloned();
     }
 
     pub fn show_error(&mut self, error: String) {
@@ -111,10 +111,7 @@ impl Manager {
             });
             ui.add_space(crate::theme::space::M);
             match &self.list {
-                Err(error) => {
-                    let response = ui.colored_label(ui.visuals().error_fg_color, error);
-                    ui_probe::record(ctx, "workspace-error", response.rect);
-                }
+                Err(_) => {}
                 Ok(list) => {
                     let entries: Vec<_> = if self.load_only {
                         Pattern::new(
@@ -275,10 +272,6 @@ impl Manager {
                     }
                 }
             }
-            if let Some(error) = &self.error {
-                let response = ui.colored_label(ui.visuals().error_fg_color, error);
-                ui_probe::record(ctx, "workspace-error", response.rect);
-            }
         });
         ui_probe::record(ctx, "workspace-manager", response.response.rect);
         if close || response.should_close() {
@@ -316,6 +309,9 @@ impl Manager {
                 Ok(()) => self.error = None,
                 Err(error) => self.error = Some(error),
             }
+        }
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ctx, error);
         }
         load
     }

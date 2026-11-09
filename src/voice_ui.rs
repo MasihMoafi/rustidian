@@ -12,7 +12,6 @@ pub(crate) struct VoiceForm {
     /// The account whose key is being replaced.
     pub replacing: Option<String>,
     message: Option<Feedback>,
-    scroll_message: bool,
     /// The keyring failed: offer to keep the typed key for this session only.
     pub offer_session: bool,
     pub setup: bool,
@@ -26,54 +25,23 @@ pub(crate) struct VoiceForm {
 
 struct Feedback {
     text: String,
-    shown: std::time::Instant,
 }
 
 impl Feedback {
     fn new(text: String) -> Self {
-        Self {
-            text,
-            shown: std::time::Instant::now(),
-        }
+        Self { text }
     }
 }
 
 impl VoiceForm {
     fn message(&mut self, text: impl Into<String>) {
         self.message = Some(Feedback::new(text.into()));
-        self.scroll_message = true;
     }
 }
 
-/// A settings message has its own row so actions never cover its text.
-fn feedback_row(ui: &mut egui::Ui, feedback: &mut Option<Feedback>, probe: &str) {
-    let Some(shown) = feedback.as_ref() else {
-        return;
-    };
-    let now = std::time::Instant::now();
-    let remaining = super::ERROR_NOTICE_TIME.saturating_sub(now.duration_since(shown.shown));
-    if remaining.is_zero() {
-        *feedback = None;
-        return;
-    }
-    let row = ui.scope(|ui| {
-        settings_ui::voice_row(ui, "", &shown.text, |ui| {
-            let dismiss = theme::button(ui, "Dismiss", theme::Kind::Ghost);
-            crate::ui_probe::record(ui.ctx(), format!("{probe}-dismiss"), dismiss.rect);
-            dismiss.clicked()
-        })
-    });
-    crate::ui_probe::record(ui.ctx(), probe, row.response.rect);
-    if row.inner {
-        *feedback = None;
-    } else if row.response.contains_pointer() {
-        if let Some(shown) = feedback.as_mut() {
-            shown.shown = now;
-        }
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(250));
-    } else {
-        ui.ctx().request_repaint_after(remaining);
+fn feedback_row(ui: &mut egui::Ui, feedback: &mut Option<Feedback>) {
+    if let Some(feedback) = feedback.take() {
+        crate::notices::report(ui.ctx(), feedback.text);
     }
 }
 
@@ -282,11 +250,7 @@ impl NotesApp {
                 false
             },
         );
-        feedback_row(
-            ui,
-            &mut self.voice_form.model_error,
-            "settings-dictation-model-error",
-        );
+        feedback_row(ui, &mut self.voice_form.model_error);
         if fetch {
             let endpoint = self.voice.endpoint.clone();
             let ctx = ui.ctx().clone();
@@ -514,8 +478,8 @@ impl NotesApp {
         );
         let mut save = None;
         let mut test = false;
-        feedback_row(ui, &mut self.voice_form.message, "settings-voice-message");
-        let actions = ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        feedback_row(ui, &mut self.voice_form.message);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let typed = !self.voice_form.key.trim().is_empty();
             let store = ui.add_enabled_ui(typed, |ui| {
                 theme::button(ui, "Save key", theme::Kind::Primary)
@@ -552,10 +516,6 @@ impl NotesApp {
                 }
             }
         });
-        if self.voice_form.scroll_message {
-            actions.response.scroll_to_me(Some(egui::Align::BOTTOM));
-            self.voice_form.scroll_message = false;
-        }
         if test {
             let endpoint = self.voice.endpoint.clone();
             let key = self.voice_form.key.clone();

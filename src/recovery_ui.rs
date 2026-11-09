@@ -46,6 +46,7 @@ pub struct Manager {
     error: Option<String>,
     notice: Option<String>,
     refresh_due: bool,
+    query_failed: bool,
     focus: bool,
     selected_file: usize,
     pick_when_ready: bool,
@@ -123,6 +124,7 @@ impl Manager {
     }
 
     fn reload(&mut self, ctx: &egui::Context, refresh_list: bool) {
+        self.query_failed = false;
         let Some(history) = self.history.clone() else {
             return;
         };
@@ -199,10 +201,12 @@ impl Manager {
                 }
                 Ok(Err(error)) => {
                     self.error = Some(error);
+                    self.query_failed = true;
                     self.loading = None;
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.error = Some("Cannot read local history.".into());
+                    self.query_failed = true;
                     self.loading = None;
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -235,6 +239,7 @@ impl Manager {
         // Like the reference, keep displayed versions fixed while browsing.
         // File selection/reopening reads new metadata; version clicks read text.
         if self.refresh_due
+            && !self.query_failed
             && self.choosing_file
             && self.loading.is_none()
             && self.clearing.is_none()
@@ -562,14 +567,7 @@ impl Manager {
                     .min_scrolled_height(48.0)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        if let Some(error) = &self.error {
-                            let response = ui.colored_label(ui.visuals().error_fg_color, error);
-                            ui_probe::record(
-                                ctx,
-                                "recovery-error",
-                                response.rect.intersect(ui.clip_rect()),
-                            );
-                        } else if let Some(notice) = &self.notice {
+                        if let Some(notice) = &self.notice {
                             ui.label(notice);
                         }
                     });
@@ -616,6 +614,9 @@ impl Manager {
             self.selected = Some(id);
             self.error = None;
             self.reload(ctx, false);
+        }
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ctx, error);
         }
         restore
     }

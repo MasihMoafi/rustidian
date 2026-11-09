@@ -16,6 +16,7 @@ mod math_inline;
 mod math_ui;
 mod media_ui;
 mod note_embed_ui;
+mod notices;
 mod page_pan;
 mod page_preview;
 mod preview;

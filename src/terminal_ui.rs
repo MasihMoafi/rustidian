@@ -67,7 +67,6 @@ pub struct Panel {
     chosen: Option<Backend>,
     installed: Vec<(Backend, PathBuf)>,
     session: Option<Session>,
-    error: Option<String>,
     /// Start at the next show: the first one, Restart or another agent.
     start: bool,
     focus: bool,
@@ -175,19 +174,18 @@ impl Panel {
         let starting = std::mem::take(&mut self.start);
         if starting {
             self.installed = terminal::discover(&std::env::var_os("PATH").unwrap_or_default());
-            self.error = None;
         }
         let current = self.backend().map(|(backend, _)| *backend);
         let status = if self.installed.is_empty() {
             "No agent".to_owned()
-        } else if self.error.is_some() {
-            "Failed".to_owned()
         } else if let Some(exit) = self.session.as_mut().and_then(Session::exit) {
             describe(exit)
         } else if self.session.is_some() {
             "Running".to_owned()
-        } else {
+        } else if starting {
             "Starting".to_owned()
+        } else {
+            "Stopped".to_owned()
         };
         let mut picked = current;
         let mut restart = false;
@@ -250,6 +248,12 @@ impl Panel {
             (area.height() / cell.y).floor().clamp(1.0, 500.0) as u16,
             (area.width() / cell.x).floor().clamp(2.0, 1000.0) as u16,
         );
+        if starting && current.is_none() {
+            crate::notices::report(
+                ui.ctx(),
+                "No agent CLI found. Choose an installed agent, then Restart.",
+            );
+        }
         if starting && let Some((backend, program)) = self.backend().cloned() {
             let (ctx, awake) = (ui.ctx().clone(), self.awake.clone());
             let repaint = move || {
@@ -261,7 +265,10 @@ impl Panel {
             match Session::start(&program, &args, root, size, repaint) {
                 Ok(session) => self.session = Some(session),
                 Err(error) => {
-                    self.error = Some(format!("Couldn’t start {}: {error}", backend.label()));
+                    crate::notices::report(
+                        ui.ctx(),
+                        format!("Couldn’t start {}: {error}", backend.label()),
+                    );
                 }
             }
         }
@@ -368,12 +375,10 @@ impl Panel {
                 }
             }
             None => {
-                let message = match (&self.error, current) {
-                    (Some(error), _) => error.clone(),
-                    (None, None) => {
-                        "No agent CLI on PATH: install elpis, codex or claude.".to_owned()
-                    }
-                    (None, Some(_)) => String::new(),
+                let message = if current.is_none() {
+                    "Choose an installed agent to begin.".to_owned()
+                } else {
+                    String::new()
                 };
                 let color = ui.visuals().weak_text_color();
                 let galley = painter.layout(

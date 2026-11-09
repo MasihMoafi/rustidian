@@ -237,32 +237,26 @@ impl<'a> Context<'a> {
         embed: &Embed,
         edit_source: bool,
     ) -> bool {
+        let source = match &embed.source {
+            Ok(source) => source,
+            Err(error) => {
+                crate::notices::once(ui.ctx(), ("note-embed", from, &embed.target), error.clone());
+                return false;
+            }
+        };
+        let key = (source.path.clone(), source.range.clone());
+        if self.stack.contains(&key) || self.stack.len() >= 8 {
+            crate::notices::once(
+                ui.ctx(),
+                ("note-embed-cycle", from, &embed.target),
+                format!("Cannot expand nested embed: {}", embed.target),
+            );
+            return false;
+        }
         let width = ui.available_width();
         let mut edit = false;
         let frame = egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width((width - 18.0).max(40.0));
-            let source = match &embed.source {
-                Ok(source) => source,
-                Err(error) => {
-                    let response = ui.weak(error);
-                    crate::ui_probe::record(
-                        ui.ctx(),
-                        format!("note-embed-error:{}", embed.target),
-                        response.rect,
-                    );
-                    return;
-                }
-            };
-            let key = (source.path.clone(), source.range.clone());
-            if self.stack.contains(&key) {
-                ui.weak(format!("Recursive embed: {}", embed.target));
-                crate::ui_probe::record(ui.ctx(), "note-embed-cycle", ui.min_rect());
-                return;
-            }
-            if self.stack.len() >= 8 {
-                ui.weak("Embed nesting limit reached");
-                return;
-            }
             self.stack.push(key);
             let mut rendered = source.text.clone();
             let follow = crate::preview::show_embedded(
