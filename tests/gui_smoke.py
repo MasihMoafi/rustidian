@@ -64,7 +64,7 @@ def main():
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
     parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
-    parser._option_string_actions["--section"].choices += ["background-io"]
+    parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning"]
     args = parser.parse_args()
     reports = args.report_dir or ROOT / "reports"
     reports.mkdir(exist_ok=True)
@@ -8091,6 +8091,35 @@ def main():
                     open_note("Home")
                     set_theme(True)
 
+            def quiet_warning_checks():
+                # A folder the app cannot read warns once, small, in the status bar.
+                locked = fixture / "Locked folder"
+                locked.mkdir()
+                (locked / "Hidden.md").write_text("# Hidden\n")
+                locked.chmod(0)
+                try:
+                    command("Refresh vault")
+                    deadline = time.monotonic() + 5
+                    while not control_bounds("error-notice", required=False) and time.monotonic() < deadline:
+                        time.sleep(.1)
+                    notice, bar = control_bounds("error-notice"), control_bounds("status-bar")
+                    assert notice[1] >= bar[1] and notice[3] <= bar[3], (notice, bar)
+                    capture("native-quiet-warning.png")
+                    xdo("mousemove", "--window", window, "200", "600")
+                    deadline = time.monotonic() + 9
+                    while control_bounds("error-notice", required=False) and time.monotonic() < deadline:
+                        time.sleep(.2)
+                    assert not control_bounds("error-notice", required=False), "The warning stayed"
+                    for _ in range(3):
+                        command("Refresh vault")
+                        deadline = time.monotonic() + 2
+                        while time.monotonic() < deadline:
+                            assert not control_bounds("error-notice", required=False), "The warning came back"
+                            time.sleep(.1)
+                    results.append("An unreadable folder warned once inside the status bar and three rescans never showed it again")
+                finally:
+                    locked.chmod(0o755)
+
             def background_io_checks():
                 # Real disk syscalls are held by the fixture library; no application test flag.
                 nonlocal app, window
@@ -12648,6 +12677,11 @@ def main():
                 assert (control_bounds("sidebar:details",required=False) is not None)==before
                 for name,digest in sources.items():assert hashlib.sha256((fixture/name).read_bytes()).hexdigest()==digest,name
                 results.append("A queued unknown command performed no action; a second valid query restored the sidebar and every Markdown byte stayed unchanged")
+            if args.section == "quiet-warning":
+                quiet_warning_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "quiet-warning"}))
+                return
             if args.section == "background-io":
                 background_io_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -13434,6 +13468,7 @@ def main():
                 (reports/"gui-all-workflows.json").write_text(json.dumps(workflow_results,indent=2)+"\n")
             run_checks([
                 background_io_checks,
+                quiet_warning_checks,
                 properties_checks,
                 image_checks,
                 attachment_tab_checks,

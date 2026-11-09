@@ -166,6 +166,8 @@ pub struct NotesApp {
     error: Option<String>,
     /// The notice on screen and when its fade timer last started.
     error_seen: Option<(String, Instant)>,
+    /// Background warnings already shown; none of them comes back this session.
+    warned: std::collections::HashSet<String>,
     voice_fallback: Option<VoiceFallback>,
     status: String,
     allow_close: bool,
@@ -301,6 +303,7 @@ impl NotesApp {
             pending: None,
             error: None,
             error_seen: None,
+            warned: Default::default(),
             voice_fallback: None,
             status: "Ready".into(),
             allow_close: false,
@@ -740,7 +743,10 @@ impl NotesApp {
                         self.refresh_paths.extend(event.paths);
                         self.refresh_due = Some(Instant::now() + Duration::from_millis(150));
                     }
-                    Err(error) => self.error = Some(rustidian::watcher::describe(&error)),
+                    Err(error) => {
+                        let warning = rustidian::watcher::describe(&error);
+                        warn_once(&mut self.error, &mut self.warned, &warning, warning.clone());
+                    }
                     _ => {}
                 }
             }
@@ -794,7 +800,7 @@ impl NotesApp {
                         self.watch_overflow = overflow;
                     }
                     if let Some(warning) = watch_warning {
-                        self.error = Some(warning);
+                        warn_once(&mut self.error, &mut self.warned, &warning, warning.clone());
                     }
                     let opening = self.loading_root.take().is_some();
                     if opening {
@@ -939,7 +945,12 @@ impl NotesApp {
                                     Ok(document) if document.text != tab.document.text => {
                                         tab.replace(document)
                                     }
-                                    Err(error) => self.error = Some(error),
+                                    Err(error) => warn_once(
+                                        &mut self.error,
+                                        &mut self.warned,
+                                        &error,
+                                        error.clone(),
+                                    ),
                                     _ => {}
                                 }
                             }
@@ -965,10 +976,21 @@ impl NotesApp {
                     if let Some(vault) = &self.vault {
                         self.status = format!("{} notes", vault.notes.len());
                         if !vault.warnings.is_empty() {
-                            self.error = Some(format!(
-                                "Some files could not be indexed: {}",
-                                vault.warnings.join("; ")
-                            ));
+                            // Each path goes to the log; the window gets one short line,
+                            // once per vault, however often the folder is rescanned.
+                            for warning in &vault.warnings {
+                                eprintln!("not indexed: {warning}");
+                            }
+                            let count = vault.warnings.len();
+                            warn_once(
+                                &mut self.error,
+                                &mut self.warned,
+                                &format!("index:{}", vault.root.display()),
+                                format!(
+                                    "{count} item{} could not be indexed",
+                                    if count == 1 { "" } else { "s" }
+                                ),
+                            );
                         }
                     }
                     if watched {
@@ -982,12 +1004,16 @@ impl NotesApp {
                 Err(error) => {
                     self.recovery_changed_paths
                         .extend(self.recovery_index_paths.drain());
-                    self.loading_root = None;
+                    let rescan = self.loading_root.take().is_none();
                     self.startup_document = None;
                     if self.vault_manager.open {
                         self.vault_manager.show_error(error.clone());
                     }
-                    self.error = Some(error);
+                    if rescan {
+                        warn_once(&mut self.error, &mut self.warned, &error, error.clone());
+                    } else {
+                        self.error = Some(error);
+                    }
                 }
             }
         }
@@ -1074,7 +1100,7 @@ impl NotesApp {
             ctx.request_repaint_after(Duration::from_millis(20));
         }
         while let Ok(error) = recorder.errors.try_recv() {
-            self.error = Some(error);
+            warn_once(&mut self.error, &mut self.warned, &error, error.clone());
         }
         if recorder.events.try_iter().count() > 0 {
             self.recovery_manager.changed(ctx);
@@ -6696,6 +6722,7 @@ impl eframe::App for NotesApp {
         if let Some(kind) = crate::window::title_bar(ui, &self.window_title, file_actions_enabled) {
             self.start_open_picker(kind);
         }
+        let mut status_text_right = 0.0;
         let status = egui::Panel::bottom("status")
             .exact_size(28.0)
             .resizable(false)
@@ -6708,6 +6735,7 @@ impl eframe::App for NotesApp {
                         format!("status:{}", self.status),
                         message.rect,
                     );
+                    status_text_right = message.rect.right();
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(theme::space::M);
                         if self
@@ -6775,23 +6803,31 @@ impl eframe::App for NotesApp {
             {
                 self.error_seen = Some((error.clone(), now));
             }
+            let notice_width = (ctx.content_rect().width() * 0.4).min(460.0);
             let notice = egui::Area::new(egui::Id::unique("error"))
                 .order(egui::Order::Foreground)
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-16.0, 44.0))
+                .anchor(
+                    egui::Align2::LEFT_BOTTOM,
+                    egui::vec2(status_text_right + theme::space::L, -3.0),
+                )
                 .show(&ctx, |ui| {
-                    theme::notice_frame(&ctx).show(ui, |ui| {
-                        ui.horizontal_top(|ui| {
+                    egui::Frame::NONE.show(ui, |ui| {
+                        ui.horizontal(|ui| {
                             ui.add(
                                 theme::icon_image(
                                     theme::Icon::CalloutWarning,
                                     ui.visuals().warn_fg_color,
                                 )
-                                .fit_to_exact_size(egui::vec2(16.0, 16.0)),
+                                .fit_to_exact_size(egui::vec2(12.0, 12.0)),
                             );
-                            ui.vertical(|ui| {
-                                ui.set_max_width(320.0);
+                            ui.horizontal(|ui| {
+                                ui.set_max_width(notice_width);
+                                let line = error.lines().next().unwrap_or_default();
                                 let message = ui
-                                    .add(egui::Label::new(RichText::new(&error).size(13.0)).wrap());
+                                    .add(
+                                        egui::Label::new(RichText::new(line).size(11.0)).truncate(),
+                                    )
+                                    .on_hover_text(&error);
                                 crate::ui_probe::record(ui.ctx(), "error-notice", message.rect);
                                 if let Some(fallback) = &fallback {
                                     ui.horizontal_wrapped(|ui| {
@@ -6912,6 +6948,19 @@ impl eframe::App for NotesApp {
             );
             self.first_frame = false;
         }
+    }
+}
+
+/// Show a background warning at most once per session and never over another notice.
+fn warn_once(
+    error: &mut Option<String>,
+    warned: &mut std::collections::HashSet<String>,
+    key: &str,
+    message: String,
+) {
+    if error.is_none() && !warned.contains(key) {
+        warned.insert(key.to_owned());
+        *error = Some(message);
     }
 }
 
