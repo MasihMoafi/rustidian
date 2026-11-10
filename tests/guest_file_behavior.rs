@@ -3,6 +3,51 @@
 use rustidian::vault::Vault;
 use std::fs;
 
+/// 9 Nov: searching a file's name found nothing, because the file was open in
+/// a tab from outside the vault. Open outside files are searched too: by name
+/// in any case, by their text, and by text typed but not saved; a file not
+/// open in a tab stays out.
+#[test]
+fn search_finds_an_open_outside_file_by_name_and_by_its_text() {
+    use rustidian::{query::Cache, vault::Document};
+    use std::{path::PathBuf, sync::mpsc, time::Duration};
+
+    let home = tempfile::tempdir().unwrap();
+    fs::write(
+        home.path().join("Home.md"),
+        "# Home\nsee the guide in guide.md\n",
+    )
+    .unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    let file = elsewhere.path().join("GUIDE.md");
+    fs::write(&file, "only here: zanzibar\n").unwrap();
+    let closed = elsewhere.path().join("Closed.md");
+    fs::write(&closed, "zanzibar too\n").unwrap();
+    let mut vault = Vault::open(home.path()).unwrap();
+    let mut open = vault.open_guest(&file).unwrap();
+    vault.open_guest(&closed).unwrap();
+    let mut cache = Cache::default();
+    let mut search = |query: &str, open: &Document| {
+        cache.invalidate();
+        let (wake, done) = mpsc::sync_channel(1);
+        cache.update(query, &vault, &[open], move || {
+            let _ = wake.send(());
+        });
+        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        cache.update(query, &vault, &[open], || {});
+        assert!(cache.error.is_none(), "{query}: {:?}", cache.error);
+        cache.paths.clone()
+    };
+
+    for name in ["guide.md", "GUIDE.MD", "Guide"] {
+        assert_eq!(search(name, &open)[0], open.path, "{name}");
+    }
+    assert_eq!(search("zanzibar", &open), vec![open.path.clone()]);
+    assert!(search("guide", &open).contains(&PathBuf::from("Home.md")));
+    open.text = "typed, not saved: quokka\n".into();
+    assert_eq!(search("quokka", &open), vec![open.path.clone()]);
+}
+
 #[test]
 fn a_guest_file_is_read_and_saved_where_it_is_and_never_enters_the_index() {
     let home = tempfile::tempdir().unwrap();

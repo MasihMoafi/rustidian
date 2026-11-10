@@ -35,6 +35,7 @@ pub struct Cache {
     key: Option<String>,
     root: Option<std::path::PathBuf>,
     index: Option<std::sync::Arc<Vec<Note>>>,
+    guests: Vec<std::path::PathBuf>,
     worker: Option<SearchWorker>,
     pub paths: Vec<std::path::PathBuf>,
     pub error: Option<String>,
@@ -140,11 +141,22 @@ impl Cache {
         &mut self,
         query: &str,
         vault: &crate::vault::Vault,
+        guests: &[&crate::vault::Document],
         wake: impl Fn() + Send + 'static,
     ) {
         if self.root.as_ref() != Some(&vault.root) {
             self.invalidate();
             self.root = Some(vault.root.clone());
+        }
+        // Files open from outside the vault are searched beside its notes;
+        // opening or closing one starts the search again.
+        if !self
+            .guests
+            .iter()
+            .eq(guests.iter().map(|guest| &guest.path))
+        {
+            self.invalidate();
+            self.guests = guests.iter().map(|guest| guest.path.clone()).collect();
         }
         if self.worker.is_none() {
             match SearchWorker::start() {
@@ -162,7 +174,15 @@ impl Cache {
             self.error = None;
             let index = self
                 .index
-                .get_or_insert_with(|| std::sync::Arc::new(vault.notes.clone()))
+                .get_or_insert_with(|| {
+                    let mut notes = vault.notes.clone();
+                    notes.extend(
+                        guests
+                            .iter()
+                            .map(|guest| Note::new(guest.path.clone(), guest.text.clone())),
+                    );
+                    std::sync::Arc::new(notes)
+                })
                 .clone();
             let version = worker
                 .0
@@ -235,7 +255,11 @@ impl Query {
         let phrase = terms.join(" ");
         notes.sort_by_cached_key(|note| {
             let title = note.title().to_lowercase();
-            if title == phrase {
+            let name = note
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_lowercase());
+            if title == phrase || name.as_deref() == Some(phrase.as_str()) {
                 0
             } else if terms.iter().all(|term| title.contains(*term)) {
                 1

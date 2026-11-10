@@ -31,11 +31,11 @@ fn exact_and_full_title_matches_precede_body_matches() {
         .map(PathBuf::from)
         .collect();
         let (wake, done) = mpsc::sync_channel(1);
-        cache.update(source, &vault, move || {
+        cache.update(source, &vault, &[], move || {
             let _ = wake.send(());
         });
         done.recv_timeout(Duration::from_secs(3)).unwrap();
-        cache.update(source, &vault, || {});
+        cache.update(source, &vault, &[], || {});
         assert!(cache.error.is_none(), "{source}: {:?}", cache.error);
         assert_eq!(cache.paths, expected, "Sidebar search: {source}");
         let paths: Vec<_> = vault

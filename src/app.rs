@@ -2786,8 +2786,14 @@ impl NotesApp {
                     ui.add_space(theme::space::S);
                     if let Some(vault) = &self.vault {
                         let wake = ui.ctx().clone();
+                        let guests: Vec<_> = self
+                            .tabs
+                            .iter()
+                            .map(|tab| &tab.document)
+                            .filter(|document| vault.is_guest(&document.path))
+                            .collect();
                         self.search_cache
-                            .update(&self.search, vault, move || wake.request_repaint());
+                            .update(&self.search, vault, &guests, move || wake.request_repaint());
                         let results = &self.search_cache.paths;
                         if let Some(paths) = visible_files.as_mut() {
                             paths.clone_from(results);
