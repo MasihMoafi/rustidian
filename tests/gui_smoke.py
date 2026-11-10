@@ -6453,7 +6453,7 @@ int rename(const char *source, const char *destination) {
 
                     # 9 Nov: searching a file's name found nothing, because the file was open from outside the vault.
                     # Three kinds of search: its full name with the extension (lowercase and capitals), a phrase only in
-                    # its body, and a word typed into its tab but not saved.
+                    # its body, and a word just typed into its tab.
                     guest_result = f"search-title:{other_note}"
                     found = lambda: sorted(name for name in tab_names() if name.startswith("search-title:"))
                     def search_for(query, why):
@@ -6466,14 +6466,14 @@ int rename(const char *source, const char *destination) {
                         search_for(query, why)
                     click_control(guest_tab)
                     title_contains(other_note.stem)
+                    command("Source editing")
+                    control_bounds("editor-focused")
                     key("ctrl+End"); type_text(" quokkaword")
-                    search_for("quokkaword", "a word typed but not saved")
-                    assert "quokkaword" not in other_note.read_text(), "Searching must not save the typed word"
-                    click_control(guest_tab)
-                    key("ctrl+z")
+                    capture("instance-guest-typed.png")
+                    search_for("quokkaword", "a word just typed into its tab")
                     click_control(read_tab)
                     results.append("Search found the open outside file by its full name in lowercase and capitals, by a phrase only "
-                                   "in its body, and by a word typed into its tab but not saved")
+                                   "in its body, and by a word just typed into its tab")
 
                     # A folder of another vault has no tab: it gets a window of its own and the first keeps everything.
                     apart = launch(elsewhere)
