@@ -580,7 +580,7 @@ mod worker_tests {
         let release = Arc::new(Barrier::new(2));
         let worker_entered = entered.clone();
         let worker_release = release.clone();
-        cache.update("old", &old_vault, move || {
+        cache.update("old", &old_vault, &[], move || {
             worker_entered.wait();
             worker_release.wait();
         });
@@ -593,23 +593,23 @@ mod worker_tests {
         assert_eq!(old_vault.notes[0].text, "changed");
         let obsolete_called = Arc::new(AtomicBool::new(false));
         let obsolete = obsolete_called.clone();
-        cache.update("no match", &new_vault, move || {
+        cache.update("no match", &new_vault, &[], move || {
             obsolete.store(true, Ordering::SeqCst);
         });
         let (wake, done) = mpsc::sync_channel(1);
-        cache.update("new", &new_vault, move || {
+        cache.update("new", &new_vault, &[], move || {
             let _ = wake.send(());
         });
         release.wait();
         done.recv_timeout(Duration::from_secs(3)).unwrap();
-        cache.update("new", &new_vault, || {});
+        cache.update("new", &new_vault, &[], || {});
         assert_eq!(cache.paths, [PathBuf::from("New.md")]);
         assert!(cache.error.is_none());
         assert!(!obsolete_called.load(Ordering::SeqCst));
         // A late, already-delivered result from an obsolete generation is also rejected.
         let worker = cache.worker.as_ref().unwrap();
         worker.0.queue.lock().unwrap().done = Some((0, Ok(vec![PathBuf::from("Old.md")])));
-        cache.update("new", &new_vault, || {});
+        cache.update("new", &new_vault, &[], || {});
         assert_eq!(cache.paths, [PathBuf::from("New.md")]);
     }
 }
