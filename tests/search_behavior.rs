@@ -156,3 +156,39 @@ fn aliases_are_fuzzy_matched_without_duplicate_file_results() {
     assert_eq!(matcher.rank("", 10).len(), 2);
     assert_eq!(matcher.rank("Home", 10).len(), 1);
 }
+
+/// 10 Nov: Ctrl+O "agents.md" showed an unrelated note, because the file was
+/// AGENTS.md outside the vault. Files elsewhere are listed (hidden, dependency
+/// folders and the vault itself left out) and an exact name wins in any case.
+#[test]
+fn ctrl_o_finds_a_file_outside_the_vault_by_its_exact_name_in_any_case() {
+    let home = tempfile::tempdir().unwrap();
+    let vault = home.path().join("notes");
+    for (path, text) in [
+        ("notes/Steering agents with CLAUDE.md.md", "in the vault"),
+        ("p/AGENTS.md", "rules"),
+        ("p/app/node_modules/pkg/AGENTS.md", "dependency"),
+        ("p/.cache/AGENTS.md", "hidden"),
+        ("p/cover.png", "not text"),
+    ] {
+        let file = home.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let found = rustidian::elsewhere::scan(home.path(), &vault);
+    assert_eq!(found, vec![home.path().join("p/AGENTS.md")], "{found:?}");
+
+    let mut matcher = FileMatcher::elsewhere(home.path(), found);
+    for query in ["agents.md", "AGENTS.MD", "Agents.md"] {
+        assert_eq!(
+            matcher.rank(query, 5)[0],
+            home.path().join("p/AGENTS.md"),
+            "{query}"
+        );
+    }
+    let mut vault_files = FileMatcher::new([PathBuf::from("Agents.md"), PathBuf::from("Other.md")]);
+    assert_eq!(
+        vault_files.rank("agents.md", 5)[0],
+        PathBuf::from("Agents.md")
+    );
+}

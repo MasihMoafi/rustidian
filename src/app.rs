@@ -167,6 +167,8 @@ pub struct NotesApp {
     dictation_target: Option<DictationTarget>,
     dictation_result: Option<Receiver<Result<String, String>>>,
     files: rustidian::search::FileMatcher,
+    /// Files outside the vault for Ctrl+O, with the vault they were listed for.
+    elsewhere: Option<(PathBuf, rustidian::elsewhere::Index)>,
     pending: Option<Pending>,
     error: Option<String>,
     voice_fallback: Option<VoiceFallback>,
@@ -303,6 +305,7 @@ impl NotesApp {
             dictation_target: None,
             dictation_result: None,
             files: rustidian::search::FileMatcher::new(Vec::new()),
+            elsewhere: None,
             pending: None,
             error: None,
             voice_fallback: None,
@@ -2266,6 +2269,49 @@ impl NotesApp {
 
     /// Open a file of another vault as a tab of this window, where it lies. The
     /// notes already open stay open.
+    /// Ctrl+O's results: exact file names first (from the vault, then from
+    /// elsewhere on this computer), then the vault's close matches, then
+    /// close matches elsewhere.
+    fn quick_open_matches(&mut self, ctx: &egui::Context) -> Vec<PathBuf> {
+        let query = self.dialog_input.trim().to_owned();
+        let vault_matches = self.files.rank(&query, 100);
+        let Some(vault) = &self.vault else {
+            return vault_matches;
+        };
+        if self
+            .elsewhere
+            .as_ref()
+            .is_none_or(|(root, _)| *root != vault.root)
+            && let Some(home) = rustidian::elsewhere::root()
+        {
+            let wake = ctx.clone();
+            self.elsewhere = Some((
+                vault.root.clone(),
+                rustidian::elsewhere::Index::start(home, vault.root.clone(), move || {
+                    wake.request_repaint()
+                }),
+            ));
+        }
+        let other = match (&self.elsewhere, query.is_empty()) {
+            (Some((_, index)), false) => index.rank(&query, 50).unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let lower = query.to_lowercase();
+        let exact = |path: &PathBuf| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().to_lowercase() == lower)
+        };
+        let (vault_exact, vault_rest): (Vec<_>, Vec<_>) =
+            vault_matches.into_iter().partition(exact);
+        let (other_exact, other_rest): (Vec<_>, Vec<_>) = other.into_iter().partition(exact);
+        vault_exact
+            .into_iter()
+            .chain(other_exact)
+            .chain(vault_rest)
+            .chain(other_rest)
+            .collect()
+    }
+
     fn open_guest_tab(&mut self, file: &Path) {
         if self.open_html_in_browser(file) {
             return;
@@ -5106,10 +5152,10 @@ impl NotesApp {
                 crate::ui_probe::record(ctx, "trash-target", response.rect);
                 response
             } else {
-                ui.add(TextEdit::singleline(&mut self.dialog_input)
+                ui.add(theme::text_field(TextEdit::singleline(&mut self.dialog_input)
                     .id(input_id)
                     .desired_width(f32::INFINITY)
-                    .hint_text(hint))
+                    .hint_text(hint)))
             };
             if self.dialog_focus && dialog != Dialog::TrashNote {
                 // A new Area/menu may still be completing its first layout pass.
@@ -5133,7 +5179,7 @@ impl NotesApp {
             ui.add_space(theme::space::M);
             match dialog {
                 Dialog::QuickOpen => {
-                    let matches = self.files.rank(&self.dialog_input, 100);
+                    let matches = self.quick_open_matches(ctx);
                     if input.changed() {
                         self.dialog_selected = 0;
                     }
@@ -5153,8 +5199,15 @@ impl NotesApp {
                     ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
                         theme::list_style(ui);
                         for (index, path) in matches.iter().enumerate() {
+                            let label = match rustidian::elsewhere::root()
+                                .filter(|_| path.is_absolute())
+                                .and_then(|home| path.strip_prefix(&home).ok().map(Path::to_owned))
+                            {
+                                Some(below_home) => format!("~/{}", below_home.display()),
+                                None => rustidian::paths::display_path(path),
+                            };
                             let row = ui.add(
-                                egui::Button::new(rustidian::paths::display_path(path))
+                                egui::Button::new(label)
                                     .selected(index == self.dialog_selected)
                                     .frame_when_inactive(false)
                                     .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
@@ -5432,6 +5485,9 @@ impl NotesApp {
                 if !self.insert_template(&path) {
                     return;
                 }
+            } else if path.is_absolute() {
+                // Ctrl+O found it outside the vault: it opens as a tab beside the notes.
+                self.open_guest_tab(&path);
             } else {
                 self.open_note_at(&path, open_in_new_tab || ctx.input(|i| i.modifiers.command));
             }

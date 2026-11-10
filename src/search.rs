@@ -67,6 +67,25 @@ impl FileMatcher {
         }
     }
 
+    /// Files outside the vault, matched by their path below `root`.
+    pub fn elsewhere(root: &std::path::Path, paths: Vec<PathBuf>) -> Self {
+        let entries = paths
+            .into_iter()
+            .map(|path| Entry {
+                label: path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned(),
+                path,
+            })
+            .collect();
+        Self {
+            entries,
+            matcher: Matcher::new(Config::DEFAULT.match_paths()),
+        }
+    }
+
     pub fn from_notes(notes: &[crate::vault::Note]) -> Self {
         let mut matcher = Self::new(notes.iter().map(|note| note.path.clone()));
         for note in notes {
@@ -111,17 +130,20 @@ impl FileMatcher {
         limit: usize,
         include: impl Fn(&std::path::Path) -> bool,
     ) -> Vec<PathBuf> {
+        // An exact name or path matches whatever its letter case: "agents.md"
+        // finds AGENTS.md.
+        let lower = query.to_lowercase();
         let mut exact: Vec<_> = self
             .entries
             .iter()
             .filter(|entry| {
                 !query.is_empty()
                     && include(&entry.path)
-                    && (entry.path == std::path::Path::new(query)
+                    && (entry.path.to_string_lossy().to_lowercase() == lower
                         || entry
                             .path
                             .file_name()
-                            .is_some_and(|name| name == std::ffi::OsStr::new(query)))
+                            .is_some_and(|name| name.to_string_lossy().to_lowercase() == lower))
             })
             .collect();
         // A qualified path selects that file even when other folders contain

@@ -92,7 +92,10 @@ def main():
         with os.fdopen(read_fd) as display_file:
             display = ":" + display_file.readline().strip()
         assert display[1:].isdigit() and server.poll() is None, (reports / "gui-xvfb.log").read_text()
-        environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"))
+        environment = dict(os.environ, DISPLAY=display, WAYLAND_DISPLAY="", WINIT_UNIX_BACKEND="x11", XDG_CONFIG_HOME=str(base / "config"), XDG_STATE_HOME=str(base / "state"), XDG_DATA_HOME=str(base / "data"), GSETTINGS_BACKEND="memory", RUSTIDIAN_UI_PROBE=str(base / "ui-probe.json"), RUSTIDIAN_ELSEWHERE_ROOT=str(base / "home"))
+        # Ctrl+O also lists files outside the vault; it searches this private home, never the real one.
+        (base / "home/p").mkdir(parents=True, exist_ok=True)
+        (base / "home/p/AGENTS.md").write_text("# Agent rules\n\nOUTSIDE_THE_VAULT\n")
         transcription_server = None
         transcription_requests = []
         if args.section in ("dictation", "all"):
@@ -2909,6 +2912,28 @@ int rename(const char *source, const char *destination) {
                 key("Escape");title_contains("No matching needle qzx")
                 assert all(path.read_text()==original for path,original in originals.items())
                 results.append("An empty chooser still listed files; cancelling it kept the current document and every fixture byte unchanged")
+
+                # 10 Nov: Ctrl+O "agents.md" showed an unrelated note: the file was AGENTS.md outside the vault, and
+                # the field's text sat high. A file elsewhere is found by its exact name in any case, ranks first,
+                # and opens as a tab; the field has the shared control height, so its text is centred.
+                outside=base/"home/p/AGENTS.md"
+                for value in ("agents.md","AGENTS.MD"):
+                    deadline=time.monotonic()+5
+                    while True:
+                        rows=query(value)
+                        probe=json.loads((base/"ui-probe.json").read_text())
+                        tops={name:rect[1] for name,rect in probe.items() if name.startswith("quick-open:")}
+                        if tops and min(tops,key=tops.get)=="quick-open:"+str(outside):break
+                        assert time.monotonic()<deadline,(value,sorted(tops.items(),key=lambda item:item[1]))
+                        key("Escape");time.sleep(.2)
+                    field=control_bounds("dialog-input")
+                    assert field[3]-field[1]>=31,("The Ctrl+O field keeps the shared control height",field)
+                    capture("native-quick-open-elsewhere-"+value.replace(".","-")+".png")
+                    key("Return");title_contains("AGENTS")
+                    control_bounds("tab-full:"+str(outside))
+                    key("ctrl+w")
+                assert outside.read_text()=="# Agent rules\n\nOUTSIDE_THE_VAULT\n"
+                results.append("Ctrl+O found AGENTS.md outside the vault by its name in lowercase and capitals, listed it first, opened it as a tab, and its field kept the shared height")
 
             def page_preview_checks():
                 close_tabs()
