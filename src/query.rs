@@ -35,7 +35,7 @@ pub struct Cache {
     key: Option<String>,
     root: Option<std::path::PathBuf>,
     index: Option<std::sync::Arc<Vec<Note>>>,
-    guests: Vec<std::path::PathBuf>,
+    guests: Vec<(std::path::PathBuf, u64)>,
     worker: Option<SearchWorker>,
     pub paths: Vec<std::path::PathBuf>,
     pub error: Option<String>,
@@ -148,15 +148,21 @@ impl Cache {
             self.invalidate();
             self.root = Some(vault.root.clone());
         }
-        // Files open from outside the vault are searched beside its notes;
-        // opening or closing one starts the search again.
-        if !self
-            .guests
+        // Files open from outside the vault are searched beside its notes, with
+        // the text their tabs hold; opening, closing or typing in one starts
+        // the search again.
+        let seen: Vec<_> = guests
             .iter()
-            .eq(guests.iter().map(|guest| &guest.path))
-        {
+            .map(|guest| {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                guest.text.hash(&mut hasher);
+                (guest.path.clone(), hasher.finish())
+            })
+            .collect();
+        if self.guests != seen {
             self.invalidate();
-            self.guests = guests.iter().map(|guest| guest.path.clone()).collect();
+            self.guests = seen;
         }
         if self.worker.is_none() {
             match SearchWorker::start() {

@@ -28,7 +28,6 @@ fn search_finds_an_open_outside_file_by_name_and_by_its_text() {
     vault.open_guest(&closed).unwrap();
     let mut cache = Cache::default();
     let mut search = |query: &str, open: &Document| {
-        cache.invalidate();
         let (wake, done) = mpsc::sync_channel(1);
         cache.update(query, &vault, &[open], move || {
             let _ = wake.send(());
