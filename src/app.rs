@@ -2267,8 +2267,6 @@ impl NotesApp {
         }
     }
 
-    /// Open a file of another vault as a tab of this window, where it lies. The
-    /// notes already open stay open.
     /// Ctrl+O's results: exact file names first (from the vault, then from
     /// elsewhere on this computer), then the vault's close matches, then
     /// close matches elsewhere.
@@ -2312,6 +2310,8 @@ impl NotesApp {
             .collect()
     }
 
+    /// Open a file of another vault as a tab of this window, where it lies. The
+    /// notes already open stay open.
     fn open_guest_tab(&mut self, file: &Path) {
         if self.open_html_in_browser(file) {
             return;
