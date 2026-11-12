@@ -73,6 +73,8 @@ jobs:
       # Before the cache (see native.yml): a formatting failure must not save an empty cache.
       - name: Formatting
         run: cargo fmt --all -- --check
+      - name: Speech worker exit during loading and synthesis
+        run: python3 -B tests/kokoro_lifecycle.py
       - name: Restore the Rust build cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

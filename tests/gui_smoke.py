@@ -16,6 +16,9 @@ import time
 import traceback
 
 from PIL import Image, ImageChops, ImageGrab
+import kokoro_lifecycle
+
+SPEECH_EXIT_SECTIONS = tuple("read-aloud-exit-" + stage for stage in ("idle", "loading", "synthesis", "crash"))
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -62,7 +65,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", *SPEECH_EXIT_SECTIONS, "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo", "deletion-storage", "quiet-errors"]
     args = parser.parse_args()
@@ -148,6 +151,9 @@ def main():
             environment.update(RUSTIDIAN_KOKORO_PYTHON=str(voice), RUSTIDIAN_KOKORO_MODEL=str(base / "kokoro.onnx"),
                                RUSTIDIAN_KOKORO_VOICES=str(base / "voices.bin"), RUSTIDIAN_READ_ALOUD_PLAYER=str(player),
                                READ_ALOUD_LOG=str(base / "read-aloud"))
+        if args.section in SPEECH_EXIT_SECTIONS:
+            stage = args.section.removeprefix("read-aloud-exit-")
+            environment.update(kokoro_lifecycle.prepare(base, "synthesis" if stage == "crash" else stage))
         if args.section in ("palettes", "all"):
             launcher = base / "data/applications/rustidian.desktop"
             environment["XDG_DATA_DIRS"] = str(base / "system data") + os.pathsep + os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share")
@@ -8321,6 +8327,43 @@ int rename(const char *source, const char *destination) {
                 finally:
                     speech.shutdown()
 
+            def read_aloud_exit_checks():
+                stage = args.section.removeprefix("read-aloud-exit-")
+                note = fixture / "Speech exit.md"
+                note.write_text("# Speech exit\n\nRead this sentence.\n")
+                before = note.read_bytes()
+                command("Refresh vault")
+                open_note("Speech exit")
+                command("Reading view")
+                block = control_bounds("reading-block:1")
+                xdo("mousemove", "--sync", str(round(block[0] + 40)), str(round((block[1] + block[3]) / 2)))
+                pause()
+                click_control("read-aloud-block:1")
+                marker = base / "worker"
+                reached = marker.with_suffix(".loading" if stage == "loading" else ".synthesis")
+                kokoro_lifecycle.wait_for(reached.exists, f"Speech did not reach {stage}")
+                pid = int(marker.with_suffix(".pid").read_text())
+                assert kokoro_lifecycle.alive(pid), "Speech worker exited before the app closed"
+                if stage == "idle":
+                    kokoro_lifecycle.wait_for(
+                        lambda: control_bounds("read-aloud-player", required=False) is None,
+                        "Reading did not finish",
+                    )
+                    assert kokoro_lifecycle.alive(pid), "Idle speech must stay reusable while the app is open"
+                capture("native-" + args.section + ".png")
+                closed = time.monotonic()
+                if stage == "crash":
+                    app.kill()
+                    assert app.wait(timeout=3) == -signal.SIGKILL
+                else:
+                    left, top, right, bottom = control_bounds("window:Close window")
+                    xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)), "click", "1")
+                    assert app.wait(timeout=3) == 0, "Closing the window must end the app"
+                kokoro_lifecycle.wait_for(lambda: not kokoro_lifecycle.alive(pid), f"Kokoro survived app exit during {stage}", seconds=2)
+                elapsed = time.monotonic() - closed
+                assert note.read_bytes() == before, "Closing speech must preserve the note"
+                results.append(f"Speech was active in {stage}; closing the app ended its process and worker within {elapsed:.2f}s and preserved the note")
+
             def read_aloud_checks():
                 # Masih (6 Nov): read a paragraph, a selection (whole sentences) or the note aloud,
                 # skip folded sections, and stop both voicing and playback at once.
@@ -14059,6 +14102,11 @@ int rename(const char *source, const char *destination) {
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": "voice-account"}))
                 return
+            if args.section in SPEECH_EXIT_SECTIONS:
+                read_aloud_exit_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
+                return
             if args.section == "read-aloud":
                 read_aloud_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
@@ -14856,6 +14904,13 @@ int rename(const char *source, const char *destination) {
             except subprocess.TimeoutExpired:
                 app.kill()
                 app.wait()
+            if args.section in SPEECH_EXIT_SECTIONS and (base / "worker.pid").exists():
+                pid = int((base / "worker.pid").read_text())
+                if kokoro_lifecycle.alive(pid):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
             if file_manager_bus is not None:
                 try:
                     subprocess.run(["nautilus", "--quit"], env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)

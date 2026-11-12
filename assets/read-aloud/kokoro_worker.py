@@ -28,6 +28,20 @@ if not os.environ.get("RUSTIDIAN_KOKORO_LIBS"):
         )
         os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
 
+# Loading or synthesis can keep the request loop from noticing EOF. Watch the
+# app's pipe separately so even an abrupt app exit immediately releases the GPU.
+if sys.platform == "linux":
+    import select
+    import threading
+
+    def exit_when_app_closes():
+        pipe = select.poll()
+        pipe.register(sys.stdin.fileno(), select.POLLHUP | select.POLLERR)
+        pipe.poll()
+        os._exit(0)
+
+    threading.Thread(target=exit_when_app_closes, daemon=True).start()
+
 import kokoro_onnx
 import onnxruntime
 import numpy as np
