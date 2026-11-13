@@ -8496,8 +8496,9 @@ int rename(const char *source, const char *destination) {
                     assert wait_played(2) == ["Top", "Target one is here."], lines(played)
 
                     def heard_on_screen():
-                        heard, viewport = control_bounds("read-aloud-heard"), control_bounds("document-viewport")
-                        return viewport[1] <= heard[1] and heard[3] <= viewport[3], (heard, viewport)
+                        # The probe skips rectangles outside the window: absent means off screen.
+                        heard, viewport = control_bounds("read-aloud-heard", required=False), control_bounds("document-viewport")
+                        return heard is not None and viewport[1] <= heard[1] and heard[3] <= viewport[3], (heard, viewport)
 
                     for view in ("Live preview", "Reading view"):
                         command(view)
