@@ -176,6 +176,10 @@ fn voices() -> PathBuf {
 
 fn qwen_python() -> PathBuf {
     configured("RUSTIDIAN_QWEN_PYTHON", || {
+        let accelerated = home().join(".local/share/rustidian/qwen-fast-venv/bin/python");
+        if accelerated.exists() {
+            return accelerated;
+        }
         home().join(".local/share/rustidian/qwen-venv/bin/python")
     })
 }

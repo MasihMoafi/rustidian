@@ -15,13 +15,27 @@ from speech_text import prepare
 
 torch.set_num_threads(2)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-model = Qwen3TTSModel.from_pretrained(
-    sys.argv[1],
-    device_map="cuda:0" if device == "cuda" else "cpu",
-    dtype=torch.float16 if device == "cuda" else torch.float32,
-    attn_implementation="sdpa",
-    local_files_only=True,
-)
+accelerated = None
+if device == "cuda":
+    try:
+        from faster_qwen3_tts import FasterQwen3TTS
+        accelerated = FasterQwen3TTS
+    except ImportError:
+        pass
+if accelerated is not None:
+    model = accelerated.from_pretrained(
+        sys.argv[1], device="cuda:0", dtype=torch.float16,
+        attn_implementation="sdpa", max_seq_len=1024, local_files_only=True,
+    )
+    model.warmup(prefill_len=100)
+else:
+    model = Qwen3TTSModel.from_pretrained(
+        sys.argv[1],
+        device_map="cuda:0" if device == "cuda" else "cpu",
+        dtype=torch.float16 if device == "cuda" else torch.float32,
+        attn_implementation="sdpa",
+        local_files_only=True,
+    )
 voice = os.environ.get("RUSTIDIAN_QWEN_VOICE", "aiden")
 print(json.dumps({"ready": True, "device": device}), flush=True)
 for line in sys.stdin:
@@ -33,7 +47,7 @@ for line in sys.stdin:
                 language="English",
                 speaker=voice,
                 instruct="Read this article clearly and naturally, with a calm explanatory tone and pauses at punctuation.",
-                max_new_tokens=1024,
+                max_new_tokens=512,
             )
         samples = audio[0]
         speed = float(request.get("speed", 1.0))
