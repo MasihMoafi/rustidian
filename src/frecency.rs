@@ -30,7 +30,11 @@ pub fn now() -> u64 {
 
 impl History {
     pub fn file(state_base: &Path) -> PathBuf {
-        crate::paths::app_directory(state_base).join("open-history.json")
+        // A folder of its own: tools read every `*.json` directly in the app folder as a
+        // vault session.
+        crate::paths::app_directory(state_base)
+            .join("history")
+            .join("opens.json")
     }
 
     /// The saved history; a missing or unreadable file is an empty one.

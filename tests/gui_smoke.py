@@ -2957,10 +2957,11 @@ int rename(const char *source, const char *destination) {
                 control_bounds("file:Notes/First steps.md")
                 capture("native-quick-open-vault-folder.png")
                 results.append("Choosing the vault folder Notes in Ctrl+O revealed it in the explorer, its notes listed")
-                rows=order("Closed",["Closed C.md","Closed B.md"])
+                rows=order("Closed",["Closed C.md"])
                 key("Escape")
-                results.append(f"Among loose matches for 'Closed', the files opened most came first (Closed C three times, Closed B once): {rows[:3]}")
-                history=json.loads((base/"state/rustidian/open-history.json").read_text())["opens"]
+                assert rows.index("Closed B.md")<rows.index("Closed A.md"),rows
+                results.append(f"Among loose matches for 'Closed', the files opened most came first (Closed C three times first, Closed B once before the unopened Closed A): {rows[:3]}")
+                history=json.loads((base/"state/rustidian/history/opens.json").read_text())["opens"]
                 assert any(path.endswith("Closed C.md") and entry["count"]>=3 for path,entry in history.items()),history
                 rows=order("",[str(fixture/"Closed C.md").removeprefix(str(fixture)+"/")])
                 key("Escape")
