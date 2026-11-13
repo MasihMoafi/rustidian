@@ -61,30 +61,140 @@ impl Selection {
     }
 }
 
+/// One conversation: an agent on its own terminal. A chat keeps running while
+/// another is shown, so switching back finds it where it was.
+struct Chat {
+    /// Its place in opening order, which names it until the agent gives a title.
+    number: usize,
+    /// The agent picked for this chat; `None` follows the vault's choice.
+    backend: Option<Backend>,
+    session: Option<Session>,
+    /// Start at its next show: a new chat, Restart or another agent.
+    start: bool,
+    wheel: f32,
+    selection: Option<Selection>,
+}
+
+impl Chat {
+    fn new(number: usize, backend: Option<Backend>) -> Self {
+        Self {
+            number,
+            backend,
+            session: None,
+            start: true,
+            wheel: 0.0,
+            selection: None,
+        }
+    }
+
+    /// The title the agent set, without its leading spinner or status mark.
+    fn agent_title(&self) -> String {
+        self.session
+            .as_ref()
+            .map(|session| clean_title(&session.lock().callbacks().title))
+            .unwrap_or_default()
+    }
+}
+
+/// A terminal title without the spinner or status mark agents put before it.
+fn clean_title(title: &str) -> String {
+    title
+        .trim_start_matches(|letter: char| !letter.is_alphanumeric())
+        .trim()
+        .to_owned()
+}
+
+/// The chat keys, which stay with the panel while the terminal has focus.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ChatKey {
+    /// Ctrl+Shift+T.
+    New,
+    /// Ctrl+Shift+W.
+    Close,
+    /// Ctrl+Tab.
+    Next,
+    /// Ctrl+Shift+Tab.
+    Previous,
+}
+
+/// The chat key `event` presses. Ctrl+T and Ctrl+W stay the agent's (Elpis
+/// expands output with Ctrl+T, and Ctrl+W deletes a word), so the new and close
+/// keys add Shift, as a terminal's own tab keys do.
+fn chat_key(event: &Event) -> Option<ChatKey> {
+    let Event::Key {
+        key,
+        pressed: true,
+        modifiers,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    if !modifiers.command || modifiers.alt {
+        return None;
+    }
+    match (key, modifiers.shift) {
+        (Key::T, true) => Some(ChatKey::New),
+        (Key::W, true) => Some(ChatKey::Close),
+        (Key::Tab, false) => Some(ChatKey::Next),
+        (Key::Tab, true) => Some(ChatKey::Previous),
+        _ => None,
+    }
+}
+
+/// The tab names: each chat's agent title, else its agent's name; a name that
+/// several chats share gets each one's number.
+fn chat_names(chats: &[(usize, String)]) -> Vec<String> {
+    chats
+        .iter()
+        .map(|(number, name)| {
+            if chats.iter().filter(|(_, other)| other == name).count() > 1 {
+                format!("{name} {number}")
+            } else {
+                name.clone()
+            }
+        })
+        .collect()
+}
+
+/// A tab name cut to fit beside the others, with an ellipsis.
+fn short(name: &str) -> String {
+    const MOST: usize = 22;
+    if name.chars().count() <= MOST {
+        name.to_owned()
+    } else {
+        let cut: String = name.chars().take(MOST - 1).collect();
+        format!("{}…", cut.trim_end())
+    }
+}
+
 #[derive(Default)]
 pub struct Panel {
     root: Option<PathBuf>,
+    /// The vault's agent choice: the one a new chat starts.
     chosen: Option<Backend>,
     installed: Vec<(Backend, PathBuf)>,
-    session: Option<Session>,
-    /// Start at the next show: the first one, Restart or another agent.
-    start: bool,
+    chats: Vec<Chat>,
+    /// The chat on screen.
+    active: usize,
+    /// Chats opened in this vault, which numbers the next one.
+    opened: usize,
+    /// Chat keys pressed in the terminal, applied at the next show.
+    pending: Vec<ChatKey>,
     focus: bool,
     keys: Keys,
     /// Ctrl+Shift+V: ask the window for the clipboard at the next show.
     paste: bool,
     /// Text to put on the clipboard at the next show.
     copy: Option<String>,
-    wheel: f32,
-    selection: Option<Selection>,
     /// Re-armed by every draw: output asks for one frame, none while the tab is hidden.
     awake: Arc<AtomicBool>,
 }
 
 impl Panel {
-    /// Whether an agent runs in the panel.
+    /// Whether an agent runs in any chat.
     pub fn running(&self) -> bool {
-        self.session.is_some()
+        self.chats.iter().any(|chat| chat.session.is_some())
     }
 
     /// Give the terminal keyboard focus at the next show.
@@ -96,40 +206,107 @@ impl Panel {
         if self.root.as_deref() == Some(root) {
             return;
         }
-        // Replacing the panel ends the previous vault's agent.
+        // Replacing the panel ends the previous vault's agents.
         *self = Self {
             root: Some(root.to_owned()),
             chosen: load(root),
-            start: true,
             focus: self.focus,
             ..Default::default()
         };
+        self.new_chat();
     }
 
-    /// The agent to run: the vault's choice when installed, else the first installed.
-    fn backend(&self) -> Option<&(Backend, PathBuf)> {
-        self.installed
-            .iter()
-            .find(|(backend, _)| Some(*backend) == self.chosen)
+    /// Open a chat with the vault's agent and show it.
+    fn new_chat(&mut self) {
+        self.opened += 1;
+        self.chats.push(Chat::new(self.opened, self.chosen));
+        self.active = self.chats.len() - 1;
+        self.focus = true;
+    }
+
+    /// Close a chat, ending its agent; closing the last one opens a fresh chat.
+    fn close_chat(&mut self, index: usize) {
+        if index >= self.chats.len() {
+            return;
+        }
+        // The agent ends off this thread when its session drops.
+        self.chats.remove(index);
+        if self.chats.is_empty() {
+            self.new_chat();
+            return;
+        }
+        if index < self.active || self.active >= self.chats.len() {
+            self.active = self.active.saturating_sub(1);
+        }
+        self.focus = true;
+    }
+
+    /// Show the chat `step` places on, wrapping around.
+    fn cycle(&mut self, step: isize) {
+        let count = self.chats.len() as isize;
+        if count > 0 {
+            self.active = (self.active as isize + step).rem_euclid(count) as usize;
+            self.focus = true;
+        }
+    }
+
+    fn apply(&mut self, key: ChatKey) {
+        match key {
+            ChatKey::New => self.new_chat(),
+            ChatKey::Close => self.close_chat(self.active),
+            ChatKey::Next => self.cycle(1),
+            ChatKey::Previous => self.cycle(-1),
+        }
+    }
+
+    /// The agent `wanted` when installed, else the vault's choice, else the first installed.
+    fn backend(&self, wanted: Option<Backend>) -> Option<&(Backend, PathBuf)> {
+        let find = |wanted: Option<Backend>| {
+            self.installed
+                .iter()
+                .find(|(backend, _)| Some(*backend) == wanted)
+        };
+        find(wanted)
+            .or_else(|| find(self.chosen))
             .or_else(|| self.installed.first())
     }
 
-    /// Send the window's keyboard input to the agent while the terminal has
-    /// focus; Ctrl+Shift+A stays with the app. This runs before egui reads the
-    /// input, so Tab, arrows and Escape do not move focus.
+    /// Send the window's keyboard input to the shown agent while the terminal
+    /// has focus; Ctrl+Shift+A and the chat keys stay with the app. This runs
+    /// before egui reads the input, so Tab, arrows and Escape do not move focus.
     pub fn raw_input(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if !ctx.memory(|memory| memory.has_focus(focus_id())) {
+            return;
+        }
         let Self {
-            session,
+            chats,
+            active,
+            pending,
             keys,
             paste,
             copy,
-            selection,
             ..
         } = self;
-        let Some(session) = session.as_mut() else {
+        let before = pending.len();
+        raw.events.retain(|event| match chat_key(event) {
+            Some(key) => {
+                pending.push(key);
+                false
+            }
+            None => true,
+        });
+        if pending.len() > before {
+            ctx.request_repaint();
+        }
+        let Some(Chat {
+            session: Some(session),
+            selection,
+            ..
+        }) = chats.get_mut(*active)
+        else {
             return;
         };
-        if session.exit().is_some() || !ctx.memory(|memory| memory.has_focus(focus_id())) {
+        if session.exit().is_some() {
             return;
         }
         let (application_cursor, bracketed) = {
@@ -165,22 +342,97 @@ impl Panel {
         }
     }
 
+    /// The chat tabs, each with its close button, and the button for a new chat.
+    fn chat_tabs(&mut self, ui: &mut egui::Ui) {
+        let names = chat_names(
+            &self
+                .chats
+                .iter()
+                .map(|chat| {
+                    let title = chat.agent_title();
+                    let name = if title.is_empty() {
+                        self.backend(chat.backend)
+                            .map_or("Chat", |(backend, _)| backend.label())
+                            .to_owned()
+                    } else {
+                        title
+                    };
+                    (chat.number, name)
+                })
+                .collect::<Vec<_>>(),
+        );
+        let several = self.chats.len() > 1;
+        let (mut show, mut close, mut new) = (None, None, false);
+        let strip = ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::space::XS;
+            for (index, name) in names.iter().enumerate() {
+                let tab = ui
+                    .selectable_label(index == self.active, RichText::new(short(name)).size(12.0))
+                    .on_hover_text(name);
+                ui_probe::record(ui.ctx(), format!("agent-chat:{index}:{name}"), tab.rect);
+                if tab.clicked() {
+                    show = Some(index);
+                }
+                if tab.middle_clicked() {
+                    close = Some(index);
+                }
+                if several {
+                    let cross = ui
+                        .add(
+                            egui::Button::new(RichText::new("×").size(12.0).weak())
+                                .frame(false)
+                                .small(),
+                        )
+                        .on_hover_text("Close chat (Ctrl+Shift+W)");
+                    ui_probe::record(ui.ctx(), format!("agent-chat-close:{index}"), cross.rect);
+                    if cross.clicked() {
+                        close = Some(index);
+                    }
+                }
+            }
+            let plus = theme::glyph_button(ui, "+", "New chat (Ctrl+Shift+T)");
+            ui_probe::record(ui.ctx(), "agent-new-chat", plus.rect);
+            new = plus.clicked();
+        });
+        ui_probe::record(ui.ctx(), "agent-chats", strip.response.rect);
+        if let Some(index) = show {
+            self.active = index;
+            self.focus = true;
+        }
+        if let Some(index) = close {
+            self.close_chat(index);
+        }
+        if new {
+            self.new_chat();
+        }
+        ui_probe::metric(ui.ctx(), "agent-chat-count", self.chats.len() as f32);
+        ui_probe::metric(ui.ctx(), "agent-chat-active", self.active as f32);
+    }
+
     /// The tab's content. `font` is the editor's code font.
     pub fn show(&mut self, ui: &mut egui::Ui, root: &Path, font: &FontId) {
         self.open(root);
         // Output asks for at most one frame per draw, and none while the tab is hidden.
         self.awake.store(true, Ordering::Release);
         theme::interface_style(ui);
-        let starting = std::mem::take(&mut self.start);
+        for key in std::mem::take(&mut self.pending) {
+            self.apply(key);
+        }
+        self.chat_tabs(ui);
+        ui.add_space(crate::theme::space::XS);
+        let active = self.active;
+        let starting = std::mem::take(&mut self.chats[active].start);
         if starting {
             self.installed = terminal::discover(&std::env::var_os("PATH").unwrap_or_default());
         }
-        let current = self.backend().map(|(backend, _)| *backend);
+        let current = self
+            .backend(self.chats[active].backend)
+            .map(|(backend, _)| *backend);
         let status = if self.installed.is_empty() {
             "No agent".to_owned()
-        } else if let Some(exit) = self.session.as_mut().and_then(Session::exit) {
+        } else if let Some(exit) = self.chats[active].session.as_mut().and_then(Session::exit) {
             describe(exit)
-        } else if self.session.is_some() {
+        } else if self.chats[active].session.is_some() {
             "Running".to_owned()
         } else if starting {
             "Starting".to_owned()
@@ -222,6 +474,8 @@ impl Panel {
         if picked != current
             && let Some(backend) = picked
         {
+            // This chat changes agent; the next new chat starts the same one.
+            self.chats[active].backend = Some(backend);
             self.chosen = Some(backend);
             if let Err(error) = save(root, backend) {
                 eprintln!("Cannot save the agent choice: {error}");
@@ -230,9 +484,10 @@ impl Panel {
         }
         if restart {
             // The old agent ends off this thread; the new one starts with the next frame.
-            self.session = None;
-            self.selection = None;
-            self.start = true;
+            let chat = &mut self.chats[active];
+            chat.session = None;
+            chat.selection = None;
+            chat.start = true;
             self.focus = true;
             ui.ctx().request_repaint();
         }
@@ -254,7 +509,7 @@ impl Panel {
                 "No agent CLI found. Choose an installed agent, then Restart.",
             );
         }
-        if starting && let Some((backend, program)) = self.backend().cloned() {
+        if starting && let Some((backend, program)) = self.backend(current).cloned() {
             let (ctx, awake) = (ui.ctx().clone(), self.awake.clone());
             let repaint = move || {
                 if awake.swap(false, Ordering::AcqRel) {
@@ -263,7 +518,7 @@ impl Panel {
             };
             let args = backend.context_args(root);
             match Session::start(&program, &args, root, size, repaint) {
-                Ok(session) => self.session = Some(session),
+                Ok(session) => self.chats[active].session = Some(session),
                 Err(error) => {
                     crate::notices::report(
                         ui.ctx(),
@@ -272,28 +527,41 @@ impl Panel {
                 }
             }
         }
-        if let Some(session) = &mut self.session
+        let Self {
+            chats,
+            focus,
+            paste,
+            copy,
+            ..
+        } = self;
+        let Chat {
+            session,
+            wheel,
+            selection,
+            ..
+        } = &mut chats[active];
+        if let Some(session) = session
             && session.exit().is_none()
         {
             session.resize(size);
         }
         ui.allocate_rect(area, Sense::hover());
         let response = ui.interact(area, focus_id(), Sense::click_and_drag());
-        if response.clicked() || response.drag_started() || std::mem::take(&mut self.focus) {
+        if response.clicked() || response.drag_started() || std::mem::take(focus) {
             response.request_focus();
         }
         ui_probe::record(ui.ctx(), "agent-terminal", area);
-        if std::mem::take(&mut self.paste) {
+        if std::mem::take(paste) {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::RequestPaste);
             ui.ctx().request_repaint();
         }
-        if let Some(text) = self.copy.take() {
+        if let Some(text) = copy.take() {
             ui.ctx().copy_text(text);
         }
         let painter = ui.painter_at(area);
         let colors = Colors::new(ui.visuals());
-        match &self.session {
+        match session {
             Some(session) => {
                 let mut parser = session.lock();
                 parser.callbacks_mut().colors = [colors.foreground, colors.background].map(rgb);
@@ -305,23 +573,21 @@ impl Panel {
                     if response.drag_started() {
                         // egui starts a drag once the pointer has moved: anchor where it was pressed.
                         let origin = ui.input(|input| input.pointer.press_origin());
-                        self.selection = Some(Selection {
+                        *selection = Some(Selection {
                             anchor: at(origin.unwrap_or(pointer)),
                             end: at(pointer),
                         });
                     } else if (response.dragged() || response.drag_stopped())
-                        && let Some(selection) = &mut self.selection
+                        && let Some(selection) = selection
                     {
                         selection.end = at(pointer);
                     }
                 }
                 if response.clicked() {
-                    self.selection = None;
+                    *selection = None;
                 }
-                if response.hovered()
-                    && scroll(ui, &mut self.wheel, &mut parser, area, cell, session)
-                {
-                    self.selection = None;
+                if response.hovered() && scroll(ui, wheel, &mut parser, area, cell, session) {
+                    *selection = None;
                 }
                 let screen = parser.screen();
                 paint(
@@ -333,7 +599,7 @@ impl Panel {
                     &colors,
                     response.has_focus(),
                 );
-                if let Some(selection) = self.selection {
+                if let Some(selection) = *selection {
                     let (first, last) = selection.ordered();
                     for row in first.0..=last.0 {
                         let start = if row == first.0 { first.1 } else { 0 };
@@ -370,7 +636,7 @@ impl Panel {
                     ui_probe::metric(
                         ui.ctx(),
                         "terminal-selected",
-                        f32::from(u8::from(self.selection.is_some())),
+                        f32::from(u8::from(selection.is_some())),
                     );
                 }
             }
@@ -1209,6 +1475,69 @@ mod tests {
             routed(key(Key::C, command | Modifiers::SHIFT), false),
             Routed::Send(Vec::new())
         );
+    }
+
+    #[test]
+    fn chat_keys_add_shift_so_the_agents_own_ctrl_t_and_ctrl_w_still_reach_it() {
+        let command = Modifiers::CTRL | Modifiers::COMMAND;
+        let shift = command | Modifiers::SHIFT;
+        assert_eq!(chat_key(&key(Key::T, shift)), Some(ChatKey::New));
+        assert_eq!(chat_key(&key(Key::W, shift)), Some(ChatKey::Close));
+        assert_eq!(chat_key(&key(Key::Tab, command)), Some(ChatKey::Next));
+        assert_eq!(chat_key(&key(Key::Tab, shift)), Some(ChatKey::Previous));
+        assert_eq!(chat_key(&key(Key::T, command)), None);
+        assert_eq!(chat_key(&key(Key::W, command)), None);
+        assert_eq!(chat_key(&key(Key::Tab, Modifiers::NONE)), None);
+    }
+
+    #[test]
+    fn chats_open_close_and_cycle_in_order() {
+        let mut panel = Panel::default();
+        panel.new_chat();
+        panel.new_chat();
+        panel.new_chat();
+        let numbers = |panel: &Panel| panel.chats.iter().map(|c| c.number).collect::<Vec<_>>();
+        assert_eq!((numbers(&panel), panel.active), (vec![1, 2, 3], 2));
+        panel.apply(ChatKey::Next);
+        assert_eq!(panel.active, 0);
+        panel.apply(ChatKey::Previous);
+        assert_eq!(panel.active, 2);
+        // Closing a chat before the shown one keeps the same chat on screen.
+        panel.active = 1;
+        panel.close_chat(0);
+        assert_eq!((numbers(&panel), panel.active), (vec![2, 3], 0));
+        // Closing the shown last chat shows the one before it.
+        panel.active = 1;
+        panel.apply(ChatKey::Close);
+        assert_eq!((numbers(&panel), panel.active), (vec![2], 0));
+        // Closing the only chat leaves a fresh one, numbered on.
+        panel.apply(ChatKey::Close);
+        assert_eq!((numbers(&panel), panel.active), (vec![4], 0));
+        assert!(panel.chats[0].start);
+    }
+
+    #[test]
+    fn chats_with_the_same_name_take_their_numbers() {
+        let names = chat_names(&[
+            (1, "Elpis".into()),
+            (2, "Fix the build".into()),
+            (3, "Elpis".into()),
+        ]);
+        assert_eq!(names, ["Elpis 1", "Fix the build", "Elpis 3"]);
+        assert_eq!(
+            short("A very long chat title for a tab"),
+            "A very long chat titl…"
+        );
+    }
+
+    #[test]
+    fn an_agents_title_names_its_chat_without_its_spinner() {
+        let mut parser = terminal::Parser::new_with_callbacks(2, 20, 0, Default::default());
+        parser.process("\x1b]0;✳ Summarise the note\x07".as_bytes());
+        assert_eq!(parser.callbacks().title, "✳ Summarise the note");
+        assert_eq!(clean_title(&parser.callbacks().title), "Summarise the note");
+        assert_eq!(clean_title("⠋ Working"), "Working");
+        assert_eq!(clean_title("  "), "");
     }
 
     #[test]

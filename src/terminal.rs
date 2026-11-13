@@ -168,9 +168,15 @@ pub struct Replies {
     pub colors: [[u8; 3]; 2],
     /// DECSET 1007: in the alternate screen the wheel sends arrow keys.
     pub alternate_scroll: bool,
+    /// The window title the agent last set (OSC 0 or 2), its chat's name.
+    pub title: String,
 }
 
 impl vt100::Callbacks for Replies {
+    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
+        self.title = String::from_utf8_lossy(title).trim().to_owned();
+    }
+
     fn unhandled_csi(
         &mut self,
         screen: &mut vt100::Screen,
