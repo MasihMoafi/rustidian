@@ -97,19 +97,21 @@ impl NotesApp {
         settings_ui::voice_row(
             ui,
             "Voice",
-            "Local Kokoro, or a hosted voice through your OpenRouter key.",
+            "Kokoro or Qwen on this computer, or a voice through OpenRouter.",
             |ui| {
                 let mut engine = self.voice.engine;
                 let response = egui::ComboBox::from_id_salt("settings-voice-engine")
                     .icon(theme::combo_chevron)
                     .selected_text(match engine {
                         Engine::Local => "Local (Kokoro)",
+                        Engine::Qwen => "Local (Qwen)",
                         Engine::OpenRouter => "OpenRouter",
                     })
                     .show_ui(ui, |ui| {
                         theme::menu_style(ui);
                         for (value, label) in [
                             (Engine::Local, "Local (Kokoro)"),
+                            (Engine::Qwen, "Local (Qwen)"),
                             (Engine::OpenRouter, "OpenRouter"),
                         ] {
                             let r = ui.selectable_value(&mut engine, value, label);

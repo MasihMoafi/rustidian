@@ -1,4 +1,4 @@
-//! One owner for Kokoro's process, pipes, latest request, and resettable idle timer.
+//! One owner for the local voice process, pipes, latest request, and idle timer.
 use std::{
     io::{Read, Write},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -30,6 +30,7 @@ struct Job {
 struct Queue {
     latest: Option<Job>,
     shutdown: bool,
+    reset: bool,
 }
 struct Shared {
     epoch: AtomicU64,
@@ -91,9 +92,19 @@ impl Service {
 
     /// Never waits for a pipe, child or service thread.
     pub fn cancel(&self) {
+        self.interrupt(false);
+    }
+
+    /// Release an idle model as well, before changing local backends.
+    pub fn reset(&self) {
+        self.interrupt(true);
+    }
+
+    fn interrupt(&self, release_worker: bool) {
         let mut queue = self.shared.queue.lock().unwrap_or_else(|e| e.into_inner());
         self.shared.epoch.fetch_add(1, Ordering::AcqRel);
         queue.latest = None;
+        queue.reset |= release_worker;
         self.shared.wake.notify_one();
     }
 
@@ -291,12 +302,12 @@ fn run(shared: Arc<Shared>, command: impl Fn() -> Result<Command, String>, polic
         if used.elapsed() >= policy.idle {
             worker = None;
         }
-        let job = {
+        let (job, reset) = {
             let mut queue = shared.queue.lock().unwrap_or_else(|e| e.into_inner());
             if queue.shutdown {
                 return;
             }
-            if queue.latest.is_none() {
+            if queue.latest.is_none() && !queue.reset {
                 let wait = if worker.is_some() {
                     policy.idle.saturating_sub(used.elapsed())
                 } else {
@@ -311,8 +322,11 @@ fn run(shared: Arc<Shared>, command: impl Fn() -> Result<Command, String>, polic
             if queue.shutdown {
                 return;
             }
-            queue.latest.take()
+            (queue.latest.take(), std::mem::take(&mut queue.reset))
         };
+        if reset {
+            worker = None;
+        }
         let Some(job) = job else { continue };
         let result = (|| {
             check(&shared, job.epoch, Instant::now() + policy.startup)?;
@@ -501,5 +515,38 @@ for line in sys.stdin:
         }
         gone(active);
         assert!(service.wait_shutdown(Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn changing_backends_releases_an_idle_model_before_starting_the_next() {
+        let mut policy = policy();
+        policy.idle = Duration::from_secs(30);
+        let (dir, service) = fixture("normal", policy);
+        service
+            .submit(service.epoch(), None)
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        let first = pid(dir.path());
+        let at = Instant::now();
+        service.reset();
+        assert!(at.elapsed() < Duration::from_millis(100));
+        let until = Instant::now() + Duration::from_secs(2);
+        while Path::new(&format!("/proc/{first}")).exists() && Instant::now() < until {
+            std::thread::sleep(POLL);
+        }
+        gone(first);
+        service
+            .submit(
+                service.epoch(),
+                Some(serde_json::json!({"text": "next backend"})),
+            )
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        let second = pid(dir.path());
+        assert_ne!(first, second);
+        assert!(service.wait_shutdown(Duration::from_secs(2)));
+        gone(second);
     }
 }

@@ -23,6 +23,8 @@ pub enum Engine {
     /// Kokoro on this machine.
     #[default]
     Local,
+    /// Qwen CustomVoice on this machine.
+    Qwen,
     OpenRouter,
 }
 
@@ -124,8 +126,8 @@ pub enum VoiceChoice {
 
 pub fn choose_engine(preferred: Engine, local_available: bool, key_available: bool) -> VoiceChoice {
     match (preferred, local_available, key_available) {
-        (Engine::Local, true, _) => VoiceChoice::Local,
-        (Engine::Local, false, true) => VoiceChoice::OfferHosted,
+        (Engine::Local | Engine::Qwen, true, _) => VoiceChoice::Local,
+        (Engine::Local | Engine::Qwen, false, true) => VoiceChoice::OfferHosted,
         (Engine::OpenRouter, _, true) => VoiceChoice::Hosted,
         _ => VoiceChoice::Setup,
     }

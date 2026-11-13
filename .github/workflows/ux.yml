@@ -92,6 +92,12 @@ jobs:
           python3 scripts/reuse-actions-candidate.py --source-commit "$source_commit" --check-source
           gh run download "$REUSE_RUN" --repo "$GITHUB_REPOSITORY" --name "rustidian-candidate-$source_commit" --dir "$RUNNER_TEMP/reused-candidate"
           python3 scripts/reuse-actions-candidate.py --source-commit "$source_commit" --artifact-dir "$RUNNER_TEMP/reused-candidate" --run-metadata "$RUNNER_TEMP/reused-run.json"
+      - name: Read aloud worker checks
+        if: ${{ contains(inputs.sections, 'read-aloud') && inputs.reuse_run == '' }}
+        run: |
+          cargo clippy --locked --bin rustidian -- -D warnings
+          cargo test --locked --bin rustidian read_aloud::worker::tests
+          cargo test --locked --test voice_account_behavior
       - name: Verify and obtain dependency notices
         if: ${{ !inputs.gui_only || inputs.package_after_checks || contains(inputs.sections, 'html-import') }}
         env:

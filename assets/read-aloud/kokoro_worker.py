@@ -11,6 +11,12 @@ import json
 import os
 import sys
 
+from speech_text import phonemize
+
+# Models are installed separately; reading never needs the network.
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
 # onnxruntime finds CUDA and cuDNN through the loader path; the NVIDIA wheels (installed with
 # PyTorch, for example) keep them in site-packages/nvidia/*/lib. Set the path once, then restart.
 if not os.environ.get("RUSTIDIAN_KOKORO_LIBS"):
@@ -43,7 +49,7 @@ model = kokoro_onnx.Kokoro.from_session(session, sys.argv[2])
 voice = os.environ.get("RUSTIDIAN_KOKORO_VOICE", "af_heart")
 speed = float(os.environ.get("RUSTIDIAN_KOKORO_SPEED", "1.0"))
 model.create(
-    "Ready.", voice=voice, speed=speed, lang="en-us"
+    phonemize("Ready."), voice=voice, speed=speed, is_phonemes=True
 )  # load the voice before the first request
 device = "cuda" if session.get_providers()[0] == "CUDAExecutionProvider" else "cpu"
 print(json.dumps({"ready": True, "device": device}), flush=True)
@@ -51,7 +57,10 @@ for line in sys.stdin:
     request = json.loads(line)
     try:
         samples, rate = model.create(
-            request["text"], voice=voice, speed=request.get("speed", speed), lang="en-us"
+            phonemize(request["text"]),
+            voice=voice,
+            speed=request.get("speed", speed),
+            is_phonemes=True,
         )
         pcm = (np.clip(samples, -1, 1) * 32767).astype("<i2").tobytes()
         print(json.dumps({"id": request["id"], "ok": True, "rate": rate,

@@ -1,4 +1,4 @@
-//! Read aloud with local Kokoro: short pieces feed one continuous PCM player. The next piece
+//! Read aloud with local Kokoro or Qwen: short pieces feed one continuous PCM player. The next piece
 //! is voiced while the current one plays, and Stop ends both at
 //! once. The voice runs in a Python worker on the GPU (see `assets/read-aloud`), which keeps
 //! the model loaded between reads and leaves after 30 idle minutes to free the GPU.
@@ -80,6 +80,9 @@ pub fn speed_menu(ui: &mut egui::Ui, speed: &mut Option<f32>, id: &str) {
 }
 
 const WORKER: &str = include_str!("../assets/read-aloud/kokoro_worker.py");
+const QWEN_WORKER: &str = include_str!("../assets/read-aloud/qwen_worker.py");
+const SPEECH_TEXT: &str = include_str!("../assets/read-aloud/speech_text.py");
+static LOCAL_QWEN: AtomicBool = AtomicBool::new(false);
 /// The worker leaves after this long without a read, to give the GPU memory back.
 const IDLE: Duration = Duration::from_secs(30 * 60);
 
@@ -143,9 +146,13 @@ fn configured(variable: &str, default: impl FnOnce() -> PathBuf) -> PathBuf {
     std::env::var_os(variable).map_or_else(default, PathBuf::from)
 }
 
-/// The Python that runs the voice: Rustidian's GPU environment, else Elpis's (CPU) one.
+/// Prefer the pronunciation environment; retain the existing runtime overrides.
 fn python() -> PathBuf {
     configured("RUSTIDIAN_KOKORO_PYTHON", || {
+        let shared = home().join(".local/share/rustidian/voice-venv/bin/python");
+        if shared.exists() {
+            return shared;
+        }
         let own = home().join(".local/share/rustidian/kokoro-venv/bin/python");
         if own.exists() {
             own
@@ -167,32 +174,82 @@ fn voices() -> PathBuf {
     })
 }
 
+fn qwen_python() -> PathBuf {
+    configured("RUSTIDIAN_QWEN_PYTHON", || {
+        home().join(".local/share/rustidian/qwen-venv/bin/python")
+    })
+}
+
+fn qwen_model() -> PathBuf {
+    configured("RUSTIDIAN_QWEN_MODEL", || {
+        home().join(".local/share/rustidian/models/Qwen3-TTS-12Hz-1.7B-CustomVoice")
+    })
+}
+
+fn voice_settings() -> voice_account::Settings {
+    voice_account::state_base()
+        .map(|base| voice_account::Settings::load(&base))
+        .unwrap_or_default()
+}
+
+fn select_local_engine(engine: voice_account::Engine) {
+    let qwen = engine == voice_account::Engine::Qwen;
+    if LOCAL_QWEN.swap(qwen, Ordering::SeqCst) != qwen
+        && let Some(Ok(service)) = SERVICE.get()
+    {
+        service.reset();
+    }
+}
+
 fn scratch() -> PathBuf {
     std::env::temp_dir().join(format!("rustidian-read-aloud-{}", std::process::id()))
 }
 
-/// Why read aloud cannot run here, if it cannot.
-pub fn unavailable() -> Option<String> {
-    let missing: Vec<String> = [python(), model(), voices()]
+/// Why the selected local engine cannot run here, if it cannot.
+fn unavailable_for(engine: voice_account::Engine) -> Option<String> {
+    let (name, paths) = if engine == voice_account::Engine::Qwen {
+        let model = qwen_model();
+        (
+            "Qwen",
+            vec![
+                qwen_python(),
+                model.join("model.safetensors"),
+                model.join("speech_tokenizer/model.safetensors"),
+            ],
+        )
+    } else {
+        ("Kokoro", vec![python(), model(), voices()])
+    };
+    let missing: Vec<String> = paths
         .into_iter()
         .filter(|path| !path.exists())
         .map(|path| path.display().to_string())
         .collect();
     (!missing.is_empty())
-        .then(|| format!("Read aloud needs Kokoro: missing {}", missing.join(", ")))
+        .then(|| format!("Read aloud needs {name}: missing {}", missing.join(", ")))
 }
 
 fn worker_command() -> Result<Command, String> {
     let folder = scratch();
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let script = folder.join("kokoro_worker.py");
-    std::fs::write(&script, WORKER).map_err(|error| error.to_string())?;
-    let mut command = Command::new(python());
+    let qwen = LOCAL_QWEN.load(Ordering::SeqCst);
+    let script = folder.join(if qwen {
+        "qwen_worker.py"
+    } else {
+        "kokoro_worker.py"
+    });
+    std::fs::write(&script, if qwen { QWEN_WORKER } else { WORKER })
+        .map_err(|error| error.to_string())?;
+    std::fs::write(folder.join("speech_text.py"), SPEECH_TEXT)
+        .map_err(|error| error.to_string())?;
+    let mut command = Command::new(if qwen { qwen_python() } else { python() });
+    command.arg("-u").arg(script);
+    if qwen {
+        command.arg(qwen_model());
+    } else {
+        command.arg(model()).arg(voices());
+    }
     command
-        .arg("-u")
-        .arg(script)
-        .arg(model())
-        .arg(voices())
         .env_remove("RUSTIDIAN_KOKORO_LIBS")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -246,10 +303,15 @@ fn update(ctx: &egui::Context, session: u64, change: impl FnOnce(&mut Status)) {
     }
 }
 
-/// Start the model in the background when the pointer reaches a speaker, so the click that
-/// follows does not wait for it; a note that is only read never loads it (about 1.3 GB).
+/// Warm the selected local model when the pointer reaches a speaker; reading a note
+/// without using its speakers does not load a voice model.
 pub fn warm_up() {
-    if unavailable().is_none()
+    let settings = voice_settings();
+    if status().active || settings.engine == voice_account::Engine::OpenRouter {
+        return;
+    }
+    select_local_engine(settings.engine);
+    if unavailable_for(settings.engine).is_none()
         && let Ok(service) = service()
     {
         let _ = service.submit(service.epoch(), None);
@@ -284,19 +346,23 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
     {
         service.cancel();
     }
-    let epoch = service().map_or(0, worker::Service::epoch);
     if first >= chunks.len() {
         return;
     }
-    let settings = voice_account::state_base()
-        .map(|base| voice_account::Settings::load(&base))
-        .unwrap_or_default();
+    let settings = voice_settings();
+    if settings.engine == voice_account::Engine::Qwen
+        && let Some(error) = unavailable_for(settings.engine)
+    {
+        stop(ctx);
+        crate::notices::report(ctx, error);
+        return;
+    }
     if saved_speed {
         set_speed(settings.speed);
     }
     let choice = voice_account::choose_engine(
         settings.engine,
-        unavailable().is_none(),
+        unavailable_for(settings.engine).is_none(),
         settings.selected_account().is_some(),
     );
     if matches!(
@@ -324,6 +390,10 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
         return;
     }
     let hosted = choice == voice_account::VoiceChoice::Hosted;
+    if !hosted {
+        select_local_engine(settings.engine);
+    }
+    let epoch = service().map_or(0, worker::Service::epoch);
     {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         let device = status.device.take();
