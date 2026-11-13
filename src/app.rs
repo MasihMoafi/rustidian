@@ -2267,6 +2267,39 @@ impl NotesApp {
         }
     }
 
+    /// Remember which note a reading started in; after a click on the player, bring that
+    /// note's tab forward so its editor can scroll to the sentence being heard.
+    fn follow_reading(&mut self, ctx: &egui::Context) {
+        let status = crate::read_aloud::status();
+        if !status.active {
+            crate::read_aloud::take_jump();
+            return;
+        }
+        let id = egui::Id::unique("read-aloud-from");
+        let path = match ctx.data(|data| data.get_temp::<(u64, PathBuf)>(id)) {
+            Some((origin, path)) if origin == status.origin => path,
+            _ => {
+                let Some(tab) = self.tabs.get(self.active) else {
+                    return;
+                };
+                let path = tab.document.path.clone();
+                ctx.data_mut(|data| data.insert_temp(id, (status.origin, path.clone())));
+                path
+            }
+        };
+        if crate::read_aloud::jump_pending()
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.document.path != path)
+            && let Some(index) = self.tabs.iter().position(|tab| tab.document.path == path)
+        {
+            self.active = index;
+            self.tabs[index].show_document();
+            ctx.request_repaint();
+        }
+    }
+
     /// Ctrl+O's results, ranked again only when the query or a file list changes: the dialog
     /// repaints for every blink and pointer move, and ranking the ~200,000 files elsewhere
     /// on each of those frames kept a core busy.
@@ -6535,39 +6568,6 @@ impl eframe::App for NotesApp {
             .map(Tab::id);
         self.editor
             .raw_input(ctx, raw, editing_tab, self.view() == View::Live);
-    }
-
-    /// Remember which note a reading started in; after a click on the player, bring that
-    /// note's tab forward so its editor can scroll to the sentence being heard.
-    fn follow_reading(&mut self, ctx: &egui::Context) {
-        let status = crate::read_aloud::status();
-        if !status.active {
-            crate::read_aloud::take_jump();
-            return;
-        }
-        let id = egui::Id::unique("read-aloud-from");
-        let path = match ctx.data(|data| data.get_temp::<(u64, PathBuf)>(id)) {
-            Some((origin, path)) if origin == status.origin => path,
-            _ => {
-                let Some(tab) = self.tabs.get(self.active) else {
-                    return;
-                };
-                let path = tab.document.path.clone();
-                ctx.data_mut(|data| data.insert_temp(id, (status.origin, path.clone())));
-                path
-            }
-        };
-        if crate::read_aloud::jump_pending()
-            && self
-                .tabs
-                .get(self.active)
-                .is_some_and(|tab| tab.document.path != path)
-            && let Some(index) = self.tabs.iter().position(|tab| tab.document.path == path)
-        {
-            self.active = index;
-            self.tabs[index].show_document();
-            ctx.request_repaint();
-        }
     }
 
     /// Runs before every `ui` pass and alone while the window is hidden, so
