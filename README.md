@@ -1,6 +1,13 @@
 <div align="center">
 
-<img src="docs/brand/rustidian.png" width="128" height="128" alt="Rustidian logo">
+<table>
+  <tr>
+    <td align="center"><img src="docs/brand/themes/signature.png" width="112" height="112" alt="Rustidian signature pink logo"><br><sub>Main · Signature</sub></td>
+    <td align="center"><img src="docs/brand/rustidian.png" width="112" height="112" alt="Rustidian teal logo"><br><sub>Teal</sub></td>
+    <td align="center"><img src="docs/brand/themes/love-space.png" width="112" height="112" alt="Rustidian Love Space logo"><br><sub>Love Space</sub></td>
+    <td align="center"><img src="docs/brand/themes/elpis-gold.png" width="112" height="112" alt="Rustidian Elpis Gold logo"><br><sub>Elpis Gold</sub></td>
+  </tr>
+</table>
 
 # Rustidian
 
