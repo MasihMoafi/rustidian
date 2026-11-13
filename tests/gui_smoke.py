@@ -2875,6 +2875,9 @@ int rename(const char *source, const char *destination) {
 
             def quick_ranking_checks():
                 close_tabs()
+                # The list of files elsewhere is built at the first Ctrl+O, so its folders exist first.
+                for folder in ("p/skills","p/Deep/skills"):
+                    (base/"home"/folder).mkdir(parents=True,exist_ok=True)
                 originals={}
                 for label in ("Closed A","Closed B","Closed C"):
                     path=fixture/(label+".md");originals[path]="# "+label+"\n\nORDERED_QUERY_FIXTURE\n";path.write_text(originals[path])
@@ -2946,8 +2949,6 @@ int rename(const char *source, const char *destination) {
                         if [name for _,name in tops[:len(first)]]==first:return [name for _,name in tops]
                         assert time.monotonic()<deadline,(value,first,tops)
                         key("Escape");time.sleep(.2)
-                for folder in ("p/skills","p/Deep/skills"):
-                    (base/"home"/folder).mkdir(parents=True,exist_ok=True)
                 rows=order("skills",[str(base/"home/p/skills"),str(base/"home/p/Deep/skills")])
                 capture("native-quick-open-folders.png");key("Escape")
                 results.append(f"Ctrl+O 'skills' listed the least nested skills folder first: {rows[:2]}")

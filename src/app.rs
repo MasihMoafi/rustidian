@@ -2349,7 +2349,8 @@ impl NotesApp {
                 self.show_left = true;
                 self.searching = false;
                 self.show_bookmarks = false;
-                crate::file_tree::reveal(&self.ctx, &relative);
+                // Opens the folder and its parents, then scrolls to it.
+                self.reveal_folder = Some(relative);
             }
             None => self
                 .open_system_selection(rustidian::native_picker::Kind::Folder, folder.to_owned()),
