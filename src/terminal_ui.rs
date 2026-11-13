@@ -207,13 +207,15 @@ impl Panel {
             return;
         }
         // Replacing the panel ends the previous vault's agents.
+        let focus = self.focus;
         *self = Self {
             root: Some(root.to_owned()),
             chosen: load(root),
-            focus: self.focus,
             ..Default::default()
         };
         self.new_chat();
+        // A tab restored at launch must not take the keys from the editor.
+        self.focus = focus;
     }
 
     /// Open a chat with the vault's agent and show it.
@@ -1488,6 +1490,14 @@ mod tests {
         assert_eq!(chat_key(&key(Key::T, command)), None);
         assert_eq!(chat_key(&key(Key::W, command)), None);
         assert_eq!(chat_key(&key(Key::Tab, Modifiers::NONE)), None);
+    }
+
+    #[test]
+    fn a_tab_restored_at_launch_leaves_the_keys_with_the_editor() {
+        let mut panel = Panel::default();
+        panel.open(Path::new("/nonexistent/rustidian-test-vault"));
+        assert_eq!(panel.chats.len(), 1);
+        assert!(panel.chats[0].start && !panel.focus);
     }
 
     #[test]
