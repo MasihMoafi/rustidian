@@ -169,6 +169,10 @@ pub struct NotesApp {
     files: rustidian::search::FileMatcher,
     /// Files outside the vault for Ctrl+O, with the vault they were listed for.
     elsewhere: Option<(PathBuf, rustidian::elsewhere::Index)>,
+    /// What the user opens, so Ctrl+O lists the files and folders used most first.
+    open_history: rustidian::frecency::History,
+    /// Changes with every recorded open, so Ctrl+O ranks again.
+    open_history_version: u64,
     pending: Option<Pending>,
     error: Option<String>,
     voice_fallback: Option<VoiceFallback>,
@@ -306,6 +310,12 @@ impl NotesApp {
             dictation_result: None,
             files: rustidian::search::FileMatcher::new(Vec::new()),
             elsewhere: None,
+            open_history: rustidian::voice_account::state_base()
+                .map(|base| {
+                    rustidian::frecency::History::load(&rustidian::frecency::History::file(&base))
+                })
+                .unwrap_or_default(),
+            open_history_version: 0,
             pending: None,
             error: None,
             voice_fallback: None,
@@ -1230,6 +1240,7 @@ impl NotesApp {
     }
 
     fn open_note_at(&mut self, path: &Path, new_tab: bool) {
+        self.record_open(path);
         if !self.open_html_in_browser(path) {
             self.open_source_note_at(path, new_tab);
         }
@@ -2300,19 +2311,67 @@ impl NotesApp {
         }
     }
 
+    /// Count an open of `path` (vault-relative or absolute) for Ctrl+O's ranking.
+    fn record_open(&mut self, path: &Path) {
+        let absolute = match &self.vault {
+            Some(vault) if path.is_relative() => vault.root.join(path),
+            _ => path.to_owned(),
+        };
+        self.open_history
+            .record(&absolute, rustidian::frecency::now());
+        self.open_history_version += 1;
+        if let Some(base) = rustidian::voice_account::state_base() {
+            let _ = self
+                .open_history
+                .save(&rustidian::frecency::History::file(&base));
+        }
+    }
+
+    /// The absolute path Ctrl+O's history knows a result by.
+    fn history_path(&self, path: &Path) -> PathBuf {
+        match &self.vault {
+            Some(vault) if path.is_relative() => vault.root.join(path),
+            _ => path.to_owned(),
+        }
+    }
+
+    /// Open a folder Ctrl+O found: one in this vault is shown in the file explorer,
+    /// any other opens as the vault.
+    fn open_quick_folder(&mut self, folder: &Path) {
+        let inside = match &self.vault {
+            Some(_) if folder.is_relative() => Some(folder.to_owned()),
+            Some(vault) => folder.strip_prefix(&vault.root).ok().map(Path::to_owned),
+            None => None,
+        };
+        self.record_open(folder);
+        match inside {
+            Some(relative) => {
+                self.show_left = true;
+                self.searching = false;
+                self.show_bookmarks = false;
+                crate::file_tree::reveal(&self.ctx, &relative);
+            }
+            None => self
+                .open_system_selection(rustidian::native_picker::Kind::Folder, folder.to_owned()),
+        }
+    }
+
     /// Ctrl+O's results, ranked again only when the query or a file list changes: the dialog
     /// repaints for every blink and pointer move, and ranking the ~200,000 files elsewhere
     /// on each of those frames kept a core busy.
     fn quick_open_matches(&mut self, ctx: &egui::Context) -> Vec<PathBuf> {
         let key = (
             self.dialog_input.trim().to_owned(),
-            self.files.generation(),
+            (self.files.generation(), self.open_history_version),
             self.elsewhere
                 .as_ref()
                 .map(|(root, index)| (root.clone(), index.ready())),
         );
         let id = egui::Id::unique("quick-open-results");
-        type Ranked = ((String, u64, Option<(PathBuf, bool)>), Arc<Vec<PathBuf>>);
+        type Ranked = (
+            (String, (u64, u64), Option<(PathBuf, bool)>),
+            Arc<Vec<PathBuf>>,
+        );
         if let Some((cached, results)) = ctx.data(|data| data.get_temp::<Ranked>(id))
             && cached == key
         {
@@ -2331,8 +2390,9 @@ impl NotesApp {
         results
     }
 
-    /// Exact file names first (from the vault, then from elsewhere on this
-    /// computer), then the vault's close matches, then close matches elsewhere.
+    /// Exact names first, files and folders, the least nested first (from the vault,
+    /// then from elsewhere on this computer); then close matches, of which the up to five
+    /// opened most come first. An empty query lists the ten opened most, then the vault.
     fn rank_quick_open(&mut self, ctx: &egui::Context) -> Vec<PathBuf> {
         let query = self.dialog_input.trim().to_owned();
         let vault_matches = self.files.rank(&query, 100);
@@ -2353,9 +2413,35 @@ impl NotesApp {
                 }),
             ));
         }
-        let other = match (&self.elsewhere, query.is_empty()) {
-            (Some((_, index)), false) => index.rank(&query, 50).unwrap_or_default(),
-            _ => Vec::new(),
+        let now = rustidian::frecency::now();
+        if query.is_empty() {
+            let root = vault.root.clone();
+            let mut seen = std::collections::HashSet::new();
+            return self
+                .open_history
+                .top(now, 10)
+                .into_iter()
+                .filter(|path| path.exists())
+                .map(|path| match path.strip_prefix(&root) {
+                    Ok(relative) => relative.to_owned(),
+                    Err(_) => path,
+                })
+                .chain(vault_matches)
+                .filter(|path| seen.insert(path.clone()))
+                .take(100)
+                .collect();
+        }
+        let folders = rustidian::search::FileMatcher::new(
+            vault
+                .folders
+                .iter()
+                .filter(|folder| !folder.as_os_str().is_empty())
+                .cloned(),
+        )
+        .rank(&query, 20);
+        let other = match &self.elsewhere {
+            Some((_, index)) => index.rank(&query, 50).unwrap_or_default(),
+            None => Vec::new(),
         };
         let lower = query.to_lowercase();
         let exact = |path: &PathBuf| {
@@ -2364,12 +2450,24 @@ impl NotesApp {
         };
         let (vault_exact, vault_rest): (Vec<_>, Vec<_>) =
             vault_matches.into_iter().partition(exact);
+        let (folder_exact, folder_rest): (Vec<_>, Vec<_>) = folders.into_iter().partition(exact);
         let (other_exact, other_rest): (Vec<_>, Vec<_>) = other.into_iter().partition(exact);
+        let mut folder_exact = folder_exact;
+        folder_exact.sort_by_key(|path| path.components().count());
+        let loose = rustidian::frecency::lift(
+            vault_rest
+                .into_iter()
+                .chain(folder_rest)
+                .chain(other_rest)
+                .collect(),
+            5,
+            |path| self.open_history.score(&self.history_path(path), now),
+        );
         vault_exact
             .into_iter()
+            .chain(folder_exact)
             .chain(other_exact)
-            .chain(vault_rest)
-            .chain(other_rest)
+            .chain(loose)
             .collect()
     }
 
@@ -2383,6 +2481,7 @@ impl NotesApp {
             self.error = Some(format!("Cannot open {}", file.display()));
             return;
         };
+        self.record_open(&absolute);
         if let Some(index) = self
             .tabs
             .iter()
@@ -5262,13 +5361,16 @@ impl NotesApp {
                     ScrollArea::vertical().max_height(330.0).show(ui, |ui| {
                         theme::list_style(ui);
                         for (index, path) in matches.iter().enumerate() {
-                            let label = match rustidian::elsewhere::root()
+                            let mut label = match rustidian::elsewhere::root()
                                 .filter(|_| path.is_absolute())
                                 .and_then(|home| path.strip_prefix(&home).ok().map(Path::to_owned))
                             {
                                 Some(below_home) => format!("~/{}", below_home.display()),
                                 None => rustidian::paths::display_path(path),
                             };
+                            if self.history_path(path).is_dir() {
+                                label.push('/');
+                            }
                             let row = ui.add(
                                 egui::Button::new(label)
                                     .selected(index == self.dialog_selected)
@@ -5548,6 +5650,8 @@ impl NotesApp {
                 if !self.insert_template(&path) {
                     return;
                 }
+            } else if dialog == Dialog::QuickOpen && self.history_path(&path).is_dir() {
+                self.open_quick_folder(&path);
             } else if path.is_absolute() {
                 // Ctrl+O found it outside the vault: it opens as a tab beside the notes.
                 self.open_guest_tab(&path);

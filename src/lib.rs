@@ -7,6 +7,7 @@ pub mod editor;
 pub mod elsewhere;
 pub mod explorer_order;
 pub mod folding;
+pub mod frecency;
 pub mod graph;
 pub mod graph_layout;
 pub mod highlight;

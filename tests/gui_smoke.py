@@ -2935,6 +2935,37 @@ int rename(const char *source, const char *destination) {
                 assert outside.read_text()=="# Agent rules\n\nOUTSIDE_THE_VAULT\n"
                 results.append("Ctrl+O found AGENTS.md outside the vault by its name in lowercase and capitals, listed it first, opened it as a tab, and its field kept the shared height")
 
+                # Masih: folders are results too, the main (least nested) one first; one in the
+                # vault opens in the explorer. Files opened most rise among loose matches.
+                def order(value, first):
+                    deadline=time.monotonic()+5
+                    while True:
+                        query(value)
+                        probe=json.loads((base/"ui-probe.json").read_text())
+                        tops=sorted((rect[1],name.removeprefix("quick-open:")) for name,rect in probe.items() if name.startswith("quick-open:"))
+                        if [name for _,name in tops[:len(first)]]==first:return [name for _,name in tops]
+                        assert time.monotonic()<deadline,(value,first,tops)
+                        key("Escape");time.sleep(.2)
+                for folder in ("p/skills","p/Deep/skills"):
+                    (base/"home"/folder).mkdir(parents=True,exist_ok=True)
+                rows=order("skills",[str(base/"home/p/skills"),str(base/"home/p/Deep/skills")])
+                capture("native-quick-open-folders.png");key("Escape")
+                results.append(f"Ctrl+O 'skills' listed the least nested skills folder first: {rows[:2]}")
+                order("Notes",["Notes"])
+                key("Return")
+                control_bounds("file:Notes/First steps.md")
+                capture("native-quick-open-vault-folder.png")
+                results.append("Choosing the vault folder Notes in Ctrl+O revealed it in the explorer, its notes listed")
+                rows=order("Closed",["Closed C.md","Closed B.md"])
+                key("Escape")
+                results.append(f"Among loose matches for 'Closed', the files opened most came first (Closed C three times, Closed B once): {rows[:3]}")
+                history=json.loads((base/"state/rustidian/open-history.json").read_text())["opens"]
+                assert any(path.endswith("Closed C.md") and entry["count"]>=3 for path,entry in history.items()),history
+                rows=order("",[str(fixture/"Closed C.md").removeprefix(str(fixture)+"/")])
+                key("Escape")
+                assert 1<=len(rows)<=100,rows
+                results.append("The empty Ctrl+O list starts with the file opened most and keeps at most 100 rows")
+
             def page_preview_checks():
                 close_tabs()
                 source=fixture/"Preview source.md";target=fixture/"Preview folder/Preview target.md"

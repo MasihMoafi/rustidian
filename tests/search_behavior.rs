@@ -216,3 +216,36 @@ fn ctrl_o_lists_the_least_nested_file_of_a_name_first() {
     let mut matcher = FileMatcher::elsewhere(home.path(), found.into_iter().rev().collect());
     assert_eq!(matcher.rank("agents.md", 3), shallow_first);
 }
+
+#[test]
+fn ctrl_o_finds_folders_by_name_least_nested_first() {
+    let home = tempfile::tempdir().unwrap();
+    for folder in [
+        "p/skills",
+        "p/Matilda/skills",
+        "p/.hidden/skills",
+        "p/app/node_modules/skills",
+    ] {
+        std::fs::create_dir_all(home.path().join(folder)).unwrap();
+    }
+    std::fs::write(home.path().join("p/skills/README.md"), "skills").unwrap();
+    let (files, folders) = rustidian::elsewhere::scan_all(home.path(), &home.path().join("vault"));
+    assert_eq!(files, vec![home.path().join("p/skills/README.md")]);
+    assert!(
+        !folders
+            .iter()
+            .any(|folder| folder.to_string_lossy().contains("hidden")
+                || folder.to_string_lossy().contains("node_modules")),
+        "{folders:?}"
+    );
+    let mut paths = files;
+    paths.extend(folders);
+    let mut matcher = FileMatcher::elsewhere(home.path(), paths);
+    assert_eq!(
+        matcher.rank("skills", 2),
+        vec![
+            home.path().join("p/skills"),
+            home.path().join("p/Matilda/skills")
+        ]
+    );
+}

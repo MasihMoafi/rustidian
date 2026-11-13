@@ -20,7 +20,13 @@ const LIMIT: usize = 200_000;
 /// read nearest first, so the limit drops the most deeply buried files, never a top-level
 /// one such as `~/code/AGENTS.md`.
 pub fn scan(root: &Path, vault: &Path) -> Vec<PathBuf> {
-    let mut found = Vec::new();
+    scan_all(root, vault).0
+}
+
+/// The text documents and the folders under `root`, outside `vault`, nearest first, each
+/// list up to the fixed limit. Ctrl+O offers both: typing "skills" finds the folder.
+pub fn scan_all(root: &Path, vault: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let (mut files, mut found_folders) = (Vec::new(), Vec::new());
     let mut folders = std::collections::VecDeque::from([root.to_owned()]);
     while let Some(folder) = folders.pop_front() {
         let Ok(entries) = std::fs::read_dir(&folder) else {
@@ -38,17 +44,20 @@ pub fn scan(root: &Path, vault: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if kind.is_dir() {
                 if !SKIPPED.contains(&name.as_ref()) && path != vault {
+                    if found_folders.len() < LIMIT {
+                        found_folders.push(path.clone());
+                    }
                     folders.push_back(path);
                 }
             } else if kind.is_file() && crate::vault::is_text_document(&path) {
-                found.push(path);
-                if found.len() >= LIMIT {
-                    return found;
+                files.push(path);
+                if files.len() >= LIMIT {
+                    return (files, found_folders);
                 }
             }
         }
     }
-    found
+    (files, found_folders)
 }
 
 /// The folder to search: `RUSTIDIAN_ELSEWHERE_ROOT` for tests, else the home folder.
@@ -70,7 +79,10 @@ impl Index {
             .name("rustidian-elsewhere".into())
             .spawn(move || {
                 let vault = vault.canonicalize().unwrap_or(vault);
-                let matcher = crate::search::FileMatcher::elsewhere(&root, scan(&root, &vault));
+                let (files, folders) = scan_all(&root, &vault);
+                let mut paths = files;
+                paths.extend(folders);
+                let matcher = crate::search::FileMatcher::elsewhere(&root, paths);
                 *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(matcher);
                 wake();
             });
