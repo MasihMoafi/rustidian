@@ -319,9 +319,92 @@ pub fn snap(full: &str, selected: &str) -> String {
     full[first..last].to_owned()
 }
 
+/// Letters and digits of `text`, lowercased, each with the byte range it came from: what
+/// the spoken text and its Markdown source still share once markup, links and spacing go.
+fn letters(text: &str) -> Vec<(char, Range<usize>)> {
+    text.char_indices()
+        .filter(|(_, character)| character.is_alphanumeric())
+        .flat_map(|(at, character)| {
+            let end = at + character.len_utf8();
+            character.to_lowercase().map(move |lower| (lower, at..end))
+        })
+        .collect()
+}
+
+/// Where `needle` (letters) starts in `haystack`, searching from `from`.
+fn find_letters(haystack: &[(char, Range<usize>)], needle: &[char], from: usize) -> Option<usize> {
+    if needle.is_empty() || from > haystack.len() {
+        return None;
+    }
+    haystack[from..]
+        .windows(needle.len())
+        .position(|window| window.iter().map(|(c, _)| *c).eq(needle.iter().copied()))
+        .map(|at| at + from)
+}
+
+/// How many leading letters of a spoken chunk must appear together in its source.
+const ANCHOR: usize = 12;
+/// The most source letters the voice may have skipped in one place (a link target, a path).
+const GAP: usize = 120;
+
+/// The byte range of `source` that a spoken chunk was read from, at or after byte `after`
+/// when it is there (a sentence can repeat), else anywhere. The first letters must match
+/// together; the rest match in order, stepping over markup, link targets and paths the
+/// voice skips.
+pub fn locate(source: &str, spoken: &str, after: usize) -> Option<Range<usize>> {
+    let key: Vec<char> = letters(spoken).into_iter().map(|(c, _)| c).collect();
+    if key.is_empty() {
+        return None;
+    }
+    let all = letters(source);
+    let start_from = all.partition_point(|(_, range)| range.start < after);
+    // A link can split the first words ("My [code](...) on"), so a shorter start is the fallback.
+    let (first, head) = [ANCHOR, ANCHOR / 2].into_iter().find_map(|size| {
+        let head = &key[..size.min(key.len())];
+        find_letters(&all, head, start_from)
+            .or_else(|| find_letters(&all, head, 0))
+            .map(|first| (first, head))
+    })?;
+    let mut last = first + head.len() - 1;
+    for wanted in &key[head.len()..] {
+        let reach = (last + 1 + GAP).min(all.len());
+        match all[last + 1..reach].iter().position(|(c, _)| c == wanted) {
+            Some(step) => last += 1 + step,
+            None => break,
+        }
+    }
+    Some(all[first].1.start..all[last].1.end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spoken_chunks_find_their_source() {
+        let source = "# Title\n\nSee **the docs** at [the site](https://x.y/z) now. Then more.\n\nThen more.";
+        let at = |spoken: &str, after: usize| locate(source, spoken, after).map(|r| &source[r]);
+        for chunk in chunks(source) {
+            assert!(locate(source, &chunk, 0).is_some(), "{chunk}");
+        }
+        assert_eq!(
+            at("See the docs at the site now.", 0),
+            Some("See **the docs** at [the site](https://x.y/z) now")
+        );
+        // A repeated sentence: the one after the hint, else the first.
+        let second = source.rfind("Then more").unwrap();
+        assert_eq!(locate(source, "Then more.", second).unwrap().start, second);
+        assert_eq!(
+            locate(source, "Then more.", 0).unwrap().start,
+            source.find("Then more").unwrap()
+        );
+        assert_eq!(at("Nothing like this.", 0), None);
+        assert_eq!(at("", 0), None);
+        // Non-ASCII letters keep their byte boundaries.
+        let persian = "متن اول. **جمله دوم** اینجاست.";
+        let range = locate(persian, "جمله دوم اینجاست.", 0).unwrap();
+        assert_eq!(&persian[range], "جمله دوم** اینجاست");
+    }
 
     #[test]
     fn markup_is_not_spoken() {

@@ -192,3 +192,27 @@ fn ctrl_o_finds_a_file_outside_the_vault_by_its_exact_name_in_any_case() {
         PathBuf::from("Agents.md")
     );
 }
+
+#[test]
+fn ctrl_o_lists_the_least_nested_file_of_a_name_first() {
+    let home = tempfile::tempdir().unwrap();
+    let names = [
+        "p/app/docs/AGENTS.md",
+        "p/rustidian/AGENTS.md",
+        "p/AGENTS.md",
+    ];
+    for path in names {
+        let file = home.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "rules").unwrap();
+    }
+    let found = rustidian::elsewhere::scan(home.path(), &home.path().join("vault"));
+    let shallow_first: Vec<_> = names
+        .iter()
+        .rev()
+        .map(|path| home.path().join(path))
+        .collect();
+    assert_eq!(found, shallow_first, "nearest folders are read first");
+    let mut matcher = FileMatcher::elsewhere(home.path(), found.into_iter().rev().collect());
+    assert_eq!(matcher.rank("agents.md", 3), shallow_first);
+}

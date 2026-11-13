@@ -2985,6 +2985,13 @@ impl Editor {
                 .translate(output.galley_pos.to_vec2());
             ui.scroll_to_rect(rect, Some(egui::Align::Center));
         }
+        crate::read_aloud::mark_heard(
+            ui,
+            id,
+            &tab.document.text,
+            &output.galley,
+            output.galley_pos,
+        );
         if crate::ui_probe::enabled()
             && let Some(range) = &selected_match
         {

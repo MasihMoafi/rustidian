@@ -31,18 +31,20 @@ pub fn open_video(uri: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A missing image's one-line stand-in. It never wraps: Live preview reserves one line for
+/// it, and a long name wrapped over the paragraph below. The whole name shows on hover.
 pub fn broken(ui: &mut egui::Ui, alt: &str, clickable: bool) -> egui::Response {
     let label = if alt.is_empty() { "Missing image" } else { alt };
-    let short: String = label.chars().take(72).collect();
     let response = ui
         .add(
-            egui::Label::new(egui::RichText::new(format!("▧ {short}")).weak()).sense(
-                if clickable {
+            egui::Label::new(egui::RichText::new(format!("▧ {label}")).weak())
+                .truncate()
+                .show_tooltip_when_elided(false)
+                .sense(if clickable {
                     egui::Sense::click()
                 } else {
                     egui::Sense::hover()
-                },
-            ),
+                }),
         )
         .on_hover_text(label);
     crate::ui_probe::record(ui.ctx(), format!("broken-image:{alt}"), response.rect);

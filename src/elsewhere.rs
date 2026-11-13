@@ -16,11 +16,13 @@ const SKIPPED: &[&str] = &[
 ];
 const LIMIT: usize = 200_000;
 
-/// Every text document under `root`, outside `vault`, up to a fixed limit.
+/// Every text document under `root`, outside `vault`, up to a fixed limit. Folders are
+/// read nearest first, so the limit drops the most deeply buried files, never a top-level
+/// one such as `~/code/AGENTS.md`.
 pub fn scan(root: &Path, vault: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let mut folders = vec![root.to_owned()];
-    while let Some(folder) = folders.pop() {
+    let mut folders = std::collections::VecDeque::from([root.to_owned()]);
+    while let Some(folder) = folders.pop_front() {
         let Ok(entries) = std::fs::read_dir(&folder) else {
             continue;
         };
@@ -36,7 +38,7 @@ pub fn scan(root: &Path, vault: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if kind.is_dir() {
                 if !SKIPPED.contains(&name.as_ref()) && path != vault {
-                    folders.push(path);
+                    folders.push_back(path);
                 }
             } else if kind.is_file() && crate::vault::is_text_document(&path) {
                 found.push(path);
@@ -73,6 +75,11 @@ impl Index {
                 wake();
             });
         index
+    }
+
+    /// Whether the list has been built.
+    pub fn ready(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 
     /// Ranked absolute paths, or `None` while the list is still being built.

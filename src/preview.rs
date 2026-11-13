@@ -1338,6 +1338,14 @@ fn show_blocks(
     }
     let mut folded_level = None;
     let mut speech = Speech::default();
+    let heard = embedding.is_none().then(|| {
+        crate::read_aloud::heard_block(ui, document_id, blocks.len(), || {
+            blocks
+                .iter()
+                .map(|block| block.parts.iter().map(|part| part.text.as_str()).collect())
+                .collect()
+        })
+    });
     for (index, block) in blocks.iter().enumerate() {
         let ordinal = block.ordinal;
         let table_index = block.ordinal;
@@ -1770,6 +1778,9 @@ fn show_blocks(
             );
         }
         crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);
+        if heard == Some(Some(index)) {
+            crate::read_aloud::mark_heard_in(ui, &galley, response.rect.min);
+        }
         if crate::ui_probe::enabled() {
             crate::ui_probe::record(
                 ui.ctx(),

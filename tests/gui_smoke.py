@@ -8476,6 +8476,71 @@ int rename(const char *source, const char *destination) {
                 assert control_bounds("read-aloud-player", required=False) is None
                 assert note.read_bytes() == before, "Reading aloud must not change the note"
                 results.append(f"Stop ended playback after {stopped} sentence(s) and voicing after {len(lines(voiced))}; nothing played afterwards and the note kept its bytes")
+                # Masih: a click on the player shows the sentence being read, underlined, in Live
+                # preview and Reading view; a speed change is heard from the current sentence.
+                far = fixture / "Read aloud follow.md"
+                far.write_text("# Top\n\n" + "---\n\n" * 80 + "Target one is here. Target two waits. Target three ends.\n")
+                far_before = far.read_bytes()
+                command("Refresh vault")
+                open_note("Read aloud follow")
+                command("Live preview")
+                pause()
+                reset()
+                requests.unlink(missing_ok=True)
+                blocked.unlink(missing_ok=True)
+                hold.write_text("Target two waits.")
+                try:
+                    click_control("editor")
+                    key("ctrl+Home")
+                    key("ctrl+shift+r")
+                    assert wait_played(2) == ["Top", "Target one is here."], lines(played)
+
+                    def heard_on_screen():
+                        heard, viewport = control_bounds("read-aloud-heard"), control_bounds("document-viewport")
+                        return viewport[1] <= heard[1] and heard[3] <= viewport[3], (heard, viewport)
+
+                    for view in ("Live preview", "Reading view"):
+                        command(view)
+                        pause()
+                        viewport = control_bounds("document-viewport")
+                        xdo("mousemove", "--sync", str(round((viewport[0] + viewport[2]) / 2)), str(round(viewport[1] + 60)))
+                        xdo("click", "--repeat", "80", "--delay", "4", "4")
+                        time.sleep(.8)
+                        visible, boxes = heard_on_screen()
+                        assert not visible, (view, "The sentence starts off screen", boxes)
+                        click_control("read-aloud-sentence")
+                        time.sleep(.8)  # The scroll animation.
+                        visible, boxes = heard_on_screen()
+                        assert visible, (view, "A click on the player scrolls to the sentence", boxes)
+                        heard = control_bounds("read-aloud-heard")
+                        assert heard[3] - heard[1] < 60, (view, "Only the one sentence is marked", heard)
+                        capture(f"native-read-aloud-follow-{view.split()[0].lower()}.png")
+                        results.append(f"In {view}, a click on the player's sentence scrolled from the top of an 80-rule note to 'Target one is here.', marked on screen at {heard}")
+                    # Speed: with 'Target two waits.' heard and the next sentence still voicing,
+                    # 1.5x voices the heard sentence again rather than after it.
+                    hold.write_text("Target three ends.")
+                    deadline = time.monotonic() + 5
+                    while lines(played)[-1:] != ["Target two waits."] and time.monotonic() < deadline:
+                        time.sleep(.05)
+                    assert lines(played)[-1:] == ["Target two waits."], lines(played)
+                    count = len(lines(requests))
+                    click_control("read-aloud-speed")
+                    click_control("read-aloud-speed:1.5×")
+                finally:
+                    hold.unlink(missing_ok=True)
+                deadline = time.monotonic() + 8
+                later = []
+                while time.monotonic() < deadline and not any(abs(r.get("speed", 0) - 1.5) < .0001 for r in later):
+                    later = [json.loads(line) for line in lines(requests)[count:]]
+                    time.sleep(.05)
+                fast = [r["text"] for r in later if abs(r.get("speed", 0) - 1.5) < .0001]
+                assert fast[:1] == ["Target two waits."], ("A new speed restarts at the heard sentence", later)
+                deadline = time.monotonic() + 10
+                while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
+                    time.sleep(.1)
+                assert lines(played)[-2:] == ["Target two waits.", "Target three ends."], lines(played)
+                assert far.read_bytes() == far_before, "Reading aloud must not change the note"
+                results.append(f"Changing to 1.5x mid-reading voiced the heard sentence again at 1.5x ({fast}), then finished; the note kept its bytes")
                 # Masih (7 Nov): read aloud must be reachable where he edits, and never speak Markdown markup.
                 marked = fixture / "Read aloud markup.md"
                 marked.write_text("# Plan\n\nThis is **bold** and `code`. See [the guide](https://example.com) and [[Read aloud test|the test]]. Two * three stays.\n")
@@ -10050,6 +10115,7 @@ int rename(const char *source, const char *destination) {
                         "<img src='Assets/HTML%20dark.png' width='160' height='80' alt='Theme image'></picture>\n\n"
                         f"<a href='https://example.com/?a=1&amp;b=2'><img src='{origin}/badge.svg' alt='Linked badge'></a>\n\n"
                         "![Lost badge](Assets/absent.png)\n\n"
+                        "![a-beautifully-illustrated-watercolor-img_TcCW0ivURQi-raDmaFRZLw_GIGBjDOW-long-name](Assets/absent-long.png)\n\n"
                         "<details><summary>More HTML</summary>DISCLOSED_TEXT</details>\n\n"
                         "<custom-box>UNKNOWN_TEXT</custom-box>\n")
                     note.write_text(source); originals[note] = note.read_bytes()
@@ -10064,6 +10130,9 @@ int rename(const char *source, const char *destination) {
                         assert left[2] <= right[0] + 2 and abs(left[1] - right[1]) < 2, (left, right)
                         broken = control_bounds("broken-image:Lost badge")
                         assert 12 <= broken[3] - broken[1] <= 40 and broken[2] - broken[0] < 300, broken
+                        # A long name stays on one line instead of wrapping over the text below it.
+                        long_name = control_bounds("broken-image:a-beautifully-illustrated-watercolor-img_TcCW0ivURQi-raDmaFRZLw_GIGBjDOW-long-name")
+                        assert 12 <= long_name[3] - long_name[1] <= 40, (mode, long_name)
                         wait_for(lambda: color_count((230, 40, 150)) > 1000, "The remote badge did not draw")
                         before = (reports / "browser-requests.txt").read_text() if (reports / "browser-requests.txt").exists() else ""
                         click_control("media-image:Linked badge")
@@ -10074,7 +10143,7 @@ int rename(const char *source, const char *destination) {
                         capture(f"native-html-details-{mode.replace(' ', '-')}.png")
                         command("Source editing"); key("ctrl+s"); assert note.read_bytes() == originals[note]
                     assert requests.get("/badge.svg") == 1, requests
-                    results.append("Reading and Live draw aligned cells, theme-selected pictures, clickable HTML badges, compact missing-image placeholders and working details; source bytes stay exact and the remote image is cached")
+                    results.append("Reading and Live draw aligned cells, theme-selected pictures, clickable HTML badges, compact one-line missing-image placeholders (a long name too) and working details; source bytes stay exact and the remote image is cached")
 
                     delayed = fixture / "Delayed image.md"
                     delayed.write_text(f"![Delayed]({origin}/delayed.svg)\n"); originals[delayed] = delayed.read_bytes()

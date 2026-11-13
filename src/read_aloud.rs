@@ -18,7 +18,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
 
 #[path = "read_aloud/worker.rs"]
 mod worker;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const SPEEDS: [(f32, &str, &str); 7] = [
     (1.0, "Normal", "1.0×"),
@@ -96,16 +96,26 @@ pub struct Status {
     pub error: Option<String>,
     /// "cuda" or "cpu", once the worker is up.
     pub device: Option<String>,
+    /// The reading this status belongs to; a new one starts with every read and restart.
+    pub session: u64,
+    /// The session of the read the user started; a restart for a new speed keeps it.
+    pub origin: u64,
 }
 
 struct Shared {
     session: AtomicU64,
     status: Mutex<Status>,
+    /// Every sentence of the reading in progress, so a speed change can restart it.
+    chunks: Mutex<Arc<Vec<String>>>,
+    /// Set by a click on the player: the editor scrolls to the sentence being heard.
+    jump: AtomicBool,
 }
 
 static SHARED: LazyLock<Shared> = LazyLock::new(|| Shared {
     session: AtomicU64::new(0),
     status: Mutex::new(Status::default()),
+    chunks: Mutex::new(Arc::default()),
+    jump: AtomicBool::new(false),
 });
 static SERVICE: OnceLock<Result<worker::Service, String>> = OnceLock::new();
 
@@ -248,6 +258,26 @@ pub fn warm_up() {
 
 /// Read a selection through one continuous mono PCM player.
 pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
+    start(ctx, Arc::new(chunks), 0, true);
+}
+
+/// Start the current reading again at the sentence being heard, so a new speed is heard at
+/// once rather than after the sentences already voiced at the old one.
+fn restart_at_heard(ctx: &egui::Context) {
+    let status = status();
+    if status.active {
+        let chunks = SHARED
+            .chunks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        start(ctx, chunks, status.index.saturating_sub(1), false);
+    }
+}
+
+/// Read `chunks` from index `first`; `saved_speed` takes the speed from the saved settings
+/// (a restart keeps the speed just chosen, which may not be saved yet).
+fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_speed: bool) {
     let session = SHARED.session.fetch_add(1, Ordering::SeqCst) + 1;
     if status().active
         && let Some(Ok(service)) = SERVICE.get()
@@ -255,13 +285,15 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
         service.cancel();
     }
     let epoch = service().map_or(0, worker::Service::epoch);
-    if chunks.is_empty() {
+    if first >= chunks.len() {
         return;
     }
     let settings = voice_account::state_base()
         .map(|base| voice_account::Settings::load(&base))
         .unwrap_or_default();
-    set_speed(settings.speed);
+    if saved_speed {
+        set_speed(settings.speed);
+    }
     let choice = voice_account::choose_engine(
         settings.engine,
         unavailable().is_none(),
@@ -281,7 +313,10 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
                 data.insert_temp(egui::Id::unique("voice-setup"), true);
             }
             voice_account::VoiceChoice::OfferHosted => {
-                data.insert_temp(egui::Id::unique("voice-fallback-speech"), chunks);
+                data.insert_temp(
+                    egui::Id::unique("voice-fallback-speech"),
+                    chunks[first..].to_vec(),
+                );
             }
             _ => unreachable!(),
         });
@@ -292,16 +327,20 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
     {
         let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
         let device = status.device.take();
+        let origin = if saved_speed { session } else { status.origin };
         *status = Status {
             active: true,
-            index: 1,
+            index: first + 1,
             total: chunks.len(),
-            current: chunks[0].clone(),
+            current: chunks[first].clone(),
             preparing: true,
             error: None,
             device,
+            session,
+            origin,
         };
     }
+    *SHARED.chunks.lock().unwrap_or_else(|e| e.into_inner()) = Arc::clone(&chunks);
     ctx.request_repaint();
     let ctx = ctx.clone();
     std::thread::spawn(move || {
@@ -358,20 +397,44 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
             let watcher = Arc::clone(&player);
             let done = Arc::new(AtomicBool::new(false));
             let watching = Arc::clone(&done);
+            // When each written sentence starts to be heard: the player holds audio written
+            // ahead, so the bar and the underline follow this clock, not the writes.
+            let heard: Arc<Mutex<std::collections::VecDeque<(Instant, usize, String)>>> =
+                Arc::default();
+            let schedule = Arc::clone(&heard);
+            let monitor_ctx = ctx.clone();
             let monitor = std::thread::spawn(move || {
                 while !watching.load(Ordering::SeqCst) {
                     if !current(session) {
                         let _ = watcher.lock().unwrap_or_else(|e| e.into_inner()).kill();
                         break;
                     }
+                    let due = {
+                        let mut queue = schedule.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut due = None;
+                        while queue
+                            .front()
+                            .is_some_and(|(at, _, _)| *at <= Instant::now())
+                        {
+                            due = queue.pop_front();
+                        }
+                        due
+                    };
+                    if let Some((_, index, text)) = due {
+                        update(&monitor_ctx, session, |status| {
+                            status.index = index + 1;
+                            status.current = text;
+                            status.preparing = false;
+                        });
+                    }
                     std::thread::sleep(Duration::from_millis(20));
                 }
             });
             let (sender, receiver) = mpsc::sync_channel(1);
             let producer = std::thread::spawn(move || {
-                for (index, text) in chunks.iter().enumerate() {
+                for (index, text) in chunks.iter().enumerate().skip(first) {
                     let mut pieces = vec![text.as_str()];
-                    if index == 0
+                    if index == first
                         && text.chars().count() > 80
                         && let Some(comma) = text.find(',')
                         && comma > 0
@@ -404,16 +467,19 @@ pub fn speak(ctx: &egui::Context, chunks: Vec<String>) {
                 }
             });
             let played = (|| -> Result<(), String> {
+                let mut audio_end = Instant::now();
                 for (index, text, pcm) in receiver {
                     if !current(session) {
                         break;
                     }
                     let pcm = pcm?;
-                    update(&ctx, session, |status| {
-                        status.index = index + 1;
-                        status.current = text;
-                        status.preparing = false;
-                    });
+                    // 24 kHz mono, two bytes a sample.
+                    let begins = audio_end.max(Instant::now());
+                    audio_end = begins + Duration::from_secs_f64(pcm.len() as f64 / 48_000.0);
+                    heard
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push_back((begins, index, text));
                     input
                         .write_all(&pcm)
                         .map_err(|error| format!("Audio player stopped: {error}"))?;
@@ -683,10 +749,19 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
                             format!("{} of {}", status.index, status.total)
                         };
                         ui.label(egui::RichText::new(label).small().weak());
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&status.current).small())
-                                .truncate(),
-                        );
+                        let sentence = ui
+                            .add(
+                                egui::Label::new(egui::RichText::new(&status.current).small())
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Show where this is in the note");
+                        crate::ui_probe::record(ui.ctx(), "read-aloud-sentence", sentence.rect);
+                        if sentence.clicked() {
+                            SHARED.jump.store(true, Ordering::SeqCst);
+                            ui.ctx().request_repaint();
+                        }
                     }
                 });
             });
@@ -696,6 +771,177 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
         });
     if *speed != before {
         set_speed(*speed);
+        restart_at_heard(ctx);
     }
     *speed != before
+}
+
+/// True once after a click on the player's sentence: show it in the note.
+pub fn take_jump() -> bool {
+    SHARED.jump.swap(false, Ordering::SeqCst)
+}
+
+/// Whether a click on the player is still waiting for the note that holds the sentence.
+pub fn jump_pending() -> bool {
+    SHARED.jump.load(Ordering::SeqCst)
+}
+
+/// Where the sentence being heard was last found in a note, so the next one is looked for
+/// after it and a long note is searched once per sentence, not once per frame.
+#[derive(Clone, Default)]
+struct Heard {
+    session: u64,
+    index: usize,
+    length: usize,
+    /// Character range in the note.
+    found: Option<std::ops::Range<usize>>,
+    /// Byte range in the note.
+    bytes: Option<std::ops::Range<usize>>,
+}
+
+/// Underline the sentence being heard when `source` (laid out as `galley` at `origin`) holds
+/// it, and scroll to it after a click on the player.
+pub fn mark_heard(
+    ui: &egui::Ui,
+    id: egui::Id,
+    source: &str,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+) {
+    let status = status();
+    if !status.active {
+        SHARED.jump.store(false, Ordering::SeqCst);
+        return;
+    }
+    let memory = id.with("read-aloud-heard");
+    let mut heard = ui
+        .ctx()
+        .data(|data| data.get_temp::<Heard>(memory))
+        .unwrap_or_default();
+    if (heard.session, heard.index, heard.length) != (status.session, status.index, source.len()) {
+        let after = heard.bytes.as_ref().map_or(0, |range| range.start);
+        let bytes = rustidian::speech_text::locate(source, &status.current, after);
+        heard = Heard {
+            session: status.session,
+            index: status.index,
+            length: source.len(),
+            found: bytes.as_ref().map(|range| {
+                let start = source[..range.start].chars().count();
+                start..start + source[range.clone()].chars().count()
+            }),
+            bytes,
+        };
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(memory, heard.clone()));
+    }
+    if let Some(found) = heard.found {
+        paint_heard(ui, galley, origin, found);
+    }
+}
+
+/// The character range of the sentence being heard within `text`, if it is there.
+fn heard_chars(text: &str, spoken: &str) -> Option<std::ops::Range<usize>> {
+    let bytes = rustidian::speech_text::locate(text, spoken, 0)?;
+    let start = text[..bytes.start].chars().count();
+    Some(start..start + text[bytes].chars().count())
+}
+
+/// Which of the Reading view's blocks (`texts`, built only when the sentence changes) holds
+/// the sentence being heard.
+pub fn heard_block(
+    ui: &egui::Ui,
+    id: egui::Id,
+    count: usize,
+    texts: impl FnOnce() -> Vec<String>,
+) -> Option<usize> {
+    let status = status();
+    if !status.active {
+        SHARED.jump.store(false, Ordering::SeqCst);
+        return None;
+    }
+    let memory = id.with("read-aloud-heard-block");
+    let cached = ui
+        .ctx()
+        .data(|data| data.get_temp::<(u64, usize, usize, Option<usize>, usize)>(memory));
+    if let Some((session, index, blocks, block, _)) = cached
+        && (session, index, blocks) == (status.session, status.index, count)
+    {
+        return block;
+    }
+    let texts = texts();
+    let joined = texts.join("\n");
+    let after = cached.map_or(0, |(.., after)| after);
+    let found = rustidian::speech_text::locate(&joined, &status.current, after);
+    let block = found.as_ref().map(|range| {
+        let mut end = 0;
+        texts
+            .iter()
+            .position(|text| {
+                end += text.len() + 1;
+                range.start < end
+            })
+            .unwrap_or(texts.len().saturating_sub(1))
+    });
+    let after = found.map_or(after, |range| range.start);
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(memory, (status.session, status.index, count, block, after))
+    });
+    block
+}
+
+/// Underline the sentence being heard inside one Reading view block (`galley` at `origin`).
+pub fn mark_heard_in(ui: &egui::Ui, galley: &egui::Galley, origin: egui::Pos2) {
+    let status = status();
+    if status.active
+        && let Some(found) = heard_chars(&galley.job.text, &status.current)
+    {
+        paint_heard(ui, galley, origin, found);
+    }
+}
+
+/// Tint and underline characters `found` of `galley` at `origin`; scroll there once after a
+/// click on the player.
+fn paint_heard(
+    ui: &egui::Ui,
+    galley: &egui::Galley,
+    origin: egui::Pos2,
+    found: std::ops::Range<usize>,
+) {
+    let accent = crate::theme::interactive(ui);
+    let mut rows = Vec::new();
+    let mut offset = 0;
+    for row in &galley.rows {
+        let start = offset;
+        let end = start + row.char_count_excluding_newline().0;
+        offset += row.char_count_including_newline().0;
+        if end <= found.start || start >= found.end || start == end {
+            continue;
+        }
+        let from = row.x_offset(egui::epaint::text::CharIndex(
+            found.start.max(start) - start,
+        ));
+        let to = row.x_offset(egui::epaint::text::CharIndex(found.end.min(end) - start));
+        let rect = egui::Rect::from_min_max(
+            origin + row.pos.to_vec2() + egui::vec2(from.min(to), 0.0),
+            origin + row.pos.to_vec2() + egui::vec2(from.max(to), row.size.y),
+        );
+        if rect.width() > 0.5 {
+            rows.push(rect);
+        }
+    }
+    let painter = ui.painter();
+    for rect in &rows {
+        painter.rect_filled(*rect, 2.0, accent.gamma_multiply(0.12));
+        painter.line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            egui::Stroke::new(2.0, accent),
+        );
+    }
+    if let Some(first) = rows.first().copied() {
+        let whole = rows.iter().fold(first, |all, rect| all.union(*rect));
+        crate::ui_probe::record(ui.ctx(), "read-aloud-heard", whole);
+        if take_jump() {
+            ui.scroll_to_rect(whole, Some(egui::Align::Center));
+        }
+    }
 }

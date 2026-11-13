@@ -2267,10 +2267,40 @@ impl NotesApp {
         }
     }
 
-    /// Ctrl+O's results: exact file names first (from the vault, then from
-    /// elsewhere on this computer), then the vault's close matches, then
-    /// close matches elsewhere.
+    /// Ctrl+O's results, ranked again only when the query or a file list changes: the dialog
+    /// repaints for every blink and pointer move, and ranking the ~200,000 files elsewhere
+    /// on each of those frames kept a core busy.
     fn quick_open_matches(&mut self, ctx: &egui::Context) -> Vec<PathBuf> {
+        let key = (
+            self.dialog_input.trim().to_owned(),
+            self.files.generation(),
+            self.elsewhere
+                .as_ref()
+                .map(|(root, index)| (root.clone(), index.ready())),
+        );
+        let id = egui::Id::unique("quick-open-results");
+        type Ranked = ((String, u64, Option<(PathBuf, bool)>), Arc<Vec<PathBuf>>);
+        if let Some((cached, results)) = ctx.data(|data| data.get_temp::<Ranked>(id))
+            && cached == key
+        {
+            return results.to_vec();
+        }
+        let results = self.rank_quick_open(ctx);
+        // Starting the background list changes the key; keep the results under the new one.
+        let key = (
+            key.0,
+            key.1,
+            self.elsewhere
+                .as_ref()
+                .map(|(root, index)| (root.clone(), index.ready())),
+        );
+        ctx.data_mut(|data| data.insert_temp::<Ranked>(id, (key, Arc::new(results.clone()))));
+        results
+    }
+
+    /// Exact file names first (from the vault, then from elsewhere on this
+    /// computer), then the vault's close matches, then close matches elsewhere.
+    fn rank_quick_open(&mut self, ctx: &egui::Context) -> Vec<PathBuf> {
         let query = self.dialog_input.trim().to_owned();
         let vault_matches = self.files.rank(&query, 100);
         let Some(vault) = &self.vault else {
@@ -6507,6 +6537,39 @@ impl eframe::App for NotesApp {
             .raw_input(ctx, raw, editing_tab, self.view() == View::Live);
     }
 
+    /// Remember which note a reading started in; after a click on the player, bring that
+    /// note's tab forward so its editor can scroll to the sentence being heard.
+    fn follow_reading(&mut self, ctx: &egui::Context) {
+        let status = crate::read_aloud::status();
+        if !status.active {
+            crate::read_aloud::take_jump();
+            return;
+        }
+        let id = egui::Id::unique("read-aloud-from");
+        let path = match ctx.data(|data| data.get_temp::<(u64, PathBuf)>(id)) {
+            Some((origin, path)) if origin == status.origin => path,
+            _ => {
+                let Some(tab) = self.tabs.get(self.active) else {
+                    return;
+                };
+                let path = tab.document.path.clone();
+                ctx.data_mut(|data| data.insert_temp(id, (status.origin, path.clone())));
+                path
+            }
+        };
+        if crate::read_aloud::jump_pending()
+            && self
+                .tabs
+                .get(self.active)
+                .is_some_and(|tab| tab.document.path != path)
+            && let Some(index) = self.tabs.iter().position(|tab| tab.document.path == path)
+        {
+            self.active = index;
+            self.tabs[index].show_document();
+            ctx.request_repaint();
+        }
+    }
+
     /// Runs before every `ui` pass and alone while the window is hidden, so
     /// hand-offs, signals and close requests never wait for a drawn frame.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -6525,6 +6588,7 @@ impl eframe::App for NotesApp {
         if setup {
             self.open_voice_setup();
         }
+        self.follow_reading(ctx);
         let speech_fallback = ctx.data_mut(|data| {
             let id = egui::Id::unique("voice-fallback-speech");
             let chunks = data.get_temp::<Vec<String>>(id);
