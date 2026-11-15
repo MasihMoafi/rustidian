@@ -8561,12 +8561,10 @@ int rename(const char *source, const char *destination) {
                     while lines(played)[-1:] != ["Target two waits."] and time.monotonic() < deadline:
                         time.sleep(.05)
                     assert lines(played)[-1:] == ["Target two waits."], lines(played)
-                    count = len(lines(requests))
                     click_control("read-aloud-speed")
                     click_control("read-aloud-speed:1.5×")
                 finally:
                     hold.unlink(missing_ok=True)
-                deadline = time.monotonic() + 8
                 deadline = time.monotonic() + 10
                 while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
                     time.sleep(.1)
@@ -8714,6 +8712,12 @@ int rename(const char *source, const char *destination) {
                                  "Stop did not dismiss the player", 1)
                         disappeared(pid)
                         assert time.monotonic()-at < 1.5
+                        # Text markers stand in for PCM here; audio tempo is checked with real samples.
+                        key("ctrl+comma")
+                        click_control("settings-page:Read aloud")
+                        click_control("settings-voice-speed")
+                        click_control("settings-voice-speed:Normal")
+                        key("Escape")
                         mode_file.write_text("normal")
                         played.unlink(missing_ok=True)
                         at = time.monotonic()

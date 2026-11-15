@@ -546,13 +546,9 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
                     let bits = SPEED.load(Ordering::SeqCst);
                     let speed = (bits != 0).then(|| f32::from_bits(bits));
                     let mut emit = |pcm: Vec<u8>| {
-                        // Bound playback ahead, including whole Kokoro sentences.
-                        for part in pcm.chunks(4096) {
-                            sender
-                                .send((index, text.clone(), Ok(part.to_vec())))
-                                .map_err(|_| "Reading cancelled.".to_owned())?;
-                        }
-                        Ok(())
+                        sender
+                            .send((index, text.clone(), Ok(pcm)))
+                            .map_err(|_| "Reading cancelled.".to_owned())
                     };
                     let result = (|| match &route {
                         Some(route) => {
@@ -580,34 +576,42 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
                     if !current(session) {
                         break;
                     }
-                    let mut pcm = pcm?;
-                    if !hosted {
-                        let bits = SPEED.load(Ordering::SeqCst);
-                        let speed = effective_speed((bits != 0).then(|| f32::from_bits(bits)));
-                        if tempo.is_none() && speed != 1.0 {
-                            tempo = Some(tempo::Tempo::new(24_000, speed)?);
+                    // The producer can prepare the next sentence while this one plays.
+                    // Read speed between short writes, so buffered sentences also change immediately.
+                    for part in pcm?.chunks(4096) {
+                        if !current(session) {
+                            break;
                         }
-                        if let Some(tempo) = &mut tempo {
-                            tempo.speed(speed);
-                            pcm = tempo.process(&pcm)?;
+                        let mut pcm = part.to_vec();
+                        if !hosted {
+                            let bits = SPEED.load(Ordering::SeqCst);
+                            let speed = effective_speed((bits != 0).then(|| f32::from_bits(bits)));
+                            if tempo.is_none() && speed != 1.0 {
+                                tempo = Some(tempo::Tempo::new(24_000, speed)?);
+                            }
+                            if let Some(tempo) = &mut tempo {
+                                tempo.speed(speed);
+                                pcm = tempo.process(&pcm)?;
+                            }
                         }
+                        if pcm.is_empty() {
+                            continue;
+                        }
+                        // 24 kHz mono, two bytes a sample.
+                        let begins = audio_end.max(Instant::now());
+                        audio_end = begins + Duration::from_secs_f64(pcm.len() as f64 / 48_000.0);
+                        if scheduled != Some(index) {
+                            heard.lock().unwrap_or_else(|e| e.into_inner()).push_back((
+                                begins,
+                                index,
+                                text.clone(),
+                            ));
+                            scheduled = Some(index);
+                        }
+                        input
+                            .write_all(&pcm)
+                            .map_err(|error| format!("Audio player stopped: {error}"))?;
                     }
-                    if pcm.is_empty() {
-                        continue;
-                    }
-                    // 24 kHz mono, two bytes a sample.
-                    let begins = audio_end.max(Instant::now());
-                    audio_end = begins + Duration::from_secs_f64(pcm.len() as f64 / 48_000.0);
-                    if scheduled != Some(index) {
-                        heard
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .push_back((begins, index, text));
-                        scheduled = Some(index);
-                    }
-                    input
-                        .write_all(&pcm)
-                        .map_err(|error| format!("Audio player stopped: {error}"))?;
                 }
                 if let Some(tempo) = &mut tempo {
                     input

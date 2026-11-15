@@ -25,5 +25,7 @@ for line in sys.stdin:
     with log.with_suffix(".requests").open("a") as output:
         output.write(json.dumps(request) + "\n")
     time.sleep(.3)
-    pcm = base64.b64encode((request["text"] + "\n").encode()).decode()
+    raw = request["text"].encode()
+    raw += b" " * ((len(raw) + 1) % 2) + b"\n"
+    pcm = base64.b64encode(raw).decode()
     print(json.dumps({"id": request["id"], "ok": True, "rate": 24000, "pcm": pcm}), flush=True)
