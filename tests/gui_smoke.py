@@ -138,9 +138,9 @@ def main():
             # A stand-in Kokoro (same line protocol) and player: each voiced sentence and each
             # played file is logged, and nothing reaches the speakers.
             voice = base / "fake-kokoro"
-            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nfrom pathlib import Path\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    open(os.environ['READ_ALOUD_LOG'] + '.requests', 'a').write(json.dumps(r) + '\\n')\n    hold = Path(os.environ['READ_ALOUD_LOG'] + '.hold')\n    while hold.exists() and hold.read_text() == r['text']:\n        hold.with_suffix('.blocked').write_text(r['text'])\n        time.sleep(.02)\n    time.sleep(.3)\n    pcm = base64.b64encode((r['text'] + '\\n').encode()).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
+            voice.write_text("#!/usr/bin/env python3\nimport base64, json, sys, os, time\nfrom pathlib import Path\nprint(json.dumps({'ready': True, 'device': 'cpu'}), flush=True)\nfor line in sys.stdin:\n    r = json.loads(line)\n    open(os.environ['READ_ALOUD_LOG'] + '.voiced', 'a').write(r['text'] + '\\n')\n    open(os.environ['READ_ALOUD_LOG'] + '.requests', 'a').write(json.dumps(r) + '\\n')\n    hold = Path(os.environ['READ_ALOUD_LOG'] + '.hold')\n    while hold.exists() and hold.read_text() == r['text']:\n        hold.with_suffix('.blocked').write_text(r['text'])\n        time.sleep(.02)\n    time.sleep(.3)\n    raw = r['text'].encode()\n    raw += b' ' * ((len(raw) + 1) % 2) + b'\\n'\n    pcm = base64.b64encode(raw).decode()\n    print(json.dumps({'id': r['id'], 'ok': True, 'rate': 24000, 'pcm': pcm}), flush=True)\n")
             player = base / "fake-player"
-            player.write_text("#!/usr/bin/env python3\nimport os, sys, time\nf = open(os.environ['READ_ALOUD_LOG'] + '.played', 'ab', buffering=0)\nwhile True:\n    line = sys.stdin.buffer.readline()\n    if not line: break\n    f.write(line)\n    time.sleep(.4)\n")
+            player.write_text("#!/usr/bin/env python3\nimport os, sys, time\nf = open(os.environ['READ_ALOUD_LOG'] + '.played', 'ab', buffering=0)\nwhile True:\n    line = sys.stdin.buffer.readline()\n    if not line: break\n    f.write(line.rstrip() + b'\\n')\n    time.sleep(.4)\n")
             for stub in (voice, player):
                 stub.chmod(0o755)
             (base / "kokoro.onnx").write_bytes(b"")
@@ -8446,27 +8446,32 @@ int rename(const char *source, const char *destination) {
                 assert not lines(voiced) and not lines(played) and control_bounds("read-aloud-player", required=False) is None, "A click on a hidden former speaker started reading"
                 assert note.read_bytes() == before
                 results.append("Clicking a hidden former paragraph speaker did not start reading or change the note")
-                # A speed change reaches a new request during the same reading and is saved.
+                # Local speed changes affect playback without cancelling or revoicing a sentence.
                 requests = log.with_suffix(".requests")
                 for speed in (1.3, 1.4):
                     reset()
                     requests.unlink(missing_ok=True)
                     key("ctrl+a")
                     click_control("read-aloud-selection")
+                    wait_played(1)
+                    hold.write_text("Second sentence follows.")
                     click_control("read-aloud-speed")
                     capture(f"native-read-aloud-speed-{speed}-menu.png")
                     click_control(f"read-aloud-speed:{speed}×")
-                    count = len(lines(requests))
-                    deadline = time.monotonic() + 5
-                    while len(lines(requests)) <= count and time.monotonic() < deadline:
-                        time.sleep(.05)
-                    later = [json.loads(line) for line in lines(requests)[count:]]
-                    assert later and abs(later[0]["speed"] - speed) < .0001, later
+                    time.sleep(.3)
+                    later = [json.loads(line) for line in lines(requests)]
+                    assert later and all(abs(r.get("speed", 1.0) - 1.0) < .0001 for r in later), later
+                    assert [r["text"] for r in later].count("First sentence here.") == 1, later
                     state = base / "state" / "rustidian" / "voice.json"
                     assert abs(json.loads(state.read_text())["speed"] - speed) < .0001
                     click_control("read-aloud-stop")
+                    hold.unlink(missing_ok=True)
+                    key("ctrl+comma")
+                    click_control("settings-page:Read aloud")
+                    click_control("settings-voice-speed")
+                    click_control("settings-voice-speed:Normal")
                     key("Escape")
-                    results.append(f"Speed menu selected {speed}×, the next worker request used it, and voice settings saved it")
+                    results.append(f"Speed menu saved {speed}× and kept local synthesis at 1× without repeating the first sentence")
                 # A double-clicked word reads its whole sentence.
                 reset()
                 block = control_bounds("reading-block:1")
@@ -8550,8 +8555,7 @@ int rename(const char *source, const char *destination) {
                         assert heard[3] - heard[1] < 60, (view, "Only the one sentence is marked", heard)
                         capture(f"native-read-aloud-follow-{view.split()[0].lower()}.png")
                         results.append(f"In {view}, a click on the player's sentence scrolled from the top of an 80-rule note to 'Target one is here.', marked on screen at {heard}")
-                    # Speed: with 'Target two waits.' heard and the next sentence still voicing,
-                    # 1.5x voices the heard sentence again rather than after it.
+                    # Change playback speed while the next sentence is still voicing.
                     hold.write_text("Target three ends.")
                     deadline = time.monotonic() + 5
                     while lines(played)[-1:] != ["Target two waits."] and time.monotonic() < deadline:
@@ -8563,18 +8567,19 @@ int rename(const char *source, const char *destination) {
                 finally:
                     hold.unlink(missing_ok=True)
                 deadline = time.monotonic() + 8
-                later = []
-                while time.monotonic() < deadline and not any(abs(r.get("speed", 0) - 1.5) < .0001 for r in later):
-                    later = [json.loads(line) for line in lines(requests)[count:]]
-                    time.sleep(.05)
-                fast = [r["text"] for r in later if abs(r.get("speed", 0) - 1.5) < .0001]
-                assert fast[:1] == ["Target two waits."], ("A new speed restarts at the heard sentence", later)
                 deadline = time.monotonic() + 10
                 while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
                     time.sleep(.1)
-                assert lines(played)[-2:] == ["Target two waits.", "Target three ends."], lines(played)
+                voiced_requests = [json.loads(line) for line in lines(requests)]
+                assert [r["text"] for r in voiced_requests] == ["Top", "Target one is here.", "Target two waits.", "Target three ends."], voiced_requests
+                assert all(r["speed"] == 1.0 for r in voiced_requests), voiced_requests
                 assert far.read_bytes() == far_before, "Reading aloud must not change the note"
-                results.append(f"Changing to 1.5x mid-reading voiced the heard sentence again at 1.5x ({fast}), then finished; the note kept its bytes")
+                results.append("Changing to 1.5× during synthesis kept every sentence exactly once and preserved the note")
+                key("ctrl+comma")
+                click_control("settings-page:Read aloud")
+                click_control("settings-voice-speed")
+                click_control("settings-voice-speed:Normal")
+                key("Escape")
                 # Masih (7 Nov): read aloud must be reachable where he edits, and never speak Markdown markup.
                 marked = fixture / "Read aloud markup.md"
                 marked.write_text("# Plan\n\nThis is **bold** and `code`. See [the guide](https://example.com) and [[Read aloud test|the test]]. Two * three stays.\n")

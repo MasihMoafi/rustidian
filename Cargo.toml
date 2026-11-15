@@ -34,7 +34,8 @@ ratex-types = "=0.1.15"
 ratex-svg = { version = "=0.1.15", default-features = false, features = ["embed-fonts"] }
 notify = "8.2"
 nucleo-matcher = "0.3"
-rustix = { version = "1.1", features = ["event", "fs", "process"] }
+rustix = { version = "1.1", features = ["event", "fs", "pipe", "process"] }
+libloading = "0.8.9"
 trash = "5.2"
 base64 = "0.22"
 percent-encoding = "2.3"

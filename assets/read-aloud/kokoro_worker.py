@@ -35,8 +35,8 @@ if not os.environ.get("RUSTIDIAN_KOKORO_LIBS"):
         os.execv(sys.executable, [sys.executable, "-u", *sys.argv])
 
 import kokoro_onnx
-import onnxruntime
 import numpy as np
+import onnxruntime
 
 onnxruntime.set_default_logger_severity(3)
 providers = [
@@ -46,7 +46,7 @@ providers = [
 ]
 session = onnxruntime.InferenceSession(sys.argv[1], providers=providers)
 model = kokoro_onnx.Kokoro.from_session(session, sys.argv[2])
-voice = os.environ.get("RUSTIDIAN_KOKORO_VOICE", "af_heart")
+voice = os.environ.get("RUSTIDIAN_KOKORO_VOICE", "af_jessica")
 speed = float(os.environ.get("RUSTIDIAN_KOKORO_SPEED", "1.0"))
 model.create(
     phonemize("Ready."), voice=voice, speed=speed, is_phonemes=True
@@ -57,8 +57,8 @@ for line in sys.stdin:
     request = json.loads(line)
     try:
         samples, rate = model.create(
-            phonemize(request["text"]),
-            voice=voice,
+            phonemize(request["text"], british=request.get("voice", voice).startswith("b")),
+            voice=request.get("voice", voice),
             speed=request.get("speed", speed),
             is_phonemes=True,
         )

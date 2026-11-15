@@ -3811,6 +3811,7 @@ dependencies = [
  "image",
  "imara-diff",
  "keyring",
+ "libloading",
  "mermaid-rs-renderer",
  "notify",
  "nucleo-matcher",

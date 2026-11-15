@@ -16,6 +16,8 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, mpsc};
 
+#[path = "read_aloud/tempo.rs"]
+mod tempo;
 #[path = "read_aloud/worker.rs"]
 mod worker;
 use std::time::{Duration, Instant};
@@ -262,38 +264,61 @@ fn worker_command() -> Result<Command, String> {
 }
 
 /// Only the producer waits; cancellation and exit never wait on this receiver.
-fn synthesize(text: &str, speed: Option<f32>, session: u64, epoch: u64) -> Result<Vec<u8>, String> {
+fn synthesize(
+    text: &str,
+    speed: Option<f32>,
+    session: u64,
+    epoch: u64,
+    voice: &str,
+    mut emit: impl FnMut(Vec<u8>) -> Result<(), String>,
+) -> Result<(), String> {
     if !current(session) {
         return Err("Reading cancelled.".into());
     }
     let service = service()?;
-    let mut request = serde_json::json!({"text": text});
+    let mut request = serde_json::json!({"text": text, "voice": voice});
     if let Some(speed) = speed {
         request["speed"] = speed.into();
     }
-    let message = service
-        .submit(epoch, Some(request))
-        .recv()
-        .map_err(|_| "Reading cancelled.")??;
-    if let Some(device) = message["device"].as_str() {
-        SHARED
-            .status
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .device = Some(device.into());
+    let replies = service.submit(epoch, Some(request));
+    let mut emitted = false;
+    for message in replies {
+        if !current(session) {
+            return Err("Reading cancelled.".into());
+        }
+        let message = message?;
+        if let Some(device) = message["device"].as_str() {
+            SHARED
+                .status
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .device = Some(device.into());
+        }
+        if message["ok"] != true {
+            return Err(message["error"]
+                .as_str()
+                .unwrap_or("The voice could not say this.")
+                .into());
+        }
+        if message["done"] == true {
+            break;
+        }
+        if message["rate"].as_u64() != Some(24_000) {
+            return Err("The voice returned an unsupported sample rate.".into());
+        }
+        let pcm = base64::engine::general_purpose::STANDARD
+            .decode(message["pcm"].as_str().unwrap_or(""))
+            .map_err(|error| error.to_string())?;
+        if !pcm.is_empty() {
+            emit(pcm)?;
+            emitted = true;
+        }
     }
-    if message["ok"] != true {
-        return Err(message["error"]
-            .as_str()
-            .unwrap_or("The voice could not say this.")
-            .into());
+    if emitted {
+        Ok(())
+    } else {
+        Err("The voice returned no audio.".into())
     }
-    if message["rate"].as_u64() != Some(24_000) {
-        return Err("The voice returned an unsupported sample rate.".into());
-    }
-    base64::engine::general_purpose::STANDARD
-        .decode(message["pcm"].as_str().unwrap_or(""))
-        .map_err(|error| error.to_string())
 }
 
 fn current(session: u64) -> bool {
@@ -394,6 +419,12 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
         return;
     }
     let hosted = choice == voice_account::VoiceChoice::Hosted;
+    let qwen = !hosted && settings.engine == voice_account::Engine::Qwen;
+    let local_voice = if qwen {
+        settings.qwen_voice.clone()
+    } else {
+        settings.kokoro_voice.clone()
+    };
     if !hosted {
         select_local_engine(settings.engine);
     }
@@ -467,6 +498,8 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
                 })
                 .ok_or("No audio player (pw-play, paplay or aplay) is installed.")?;
             let mut input = player.stdin.take().ok_or("The player has no input")?;
+            #[cfg(target_os = "linux")]
+            let _ = rustix::pipe::fcntl_setpipe_size(&input, 4096);
             let player = Arc::new(Mutex::new(player));
             let watcher = Arc::clone(&player);
             let done = Arc::new(AtomicBool::new(false));
@@ -507,56 +540,79 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
             let (sender, receiver) = mpsc::sync_channel(1);
             let producer = std::thread::spawn(move || {
                 for (index, text) in chunks.iter().enumerate().skip(first) {
-                    let mut pieces = vec![text.as_str()];
-                    if index == first
-                        && text.chars().count() > 80
-                        && let Some(comma) = text.find(',')
-                        && comma > 0
-                        && comma + 1 < text.len()
-                    {
-                        pieces = vec![&text[..=comma], text[comma + 1..].trim_start()];
+                    if !current(session) {
+                        return;
                     }
-                    for piece in pieces {
-                        if !current(session) {
-                            return;
+                    let bits = SPEED.load(Ordering::SeqCst);
+                    let speed = (bits != 0).then(|| f32::from_bits(bits));
+                    let mut emit = |pcm: Vec<u8>| {
+                        // Bound playback ahead, including whole Kokoro sentences.
+                        for part in pcm.chunks(4096) {
+                            sender
+                                .send((index, text.clone(), Ok(part.to_vec())))
+                                .map_err(|_| "Reading cancelled.".to_owned())?;
                         }
-                        let bits = SPEED.load(Ordering::SeqCst);
-                        let speed = (bits != 0).then(|| f32::from_bits(bits));
-                        let pcm: Result<Vec<u8>, String> = (|| match &route {
-                            Some(route) => {
-                                let wav =
-                                    voice_account::speak(route, piece, effective_speed(speed))?;
-                                Ok(wav.get(44..).ok_or("Invalid hosted audio")?.to_vec())
-                            }
-                            None => synthesize(piece, speed, session, epoch),
-                        })();
-                        if !current(session) {
-                            return;
+                        Ok(())
+                    };
+                    let result = (|| match &route {
+                        Some(route) => {
+                            let wav = voice_account::speak(route, text, effective_speed(speed))?;
+                            emit(wav.get(44..).ok_or("Invalid hosted audio")?.to_vec())
                         }
-                        let failed = pcm.is_err();
-                        if sender.send((index, text.clone(), pcm)).is_err() || failed {
-                            return;
+                        None => {
+                            synthesize(text, Some(1.0), session, epoch, &local_voice, &mut emit)
                         }
+                    })();
+                    if !current(session) {
+                        return;
+                    }
+                    if let Err(error) = result {
+                        let _ = sender.send((index, text.clone(), Err(error)));
+                        return;
                     }
                 }
             });
             let played = (|| -> Result<(), String> {
                 let mut audio_end = Instant::now();
+                let mut tempo: Option<tempo::Tempo> = None;
+                let mut scheduled = None;
                 for (index, text, pcm) in receiver {
                     if !current(session) {
                         break;
                     }
-                    let pcm = pcm?;
+                    let mut pcm = pcm?;
+                    if !hosted {
+                        let bits = SPEED.load(Ordering::SeqCst);
+                        let speed = effective_speed((bits != 0).then(|| f32::from_bits(bits)));
+                        if tempo.is_none() && speed != 1.0 {
+                            tempo = Some(tempo::Tempo::new(24_000, speed)?);
+                        }
+                        if let Some(tempo) = &mut tempo {
+                            tempo.speed(speed);
+                            pcm = tempo.process(&pcm)?;
+                        }
+                    }
+                    if pcm.is_empty() {
+                        continue;
+                    }
                     // 24 kHz mono, two bytes a sample.
                     let begins = audio_end.max(Instant::now());
                     audio_end = begins + Duration::from_secs_f64(pcm.len() as f64 / 48_000.0);
-                    heard
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .push_back((begins, index, text));
+                    if scheduled != Some(index) {
+                        heard
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push_back((begins, index, text));
+                        scheduled = Some(index);
+                    }
                     input
                         .write_all(&pcm)
                         .map_err(|error| format!("Audio player stopped: {error}"))?;
+                }
+                if let Some(tempo) = &mut tempo {
+                    input
+                        .write_all(&tempo.finish()?)
+                        .map_err(|error| error.to_string())?;
                 }
                 Ok(())
             })();
@@ -845,7 +901,9 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
         });
     if *speed != before {
         set_speed(*speed);
-        restart_at_heard(ctx);
+        if voice_settings().engine == voice_account::Engine::OpenRouter {
+            restart_at_heard(ctx);
+        }
     }
     *speed != before
 }

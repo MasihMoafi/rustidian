@@ -261,8 +261,9 @@ impl Worker {
         shared: &Shared,
         epoch: u64,
         timeout: Duration,
+        replies: &mpsc::SyncSender<Reply>,
     ) -> Reply {
-        let until = Instant::now() + timeout;
+        let mut until = Instant::now() + timeout;
         self.next_id += 1;
         request["id"] = self.next_id.into();
         let mut bytes = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
@@ -289,6 +290,24 @@ impl Worker {
             let mut reply = self.line(shared, epoch, until)?;
             if reply["id"] == self.next_id {
                 reply["device"] = self.device.clone().into();
+                if reply["more"] == true {
+                    let mut pending = Ok(reply);
+                    loop {
+                        check(shared, epoch, Instant::now() + timeout)?;
+                        match replies.try_send(pending) {
+                            Ok(()) => break,
+                            Err(mpsc::TrySendError::Full(value)) => {
+                                pending = value;
+                                std::thread::sleep(POLL);
+                            }
+                            Err(mpsc::TrySendError::Disconnected(_)) => {
+                                return Err("Reading cancelled.".into());
+                            }
+                        }
+                    }
+                    until = Instant::now() + timeout;
+                    continue;
+                }
                 return Ok(reply);
             }
         }
@@ -340,7 +359,7 @@ fn run(shared: Arc<Shared>, command: impl Fn() -> Result<Command, String>, polic
             }
             let voice = worker.as_mut().ok_or("The voice is unavailable")?;
             match job.request {
-                Some(request) => voice.say(request, &shared, job.epoch, policy.reply),
+                Some(request) => voice.say(request, &shared, job.epoch, policy.reply, &job.reply),
                 None => Ok(serde_json::json!({"ready": true, "device": voice.device})),
             }
         })();
@@ -379,6 +398,11 @@ for line in sys.stdin:
     request = json.loads(line)
     (root / 'request').write_text('received')
     if mode == 'reply': time.sleep(60)
+    if mode == 'stream':
+        print(json.dumps({'id': request['id'], 'ok': True, 'more': True, 'pcm': 'first'}), flush=True)
+        while not (root / 'release').exists(): time.sleep(.01)
+        print(json.dumps({'id': request['id'], 'ok': True, 'done': True}), flush=True)
+        continue
     print(json.dumps({'id': request['id'], 'ok': True, 'text': request['text']}), flush=True)
 "#,
                     )
@@ -419,6 +443,68 @@ for line in sys.stdin:
             !Path::new(&format!("/proc/{pid}")).exists(),
             "worker {pid} survived"
         );
+    }
+
+    #[test]
+    fn streaming_delivers_audio_before_completion_and_reuses_the_worker() {
+        let mut policy = policy();
+        policy.reply = Duration::from_secs(5);
+        let (dir, service) = fixture("stream", policy);
+        let replies = service.submit(service.epoch(), Some(serde_json::json!({"text": "first"})));
+        assert_eq!(
+            replies
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()["pcm"],
+            "first"
+        );
+        assert!(matches!(replies.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        let active = pid(dir.path());
+        fs::write(dir.path().join("release"), "continue").unwrap();
+        assert_eq!(
+            replies
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()["done"],
+            true
+        );
+        let next = service.submit(service.epoch(), Some(serde_json::json!({"text": "second"})));
+        assert_eq!(
+            next.recv_timeout(Duration::from_secs(2)).unwrap().unwrap()["pcm"],
+            "first"
+        );
+        assert_eq!(
+            next.recv_timeout(Duration::from_secs(2)).unwrap().unwrap()["done"],
+            true
+        );
+        assert_eq!(pid(dir.path()), active);
+        assert!(service.wait_shutdown(Duration::from_secs(2)));
+        gone(active);
+    }
+
+    #[test]
+    fn stop_interrupts_an_unfinished_stream() {
+        let mut policy = policy();
+        policy.reply = Duration::from_secs(30);
+        let (dir, service) = fixture("stream", policy);
+        let replies = service.submit(service.epoch(), Some(serde_json::json!({"text": "first"})));
+        assert_eq!(
+            replies
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap()["more"],
+            true
+        );
+        let active = pid(dir.path());
+        service.cancel();
+        assert!(
+            replies
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap()
+                .is_err()
+        );
+        gone(active);
+        assert!(service.wait_shutdown(Duration::from_secs(2)));
     }
 
     #[test]

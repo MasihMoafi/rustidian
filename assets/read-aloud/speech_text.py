@@ -1,6 +1,6 @@
 """Prepare written English for the local speech engines without changing the note."""
-from functools import cache
 import re
+from functools import cache
 
 
 def prepare(text):
@@ -13,7 +13,7 @@ def prepare(text):
 
 
 @cache
-def pronunciation():
+def pronunciation(british=False):
     import spacy.util
     from misaki import en, espeak
 
@@ -23,11 +23,11 @@ def pronunciation():
         raise RuntimeError("Local reading needs the English pronunciation model. Run voice setup.")
     return en.G2P(
         trf=False,
-        british=False,
-        fallback=espeak.EspeakFallback(british=False),
+        british=british,
+        fallback=espeak.EspeakFallback(british=british),
     )
 
 
-def phonemize(text):
-    phonemes, _ = pronunciation()(prepare(text))
+def phonemize(text, british=False):
+    phonemes, _ = pronunciation(british)(prepare(text))
     return phonemes

@@ -75,6 +75,19 @@ fn settings(endpoint: &str) -> Settings {
     }
 }
 
+#[test]
+fn local_voices_default_to_jessica_and_survive_restart() {
+    let state = tempfile::tempdir().unwrap();
+    let mut voice: Settings = serde_json::from_str("{}").unwrap();
+    assert_eq!(voice.kokoro_voice, "af_jessica");
+    voice.kokoro_voice = "bf_emma".into();
+    voice.qwen_voice = "ryan".into();
+    voice.save(state.path()).unwrap();
+    let saved = Settings::load(state.path());
+    assert_eq!(saved.kokoro_voice, "bf_emma");
+    assert_eq!(saved.qwen_voice, "ryan");
+}
+
 /// Check 1: save, use, replace and disconnect a key; an invalid key gets a plain message;
 /// a changed endpoint receives no old key.
 #[test]

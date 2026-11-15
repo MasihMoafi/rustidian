@@ -14,6 +14,49 @@ pub const DEFAULT_ENDPOINT: &str = "https://openrouter.ai/api/v1/audio/speech";
 pub const DEFAULT_TRANSCRIPTION_MODEL: &str = "nvidia/parakeet-tdt-0.6b-v3";
 pub const DEFAULT_MODEL: &str = "openai/gpt-4o-mini-tts-2025-12-15";
 pub const DEFAULT_VOICE: &str = "coral";
+pub const DEFAULT_KOKORO_VOICE: &str = "af_jessica";
+pub const KOKORO_VOICES: [(&str, &str); 28] = [
+    ("af_jessica", "Jessica"),
+    ("af_alloy", "Alloy"),
+    ("af_aoede", "Aoede"),
+    ("af_bella", "Bella"),
+    ("af_heart", "Heart"),
+    ("af_kore", "Kore"),
+    ("af_nicole", "Nicole"),
+    ("af_nova", "Nova"),
+    ("af_river", "River"),
+    ("af_sarah", "Sarah"),
+    ("af_sky", "Sky"),
+    ("am_adam", "Adam"),
+    ("am_echo", "Echo"),
+    ("am_eric", "Eric"),
+    ("am_fenrir", "Fenrir"),
+    ("am_liam", "Liam"),
+    ("am_michael", "Michael"),
+    ("am_onyx", "Onyx"),
+    ("am_puck", "Puck"),
+    ("am_santa", "Santa"),
+    ("bf_alice", "Alice"),
+    ("bf_emma", "Emma"),
+    ("bf_isabella", "Isabella"),
+    ("bf_lily", "Lily"),
+    ("bm_daniel", "Daniel"),
+    ("bm_fable", "Fable"),
+    ("bm_george", "George"),
+    ("bm_lewis", "Lewis"),
+];
+pub const DEFAULT_QWEN_VOICE: &str = "serena";
+pub const QWEN_VOICES: [(&str, &str); 9] = [
+    ("serena", "Serena"),
+    ("vivian", "Vivian"),
+    ("aiden", "Aiden"),
+    ("ryan", "Ryan"),
+    ("sohee", "Sohee"),
+    ("ono_anna", "Ono Anna"),
+    ("uncle_fu", "Uncle Fu"),
+    ("dylan", "Dylan"),
+    ("eric", "Eric"),
+];
 /// OpenRouter's `pcm` speech: 24 kHz, mono, 16-bit little-endian samples.
 pub const PCM_RATE: u32 = 24_000;
 const KEYRING_SERVICE: &str = "rustidian-openrouter";
@@ -89,6 +132,8 @@ pub struct Settings {
     pub transcription_model: String,
     pub model: String,
     pub voice: String,
+    pub qwen_voice: String,
+    pub kokoro_voice: String,
     pub speed: Option<f32>,
     pub endpoint: String,
     pub accounts: Vec<Account>,
@@ -106,6 +151,8 @@ impl Default for Settings {
             transcription_model: DEFAULT_TRANSCRIPTION_MODEL.into(),
             model: DEFAULT_MODEL.into(),
             voice: DEFAULT_VOICE.into(),
+            qwen_voice: DEFAULT_QWEN_VOICE.into(),
+            kokoro_voice: DEFAULT_KOKORO_VOICE.into(),
             speed: None,
             endpoint: DEFAULT_ENDPOINT.into(),
             accounts: Vec::new(),

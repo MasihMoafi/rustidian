@@ -128,7 +128,45 @@ impl NotesApp {
             },
         );
         ui.separator();
-        settings_ui::voice_row(ui, "Speed", "Applies to the next piece of speech.", |ui| {
+        if self.voice.engine != Engine::OpenRouter {
+            let (voices, chosen, control) = if self.voice.engine == Engine::Qwen {
+                (
+                    rustidian::voice_account::QWEN_VOICES.as_slice(),
+                    &mut self.voice.qwen_voice,
+                    "settings-qwen-voice",
+                )
+            } else {
+                (
+                    rustidian::voice_account::KOKORO_VOICES.as_slice(),
+                    &mut self.voice.kokoro_voice,
+                    "settings-kokoro-voice",
+                )
+            };
+            settings_ui::voice_row(ui, "Voice name", "Choose a voice on this computer.", |ui| {
+                let selected = voices
+                    .iter()
+                    .find(|(id, _)| *id == chosen.as_str())
+                    .map_or(voices[0].1, |(_, name)| *name);
+                let response = egui::ComboBox::from_id_salt(control)
+                    .icon(theme::combo_chevron)
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        theme::menu_style(ui);
+                        for &(id, name) in voices {
+                            let option = ui.selectable_value(chosen, id.into(), name);
+                            crate::ui_probe::record(
+                                ui.ctx(),
+                                format!("{control}:{name}"),
+                                option.rect,
+                            );
+                        }
+                    });
+                crate::ui_probe::record(ui.ctx(), control, response.response.rect);
+                false
+            });
+            ui.separator();
+        }
+        settings_ui::voice_row(ui, "Speed", "Changes playback speed while reading.", |ui| {
             crate::read_aloud::speed_menu(ui, &mut self.voice.speed, "settings-voice-speed");
             false
         });
