@@ -1,0 +1,54 @@
+name: PR 8 AppImage verification
+on:
+  push:
+    branches: [work/pr8-appimage-check]
+permissions:
+  contents: read
+jobs:
+  packaged-launch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev desktop-file-utils xvfb xauth xdotool
+          rustup toolchain install 1.95.0 --profile minimal
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        env:
+          RUSTUP_TOOLCHAIN: '1.95.0'
+      - name: Build and package
+        run: |
+          cargo +1.95.0 build --release --locked --bin rustidian
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          APPIMAGETOOL=$PWD/appimagetool python3 scripts/package-appimage.py --binary target/release/rustidian --notices THIRD_PARTY_NOTICES.txt --output Rustidian-x86_64.AppImage
+      - name: Check first launch and preserved edit
+        run: |
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export HOME="$RUNNER_TEMP/rustidian-home"
+          export XDG_DATA_HOME="$HOME/data"
+          export XDG_CONFIG_HOME="$HOME/config"
+          mkdir -p "$HOME"
+          xvfb-run -a bash -euo pipefail <<'SCRIPT'
+          launch() {
+            ./Rustidian-x86_64.AppImage >"$HOME/app.log" 2>&1 &
+            app=$!
+            trap 'kill "$app" 2>/dev/null || true' EXIT
+            for i in $(seq 1 60); do
+              if xdotool search --onlyvisible --name Rustidian >/dev/null 2>&1; then break; fi
+              kill -0 "$app" || { cat "$HOME/app.log"; return 1; }
+              sleep 1
+            done
+            xdotool search --onlyvisible --name Rustidian >/dev/null || { cat "$HOME/app.log"; return 1; }
+            test -f "$XDG_DATA_HOME/rustidian/demo-vault/Home.md"
+            xdotool search --onlyvisible --name Rustidian windowclose
+            wait "$app"
+            trap - EXIT
+          }
+          launch
+          printf '\nPR8 verification marker\n' >> "$XDG_DATA_HOME/rustidian/demo-vault/Home.md"
+          launch
+          [[ $(<"$XDG_DATA_HOME/rustidian/demo-vault/Home.md") == *"PR8 verification marker"* ]]
+          SCRIPT
