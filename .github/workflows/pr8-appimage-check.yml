@@ -13,11 +13,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev desktop-file-utils xvfb xauth xdotool
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev desktop-file-utils xvfb xauth xdotool openbox
           rustup toolchain install 1.95.0 --profile minimal
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         env:
           RUSTUP_TOOLCHAIN: '1.95.0'
+        with:
+          cache-on-failure: true
       - name: Build and package
         run: |
           cargo +1.95.0 build --release --locked --bin rustidian
@@ -32,10 +34,12 @@ jobs:
           export XDG_CONFIG_HOME="$HOME/config"
           mkdir -p "$HOME"
           xvfb-run -a bash -euo pipefail <<'SCRIPT'
+          openbox >"$HOME/window-manager.log" 2>&1 &
+          wm=$!
+          trap 'cat "$HOME/app.log" 2>/dev/null || true; kill "$app" "$wm" 2>/dev/null || true' EXIT
           launch() {
             ./Rustidian-x86_64.AppImage >"$HOME/app.log" 2>&1 &
             app=$!
-            trap 'kill "$app" 2>/dev/null || true' EXIT
             for i in $(seq 1 60); do
               if xdotool search --onlyvisible --name Rustidian >/dev/null 2>&1; then break; fi
               kill -0 "$app" || { cat "$HOME/app.log"; return 1; }
@@ -45,10 +49,11 @@ jobs:
             test -f "$XDG_DATA_HOME/rustidian/demo-vault/Home.md"
             xdotool search --onlyvisible --name Rustidian windowclose
             wait "$app"
-            trap - EXIT
           }
           launch
           printf '\nPR8 verification marker\n' >> "$XDG_DATA_HOME/rustidian/demo-vault/Home.md"
           launch
           [[ $(<"$XDG_DATA_HOME/rustidian/demo-vault/Home.md") == *"PR8 verification marker"* ]]
+          kill "$wm" 2>/dev/null || true
+          trap - EXIT
           SCRIPT
