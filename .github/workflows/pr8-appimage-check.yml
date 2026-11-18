@@ -47,7 +47,8 @@ jobs:
             done
             xdotool search --onlyvisible --name Rustidian >/dev/null || { cat "$HOME/app.log"; return 1; }
             test -f "$XDG_DATA_HOME/rustidian/demo-vault/Home.md"
-            xdotool search --onlyvisible --name Rustidian windowactivate --sync key alt+F4
+            xdotool search --onlyvisible --name Rustidian windowactivate --sync
+            xdotool key --clearmodifiers alt+F4
             wait "$app"
           }
           launch
