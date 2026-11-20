@@ -101,6 +101,66 @@ pub fn default_vault() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Install a private, writable copy of the demo shipped alongside a Linux executable.
+#[cfg(target_os = "linux")]
+pub fn bundled_demo_vault(executable: &Path, app_data: &Path) -> std::io::Result<Option<PathBuf>> {
+    use std::{fs, io};
+
+    let Some(bin) = executable.parent() else {
+        return Ok(None);
+    };
+    let source = bin.join("../share/rustidian/demo-vault");
+    if !source.is_dir() {
+        return Ok(None);
+    }
+
+    let destination = app_data.join("demo-vault");
+    match fs::symlink_metadata(&destination) {
+        Ok(metadata) if metadata.is_dir() => return Ok(Some(destination)),
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "Demo vault path is not a directory",
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    fs::create_dir_all(app_data)?;
+    let staging = tempfile::tempdir_in(app_data)?;
+    for entry in walkdir::WalkDir::new(&source).min_depth(1) {
+        let entry = entry?;
+        let target = staging.path().join(
+            entry
+                .path()
+                .strip_prefix(&source)
+                .expect("inside demo vault"),
+        );
+        if entry.file_type().is_dir() {
+            fs::create_dir(target)?;
+        } else if entry.file_type().is_file() {
+            let mut contents = fs::File::open(entry.path())?;
+            io::copy(&mut contents, &mut fs::File::create_new(target)?)?;
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Demo vault contains a special file",
+            ));
+        }
+    }
+    match crate::operations::rename_noreplace(staging.path(), &destination) {
+        Ok(()) => Ok(Some(destination)),
+        Err(error)
+            if error.kind() == io::ErrorKind::AlreadyExists
+                && fs::symlink_metadata(&destination).is_ok_and(|metadata| metadata.is_dir()) =>
+        {
+            Ok(Some(destination))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// CLI and native Open share the same document-to-vault policy.
 pub fn resolve_input(
     input: &Path,

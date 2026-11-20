@@ -5,6 +5,42 @@ use rustidian::{
 };
 use std::{fs, path::Path};
 
+#[cfg(target_os = "linux")]
+#[test]
+fn a_packaged_demo_vault_is_writable_and_never_replaces_user_notes() {
+    use rustidian::vaults::bundled_demo_vault;
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = tempfile::tempdir().unwrap();
+    let executable = fixture.path().join("image/usr/bin/rustidian");
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    let data = fixture.path().join("data/rustidian");
+    assert_eq!(bundled_demo_vault(&executable, &data).unwrap(), None);
+    assert!(!data.exists());
+
+    let source = fixture.path().join("image/usr/share/rustidian/demo-vault");
+    fs::create_dir_all(source.join("Notes")).unwrap();
+    let packaged_note = source.join("Notes/Home.md");
+    fs::write(&packaged_note, "# Packaged demo").unwrap();
+    fs::set_permissions(&packaged_note, fs::Permissions::from_mode(0o444)).unwrap();
+
+    let recovered = bundled_demo_vault(&executable, &data).unwrap().unwrap();
+    assert_eq!(recovered, data.join("demo-vault"));
+    let note = recovered.join("Notes/Home.md");
+    assert_eq!(fs::read_to_string(&note).unwrap(), "# Packaged demo");
+    assert_ne!(fs::metadata(&note).unwrap().permissions().mode() & 0o200, 0);
+    fs::write(&note, "# My edits").unwrap();
+    assert_eq!(
+        bundled_demo_vault(&executable, &data).unwrap(),
+        Some(recovered)
+    );
+    assert_eq!(fs::read_to_string(&note).unwrap(), "# My edits");
+    assert_eq!(
+        fs::read_to_string(packaged_note).unwrap(),
+        "# Packaged demo"
+    );
+}
+
 #[test]
 fn existing_file_links_use_encoded_desktop_uris_without_creating_or_escaping_notes() {
     let base = tempfile::tempdir().unwrap();

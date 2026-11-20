@@ -891,7 +891,7 @@ impl Vault {
 // Find the label boundary before looking for a destination. Titles can contain
 // the same delimiters, and inline code can contain brackets inside the label.
 #[cfg(target_os = "linux")]
-fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
     rustix::fs::renameat_with(
         rustix::fs::CWD,
         from,

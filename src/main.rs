@@ -126,6 +126,22 @@ fn main() -> eframe::Result {
         .map(PathBuf::from)
         .or_else(|| remembered.as_ref().map(|(root, _)| root.clone()))
         .or_else(|| default_vault.clone())
+        .or_else(|| {
+            #[cfg(target_os = "linux")]
+            {
+                let executable = std::env::current_exe().ok()?;
+                let catalog = rustidian::vaults::location()?;
+                match rustidian::vaults::bundled_demo_vault(&executable, catalog.parent()?) {
+                    Ok(demo) => demo,
+                    Err(error) => {
+                        eprintln!("Cannot prepare the bundled demo vault: {error}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            None
+        })
         .unwrap_or_else(|| {
             std::env::current_exe()
                 .ok()
