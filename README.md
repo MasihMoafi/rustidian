@@ -44,7 +44,7 @@ sudo apt install ./rustidian-linux-amd64.deb
 rustidian
 ```
 
-**Other ways to install.** Snap: `sudo snap install rustidian`; the snap is confined, so it reads vaults in your home folder, and `sudo snap connect rustidian:removable-media` lets it open vaults on other drives. AppImage: download `Rustidian-0.1.6-x86_64.AppImage` from the [release](https://github.com/MasihMoafi/rustidian/releases/latest), run `chmod +x` on it and start it. Arch and Omarchy: `git clone https://github.com/MasihMoafi/rustidian && cd rustidian/packaging/aur-bin && makepkg -si` builds a native package from the release's exact executable.
+**Other ways to install.** npm: `npx rustidian` or `npm i -g rustidian` (Linux x86_64; downloads and verifies the release archive on first run). Snap: `sudo snap install rustidian`; the snap is confined, so it reads vaults in your home folder, and `sudo snap connect rustidian:removable-media` lets it open vaults on other drives. AppImage: download `Rustidian-0.1.7-x86_64.AppImage` from the [release](https://github.com/MasihMoafi/rustidian/releases/latest), run `chmod +x` on it and start it. Arch and Omarchy: `git clone https://github.com/MasihMoafi/rustidian && cd rustidian/packaging/aur-bin && makepkg -si` builds a native package from the release's exact executable.
 
 The package adds Rustidian to your applications menu and opens a writable demo vault on first launch. Existing notes and settings are retained. The installer is built and checked on Ubuntu 24.04.
 

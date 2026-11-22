@@ -1,0 +1,31 @@
+{
+  "name": "rustidian",
+  "version": "0.1.7",
+  "description": "Rustidian — a native Markdown notebook for local vaults",
+  "license": "MIT",
+  "bin": {
+    "rustidian": "bin/rustidian.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MasihMoafi/rustidian.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/MasihMoafi/rustidian",
+  "scripts": {
+    "test": "node --test test/launcher.test.mjs"
+  }
+}
