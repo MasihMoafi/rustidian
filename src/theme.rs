@@ -1032,7 +1032,7 @@ pub fn notice_frame(ctx: &egui::Context) -> egui::Frame {
 }
 
 pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui::Response {
-    ui.horizontal_centered(|ui| {
+    ui.horizontal(|ui| {
         ui.heading(title);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let response = icon_button(ui, Icon::Close, close_label);
