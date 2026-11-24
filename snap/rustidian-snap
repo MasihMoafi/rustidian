@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+# Snap's audio interfaces use the host's PulseAudio service, including pipewire-pulse.
+export RUSTIDIAN_READ_ALOUD_PLAYER="${RUSTIDIAN_READ_ALOUD_PLAYER:-$SNAP/usr/bin/paplay}"
+export RUSTIDIAN_DICTATION_RECORDER="${RUSTIDIAN_DICTATION_RECORDER:-$SNAP/bin/rustidian-record}"
+exec "$SNAP/bin/rustidian" "$@"

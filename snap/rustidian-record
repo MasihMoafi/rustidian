@@ -1,0 +1,3 @@
+#!/bin/sh
+set -eu
+exec "$SNAP/usr/bin/parec" --file-format=wav --rate=16000 --channels=1 --format=s16le "$1"

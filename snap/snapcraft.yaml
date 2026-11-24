@@ -14,6 +14,8 @@ description: |
 
   This snap can read your home folder. To open a vault on another drive, run: sudo snap connect rustidian:removable-media
 
+  Voice playback uses PulseAudio or PipeWire with PulseAudio support. To dictate, connect the microphone: sudo snap connect rustidian:audio-record. To save an optional OpenRouter key, connect the system keyring: sudo snap connect rustidian:password-manager-service. Local voice models and WhisperType are separate installations.
+
   The Agent tab, which runs Codex, Claude Code or Elpis in a terminal beside your notes, needs your own tools and is available in the .deb and AppImage builds from GitHub.
 
   Source, downloads and bug reports: https://github.com/MasihMoafi/rustidian
@@ -33,16 +35,16 @@ platforms:
 
 apps:
   rustidian:
-    command: bin/rustidian
+    command: bin/rustidian-snap
     extensions: [gnome]
-    plugs: [home, removable-media, network, opengl, desktop, desktop-legacy, wayland, x11, gsettings]
+    plugs: [home, removable-media, network, opengl, desktop, desktop-legacy, wayland, x11, gsettings, audio-playback, audio-record, password-manager-service]
 
 parts:
   rustidian:
     plugin: nil
     source: .
     build-packages: [curl, gcc, pkg-config, python3, libx11-dev, libxkbcommon-dev, libwayland-dev, libgl1-mesa-dev]
-    stage-packages: [libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libwayland-client0, libwayland-egl1, libegl1, libgl1, fontconfig, libglib2.0-bin, dbus, zenity]
+    stage-packages: [libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libwayland-client0, libwayland-egl1, libegl1, libgl1, fontconfig, libglib2.0-bin, dbus, zenity, libsonic0, pulseaudio-utils, python3]
     override-pull: |
       craftctl default
       craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
@@ -52,6 +54,8 @@ parts:
       . "$HOME/.cargo/env"
       cargo build --release --locked
       install -Dm755 target/release/rustidian "$CRAFT_PART_INSTALL/bin/rustidian"
+      install -Dm755 snap/rustidian-snap "$CRAFT_PART_INSTALL/bin/rustidian-snap"
+      install -Dm755 snap/rustidian-record "$CRAFT_PART_INSTALL/bin/rustidian-record"
       install -Dm644 LICENSE "$CRAFT_PART_INSTALL/share/doc/rustidian/copyright"
       install -Dm644 THIRD_PARTY_NOTICES.txt "$CRAFT_PART_INSTALL/share/doc/rustidian/THIRD_PARTY_NOTICES.txt"
       for f in assets/fonts/LICENSE-*.txt; do install -Dm644 "$f" "$CRAFT_PART_INSTALL/share/doc/rustidian/$(basename "$f")"; done

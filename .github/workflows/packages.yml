@@ -31,6 +31,9 @@ jobs:
         run: |
           unsquashfs -l rustidian_amd64.snap | tee snap-files.txt
           grep -q 'bin/rustidian' snap-files.txt
+          grep -q '/usr/bin/paplay' snap-files.txt
+          grep -q '/usr/bin/parec' snap-files.txt
+          grep -q '/libsonic.so.0' snap-files.txt
           grep -q 'THIRD_PARTY_NOTICES.txt' snap-files.txt
           grep -q 'share/doc/rustidian/copyright' snap-files.txt
       - name: Install the snap and run it
@@ -40,12 +43,27 @@ jobs:
           grep -q '^Rustidian ' snap-version.txt
           test -f /snap/rustidian/current/share/doc/rustidian/THIRD_PARTY_NOTICES.txt
           test -f /snap/rustidian/current/meta/gui/rustidian.png
+      - name: Verify the confined voice runtime and opt-in permissions
+        run: |
+          snap connections rustidian | tee snap-connections.txt
+          grep -E '^audio-playback[[:space:]]+rustidian:audio-playback[[:space:]]+:audio-playback' snap-connections.txt
+          for plug in audio-record password-manager-service; do
+            grep -E "^$plug[[:space:]]+rustidian:$plug[[:space:]]+-[[:space:]]" snap-connections.txt
+            sudo snap connect "rustidian:$plug"
+          done
+          snap run --shell rustidian <<'SHELL'
+          set -eu
+          "$SNAP/usr/bin/paplay" --raw --rate 24000 --channels 1 --format s16le --help >/dev/null
+          "$SNAP/usr/bin/parec" --file-format=wav --rate=16000 --channels=1 --format=s16le --help >/dev/null
+          "$SNAP/usr/bin/python3" -c 'import ctypes; ctypes.CDLL("libsonic.so.0")'
+          SHELL
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rustidian-snap
           path: |
             rustidian_amd64.snap
             rustidian_amd64.snap.sha256
+            snap-connections.txt
           retention-days: 1
   appimage:
     needs: lint
