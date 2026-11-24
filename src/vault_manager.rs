@@ -20,6 +20,8 @@ enum Page {
 pub struct Manager {
     pub open: bool,
     list: Result<Vaults, String>,
+    saved_default: Option<PathBuf>,
+    env_default: Option<PathBuf>,
     page: Page,
     folder: String,
     name: String,
@@ -34,6 +36,8 @@ impl Default for Manager {
         Self {
             open: false,
             list: Vaults::open(),
+            saved_default: vaults::saved_default_vault(),
+            env_default: vaults::env_default_vault(),
             page: Page::Home,
             folder: String::new(),
             name: String::new(),
@@ -46,8 +50,14 @@ impl Default for Manager {
 }
 
 impl Manager {
-    pub fn show_chooser(&mut self, current: Option<&Path>) {
+    pub fn refresh(&mut self) {
         self.list = Vaults::open();
+        self.saved_default = vaults::saved_default_vault();
+        self.env_default = vaults::env_default_vault();
+    }
+
+    pub fn show_chooser(&mut self, current: Option<&Path>) {
+        self.refresh();
         self.open = true;
         self.page = Page::Home;
         self.folder = current
@@ -141,6 +151,8 @@ impl Manager {
         let mut selected = self.poll_picker();
         let mut close = false;
         let mut forget = None;
+        let mut set_default: Option<PathBuf> = None;
+        let mut clear_default = false;
         let modal =
             egui::Modal::new(egui::Id::unique("vault-manager")).frame(theme::dialog_frame(ctx));
         let response = modal.show(ctx, |ui| {
@@ -183,6 +195,10 @@ impl Manager {
                                         );
                                     }
                                     for root in list.roots() {
+                                        let is_saved_default =
+                                            self.saved_default.as_deref() == Some(root.as_path());
+                                        let is_env_default =
+                                            self.env_default.as_deref() == Some(root.as_path());
                                         ui.push_id(root, |ui| {
                                             ui.allocate_ui_with_layout(
                                                 egui::vec2(ui.available_width(), 48.0),
@@ -195,6 +211,40 @@ impl Manager {
                                                         ),
                                                         |ui| {
                                                             theme::menu_style(ui);
+                                                            if is_saved_default {
+                                                                let clear = ui.button(
+                                                                    "Clear default vault",
+                                                                );
+                                                                ui_probe::record(
+                                                                    ctx,
+                                                                    format!(
+                                                                        "vault-clear-default:{}",
+                                                                        root.display()
+                                                                    ),
+                                                                    clear.rect,
+                                                                );
+                                                                if clear.clicked() {
+                                                                    clear_default = true;
+                                                                    ui.close();
+                                                                }
+                                                            } else {
+                                                                let make_default = ui.button(
+                                                                    "Set as default vault",
+                                                                );
+                                                                ui_probe::record(
+                                                                    ctx,
+                                                                    format!(
+                                                                        "vault-set-default:{}",
+                                                                        root.display()
+                                                                    ),
+                                                                    make_default.rect,
+                                                                );
+                                                                if make_default.clicked() {
+                                                                    set_default =
+                                                                        Some(root.clone());
+                                                                    ui.close();
+                                                                }
+                                                            }
                                                             let remove =
                                                                 ui.button("Remove from list");
                                                             ui_probe::record(
@@ -226,7 +276,34 @@ impl Manager {
                                                     let mut label =
                                                         egui::text::LayoutJob::default();
                                                     label.append(
-                                                        &format!("{name}\n"),
+                                                        &name,
+                                                        0.0,
+                                                        egui::TextFormat {
+                                                            font_id: FontId::proportional(14.0),
+                                                            color: ui.visuals().text_color(),
+                                                            ..Default::default()
+                                                        },
+                                                    );
+                                                    if is_env_default || is_saved_default {
+                                                        let tag = if is_env_default {
+                                                            "  ·  Default (env)"
+                                                        } else {
+                                                            "  ·  Default"
+                                                        };
+                                                        label.append(
+                                                            tag,
+                                                            0.0,
+                                                            egui::TextFormat {
+                                                                font_id: FontId::proportional(12.0),
+                                                                color: ui
+                                                                    .visuals()
+                                                                    .weak_text_color(),
+                                                                ..Default::default()
+                                                            },
+                                                        );
+                                                    }
+                                                    label.append(
+                                                        "\n",
                                                         0.0,
                                                         egui::TextFormat {
                                                             font_id: FontId::proportional(14.0),
@@ -308,6 +385,84 @@ impl Manager {
                                                 });
                                             self.focus = true;
                                         }
+                                        ui.separator();
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(ui.available_width(), 48.0),
+                                            Layout::right_to_left(Align::Center),
+                                            |ui| {
+                                                if self.saved_default.is_some() {
+                                                    let clear = ui.add_sized(
+                                                        [72.0, crate::theme::space::CONTROL],
+                                                        egui::Button::new("Clear"),
+                                                    );
+                                                    ui_probe::record(
+                                                        ctx,
+                                                        "vault-clear-default",
+                                                        clear.rect,
+                                                    );
+                                                    if clear.clicked() {
+                                                        clear_default = true;
+                                                    }
+                                                }
+                                                if let Some(current_root) = current
+                                                    && self.saved_default.as_deref()
+                                                        != Some(current_root)
+                                                {
+                                                    let use_current = ui.add_sized(
+                                                        [96.0, crate::theme::space::CONTROL],
+                                                        egui::Button::new("Use current"),
+                                                    );
+                                                    ui_probe::record(
+                                                        ctx,
+                                                        "vault-use-current-default",
+                                                        use_current.rect,
+                                                    );
+                                                    if use_current.clicked() {
+                                                        set_default =
+                                                            Some(current_root.to_path_buf());
+                                                    }
+                                                }
+                                                ui.vertical(|ui| {
+                                                    ui.spacing_mut().item_spacing.y =
+                                                        crate::theme::space::XS;
+                                                    ui.label(
+                                                        RichText::new("Default vault").strong(),
+                                                    );
+                                                    let detail = match (
+                                                        &self.env_default,
+                                                        &self.saved_default,
+                                                    ) {
+                                                        (Some(env), _) => format!(
+                                                            "Environment override: {}",
+                                                            env.display()
+                                                        ),
+                                                        (None, Some(saved)) => {
+                                                            saved.display().to_string()
+                                                        }
+                                                        (None, None) => {
+                                                            "Not set (reopens last opened vault)"
+                                                                .to_string()
+                                                        }
+                                                    };
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            RichText::new(detail).small().weak(),
+                                                        )
+                                                        .truncate(),
+                                                    )
+                                                    .on_hover_text(
+                                                        self.env_default
+                                                            .as_ref()
+                                                            .or(self.saved_default.as_ref())
+                                                            .map(|path| path.display().to_string())
+                                                            .unwrap_or_else(|| {
+                                                                "Reopens the last opened vault on launch"
+                                                                    .into()
+                                                            }),
+                                                    );
+                                                });
+                                            },
+                                        );
                                     });
                                 ui_probe::record(ctx, "vault-actions-card", card.response.rect);
                                 ui_probe::record(ctx, "vault-actions-clip", ui.clip_rect());
@@ -459,6 +614,28 @@ impl Manager {
             && let Err(error) = list.forget(&root)
         {
             self.error = Some(error);
+        }
+        if let Some(root) = set_default {
+            match vaults::set_default_vault(&root) {
+                Ok(saved) => {
+                    self.saved_default = Some(saved);
+                    self.list = Vaults::open();
+                    self.error = None;
+                }
+                Err(error) => self.error = Some(error),
+            }
+            ctx.request_repaint();
+        }
+        if clear_default {
+            match vaults::clear_default_vault() {
+                Ok(()) => {
+                    self.saved_default = None;
+                    self.list = Vaults::open();
+                    self.error = None;
+                }
+                Err(error) => self.error = Some(error),
+            }
+            ctx.request_repaint();
         }
         if close || response.should_close() {
             self.close();

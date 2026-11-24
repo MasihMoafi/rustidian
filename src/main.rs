@@ -120,23 +120,40 @@ fn main() -> eframe::Result {
         }
     };
     let default_vault = rustidian::vaults::default_vault();
-    // A launch without a file or folder reopens the vault Masih last read, and
-    // its page; only when none is remembered does the default vault open.
+    // Without a CLI target: env/saved default vault > last-opened vault > writable demo vault.
     let remembered = first
         .is_none()
         .then(rustidian::vaults::last_opened)
         .flatten();
-    let input = first
-        .map(PathBuf::from)
-        .or_else(|| remembered.as_ref().map(|(root, _)| root.clone()))
-        .or_else(|| default_vault.clone())
+    let input = first.map(PathBuf::from).unwrap_or_else(|| {
+        rustidian::vaults::startup_vault(
+            default_vault.as_deref(),
+            remembered.as_ref().map(|(root, _)| root.as_path()),
+            || {
+                #[cfg(target_os = "linux")]
+                {
+                    let executable = std::env::current_exe().ok()?;
+                    let catalog = rustidian::vaults::location()?;
+                    match rustidian::vaults::bundled_demo_vault(&executable, catalog.parent()?) {
+                        Ok(demo) => demo,
+                        Err(error) => {
+                            eprintln!("Cannot prepare the bundled demo vault: {error}");
+                            std::process::exit(2);
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "linux"))]
+                None
+            },
+        )
         .unwrap_or_else(|| {
             std::env::current_exe()
                 .ok()
                 .and_then(|executable| executable.parent().map(|parent| parent.join("demo-vault")))
                 .filter(|vault| vault.is_dir())
                 .unwrap_or_else(|| PathBuf::from("demo-vault"))
-        });
+        })
+    });
     let registered = if input.is_file() {
         rustidian::vaults::Vaults::open().ok()
     } else {
