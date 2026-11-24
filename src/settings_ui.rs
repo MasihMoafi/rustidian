@@ -713,7 +713,7 @@ fn row(
 ) -> bool {
     ui.add_space(crate::theme::space::M);
     let label_width = (ui.available_width() - 180.0).max(100.0);
-    let changed = ui.horizontal_centered(|ui| {
+    let changed = ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(label_width, 0.0),
             Layout::top_down(Align::LEFT),
