@@ -3142,10 +3142,11 @@ impl Editor {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_width(330.0);
                         for (index, candidate) in candidates.iter().enumerate() {
+                            let is_selected = index == self.completion_selected;
                             let response = ui.add(
                                 egui::Button::new(RichText::new(&candidate.label).size(14.0))
-                                    .selected(index == self.completion_selected)
-                                    .frame_when_inactive(false)
+                                    .selected(is_selected)
+                                    .frame_when_inactive(is_selected)
                                     .min_size(egui::vec2(330.0, crate::theme::space::CONTROL)),
                             );
                             crate::ui_probe::record(

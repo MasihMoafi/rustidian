@@ -143,6 +143,7 @@ pub struct NotesApp {
     search_cache: rustidian::query::Cache,
     searching: bool,
     search_focus: bool,
+    search_selected: usize,
     pub(crate) show_left: bool,
     pub(crate) show_right: bool,
     pub(crate) dark: bool,
@@ -284,6 +285,7 @@ impl NotesApp {
             storage: Default::default(),
             searching: false,
             search_focus: false,
+            search_selected: 0,
             show_left: true,
             show_right: false,
             dark: cc.egui_ctx.theme() == egui::Theme::Dark,
@@ -2983,8 +2985,24 @@ impl NotesApp {
                         .bookmark_list(ui, &mut visible_files)
                         .map(FileAction::Open);
                 } else if self.searching {
+                    let search_id = ui.make_persistent_id("sidebar-search-input");
+                    let search_focused = self.dialog.is_none()
+                        && !self.search_cache.paths.is_empty()
+                        && ui.memory(|memory| memory.has_focus(search_id));
+                    let (move_down, move_up, open_selected) = if search_focused {
+                        ui.ctx().input_mut(|i| {
+                            (
+                                i.consume_key(egui::Modifiers::NONE, Key::ArrowDown),
+                                i.consume_key(egui::Modifiers::NONE, Key::ArrowUp),
+                                i.consume_key(egui::Modifiers::NONE, Key::Enter),
+                            )
+                        })
+                    } else {
+                        (false, false, false)
+                    };
                     let input = ui.add(theme::text_field(
                         TextEdit::singleline(&mut self.search)
+                            .id(search_id)
                             .hint_text("Search your notes…")
                             .desired_width(f32::INFINITY),
                     ));
@@ -3005,6 +3023,21 @@ impl NotesApp {
                         self.search_cache
                             .update(&self.search, vault, &guests, move || wake.request_repaint());
                         let results = &self.search_cache.paths;
+                        if input.changed() {
+                            self.search_selected = 0;
+                        }
+                        if move_down {
+                            self.search_selected =
+                                (self.search_selected + 1).min(results.len().saturating_sub(1));
+                        }
+                        if move_up {
+                            self.search_selected = self.search_selected.saturating_sub(1);
+                        }
+                        self.search_selected =
+                            self.search_selected.min(results.len().saturating_sub(1));
+                        if open_selected && let Some(note) = results.get(self.search_selected) {
+                            selected = Some(FileAction::Open(note.clone()));
+                        }
                         if let Some(paths) = visible_files.as_mut() {
                             paths.clone_from(results);
                         }
@@ -3028,17 +3061,19 @@ impl NotesApp {
                         ui.separator();
                         let target = crate::file_tree::pending_reveal(ui.ctx());
                         let mut search_scroll = theme::sidebar_scroll().id_salt("search-results");
-                        if let Some(index) = target
+                        let list_height = (ui.available_height() - 64.0).max(0.0);
+                        let max_scroll = (results.len() as f32 * 52.0 - list_height).max(0.0);
+                        if move_down || move_up {
+                            search_scroll = search_scroll.vertical_scroll_offset(
+                                (self.search_selected as f32 * 52.0 - list_height * 0.4)
+                                    .clamp(0.0, max_scroll),
+                            );
+                        } else if let Some(index) = target
                             .as_ref()
                             .and_then(|path| results.iter().position(|item| item == path))
                         {
-                            search_scroll = search_scroll.vertical_scroll_offset(
-                                (index as f32 * 52.0).min(
-                                    (results.len() as f32 * 52.0
-                                        - (ui.available_height() - 64.0).max(0.0))
-                                    .max(0.0),
-                                ),
-                            );
+                            search_scroll = search_scroll
+                                .vertical_scroll_offset((index as f32 * 52.0).min(max_scroll));
                         }
                         // Float the bar over the row's right edge so the viewport
                         // keeps its width when results start or stop scrolling.
@@ -3047,7 +3082,8 @@ impl NotesApp {
                         let scroll = search_scroll
                             .max_height((ui.available_height() - 64.0).max(0.0))
                             .show_rows(ui, 52.0, results.len(), |ui, rows| {
-                                for note in &results[rows] {
+                                for (offset, note) in results[rows.clone()].iter().enumerate() {
+                                    let result_index = rows.start + offset;
                                     let row = ui.allocate_ui_with_layout(
                                         egui::vec2(ui.available_width(), 52.0),
                                         egui::Layout::top_down(egui::Align::Min),
@@ -3069,7 +3105,15 @@ impl NotesApp {
                                                 ui.scope_id().with(("search-result", note)),
                                                 egui::Sense::click(),
                                             );
-                                            if result.hovered() || result.has_focus() {
+                                            if result_index == self.search_selected
+                                                && input.has_focus()
+                                            {
+                                                ui.painter().rect_filled(
+                                                    rect,
+                                                    4,
+                                                    ui.visuals().selection.bg_fill,
+                                                );
+                                            } else if result.hovered() || result.has_focus() {
                                                 ui.painter().rect_filled(
                                                     rect,
                                                     4,
@@ -3124,6 +3168,7 @@ impl NotesApp {
                                                 result.rect,
                                             );
                                             if result.clicked() {
+                                                self.search_selected = result_index;
                                                 selected = Some(FileAction::Open(note.clone()));
                                             }
                                         },
@@ -5437,10 +5482,11 @@ impl NotesApp {
                             if self.history_path(path).is_dir() {
                                 label.push('/');
                             }
+                            let is_selected = index == self.dialog_selected;
                             let row = ui.add(
                                 egui::Button::new(label)
-                                    .selected(index == self.dialog_selected)
-                                    .frame_when_inactive(false)
+                                    .selected(is_selected)
+                                    .frame_when_inactive(is_selected)
                                     .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
                             );
                             if crate::ui_probe::enabled() {
@@ -5453,12 +5499,7 @@ impl NotesApp {
                             if row.clicked() {
                                 select = Some(path.clone());
                             }
-                            if index == self.dialog_selected
-                                && (enter
-                                    || ui.input(|i| {
-                                        i.key_pressed(Key::ArrowDown) || i.key_pressed(Key::ArrowUp)
-                                    }))
-                            {
+                            if is_selected && (enter || navigate_down || navigate_up) {
                                 row.scroll_to_me(Some(Align::Center));
                             }
                         }
@@ -5509,10 +5550,11 @@ impl NotesApp {
                                     let label = rustidian::paths::display_path(
                                         path.strip_prefix(folder).unwrap_or(path),
                                     );
+                                    let is_selected = index == self.dialog_selected;
                                     let row = ui.add(
                                         egui::Button::new(label)
-                                            .selected(index == self.dialog_selected)
-                                            .frame_when_inactive(false)
+                                            .selected(is_selected)
+                                            .frame_when_inactive(is_selected)
                                             .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
                                     );
                                     crate::ui_probe::record(
@@ -5596,11 +5638,12 @@ impl NotesApp {
                     ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
                         theme::list_style(ui);
                         for (index, command) in matches.iter().enumerate() {
+                            let is_selected = index == self.dialog_selected;
                             let row = ui.add(
                                 egui::Button::new(command.name)
                                     .shortcut_text(command.shortcut)
-                                    .selected(index == self.dialog_selected)
-                                    .frame_when_inactive(false)
+                                    .selected(is_selected)
+                                    .frame_when_inactive(is_selected)
                                     .min_size(egui::vec2(ui.available_width(), theme::space::CONTROL)),
                             );
                             crate::ui_probe::record(

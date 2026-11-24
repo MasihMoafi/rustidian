@@ -1003,7 +1003,7 @@ mod tests {
                         ui.set_max_width(ui.available_width());
                         crate::theme::sidebar_scroll().show(ui, |ui| {
                             let mut visible = None;
-                            let mut drop_folder = None;
+                            let mut drop_folder = super::DropTarget::default();
                             tree.show(
                                 ui,
                                 "",
