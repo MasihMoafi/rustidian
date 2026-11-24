@@ -4515,7 +4515,7 @@ fn layout(
                     Color32::from_rgba_unmultiplied(red, green, blue, alpha)
                 } else if highlighted {
                     Color32::from_rgba_unmultiplied(170, 135, 20, 95)
-                } else if style.code && !style.block_code {
+                } else if style.code && !style.block_code && !hidden {
                     ui.visuals().code_bg_color
                 } else {
                     Color32::TRANSPARENT
