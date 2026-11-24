@@ -2322,7 +2322,9 @@ mod callout_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{Parsed, TableCell, prepare};
+    use super::{
+        Parsed, TableCell, append_highlighted_text, count_matches_in_blocks, find_match_bg, prepare,
+    };
     use eframe::egui;
 
     #[test]
