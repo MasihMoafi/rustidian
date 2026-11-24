@@ -720,7 +720,7 @@ fn focus_choice<T: Ord>(
         .accessible_name(format!("Filter by {label}"));
     if let Some(panel) = popup.show(|ui| {
         ui.set_width((width - 2.0 * XS).max(0.0));
-        let search_id = ui.id().with("search");
+        let search_id = ui.scope_id().with("search");
         let mut search = if trigger.clicked() {
             String::new()
         } else {

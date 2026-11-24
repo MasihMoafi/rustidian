@@ -28,7 +28,10 @@ jobs:
           (cd release && sha256sum --check --ignore-missing SHA256SUMS)
           tar -xzf release/rustidian-linux-x86_64.tar.gz -C bundle
           bundle/rustidian --version
-      - run: sudo apt-get install -y --no-install-recommends desktop-file-utils appstream
+      - name: Install packaging and native X11 test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends desktop-file-utils appstream fontconfig fonts-dejavu-core fonts-liberation libxkbcommon-x11-0 libgl1-mesa-dri openbox python3-pil python3-xlib x11-utils x11-xserver-utils xclip xdotool xvfb
       - name: Build the AppImage
         run: |
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
@@ -40,5 +43,10 @@ jobs:
           grep -q "^Rustidian $VERSION" v.txt
           APPIMAGE_EXTRACT_AND_RUN=1 "./Rustidian-$VERSION-x86_64.AppImage" --appimage-extract >/dev/null
           test "$(sha256sum squashfs-root/usr/bin/rustidian | cut -d' ' -f1)" = "$(sha256sum bundle/rustidian | cut -d' ' -f1)"
+      - name: Verify font changes in the AppImage to be published
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: python3 tests/gui_smoke.py --binary "$PWD/Rustidian-$VERSION-x86_64.AppImage" --section font-families
       - name: Attach it to the release
         run: gh release upload "v$VERSION" "Rustidian-$VERSION-x86_64.AppImage" "Rustidian-$VERSION-x86_64.AppImage.sha256"
