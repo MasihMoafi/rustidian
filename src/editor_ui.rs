@@ -2388,9 +2388,9 @@ impl Editor {
                 .as_ref()
                 .filter(|cached| cached.key.fonts == key.fonts)
                 .map(|cached| &cached.paragraphs);
-            let indents = if live && !plain_text {
-                slow("quote indents", text.len(), || {
-                    quote_indents(text, parsed, &job)
+            let indents = if !plain_text {
+                slow("paragraph indents", text.len(), || {
+                    paragraph_indents(text, parsed, &job, live)
                 })
             } else {
                 Vec::new()
@@ -4083,44 +4083,69 @@ fn edited_line(before: &str, after: &str, previous: &Range<usize>) -> Range<usiz
     start..end
 }
 
-/// Quote padding belongs to every visual row, including rows introduced by HTML breaks.
+/// Quote and fenced code-block padding belong to every visual row, including wrapped rows.
+#[cfg_attr(not(test), allow(dead_code))]
 fn quote_indents(text: &str, parsed: &Markdown, job: &LayoutJob) -> Vec<f32> {
-    if parsed.quotes.is_empty() {
+    paragraph_indents(text, parsed, job, true)
+}
+
+fn paragraph_indents(text: &str, parsed: &Markdown, job: &LayoutJob, live: bool) -> Vec<f32> {
+    if (!live || parsed.quotes.is_empty()) && parsed.code_blocks.is_empty() {
         return Vec::new();
     }
-    let lines: Vec<_> = parsed
-        .quotes
-        .iter()
-        .map(|quote| {
-            let start = text[..quote.range.start].rfind('\n').map_or(0, |i| i + 1);
-            let end = text[quote.range.end..]
-                .find('\n')
-                .map_or(text.len(), |i| quote.range.end + i + 1);
-            let callouts = parsed
-                .callouts
-                .iter()
-                .filter(|callout| callout.range.contains(&quote.range.start))
-                .count();
-            (
-                start..end,
-                17.0 * quote.depth as f32 + 7.0 * callouts as f32,
-            )
-        })
-        .collect();
+    let lines: Vec<_> = if live {
+        parsed
+            .quotes
+            .iter()
+            .map(|quote| {
+                let start = text[..quote.range.start].rfind('\n').map_or(0, |i| i + 1);
+                let end = text[quote.range.end..]
+                    .find('\n')
+                    .map_or(text.len(), |i| quote.range.end + i + 1);
+                let callouts = parsed
+                    .callouts
+                    .iter()
+                    .filter(|callout| callout.range.contains(&quote.range.start))
+                    .count();
+                (
+                    start..end,
+                    17.0 * quote.depth as f32 + 7.0 * callouts as f32,
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut current = 0;
+    let mut code_index = 0;
     let mut first = true;
     let mut indents = Vec::new();
     for ((byte, _), display) in text.char_indices().zip(job.text.chars()) {
         while current < lines.len() && lines[current].0.end <= byte {
             current += 1;
         }
+        while parsed
+            .code_blocks
+            .get(code_index)
+            .is_some_and(|block| block.range.end <= byte)
+        {
+            code_index += 1;
+        }
         if first {
-            indents.push(
-                lines
-                    .get(current)
-                    .filter(|(range, _)| range.contains(&byte))
-                    .map_or(0.0, |(_, indent)| *indent),
-            );
+            let quote_indent = lines
+                .get(current)
+                .filter(|(range, _)| range.contains(&byte))
+                .map_or(0.0, |(_, indent)| *indent);
+            let code_indent = if parsed
+                .code_blocks
+                .get(code_index)
+                .is_some_and(|block| block.range.contains(&byte))
+            {
+                crate::code_ui::HORIZONTAL_INSET
+            } else {
+                0.0
+            };
+            indents.push(quote_indent + code_indent);
         }
         first = display == '\n';
     }
@@ -5137,6 +5162,73 @@ mod tests {
                     ),
                     "Unchanged outside text must still reuse layout"
                 );
+            }
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
+    fn markdown_layout_keeps_wrapped_code_rows_inside_their_inset() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let source = "```rust\nlet long_line_value = alpha_bravo_charlie_delta_echo_foxtrot_golf_hotel_india_juliet;\n```\n\nOutside.\n";
+        let parsed = Markdown::parse(source);
+        let code_start = source.find("let long_line_value").unwrap();
+        let code_end = code_start + source[code_start..].find('\n').unwrap();
+        let code_chars = source[..code_start].chars().count()..source[..code_end].chars().count();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::theme::document_style(ui, crate::theme::DEFAULT_DOCUMENT_FONT_SIZE);
+            for live in [false, true] {
+                for width in [180.0, 320.0, 900.0] {
+                    let job = layout(
+                        ui,
+                        source,
+                        &parsed,
+                        width,
+                        Decorations {
+                            live,
+                            active_line: None,
+                            matched: None,
+                            images: &[],
+                        },
+                    );
+                    let indents = paragraph_indents(source, &parsed, &job, live);
+                    let (galley, previous) = ui.fonts_mut(|fonts| {
+                        fonts.layout_job_incremental_indented(job.clone(), None, &indents)
+                    });
+                    let (reused, _) = ui.fonts_mut(|fonts| {
+                        fonts.layout_job_incremental_indented(job, Some(&previous), &indents)
+                    });
+                    let mut character = 0;
+                    let mut visible_rows = 0;
+                    for (row, reused_row) in galley.rows.iter().zip(&reused.rows) {
+                        assert!(
+                            Arc::ptr_eq(&row.row, &reused_row.row),
+                            "Unchanged paragraphs must still reuse layout"
+                        );
+                        let row_end = character + row.char_count_including_newline().0;
+                        if character < code_chars.end
+                            && row_end > code_chars.start
+                            && row.glyphs.iter().any(|glyph| glyph.chr.is_alphabetic())
+                        {
+                            visible_rows += 1;
+                            assert!(
+                                row.rect().left() >= crate::code_ui::HORIZONTAL_INSET - 0.5,
+                                "live={live} width={width}: wrapped code row crossed left inset: {:?}",
+                                row.rect()
+                            );
+                            assert!(
+                                row.rect().right() <= width + 1.0,
+                                "live={live} width={width}: wrapped code row crossed right edge: {:?}",
+                                row.rect()
+                            );
+                        }
+                        character = row_end;
+                    }
+                    if width < 900.0 {
+                        assert!(visible_rows >= 2, "live={live} width={width}: expected wrap");
+                    }
+                }
             }
         })
         .drop_without_applying_deltas();
