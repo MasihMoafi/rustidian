@@ -750,7 +750,7 @@ fn focus_choice<T: Ord>(
         let max_list_height = (available - controls_height)
             .max(0.0)
             .min(4.0 * (trigger_height + XS));
-        egui::ScrollArea::vertical()
+        let list = egui::ScrollArea::vertical()
             .auto_shrink([false, true])
             .max_height(max_list_height)
             .show(ui, |ui| {
@@ -786,6 +786,7 @@ fn focus_choice<T: Ord>(
                     });
                 }
             });
+        ui_probe::record(ui.ctx(), format!("focus:{label}:viewport"), list.inner_rect);
     }) {
         ui_probe::record(
             ui.ctx(),

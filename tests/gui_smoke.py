@@ -13637,8 +13637,21 @@ int rename(const char *source, const char *destination) {
                     assert min(abs(popup[1] - trigger[3]), abs(trigger[1] - popup[3])) <= 8, (trigger, popup)
 
                 def choose(facet, label):
-                    click_control(prefix + f"focus:{facet}:{label}", hold=.15)
-                    assert control_bounds(prefix + f"focus:{facet}:popup"), "Choice closed a multi-select"
+                    control = prefix + f"focus:{facet}:{label}"
+                    viewport = prefix + f"focus:{facet}:viewport"
+                    # The probe can report rows outside the scroll viewport. A click there
+                    # belongs to the graph, not the picker, and dismisses the popup.
+                    for _ in range(18):
+                        left, top, right, bottom = control_bounds(viewport)
+                        bounds = control_bounds(control, required=False)
+                        if bounds and left <= (bounds[0] + bounds[2]) / 2 <= right and top + 1 < (bounds[1] + bounds[3]) / 2 < bottom - 1:
+                            click_control(control, hold=.15)
+                            assert control_bounds(prefix + f"focus:{facet}:popup"), "Choice closed a multi-select"
+                            return
+                        xdo("mousemove", "--sync", str(round((left + right) / 2)), str(round((top + bottom) / 2)))
+                        xdo("click", "4" if bounds and bounds[3] <= top else "5")
+                        pause()
+                    raise AssertionError(("Could not scroll graph option into view", facet, label, bounds, (left, top, right, bottom)))
 
                 open_facet("Author")
                 capture("native-graph-facets-wide.png")
