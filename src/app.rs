@@ -6156,7 +6156,7 @@ impl eframe::App for NotesApp {
             .exact_size(28.0)
             .resizable(false)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_centered(|ui| {
                     ui.add_space(theme::space::S);
                     ui.label(RichText::new(&self.status).size(11.0).weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
