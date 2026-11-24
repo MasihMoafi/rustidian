@@ -687,7 +687,7 @@ fn focus_choice<T: Clone + PartialEq>(
     let shown = selected
         .as_ref()
         .and_then(|selected| choices.iter().find(|(key, _)| key == selected))
-        .map_or("All", |(_, label)| label.as_str());
+        .map_or_else(|| "All".to_owned(), |(_, label)| label.clone());
     ui.horizontal(|ui| {
         ui.label(label);
         let combo = egui::ComboBox::from_id_salt(label)
