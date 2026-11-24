@@ -3852,7 +3852,103 @@ fn paint_image_selection(
     ui.painter().set(shape, egui::Shape::Vec(shapes));
 }
 
-/// Show speakers for the selection and the paragraph beneath the pointer.
+#[derive(Clone)]
+struct SpeechBlock {
+    index: usize,
+    heading: u8,
+    range: std::ops::Range<usize>,
+    section_end: usize,
+    start: usize,
+    end: usize,
+}
+
+fn collect_speech_blocks(source: &str) -> Vec<SpeechBlock> {
+    let mut raw: Vec<(u8, std::ops::Range<usize>)> = Vec::new();
+    let mut item_stack: Vec<(std::ops::Range<usize>, bool, Option<usize>)> = Vec::new();
+    for (event, range) in pulldown_cmark::Parser::new(source).into_offset_iter() {
+        match event {
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Heading { level, .. }) => {
+                if let Some(item) = item_stack.last_mut() {
+                    item.1 = true;
+                }
+                let heading = match level {
+                    pulldown_cmark::HeadingLevel::H1 => 1,
+                    pulldown_cmark::HeadingLevel::H2 => 2,
+                    pulldown_cmark::HeadingLevel::H3 => 3,
+                    pulldown_cmark::HeadingLevel::H4 => 4,
+                    pulldown_cmark::HeadingLevel::H5 => 5,
+                    pulldown_cmark::HeadingLevel::H6 => 6,
+                };
+                raw.push((heading, range));
+            }
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph) => {
+                if let Some(item) = item_stack.last_mut() {
+                    item.1 = true;
+                }
+                raw.push((0, range));
+            }
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Item) => {
+                item_stack.push((range, false, None));
+            }
+            pulldown_cmark::Event::Start(
+                pulldown_cmark::Tag::List(_)
+                | pulldown_cmark::Tag::BlockQuote(_)
+                | pulldown_cmark::Tag::CodeBlock(_),
+            ) => {
+                if let Some(item) = item_stack.last_mut()
+                    && item.2.is_none()
+                {
+                    item.2 = Some(range.start);
+                }
+            }
+            pulldown_cmark::Event::End(pulldown_cmark::TagEnd::Item) => {
+                if let Some((item_range, has_para, first_nested)) = item_stack.pop()
+                    && !has_para
+                {
+                    let end =
+                        first_nested.map_or(item_range.end, |nested| nested.min(item_range.end));
+                    if item_range.start < end && !source[item_range.start..end].trim().is_empty() {
+                        raw.push((0, item_range.start..end));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    raw.sort_by_key(|(_, range)| range.start);
+
+    let mut byte = 0;
+    let mut chars = 0;
+    let mut blocks: Vec<SpeechBlock> = Vec::with_capacity(raw.len());
+    for (index, (heading, range)) in raw.into_iter().enumerate() {
+        chars += source[byte..range.start].chars().count();
+        let start = chars;
+        chars += source[range.start..range.end].chars().count();
+        byte = range.end;
+        blocks.push(SpeechBlock {
+            index,
+            heading,
+            range,
+            section_end: source.len(),
+            start,
+            end: chars,
+        });
+    }
+    for i in 0..blocks.len() {
+        let heading = blocks[i].heading;
+        blocks[i].section_end = if heading == 0 {
+            blocks[i].range.end
+        } else {
+            blocks[i + 1..]
+                .iter()
+                .find(|later| later.heading > 0 && later.heading <= heading)
+                .map_or(source.len(), |later| later.range.start)
+        };
+    }
+    blocks
+}
+
+/// Show speakers for the selection, headings (sections), paragraphs and tight list items beneath the pointer.
 fn editor_speakers(
     ui: &mut egui::Ui,
     output: &egui::text_edit::TextEditOutput,
@@ -3894,13 +3990,18 @@ fn editor_speakers(
         let anchor = caret.right_bottom() + egui::vec2(10.0, 6.0);
         let rect = egui::Rect::from_min_size(
             egui::pos2(
-                anchor.x.clamp(clip.left(), clip.right() - 30.0),
-                anchor.y.clamp(clip.top(), clip.bottom() - 30.0),
+                anchor.x.clamp(clip.left(), clip.right() - 26.0),
+                anchor.y.clamp(clip.top(), clip.bottom() - 26.0),
             ),
-            egui::vec2(28.0, 28.0),
+            egui::vec2(24.0, 24.0),
         );
         crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
-        crate::read_aloud::speaker_button(ui, rect, id.with("read-aloud-selection"), "Read aloud");
+        crate::read_aloud::floating_speaker_button(
+            ui,
+            rect,
+            id.with("read-aloud-selection"),
+            "Read aloud",
+        );
         ui.ctx()
             .data_mut(|data| data.insert_temp(shown, (rect, text)));
     } else {
@@ -3920,40 +4021,13 @@ fn editor_speakers(
     {
         return;
     }
-    type Blocks = (String, Vec<(usize, std::ops::Range<usize>, usize, usize)>);
+    type Blocks = (String, Vec<SpeechBlock>);
     let cache_id = id.with("editor-speech-blocks");
     let cached = ui
         .ctx()
         .data(|data| data.get_temp::<std::sync::Arc<Blocks>>(cache_id));
     let blocks = cached.filter(|cache| cache.0 == source).unwrap_or_else(|| {
-        let mut blocks = Vec::new();
-        let mut index = 0;
-        let mut byte = 0;
-        let mut chars = 0;
-        for (event, range) in pulldown_cmark::Parser::new(source).into_offset_iter() {
-            let paragraph = matches!(
-                event,
-                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph)
-            );
-            let heading = matches!(
-                event,
-                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Heading { .. })
-            );
-            if !paragraph && !heading {
-                continue;
-            }
-            let block_index = index;
-            index += 1;
-            if !paragraph {
-                continue;
-            }
-            chars += source[byte..range.start].chars().count();
-            let start = chars;
-            chars += source[range.start..range.end].chars().count();
-            byte = range.end;
-            blocks.push((block_index, range, start, chars));
-        }
-        let cache = std::sync::Arc::new((source.to_owned(), blocks));
+        let cache = std::sync::Arc::new((source.to_owned(), collect_speech_blocks(source)));
         ui.ctx()
             .data_mut(|data| data.insert_temp(cache_id, cache.clone()));
         cache
@@ -3963,37 +4037,54 @@ fn editor_speakers(
         .cursor_from_pos(pointer - output.galley_pos)
         .index
         .0;
-    let nearest = blocks.1.partition_point(|block| block.3 < character);
-    for (block_index, range, start, end) in blocks.1.iter().skip(nearest.saturating_sub(1)).take(3)
-    {
-        let block_range = CCursorRange::two(CCursor::new(*start), CCursor::new(*end));
+    let clip = ui.clip_rect();
+    let nearest = blocks.1.partition_point(|block| block.end < character);
+    for block in blocks.1.iter().skip(nearest.saturating_sub(1)).take(4) {
+        let block_range = CCursorRange::two(CCursor::new(block.start), CCursor::new(block.end));
         let rects = selection_rects(output, block_range, images, source);
         let Some(first) = rects.first().copied() else {
             continue;
         };
+        let block_bounds = rects.iter().copied().fold(first, egui::Rect::union);
         crate::ui_probe::record(
             ui.ctx(),
-            format!("editor-speech-block:{block_index}"),
+            format!("editor-speech-block:{}", block.index),
             first,
         );
-        let speaker = egui::Rect::from_center_size(
-            egui::pos2(first.left() - 16.0, first.center().y),
-            egui::vec2(18.0, 18.0),
-        );
-        let over_block = rects.iter().any(|rect| rect.expand(4.0).contains(pointer));
-        if (over_block || speaker.expand(4.0).contains(pointer))
+        let x = if first.left() - 28.0 >= clip.left() {
+            first.left() - 20.0
+        } else if block.heading > 0 {
+            (first.right() + 12.0).min(clip.right() - 12.0)
+        } else {
+            clip.left() + 10.0
+        };
+        let speaker =
+            egui::Rect::from_center_size(egui::pos2(x, first.center().y), egui::vec2(18.0, 18.0));
+        if block_bounds
+            .union(speaker)
+            .expand2(egui::vec2(6.0, 2.0))
+            .contains(pointer)
             && (pressed.is_some() || !ui.input(|input| input.pointer.any_down()))
         {
-            crate::ui_probe::record(ui.ctx(), format!("read-aloud-block:{block_index}"), speaker);
+            crate::ui_probe::record(
+                ui.ctx(),
+                format!("read-aloud-block:{}", block.index),
+                speaker,
+            );
+            let hint = if block.heading > 0 {
+                "Read this section aloud"
+            } else {
+                "Read this paragraph aloud"
+            };
             if crate::read_aloud::speaker_button(
                 ui,
                 speaker,
-                id.with(("read-aloud-block", *block_index)),
-                "Read this paragraph aloud",
+                id.with(("read-aloud-block", block.index)),
+                hint,
             ) {
                 crate::read_aloud::speak(
                     ui.ctx(),
-                    rustidian::speech_text::chunks(&source[range.clone()]),
+                    rustidian::speech_text::chunks(&source[block.range.start..block.section_end]),
                 );
             }
             break;
@@ -5379,5 +5470,30 @@ mod tests {
             "The selection waits a moment for the editor's focus"
         );
         assert!(!waiting[7], "The wait for the editor's focus must end");
+    }
+
+    #[test]
+    fn speech_blocks_include_headings_sections_paragraphs_and_tight_lists() {
+        let source =
+            "# Focus\n\nFirst paragraph.\n\n1. Tight one\n2. Tight two\n\n## Next\n\nTail.\n";
+        let blocks = super::collect_speech_blocks(source);
+        assert_eq!(blocks.len(), 6);
+        assert_eq!(blocks[0].heading, 1);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(
+            &source[blocks[0].range.start..blocks[0].section_end],
+            source
+        );
+        assert_eq!(blocks[1].heading, 0);
+        assert_eq!(blocks[1].index, 1);
+        assert_eq!(&source[blocks[1].range.clone()], "First paragraph.");
+        assert_eq!(&source[blocks[2].range.clone()], "Tight one\n");
+        assert_eq!(&source[blocks[3].range.clone()], "Tight two\n\n");
+        assert_eq!(blocks[4].heading, 2);
+        assert_eq!(
+            &source[blocks[4].range.start..blocks[4].section_end],
+            "## Next\n\nTail.\n"
+        );
+        assert_eq!(&source[blocks[5].range.clone()], "Tail.");
     }
 }

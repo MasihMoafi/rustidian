@@ -3410,19 +3410,29 @@ impl NotesApp {
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.set_max_width(ui.available_width());
-                ui.horizontal_wrapped(|ui| {
-                    for (tab, title, key) in [
-                        (0, "Outline", "outline"),
-                        (1, "Backlinks", "backlinks"),
-                        (2, "Outgoing", "outgoing"),
-                        (3, "Agent", "agent"),
+                ui.horizontal(|ui| {
+                    let mut active_rect = None;
+                    for (tab, icon, tip, key) in [
+                        (0, Icon::Outline, "Outline", "outline"),
+                        (1, Icon::Back, "Backlinks", "backlinks"),
+                        (2, Icon::OpenLink, "Outgoing links", "outgoing"),
+                        (3, Icon::Agent, "Agent · Ctrl+Shift+A", "agent"),
                     ] {
-                        let response = ui.selectable_value(
-                            &mut self.right_tab,
-                            tab,
-                            RichText::new(title).size(12.0),
-                        );
+                        let selected = self.right_tab == tab;
+                        let response = theme::icon_toggle(ui, icon, tip, selected);
+                        if response.clicked() {
+                            self.right_tab = tab;
+                        }
+                        if selected {
+                            active_rect = Some(response.rect);
+                        }
                         crate::ui_probe::record(ui.ctx(), format!("panel:{key}"), response.rect);
+                    }
+                    if let Some(rect) = active_rect {
+                        ui.painter().line_segment(
+                            [rect.left_bottom(), rect.right_bottom()],
+                            Stroke::new(1.5, theme::accent(ui)),
+                        );
                     }
                 });
                 ui.add_space(theme::space::S);
@@ -4524,16 +4534,42 @@ impl NotesApp {
                 ui.set_min_width(ui.available_width());
                 ui.spacing_mut().item_spacing = egui::vec2(theme::space::XS, 0.0);
                 ui.horizontal(|ui| {
-                    let count = self.tabs.len().max(1) as f32;
+                    let labels: Vec<String> = self
+                        .tabs
+                        .iter()
+                        .map(|tab| {
+                            format!(
+                                "{}{}",
+                                tab.title(),
+                                if tab.document.dirty() { " •" } else { "" }
+                            )
+                        })
+                        .collect();
+                    let available_for_tabs = (ui.available_width() - 108.0).max(80.0);
+                    let natural: Vec<f32> = ui.fonts_mut(|fonts| {
+                        labels
+                            .iter()
+                            .map(|label| {
+                                fonts
+                                    .layout_no_wrap(
+                                        label.clone(),
+                                        FontId::proportional(13.0),
+                                        Color32::WHITE,
+                                    )
+                                    .size()
+                                    .x
+                                    + 48.0
+                            })
+                            .collect()
+                    });
+                    let widths = rustidian::tab::tab_widths(&natural, available_for_tabs, 4.0);
                     // With no tabs the strip takes no room, so New tab sits at the left as in Obsidian.
                     let width = if self.tabs.is_empty() {
                         0.0
                     } else {
-                        (ui.available_width() - 148.0)
-                            .max(80.0)
-                            .min(200.0 * count + 4.0 * (count - 1.0))
+                        (widths.iter().sum::<f32>() + 4.0 * (widths.len().saturating_sub(1) as f32))
+                            .min(available_for_tabs)
                     };
-                    let tab_width = ((width - 4.0 * (count - 1.0)) / count).clamp(32.0, 200.0);
                     let selected = self.tabs.get(self.active);
                     let reveal_key = (
                         selected.map_or(0, Tab::id),
@@ -4567,7 +4603,9 @@ impl NotesApp {
                                 .show(ui, |ui| {
                                     ui.add_space(theme::space::S);
                                     ui.horizontal(|ui| {
+                                        let mut previous_highlighted = true;
                                         for (index, tab) in self.tabs.iter().enumerate() {
+                                            let tab_width = widths[index];
                                             let (_, rect) =
                                                 ui.allocate_space(egui::vec2(tab_width, 33.0));
                                             let response = ui.interact(
@@ -4590,6 +4628,28 @@ impl NotesApp {
                                                 )
                                             });
                                             let active = index == self.active;
+                                            let highlighted = active || response.hovered();
+                                            if index > 0 && !previous_highlighted && !highlighted {
+                                                ui.painter().line_segment(
+                                                    [
+                                                        egui::pos2(
+                                                            rect.left() - 2.0,
+                                                            rect.top() + 8.0,
+                                                        ),
+                                                        egui::pos2(
+                                                            rect.left() - 2.0,
+                                                            rect.bottom() - 8.0,
+                                                        ),
+                                                    ],
+                                                    Stroke::new(
+                                                        1.0,
+                                                        ui.visuals()
+                                                            .weak_text_color()
+                                                            .gamma_multiply(0.18),
+                                                    ),
+                                                );
+                                            }
+                                            previous_highlighted = highlighted;
                                             let show_close = tab.pinned
                                                 || active
                                                 || ui.rect_contains_pointer(rect);
@@ -4632,11 +4692,7 @@ impl NotesApp {
                                                     },
                                                 );
                                             }
-                                            let label = format!(
-                                                "{}{}",
-                                                tab.title(),
-                                                if tab.document.dirty() { " •" } else { "" }
-                                            );
+                                            let label = &labels[index];
                                             let galley = egui::WidgetText::from(
                                                 RichText::new(label).size(13.0),
                                             )
@@ -4978,9 +5034,13 @@ impl NotesApp {
                         let showing = self.show_right && self.right_tab == 3;
                         let agent = ui
                             .add_enabled_ui(self.vault.is_some(), |ui| {
-                                ui.selectable_label(showing, RichText::new("Agent").size(13.0))
-                                    .on_hover_text("Agent terminal")
-                                    .on_disabled_hover_text("Open a vault first.")
+                                theme::icon_toggle(
+                                    ui,
+                                    Icon::Agent,
+                                    "Agent terminal · Ctrl+Shift+A",
+                                    showing,
+                                )
+                                .on_disabled_hover_text("Open a vault first.")
                             })
                             .inner;
                         crate::ui_probe::record(ui.ctx(), "toggle-agent", agent.rect);

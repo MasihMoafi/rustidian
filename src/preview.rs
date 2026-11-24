@@ -1205,13 +1205,13 @@ fn read_selection(
     let clip = ui.clip_rect();
     let rect = egui::Rect::from_min_size(
         egui::pos2(
-            anchor.x.clamp(clip.left(), clip.right() - 30.0),
-            anchor.y.clamp(clip.top(), clip.bottom() - 30.0),
+            anchor.x.clamp(clip.left(), clip.right() - 26.0),
+            anchor.y.clamp(clip.top(), clip.bottom() - 26.0),
         ),
-        egui::vec2(28.0, 28.0),
+        egui::vec2(24.0, 24.0),
     );
     crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
-    crate::read_aloud::speaker_button(
+    crate::read_aloud::floating_speaker_button(
         ui,
         rect,
         document_id.with("read-aloud-selection"),
@@ -1794,16 +1794,25 @@ fn show_blocks(
                 // A speaker in the margin while the pointer is on the block: a paragraph reads
                 // itself, a heading its section (folded parts stay silent).
                 let row = galley.rows.first().map_or(18.0, |row| row.height());
-                let x = task_checkbox.map_or_else(
-                    || response.rect.left() - if block.heading > 0 { 38.0 } else { 16.0 },
-                    |checkbox| checkbox.left() - 16.0,
-                );
+                let clip = ui.clip_rect();
+                let x = if let Some(checkbox) = task_checkbox {
+                    (checkbox.left() - 16.0).max(clip.left() + 10.0)
+                } else if block.heading > 0 {
+                    if response.rect.left() - 44.0 >= clip.left() {
+                        response.rect.left() - 34.0
+                    } else {
+                        let first_width = galley.rows.first().map_or(0.0, |row| row.size.x);
+                        (response.rect.left() + first_width + 14.0).min(clip.right() - 12.0)
+                    }
+                } else {
+                    (response.rect.left() - 16.0).max(clip.left() + 10.0)
+                };
                 let rect = egui::Rect::from_center_size(
                     egui::pos2(x, response.rect.top() + row / 2.0),
                     egui::vec2(18.0, 18.0),
                 );
                 let pressing = ui.input(|input| input.pointer.primary_pressed());
-                if ui.rect_contains_pointer(response.rect.union(rect).expand(4.0))
+                if ui.rect_contains_pointer(response.rect.union(rect).expand2(egui::vec2(6.0, 2.0)))
                     && (pressing || !ui.input(|input| input.pointer.any_down()))
                 {
                     crate::ui_probe::record(ui.ctx(), format!("read-aloud-block:{index}"), rect);

@@ -565,6 +565,7 @@ pub enum Icon {
     Settings,
     Appearance,
     Outline,
+    Agent,
     More,
     Close,
     Minimize,
@@ -596,7 +597,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 55] = [
+    pub const ALL: [Self; 56] = [
         Self::Files,
         Self::Search,
         Self::Graph,
@@ -624,6 +625,7 @@ impl Icon {
         Self::Settings,
         Self::Appearance,
         Self::Outline,
+        Self::Agent,
         Self::More,
         Self::Close,
         Self::Minimize,
@@ -875,6 +877,10 @@ impl Icon {
             Self::CalloutQuote => (
                 "bytes://icons/callout-quote.svg",
                 include_bytes!("../assets/icons/callout-quote.svg"),
+            ),
+            Self::Agent => (
+                "bytes://icons/agent.svg",
+                include_bytes!("../assets/icons/agent.svg"),
             ),
         }
     }

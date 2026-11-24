@@ -392,7 +392,7 @@ impl Panel {
                     }
                 }
             }
-            let plus = theme::glyph_button(ui, "+", "New chat (Ctrl+Shift+T)");
+            let plus = theme::icon_button(ui, theme::Icon::NewTab, "New chat (Ctrl+Shift+T)");
             ui_probe::record(ui.ctx(), "agent-new-chat", plus.rect);
             new = plus.clicked();
         });
@@ -463,13 +463,21 @@ impl Panel {
                     });
                 ui_probe::record(ui.ctx(), "agent-backend", combo.response.rect);
             });
-            let button = theme::glyph_button(ui, "↻", "Restart");
+            let button = theme::icon_button(ui, theme::Icon::Recovery, "Restart");
             ui_probe::record(ui.ctx(), "agent-restart", button.rect);
             restart = button.clicked();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let label =
-                    ui.add(egui::Label::new(RichText::new(&status).small().weak()).truncate());
-                ui_probe::record(ui.ctx(), format!("agent-status:{status}"), label.rect);
+                let (dot_rect, dot) =
+                    ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+                let dot_color = match status.as_str() {
+                    "Running" => theme::accent(ui),
+                    "Starting" | "Stopped" => ui.visuals().weak_text_color(),
+                    _ => ui.visuals().error_fg_color,
+                };
+                ui.painter()
+                    .circle_filled(dot_rect.center(), 4.0, dot_color);
+                dot.on_hover_text(&status);
+                ui_probe::record(ui.ctx(), format!("agent-status:{status}"), dot_rect);
             });
         });
         ui_probe::record(ui.ctx(), "agent-header", header.response.rect);

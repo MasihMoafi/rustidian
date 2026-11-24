@@ -779,12 +779,42 @@ pub fn selection_speaker_pressed(
     Some(text)
 }
 
-/// A round speaker that acts on press, since the press itself clears the text selection.
+/// A quiet margin speaker that stays unobtrusive until hovered.
+/// It acts on press, since the press itself clears the text selection.
 pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &str) -> bool {
     let response = ui.interact(rect, id, egui::Sense::click());
     let hovered = response.hovered();
     if hovered {
         warm_up();
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let painter = ui.painter();
+    if hovered {
+        painter.rect_filled(rect, 4.0, crate::theme::hover_fill(ui));
+    }
+    let ink = if hovered {
+        crate::theme::accent(ui)
+    } else {
+        ui.visuals().weak_text_color().gamma_multiply(0.62)
+    };
+    paint_speaker(painter, rect.shrink(rect.width() * 0.18), ink);
+    let pressed = speaker_pressed(ui, &response, rect);
+    response.on_hover_text(hint);
+    pressed
+}
+
+/// A compact pill speaker for drag selections floating above note text.
+pub fn floating_speaker_button(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    id: egui::Id,
+    hint: &str,
+) -> bool {
+    let response = ui.interact(rect, id, egui::Sense::click());
+    let hovered = response.hovered();
+    if hovered {
+        warm_up();
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let fill = if hovered {
         crate::theme::interactive(ui)
@@ -792,11 +822,12 @@ pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &
         ui.visuals().window_fill()
     };
     let painter = ui.painter();
-    painter.circle_filled(rect.center(), rect.width() / 2.0, fill);
-    painter.circle_stroke(
-        rect.center(),
-        rect.width() / 2.0,
+    painter.rect(
+        rect,
+        6.0,
+        fill,
         ui.visuals().window_stroke(),
+        egui::StrokeKind::Inside,
     );
     let ink = if hovered {
         ui.visuals().window_fill()
