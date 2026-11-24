@@ -698,9 +698,20 @@ fn focus_choice<T: Ord>(
             .truncate(),
     );
     ui_probe::record(ui.ctx(), format!("focus:{label}"), trigger.rect);
+    // A graph can occupy only part of the viewport. Anchor inside the visible
+    // settings pane, not the whole window (especially the lower Folder row).
+    let bounds = ui.clip_rect().intersect(ui.ctx().content_rect());
+    let below = bounds.bottom() - trigger.rect.bottom() - XS;
+    let above = trigger.rect.top() - bounds.top() - XS;
+    let align = if below >= above {
+        egui::RectAlign::BOTTOM_START
+    } else {
+        egui::RectAlign::TOP_START
+    };
+    let available = above.max(below);
     let popup = egui::Popup::from_toggle_button_response(&trigger)
-        .align(egui::RectAlign::BOTTOM_START)
-        .align_alternatives(&[egui::RectAlign::TOP_START])
+        .align(align)
+        .align_alternatives(&[])
         .gap(XS)
         .layout(Layout::top_down_justified(Align::Min))
         .width(width)
@@ -735,8 +746,10 @@ fn focus_choice<T: Ord>(
         ui.separator();
         let mut choices = choices.collect::<Vec<_>>();
         choices.sort_by(|left, right| left.1.cmp(&right.1));
-        let max_list_height =
-            (ui.ctx().content_rect().height() / 3.0).min(4.0 * (trigger_height + XS));
+        let controls_height = ui.min_rect().height() + 2.0 * XS + ui.spacing().item_spacing.y;
+        let max_list_height = (available - controls_height)
+            .max(0.0)
+            .min(4.0 * (trigger_height + XS));
         egui::ScrollArea::vertical()
             .auto_shrink([false, true])
             .max_height(max_list_height)
