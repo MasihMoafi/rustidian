@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rustidian
+Comment=Native Markdown notebook for local vaults
+Exec=rustidian %f
+Icon=io.github.masihmoafi.rustidian
+Terminal=false
+Categories=Office;TextEditor;
+Keywords=Markdown;Notes;Wiki;Vault;
+MimeType=text/markdown;
+StartupWMClass=rustidian

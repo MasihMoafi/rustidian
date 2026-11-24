@@ -24,8 +24,24 @@ pub struct Find {
     replacing: bool,
     selected: usize,
     restore: Option<Range<usize>>,
+    /// Scroll to a newly selected match without moving focus out of Find.
+    scroll_to_match: Option<usize>,
     /// When the closed bar began waiting for the editor to take focus.
     restore_since: Option<f64>,
+}
+
+impl Find {
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    pub fn take_scroll_to_match(&mut self) -> Option<usize> {
+        self.scroll_to_match.take()
+    }
 }
 
 struct LinkCandidate {
@@ -395,6 +411,8 @@ struct LiveImage {
     size: egui::Vec2,
     math: Option<usize>,
     note: Option<crate::note_embed_ui::Embed>,
+    html: Option<String>,
+    alt: String,
 }
 
 // Keep the original allocation alive so its pointer identifies the font
@@ -600,6 +618,11 @@ fn embedded_images(
     rustidian::assets::embedded_images(text)
         .into_iter()
         .filter_map(|image| {
+            if text[image.range.clone()].starts_with("![[")
+                && crate::note_embed_ui::is_note(&image.target)
+            {
+                return None;
+            }
             if maths.iter().any(|math| {
                 math.range.start < image.range.end && math.range.end > image.range.start
             }) {
@@ -608,7 +631,9 @@ fn embedded_images(
             if text[image.range.clone()].contains('\n') {
                 return None;
             }
-            let uri = rustidian::assets::image_uri(vault, from, &image.target)?;
+            let uri = rustidian::assets::image_uri(vault, from, &image.target)
+                .unwrap_or_else(|| format!("rust-missing-image:{}", image.target));
+            let mut failed = false;
             let natural = match ui
                 .ctx()
                 .try_load_image(&uri, egui::load::SizeHint::Width(width_limit.ceil() as u32))
@@ -617,17 +642,38 @@ fn embedded_images(
                     egui::vec2(image.size[0] as f32, image.size[1] as f32)
                 }
                 Ok(egui::load::ImagePoll::Pending { size: Some(size) }) => size,
+                Err(_) => {
+                    failed = true;
+                    egui::vec2(240.0, 26.0)
+                }
                 _ => egui::vec2(image.width.unwrap_or(180.0), image.height.unwrap_or(120.0)),
             };
-            let width = image.width.unwrap_or(natural.x).min(width_limit);
-            let height = image
-                .height
-                .unwrap_or(natural.y * width / natural.x.max(1.0));
+            let width = if image.html {
+                rustidian::html_layout::tokens(&text[image.range.clone()])
+                    .into_iter()
+                    .find_map(|token| match token {
+                        rustidian::html_layout::Token::Tag(tag) => tag.length("width", width_limit),
+                        _ => None,
+                    })
+            } else {
+                image.width
+            };
+            let size = if failed || uri.starts_with("rust-missing-image:") {
+                egui::vec2(width_limit.min(240.0), 26.0)
+            } else {
+                crate::media_ui::size(natural, width, image.height, width_limit)
+            };
             Some(LiveImage {
                 range: image.range,
                 block: None,
-                uri,
-                size: egui::vec2(width, height),
+                uri: if failed {
+                    format!("rust-missing-image:{}", image.target)
+                } else {
+                    uri
+                },
+                size,
+                html: None,
+                alt: image.alt,
                 math: None,
                 note: None,
             })
@@ -645,6 +691,92 @@ fn live_images(
     open_notes: &[(&std::path::Path, &str)],
 ) -> Vec<LiveImage> {
     let mut images = embedded_images(ui, text, vault, from, &parsed.maths);
+    let blocks = &parsed.html_blocks;
+    images.retain(|image| {
+        !blocks
+            .iter()
+            .any(|block| block.range.contains(&image.range.start))
+            && !rustidian::assets::is_video(std::path::Path::new(
+                image
+                    .uri
+                    .strip_prefix("rust-missing-image:")
+                    .unwrap_or(&image.uri),
+            ))
+    });
+    let width = (ui.available_width() - 4.0).max(1.0);
+    for block in blocks {
+        if active_line
+            .is_some_and(|line| line.start < block.range.end && line.end >= block.range.start)
+        {
+            continue;
+        }
+        let first_end = text[block.range.clone()]
+            .find('\n')
+            .map_or(block.range.end, |offset| block.range.start + offset);
+        let source = text[block.range.clone()].to_owned();
+        let source = if parsed
+            .html_right
+            .iter()
+            .any(|range| range.contains(&block.range.start))
+        {
+            format!("<div align='right'>\n\n{source}\n\n</div>")
+        } else if parsed
+            .html_centered
+            .iter()
+            .any(|range| range.contains(&block.range.start))
+        {
+            format!("<div align='center'>\n\n{source}\n\n</div>")
+        } else {
+            source
+        };
+        let id = ui.make_persistent_id((
+            "live-html",
+            from,
+            block.range.start,
+            width.to_bits(),
+            ui.visuals().dark_mode,
+        ));
+        images.push(LiveImage {
+            range: block.range.start..first_end,
+            block: Some(block.range.clone()),
+            uri: String::new(),
+            size: egui::vec2(width, crate::preview::fragment_height(ui.ctx(), id)),
+            math: None,
+            note: None,
+            html: Some(source),
+            alt: String::new(),
+        });
+    }
+    for image in rustidian::assets::embedded_images(text) {
+        if !rustidian::assets::is_video(std::path::Path::new(&image.target))
+            || image.html
+            || active_line
+                .is_some_and(|line| line.start < image.range.end && line.end >= image.range.start)
+        {
+            continue;
+        }
+        let target = image.target.replace('&', "&amp;").replace('"', "&quot;");
+        let first_end = text[image.range.clone()]
+            .find('\n')
+            .map_or(image.range.end, |offset| image.range.start + offset);
+        let id = ui.make_persistent_id((
+            "live-html",
+            from,
+            image.range.start,
+            width.to_bits(),
+            ui.visuals().dark_mode,
+        ));
+        images.push(LiveImage {
+            range: image.range.start..first_end,
+            block: Some(image.range),
+            uri: String::new(),
+            size: egui::vec2(width, crate::preview::fragment_height(ui.ctx(), id)),
+            math: None,
+            note: None,
+            html: Some(format!("<video src=\"{target}\"></video>")),
+            alt: image.alt,
+        });
+    }
     if let Some(vault) = vault {
         let mut occurrences = HashMap::new();
         for image in rustidian::assets::embedded_images(text) {
@@ -664,6 +796,8 @@ fn live_images(
                 range: image.range,
                 block: None,
                 uri: String::new(),
+                html: None,
+                alt: String::new(),
                 math: None,
                 size: egui::vec2(width, crate::note_embed_ui::height(ui.ctx(), id, width)),
                 note: Some(crate::note_embed_ui::Embed {
@@ -698,6 +832,8 @@ fn live_images(
                 block: Some(block.range.clone()),
                 uri,
                 size,
+                html: None,
+                alt: String::new(),
                 math: None,
                 note: None,
             });
@@ -759,6 +895,8 @@ fn live_images(
                 block: math.display.then(|| math.range.clone()),
                 uri: formula.uri,
                 size: formula.size * scale,
+                html: None,
+                alt: String::new(),
                 math: Some(ordinal),
                 note: None,
             });
@@ -794,6 +932,9 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
         if find.focus {
             response.request_focus();
             find.focus = false;
+            if !find.query.is_empty() {
+                select = true;
+            }
         }
         if response.changed() {
             find.selected = 0;
@@ -814,7 +955,9 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
             find.selected = (find.selected + matches.len() - 1) % matches.len();
             select = true;
         }
-        if (ui.button("Next").clicked()
+        let next = ui.button("Next");
+        crate::ui_probe::record(ui.ctx(), "find-next", next.rect);
+        if (next.clicked()
             || response.has_focus()
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter)))
             && !matches.is_empty()
@@ -867,12 +1010,17 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
         if let Some(range) = matches.get(find.selected.min(matches.len().saturating_sub(1))) {
             find.restore = Some(range.clone());
             find.restore_since = None;
+            find.scroll_to_match = find.open.then_some(range.start);
             let mut state = TextEditState::load(ui.ctx(), id).unwrap_or_default();
             state.cursor.set_char_range(Some(CCursorRange::two(
                 CCursor::new(range.start),
                 CCursor::new(range.end),
             )));
             state.store(ui.ctx(), id);
+        } else {
+            find.restore = None;
+            find.restore_since = None;
+            find.scroll_to_match = None;
         }
     }
     ui.separator();
@@ -1057,6 +1205,20 @@ fn consume_action(ui: &egui::Ui, modifiers: egui::Modifiers, keys: &[Key]) -> bo
 }
 
 impl Editor {
+    pub fn selected_text(&self, tab: &Tab) -> Option<String> {
+        let (_, range) = self.selection.filter(|(owner, range)| {
+            *owner == tab.id() && range.primary.index != range.secondary.index
+        })?;
+        let range = range.as_sorted_char_range();
+        Some(
+            tab.document
+                .text
+                .chars()
+                .skip(range.start.0)
+                .take(range.end.0 - range.start.0)
+                .collect(),
+        )
+    }
     pub fn raw_input(
         &mut self,
         ctx: &egui::Context,
@@ -1119,6 +1281,34 @@ impl Editor {
 
     pub fn native_highlight(&mut self, tab: &Tab, color: rustidian::highlight::NativeColor) {
         self.edit(tab, Edit::NativeHighlight(color));
+    }
+
+    pub fn dictation_selection(&self, tab: &Tab) -> Option<CCursorRange> {
+        self.selection
+            .filter(|(id, _)| *id == tab.id())
+            .map(|(_, range)| range)
+    }
+
+    pub fn caret_at_end(&mut self, tab: &Tab) -> CCursorRange {
+        let range = CCursorRange::one(CCursor::new(tab.document.text.chars().count()));
+        self.selection = Some((tab.id(), range));
+        self.jump = Some(range.primary.index.0);
+        self.focus = true;
+        range
+    }
+
+    pub fn insert_dictation(&mut self, tab: &Tab, text: String, selection: CCursorRange) {
+        self.pending_edit = Some(PendingEdit {
+            tab: tab.id(),
+            path: tab.document.path.clone(),
+            source: tab.document.text.clone(),
+            operation: Edit::Insert {
+                text,
+                caret_back: 0,
+            },
+            selection: Some(selection),
+        });
+        self.focus = true;
     }
 
     pub fn insert_text(&mut self, tab: &Tab, text: String) {
@@ -1224,12 +1414,44 @@ impl Editor {
             done = true;
         }
         ui.separator();
+        if item(ui, "Read aloud", "Ctrl+Shift+R", selected.is_some())
+            && let Some(text) = &selected
+        {
+            let text = rustidian::speech_text::snap(&tab.document.text, text);
+            crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
+            done = true;
+        }
+        ui.separator();
         for (label, shortcut, opening, closing) in FORMATS {
             if item(ui, label, shortcut, true) {
                 self.edit(tab, Edit::Wrap(opening, closing));
                 done = true;
             }
         }
+        // Colour the selection, or the word at the caret, with one click.
+        ui.horizontal(|ui| {
+            ui.label("Color");
+            let dark = ui.visuals().dark_mode;
+            for color in rustidian::highlight::NativeColor::ALL {
+                let [r, g, b, _] = color.rgba(dark);
+                let (rect, response) =
+                    ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+                let fill = egui::Color32::from_rgb(r, g, b);
+                let ring = if response.hovered() {
+                    ui.visuals().strong_text_color()
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                ui.painter()
+                    .circle(rect.center(), 8.0, fill, egui::Stroke::new(1.5, ring));
+                let name = color.command().trim_start_matches("Toggle ");
+                crate::ui_probe::record(ui.ctx(), format!("editor-menu:{name}"), rect);
+                if response.on_hover_text(name).clicked() {
+                    self.native_highlight(tab, color);
+                    done = true;
+                }
+            }
+        });
         ui.separator();
         for level in 1..=3 {
             if item(ui, format!("Heading {level}").as_str(), "", true) {
@@ -1305,7 +1527,11 @@ impl Editor {
                                 "Pasted image {}.png",
                                 chrono::Local::now().format("%Y%m%d%H%M%S")
                             );
-                            vault.import_attachment(std::path::Path::new(&name), &png)
+                            vault.import_attachment_from(
+                                &tab.document.path,
+                                std::path::Path::new(&name),
+                                &png,
+                            )
                         })();
                         *event = match saved {
                             Ok(path) => egui::Event::Paste(format!(
@@ -1335,7 +1561,11 @@ impl Editor {
                     }
                     let bytes = file.bytes()?;
                     let name = file.path().file_name().ok_or("Invalid image name.")?;
-                    vault.import_attachment(std::path::Path::new(name), &bytes)
+                    vault.import_attachment_from(
+                        &tab.document.path,
+                        std::path::Path::new(name),
+                        &bytes,
+                    )
                 })();
                 match saved {
                     Ok(path) => links.push(format!(
@@ -2067,6 +2297,15 @@ impl Editor {
                 }
                 // A line of only wrapper tags (`<div align="center">`) takes no room unless edited.
                 for line in &parsed.html_tag_lines {
+                    if images.iter().any(|image| {
+                        image.html.is_some()
+                            && image
+                                .block
+                                .as_ref()
+                                .is_some_and(|block| block.contains(&line.start))
+                    }) {
+                        continue;
+                    }
                     if !active_line
                         .as_ref()
                         .is_some_and(|active| active.start < line.end && active.end >= line.start)
@@ -2166,9 +2405,9 @@ impl Editor {
                 .as_ref()
                 .filter(|cached| cached.key.fonts == key.fonts)
                 .map(|cached| &cached.paragraphs);
-            let indents = if live && !plain_text {
-                slow("quote indents", text.len(), || {
-                    quote_indents(text, parsed, &job)
+            let indents = if !plain_text {
+                slow("paragraph indents", text.len(), || {
+                    paragraph_indents(text, parsed, &job, live)
                 })
             } else {
                 Vec::new()
@@ -2192,7 +2431,8 @@ impl Editor {
                 collapse_rows(&mut galley, hidden);
             }
             if live && !plain_text {
-                center_rows(&mut galley, text, &parsed.html_centered);
+                center_rows(&mut galley, text, &parsed.html_centered, 0.5);
+                center_rows(&mut galley, text, &parsed.html_right, 1.0);
             }
             *layout_cache = Some(LayoutCache {
                 key,
@@ -2261,6 +2501,8 @@ impl Editor {
                 if active_image {
                     ui.visuals_mut().selection.bg_fill = Color32::TRANSPARENT;
                     ui.visuals_mut().text_cursor.stroke.color = Color32::TRANSPARENT;
+                    // The image line paints its own caret below.
+                    ui.visuals_mut().text_cursor.blink = false;
                 }
                 TextEdit::multiline(&mut tab.document.text)
                     .id(id)
@@ -2301,6 +2543,7 @@ impl Editor {
         }
         cp.at(2175);
         crate::ui_probe::record(ui.ctx(), "editor", output.response.rect);
+        editor_speakers(ui, &output, id, &tab.document.text, &images);
         cp.at(2176);
         if crate::ui_probe::enabled() {
             crate::ui_probe::metric(
@@ -2585,6 +2828,59 @@ impl Editor {
                 }
                 continue;
             }
+            if let Some(source) = &image.html {
+                let id = ui.make_persistent_id((
+                    "live-html",
+                    &tab.document.path,
+                    image.range.start,
+                    image.size.x.to_bits(),
+                    ui.visuals().dark_mode,
+                ));
+                // Keep measuring off-screen children too: their heights place everything after them.
+                let mut child = ui.new_child(egui::UiBuilder::new().id_salt(id).max_rect(
+                    egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), f32::INFINITY)),
+                ));
+                child.set_clip_rect(ui.clip_rect());
+                if let Some(link) = crate::preview::show_fragment(
+                    &mut child,
+                    &mut self.embed_cache,
+                    source,
+                    &tab.document.path,
+                    id,
+                    vault,
+                ) {
+                    follow = Some(link);
+                }
+                if rect.contains(ui.input(|input| input.pointer.hover_pos().unwrap_or_default())) {
+                    let edit = ui.put(
+                        egui::Rect::from_min_size(
+                            rect.right_top() - egui::vec2(82.0, 0.0),
+                            egui::vec2(82.0, crate::theme::space::ROW),
+                        ),
+                        egui::Button::new("Edit HTML"),
+                    );
+                    crate::ui_probe::record(
+                        ui.ctx(),
+                        format!("html-edit:{}", image.range.start),
+                        edit.rect,
+                    );
+                    if edit.clicked() {
+                        let source_range = image.block.as_ref().unwrap_or(&image.range);
+                        let start = tab.document.text[..source_range.start].chars().count();
+                        self.focus_range =
+                            Some((output.response.id, CCursorRange::one(CCursor::new(start))));
+                        output.response.request_focus();
+                        ui.ctx().request_repaint();
+                    }
+                }
+                crate::ui_probe::record(ui.ctx(), format!("html-live:{}", image.range.start), rect);
+                continue;
+            }
+            if image.uri.starts_with("rust-missing-image:") {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                crate::media_ui::broken(&mut child, &image.alt, false);
+                continue;
+            }
             let widget = egui::Image::new(&image.uri)
                 .fit_to_exact_size(image.size)
                 .sense(egui::Sense::click());
@@ -2668,27 +2964,60 @@ impl Editor {
                     self.image_cursor_time = now;
                 }
                 let cycle = (cursor_style.on_duration + cursor_style.off_duration) as f64;
-                if !cursor_style.blink
-                    || (now - self.image_cursor_time) % cycle < cursor_style.on_duration as f64
-                {
+                let phase = if cycle > 0.0 {
+                    (now - self.image_cursor_time).max(0.0) % cycle
+                } else {
+                    0.0
+                };
+                let on = cursor_style.on_duration as f64;
+                if !cursor_style.blink || cycle <= 0.0 || phase < on {
                     let caret = output.galley.pos_from_cursor(range.primary);
                     let top = output.galley_pos + caret.min.to_vec2();
                     ui.painter()
                         .line_segment([top, top + egui::vec2(0.0, 29.16)], cursor_style.stroke);
                 }
-                ui.ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(100));
+                if cursor_style.blink && cycle > 0.0 {
+                    let until_transition = if phase < on {
+                        on - phase
+                    } else {
+                        cycle - phase
+                    };
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_secs_f64(
+                            until_transition.max(0.001),
+                        ));
+                }
             }
         }
         cp.at(2534);
-        if let Some(character) = jump {
+        if jump.is_some() {
             output.response.request_focus();
             ui.ctx().request_repaint();
+        }
+        let scroll_to_match = find.scroll_to_match.take();
+        if let Some(character) = jump.or(scroll_to_match) {
             let rect = output
                 .galley
                 .pos_from_cursor(CCursor::new(character))
                 .translate(output.galley_pos.to_vec2());
             ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        }
+        crate::read_aloud::mark_heard(
+            ui,
+            id,
+            &tab.document.text,
+            &output.galley,
+            output.galley_pos,
+        );
+        if crate::ui_probe::enabled()
+            && let Some(range) = &selected_match
+        {
+            let rect = output
+                .galley
+                .pos_from_cursor(CCursor::new(range.start))
+                .translate(output.galley_pos.to_vec2())
+                .expand2(egui::vec2(1.0, 0.0));
+            crate::ui_probe::record(ui.ctx(), "find-match", rect);
         }
         cp.at(2543);
         let pressed_button = ui.input(|input| {
@@ -2830,10 +3159,11 @@ impl Editor {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         ui.set_width(330.0);
                         for (index, candidate) in candidates.iter().enumerate() {
+                            let is_selected = index == self.completion_selected;
                             let response = ui.add(
                                 egui::Button::new(RichText::new(&candidate.label).size(14.0))
-                                    .selected(index == self.completion_selected)
-                                    .frame_when_inactive(false)
+                                    .selected(is_selected)
+                                    .frame_when_inactive(is_selected)
                                     .min_size(egui::vec2(330.0, crate::theme::space::CONTROL)),
                             );
                             crate::ui_probe::record(
@@ -3186,7 +3516,12 @@ fn collapse_rows(galley: &mut Arc<egui::Galley>, hidden: &[Range<usize>]) {
 }
 
 /// Rows inside `align="center"` HTML sit in the middle of the page, as GitHub shows them.
-fn center_rows(galley: &mut Arc<egui::Galley>, text: &str, centered: &[Range<usize>]) {
+fn center_rows(
+    galley: &mut Arc<egui::Galley>,
+    text: &str,
+    centered: &[Range<usize>],
+    fraction: f32,
+) {
     let width = galley.job.wrap.max_width;
     if centered.is_empty() || !width.is_finite() {
         return;
@@ -3204,7 +3539,7 @@ fn center_rows(galley: &mut Arc<egui::Galley>, text: &str, centered: &[Range<usi
     for row in &mut galley.rows {
         let length = row.char_count_including_newline().0;
         if ranges.iter().any(|range| range.contains(&character)) {
-            row.pos.x += ((width - row.row.size.x) / 2.0).max(0.0);
+            row.pos.x += ((width - row.row.size.x) * fraction).max(0.0);
             right = right.max(row.pos.x + row.row.size.x);
         }
         if row.row.size.y > 0.0 {
@@ -3535,6 +3870,250 @@ fn paint_image_selection(
     ui.painter().set(shape, egui::Shape::Vec(shapes));
 }
 
+#[derive(Clone)]
+struct SpeechBlock {
+    index: usize,
+    heading: u8,
+    range: std::ops::Range<usize>,
+    section_end: usize,
+    start: usize,
+    end: usize,
+}
+
+fn collect_speech_blocks(source: &str) -> Vec<SpeechBlock> {
+    let mut raw: Vec<(u8, std::ops::Range<usize>)> = Vec::new();
+    let mut item_stack: Vec<(std::ops::Range<usize>, bool, Option<usize>)> = Vec::new();
+    for (event, range) in pulldown_cmark::Parser::new(source).into_offset_iter() {
+        match event {
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Heading { level, .. }) => {
+                if let Some(item) = item_stack.last_mut() {
+                    item.1 = true;
+                }
+                let heading = match level {
+                    pulldown_cmark::HeadingLevel::H1 => 1,
+                    pulldown_cmark::HeadingLevel::H2 => 2,
+                    pulldown_cmark::HeadingLevel::H3 => 3,
+                    pulldown_cmark::HeadingLevel::H4 => 4,
+                    pulldown_cmark::HeadingLevel::H5 => 5,
+                    pulldown_cmark::HeadingLevel::H6 => 6,
+                };
+                raw.push((heading, range));
+            }
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph) => {
+                if let Some(item) = item_stack.last_mut() {
+                    item.1 = true;
+                }
+                raw.push((0, range));
+            }
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Item) => {
+                item_stack.push((range, false, None));
+            }
+            pulldown_cmark::Event::Start(
+                pulldown_cmark::Tag::List(_)
+                | pulldown_cmark::Tag::BlockQuote(_)
+                | pulldown_cmark::Tag::CodeBlock(_),
+            ) => {
+                if let Some(item) = item_stack.last_mut()
+                    && item.2.is_none()
+                {
+                    item.2 = Some(range.start);
+                }
+            }
+            pulldown_cmark::Event::End(pulldown_cmark::TagEnd::Item) => {
+                if let Some((item_range, has_para, first_nested)) = item_stack.pop()
+                    && !has_para
+                {
+                    let end =
+                        first_nested.map_or(item_range.end, |nested| nested.min(item_range.end));
+                    if item_range.start < end && !source[item_range.start..end].trim().is_empty() {
+                        raw.push((0, item_range.start..end));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    raw.sort_by_key(|(_, range)| range.start);
+
+    let mut byte = 0;
+    let mut chars = 0;
+    let mut blocks: Vec<SpeechBlock> = Vec::with_capacity(raw.len());
+    for (index, (heading, mut range)) in raw.into_iter().enumerate() {
+        while range.end > range.start && matches!(source.as_bytes()[range.end - 1], b'\n' | b'\r') {
+            range.end -= 1;
+        }
+        chars += source[byte..range.start].chars().count();
+        let start = chars;
+        chars += source[range.start..range.end].chars().count();
+        byte = range.end;
+        blocks.push(SpeechBlock {
+            index,
+            heading,
+            range,
+            section_end: source.len(),
+            start,
+            end: chars,
+        });
+    }
+    for i in 0..blocks.len() {
+        let heading = blocks[i].heading;
+        blocks[i].section_end = if heading == 0 {
+            blocks[i].range.end
+        } else {
+            blocks[i + 1..]
+                .iter()
+                .find(|later| later.heading > 0 && later.heading <= heading)
+                .map_or(source.len(), |later| later.range.start)
+        };
+    }
+    blocks
+}
+
+/// Show speakers for the selection, headings (sections), paragraphs and tight list items beneath the pointer.
+fn editor_speakers(
+    ui: &mut egui::Ui,
+    output: &egui::text_edit::TextEditOutput,
+    id: egui::Id,
+    source: &str,
+    images: &[LiveImage],
+) {
+    let shown = id.with("editor-read-aloud-shown");
+    let pressed = ui.input(|input| {
+        input
+            .pointer
+            .primary_pressed()
+            .then(|| input.pointer.interact_pos())
+            .flatten()
+    });
+    if let Some(text) =
+        crate::read_aloud::selection_speaker_pressed(ui, shown, id.with("read-aloud-selection"))
+    {
+        crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
+        return;
+    }
+    if output.response.has_focus()
+        && let Some(range) = output.cursor_range
+        && !range.is_empty()
+        && !ui.input(|input| input.pointer.any_down())
+    {
+        let sorted = range.as_sorted_char_range();
+        let selected: String = source
+            .chars()
+            .skip(sorted.start.0)
+            .take(sorted.end.0 - sorted.start.0)
+            .collect();
+        let text = rustidian::speech_text::snap(source, &selected);
+        let caret = output
+            .galley
+            .pos_from_cursor(range.primary)
+            .translate(output.galley_pos.to_vec2());
+        let clip = ui.clip_rect();
+        let anchor = caret.right_bottom() + egui::vec2(10.0, 6.0);
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(
+                anchor.x.clamp(clip.left(), clip.right() - 26.0),
+                anchor.y.clamp(clip.top(), clip.bottom() - 26.0),
+            ),
+            egui::vec2(24.0, 24.0),
+        );
+        crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
+        crate::read_aloud::floating_speaker_button(
+            ui,
+            rect,
+            id.with("read-aloud-selection"),
+            "Read aloud",
+        );
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(shown, (rect, text)));
+    } else {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+    }
+
+    let Some(pointer) = ui.input(|input| input.pointer.hover_pos()) else {
+        return;
+    };
+    if !output
+        .response
+        .rect
+        .expand(24.0)
+        .intersect(ui.clip_rect())
+        .contains(pointer)
+    {
+        return;
+    }
+    type Blocks = (String, Vec<SpeechBlock>);
+    let cache_id = id.with("editor-speech-blocks");
+    let cached = ui
+        .ctx()
+        .data(|data| data.get_temp::<std::sync::Arc<Blocks>>(cache_id));
+    let blocks = cached.filter(|cache| cache.0 == source).unwrap_or_else(|| {
+        let cache = std::sync::Arc::new((source.to_owned(), collect_speech_blocks(source)));
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(cache_id, cache.clone()));
+        cache
+    });
+    let character = output
+        .galley
+        .cursor_from_pos(pointer - output.galley_pos)
+        .index
+        .0;
+    let clip = ui.clip_rect();
+    let nearest = blocks.1.partition_point(|block| block.end < character);
+    for block in blocks.1.iter().skip(nearest.saturating_sub(1)).take(4) {
+        let block_range = CCursorRange::two(CCursor::new(block.start), CCursor::new(block.end));
+        let rects = selection_rects(output, block_range, images, source);
+        let Some(first) = rects.first().copied() else {
+            continue;
+        };
+        let block_bounds = rects.iter().copied().fold(first, egui::Rect::union);
+        crate::ui_probe::record(
+            ui.ctx(),
+            format!("editor-speech-block:{}", block.index),
+            first,
+        );
+        // The heading disclosure occupies the left gutter.
+        let x = if block.heading > 0 {
+            (first.right() + 12.0).min(clip.right() - 12.0)
+        } else if first.left() - 28.0 >= clip.left() {
+            first.left() - 20.0
+        } else {
+            clip.left() + 10.0
+        };
+        let speaker =
+            egui::Rect::from_center_size(egui::pos2(x, first.center().y), egui::vec2(18.0, 18.0));
+        if block_bounds
+            .union(speaker)
+            .expand2(egui::vec2(6.0, 2.0))
+            .contains(pointer)
+            && (pressed.is_some() || !ui.input(|input| input.pointer.any_down()))
+        {
+            crate::ui_probe::record(
+                ui.ctx(),
+                format!("read-aloud-block:{}", block.index),
+                speaker,
+            );
+            let hint = if block.heading > 0 {
+                "Read this section aloud"
+            } else {
+                "Read this paragraph aloud"
+            };
+            if crate::read_aloud::speaker_button(
+                ui,
+                speaker,
+                id.with(("read-aloud-block", block.index)),
+                hint,
+            ) {
+                crate::read_aloud::speak(
+                    ui.ctx(),
+                    rustidian::speech_text::chunks(&source[block.range.start..block.section_end]),
+                );
+            }
+            break;
+        }
+    }
+}
+
 /// The painted rectangles of `range`, row by row, in screen coordinates.
 fn selection_rects(
     output: &egui::text_edit::TextEditOutput,
@@ -3617,44 +4196,69 @@ fn edited_line(before: &str, after: &str, previous: &Range<usize>) -> Range<usiz
     start..end
 }
 
-/// Quote padding belongs to every visual row, including rows introduced by HTML breaks.
+/// Quote and fenced code-block padding belong to every visual row, including wrapped rows.
+#[cfg_attr(not(test), allow(dead_code))]
 fn quote_indents(text: &str, parsed: &Markdown, job: &LayoutJob) -> Vec<f32> {
-    if parsed.quotes.is_empty() {
+    paragraph_indents(text, parsed, job, true)
+}
+
+fn paragraph_indents(text: &str, parsed: &Markdown, job: &LayoutJob, live: bool) -> Vec<f32> {
+    if (!live || parsed.quotes.is_empty()) && parsed.code_blocks.is_empty() {
         return Vec::new();
     }
-    let lines: Vec<_> = parsed
-        .quotes
-        .iter()
-        .map(|quote| {
-            let start = text[..quote.range.start].rfind('\n').map_or(0, |i| i + 1);
-            let end = text[quote.range.end..]
-                .find('\n')
-                .map_or(text.len(), |i| quote.range.end + i + 1);
-            let callouts = parsed
-                .callouts
-                .iter()
-                .filter(|callout| callout.range.contains(&quote.range.start))
-                .count();
-            (
-                start..end,
-                17.0 * quote.depth as f32 + 7.0 * callouts as f32,
-            )
-        })
-        .collect();
+    let lines: Vec<_> = if live {
+        parsed
+            .quotes
+            .iter()
+            .map(|quote| {
+                let start = text[..quote.range.start].rfind('\n').map_or(0, |i| i + 1);
+                let end = text[quote.range.end..]
+                    .find('\n')
+                    .map_or(text.len(), |i| quote.range.end + i + 1);
+                let callouts = parsed
+                    .callouts
+                    .iter()
+                    .filter(|callout| callout.range.contains(&quote.range.start))
+                    .count();
+                (
+                    start..end,
+                    17.0 * quote.depth as f32 + 7.0 * callouts as f32,
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut current = 0;
+    let mut code_index = 0;
     let mut first = true;
     let mut indents = Vec::new();
     for ((byte, _), display) in text.char_indices().zip(job.text.chars()) {
         while current < lines.len() && lines[current].0.end <= byte {
             current += 1;
         }
+        while parsed
+            .code_blocks
+            .get(code_index)
+            .is_some_and(|block| block.range.end <= byte)
+        {
+            code_index += 1;
+        }
         if first {
-            indents.push(
-                lines
-                    .get(current)
-                    .filter(|(range, _)| range.contains(&byte))
-                    .map_or(0.0, |(_, indent)| *indent),
-            );
+            let quote_indent = lines
+                .get(current)
+                .filter(|(range, _)| range.contains(&byte))
+                .map_or(0.0, |(_, indent)| *indent);
+            let code_indent = if parsed
+                .code_blocks
+                .get(code_index)
+                .is_some_and(|block| block.range.contains(&byte))
+            {
+                crate::code_ui::HORIZONTAL_INSET
+            } else {
+                0.0
+            };
+            indents.push(quote_indent + code_indent);
         }
         first = display == '\n';
     }
@@ -3734,13 +4338,16 @@ fn layout(
                 })
             });
             let image = images.iter().find(|image| {
-                let content_end = if image.math.is_some() && image.block.is_some() {
+                let content_end = if image.block.is_some() {
                     start + section.trim_end_matches(['\r', '\n']).len()
                 } else {
                     end
                 };
                 start >= image.range.start && content_end <= image.range.end
             });
+            // A rendered child owns its breaks and height. Splitting its hidden source
+            // again would reserve the child's full height for every <br>.
+            let html_break = live && style.html_break && image.is_none();
             let hidden = live
                 && (style.html_break
                     || style.task_marker
@@ -3763,7 +4370,13 @@ fn layout(
             } else {
                 18.0
             };
-            let size = size * font_scale;
+            let size = size
+                * font_scale
+                * if live && style.html.script.is_some() {
+                    0.75
+                } else {
+                    1.0
+                };
             let family = if style.code || style.math {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
@@ -3798,7 +4411,7 @@ fn layout(
             let highlighted = matched
                 .is_some_and(|range| character < range.end && character + count > range.start);
             let break_display;
-            let display = if live && style.html_break {
+            let display = if html_break {
                 break_display = section.replace('<', "\n");
                 break_display.as_str()
             } else if live && style.bullet && !active && !style.task_marker {
@@ -3839,7 +4452,7 @@ fn layout(
             let format = egui::TextFormat {
                 font_id: FontId::new(size, family),
                 color,
-                line_height: Some(if live && style.html_break {
+                line_height: Some(if html_break {
                     0.01
                 } else if live && style.callout_header && !active {
                     callout_heights
@@ -3863,7 +4476,11 @@ fn layout(
                 } else {
                     29.16 * font_scale
                 }),
-                valign: if image.is_some() && active {
+                valign: if live && style.html.script == Some(1) {
+                    egui::Align::Min
+                } else if live && style.html.script == Some(-1) {
+                    egui::Align::Max
+                } else if image.is_some() && active {
                     egui::Align::Min
                 } else {
                     egui::Align::Center
@@ -3899,7 +4516,7 @@ fn layout(
                     Color32::from_rgba_unmultiplied(red, green, blue, alpha)
                 } else if highlighted {
                     Color32::from_rgba_unmultiplied(170, 135, 20, 95)
-                } else if style.code && !style.block_code {
+                } else if style.code && !style.block_code && !hidden {
                     ui.visuals().code_bg_color
                 } else {
                     Color32::TRANSPARENT
@@ -3920,6 +4537,15 @@ fn layout(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dictation_replaces_the_selected_unicode_characters() {
+        let mut text = "A سلام Z".to_owned();
+        super::replace_chars(&mut text, 2..6, "hello");
+        assert_eq!(text, "A hello Z");
+        super::replace_chars(&mut text, 7..7, "!");
+        assert_eq!(text, "A hello! Z");
+    }
+
     #[test]
     fn heading_menu_toggles_the_lines_of_the_selection() {
         // (text, selection, level) -> (text, selection), selections in characters.
@@ -4150,6 +4776,49 @@ mod tests {
     }
 
     #[test]
+    fn inactive_html_breaks_reserve_the_rendered_child_height_once() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        for breaks in ["<br>", "<br><br>"] {
+            let source = format!("<table><tr><td>Before{breaks}After</td></tr></table>\n\nTail");
+            let end = source.find('\n').unwrap();
+            let parsed = Markdown::parse(&source);
+            let image = LiveImage {
+                range: 0..end,
+                block: Some(0..end),
+                uri: String::new(),
+                size: egui::vec2(916.0, 100.0),
+                html: Some(source[..end].into()),
+                alt: String::new(),
+                math: None,
+                note: None,
+            };
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let job = layout(
+                    ui,
+                    &source,
+                    &parsed,
+                    920.0,
+                    Decorations {
+                        live: true,
+                        active_line: None,
+                        matched: None,
+                        images: std::slice::from_ref(&image),
+                    },
+                );
+                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                assert_eq!(galley.text(), source);
+                let tail = galley.pos_from_cursor(CCursor::new(end + 2));
+                assert!(
+                    (116.0..160.0).contains(&tail.top()),
+                    "HTML child height must be reserved once: {breaks}: {tail:?}"
+                );
+            })
+            .drop_without_applying_deltas();
+        }
+    }
+
+    #[test]
     fn inactive_display_math_hides_opening_delimiters_and_retains_source_positions() {
         let source = "Before\n\n$$\nx^2\n$$\n\nAfter";
         let parsed = Markdown::parse(source);
@@ -4158,6 +4827,8 @@ mod tests {
             block: Some(8..17),
             uri: "bytes://math-layout-test.svg".into(),
             size: egui::vec2(80.0, 40.0),
+            html: None,
+            alt: String::new(),
             math: Some(0),
             note: None,
         };
@@ -4610,6 +5281,73 @@ mod tests {
     }
 
     #[test]
+    fn markdown_layout_keeps_wrapped_code_rows_inside_their_inset() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let source = "```rust\nlet long_line_value = alpha_bravo_charlie_delta_echo_foxtrot_golf_hotel_india_juliet;\n```\n\nOutside.\n";
+        let parsed = Markdown::parse(source);
+        let code_start = source.find("let long_line_value").unwrap();
+        let code_end = code_start + source[code_start..].find('\n').unwrap();
+        let code_chars = source[..code_start].chars().count()..source[..code_end].chars().count();
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            crate::theme::document_style(ui, crate::theme::DEFAULT_DOCUMENT_FONT_SIZE);
+            for live in [false, true] {
+                for width in [180.0, 320.0, 900.0] {
+                    let job = layout(
+                        ui,
+                        source,
+                        &parsed,
+                        width,
+                        Decorations {
+                            live,
+                            active_line: None,
+                            matched: None,
+                            images: &[],
+                        },
+                    );
+                    let indents = paragraph_indents(source, &parsed, &job, live);
+                    let (galley, previous) = ui.fonts_mut(|fonts| {
+                        fonts.layout_job_incremental_indented(job.clone(), None, &indents)
+                    });
+                    let (reused, _) = ui.fonts_mut(|fonts| {
+                        fonts.layout_job_incremental_indented(job, Some(&previous), &indents)
+                    });
+                    let mut character = 0;
+                    let mut visible_rows = 0;
+                    for (row, reused_row) in galley.rows.iter().zip(&reused.rows) {
+                        assert!(
+                            Arc::ptr_eq(&row.row, &reused_row.row),
+                            "Unchanged paragraphs must still reuse layout"
+                        );
+                        let row_end = character + row.char_count_including_newline().0;
+                        if character < code_chars.end
+                            && row_end > code_chars.start
+                            && row.glyphs.iter().any(|glyph| glyph.chr.is_alphabetic())
+                        {
+                            visible_rows += 1;
+                            assert!(
+                                row.rect().left() >= crate::code_ui::HORIZONTAL_INSET - 0.5,
+                                "live={live} width={width}: wrapped code row crossed left inset: {:?}",
+                                row.rect()
+                            );
+                            assert!(
+                                row.rect().right() <= width + 1.0,
+                                "live={live} width={width}: wrapped code row crossed right edge: {:?}",
+                                row.rect()
+                            );
+                        }
+                        character = row_end;
+                    }
+                    if width < 900.0 {
+                        assert!(visible_rows >= 2, "live={live} width={width}: expected wrap");
+                    }
+                }
+            }
+        })
+        .drop_without_applying_deltas();
+    }
+
+    #[test]
     fn markdown_layout_html_breaks_preserve_character_indices_and_source_mode() {
         let ctx = egui::Context::default();
         crate::theme::install_fonts(&ctx);
@@ -4754,5 +5492,57 @@ mod tests {
             "The selection waits a moment for the editor's focus"
         );
         assert!(!waiting[7], "The wait for the editor's focus must end");
+    }
+
+    #[test]
+    fn speech_blocks_include_headings_sections_paragraphs_and_tight_lists() {
+        let source =
+            "# Focus\n\nFirst paragraph.\n\n1. Tight one\n2. Tight two\n\n## Next\n\nTail.\n";
+        let blocks = super::collect_speech_blocks(source);
+        assert_eq!(blocks.len(), 6);
+        assert_eq!(blocks[0].heading, 1);
+        assert_eq!(blocks[0].index, 0);
+        assert_eq!(
+            &source[blocks[0].range.start..blocks[0].section_end],
+            source
+        );
+        assert_eq!(blocks[1].heading, 0);
+        assert_eq!(blocks[1].index, 1);
+        assert_eq!(&source[blocks[1].range.clone()], "First paragraph.");
+        assert_eq!(&source[blocks[2].range.clone()], "1. Tight one");
+        assert_eq!(&source[blocks[3].range.clone()], "2. Tight two");
+        assert_eq!(blocks[4].heading, 2);
+        assert_eq!(
+            &source[blocks[4].range.start..blocks[4].section_end],
+            "## Next\n\nTail.\n"
+        );
+        assert_eq!(&source[blocks[5].range.clone()], "Tail.");
+    }
+
+    #[test]
+    fn find_bar_requests_match_scroll_without_stealing_input_focus() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut document = rustidian::vault::Document::new("Note.md".into());
+        document.text = "first needle\nsecond needle\n".into();
+        let mut tab = Tab::new(document);
+        let mut find = Find {
+            open: true,
+            focus: true,
+            query: "needle".into(),
+            ..Default::default()
+        };
+        let mut editor = Editor::default();
+        let mut files = FileMatcher::new(Vec::new());
+        let id = egui::Id::unique("note-editor");
+
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            find_bar(ui, &mut find, &mut tab, id);
+            assert_eq!(find.scroll_to_match, Some(6));
+            editor.show(ui, &mut tab, id, &mut find, &mut files, None, &[]);
+            assert_eq!(find.scroll_to_match, None);
+        })
+        .drop_without_applying_deltas();
+        assert!(!ctx.memory(|memory| memory.has_focus(id)));
     }
 }

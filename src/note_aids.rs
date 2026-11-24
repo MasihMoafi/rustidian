@@ -178,6 +178,40 @@ impl Config {
             .into_owned()
     }
 
+    /// The day a link names when it points at a daily note that does not exist yet:
+    /// its file name matches the daily format and it sits in the daily folder (or
+    /// names no folder). Following it creates that day's note from the template.
+    pub fn linked_daily_date(&self, from: &Path, target: &str) -> Option<NaiveDate> {
+        let target = target.split(['#', '|']).next()?.trim();
+        let target = crate::paths::decode(target).unwrap_or_else(|| target.to_owned());
+        let target = Path::new(&target);
+        let name = target.file_stem()?.to_str()?;
+        let format = match self.daily.format.trim() {
+            "" => "YYYY-MM-DD",
+            format => format,
+        };
+        let pattern = format
+            .replace("YYYY", "%Y")
+            .replace("MM", "%m")
+            .replace("DD", "%d");
+        let date = NaiveDate::parse_from_str(name, &pattern).ok()?;
+        let noon = date.and_hms_opt(12, 0, 0)?.and_utc().fixed_offset();
+        if moment_format(noon, format, "YYYY-MM-DD") != name {
+            return None;
+        }
+        let folder = Path::new(self.daily.folder.trim().trim_matches('/'));
+        let parent = target
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        let in_daily_folder = parent.is_none_or(|parent| {
+            parent == folder
+                || from
+                    .parent()
+                    .is_some_and(|base| base.join(parent) == folder)
+        });
+        in_daily_folder.then_some(date)
+    }
+
     pub fn create_daily(&self, vault: &mut Vault, now: DateTime<FixedOffset>) -> Result<PathBuf> {
         let name = moment_format(now, self.daily.format.trim(), "YYYY-MM-DD");
         let path = relative(&self.daily.folder, true)?.join(relative(&name, false)?);
@@ -194,6 +228,57 @@ impl Config {
         }
         vault.save(&mut document)?;
         Ok(path)
+    }
+
+    /// Whether `root` has its own daily-notes setup (Settings → Daily notes).
+    pub fn has_daily_setup(root: &Path) -> bool {
+        root.join(".obsidian/daily-notes.json").is_file()
+    }
+
+    /// Today's note of the vault at `root`, created there from that vault's daily template
+    /// when missing; an existing note is never rewritten. For a window whose own vault has
+    /// no daily notes (7 Nov: the swarm-hackathon window opened an empty note instead of
+    /// Main Vault's day page).
+    pub fn daily_in(root: &Path, now: DateTime<FixedOffset>) -> Result<PathBuf> {
+        let (config, _) = Self::from_obsidian_partial(root);
+        let name = moment_format(now, config.daily.format.trim(), "YYYY-MM-DD");
+        let path = crate::paths::markdown_name(
+            &relative(&config.daily.folder, true)?.join(relative(&name, false)?),
+        );
+        let file = root.join(&path);
+        if file.exists() {
+            return Ok(file);
+        }
+        let title = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = if config.daily.template.trim().is_empty() {
+            String::new()
+        } else {
+            let template = root.join(crate::paths::markdown_name(&relative(
+                &config.daily.template,
+                false,
+            )?));
+            let source = std::fs::read_to_string(&template)
+                .map_err(|error| format!("Cannot read the daily template: {error}"))?;
+            config.expand(&source, &title, now)
+        };
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+        {
+            Ok(mut created) => std::io::Write::write_all(&mut created, text.as_bytes())
+                .map_err(|error| error.to_string())?,
+            // Another window made it first; keep its bytes.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        Ok(file)
     }
 
     pub fn create_unique(&self, vault: &mut Vault, now: DateTime<FixedOffset>) -> Result<PathBuf> {

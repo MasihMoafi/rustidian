@@ -17,9 +17,24 @@ impl AsRef<str> for Entry {
 pub struct FileMatcher {
     entries: Vec<Entry>,
     matcher: Matcher,
+    generation: u64,
 }
 
 impl FileMatcher {
+    fn with_entries(entries: Vec<Entry>) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            entries,
+            matcher: Matcher::new(Config::DEFAULT.match_paths()),
+            generation: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
+    }
+
+    /// Different for every list built, so ranked results can be kept until the list changes.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn folders(vault: &crate::vault::Vault, current: &std::path::Path) -> Self {
         let mut paths = vec![current.to_owned(), PathBuf::new()];
         paths.extend(vault.folders.iter().cloned());
@@ -36,10 +51,7 @@ impl FileMatcher {
                 path,
             })
             .collect();
-        Self {
-            entries,
-            matcher: Matcher::new(Config::DEFAULT.match_paths()),
-        }
+        Self::with_entries(entries)
     }
 
     pub fn from_vault(vault: &crate::vault::Vault) -> Self {
@@ -61,10 +73,23 @@ impl FileMatcher {
                 path,
             })
             .collect();
-        Self {
-            entries,
-            matcher: Matcher::new(Config::DEFAULT.match_paths()),
-        }
+        Self::with_entries(entries)
+    }
+
+    /// Files outside the vault, matched by their path below `root`.
+    pub fn elsewhere(root: &std::path::Path, paths: Vec<PathBuf>) -> Self {
+        let entries = paths
+            .into_iter()
+            .map(|path| Entry {
+                label: path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .into_owned(),
+                path,
+            })
+            .collect();
+        Self::with_entries(entries)
     }
 
     pub fn from_notes(notes: &[crate::vault::Note]) -> Self {
@@ -111,22 +136,32 @@ impl FileMatcher {
         limit: usize,
         include: impl Fn(&std::path::Path) -> bool,
     ) -> Vec<PathBuf> {
+        // An exact name or path matches whatever its letter case: "agents.md"
+        // finds AGENTS.md.
+        let lower = query.to_lowercase();
         let mut exact: Vec<_> = self
             .entries
             .iter()
             .filter(|entry| {
                 !query.is_empty()
                     && include(&entry.path)
-                    && (entry.path == std::path::Path::new(query)
+                    && (entry.path.to_string_lossy().to_lowercase() == lower
                         || entry
                             .path
                             .file_name()
-                            .is_some_and(|name| name == std::ffi::OsStr::new(query)))
+                            .is_some_and(|name| name.to_string_lossy().to_lowercase() == lower))
             })
             .collect();
         // A qualified path selects that file even when other folders contain
-        // the same filename. Keep fuzzy order for every remaining candidate.
-        exact.sort_by_key(|entry| entry.path != std::path::Path::new(query));
+        // the same filename; among files of one name the least deeply nested
+        // comes first ("agents.md" means ~/code/AGENTS.md, not one in each project).
+        // Keep fuzzy order for every remaining candidate.
+        exact.sort_by_key(|entry| {
+            (
+                entry.path != std::path::Path::new(query),
+                entry.path.components().count(),
+            )
+        });
         let fuzzy = Atom::new(
             query,
             CaseMatching::Smart,

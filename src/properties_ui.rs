@@ -133,10 +133,7 @@ impl Properties {
             Ok(Some(parsed)) => parsed,
             Ok(None) => return false,
             Err(error) => {
-                ui.colored_label(
-                    egui::Color32::from_rgb(220, 135, 110),
-                    RichText::new(error).size(13.0),
-                );
+                crate::notices::once(ui.ctx(), ("properties", &tab.document.path), error);
                 return false;
             }
         };
@@ -511,11 +508,8 @@ impl Properties {
                 Err(error) => self.error = Some(error),
             }
         }
-        if let Some(error) = &self.error {
-            ui.colored_label(
-                egui::Color32::from_rgb(220, 135, 110),
-                RichText::new(error).size(12.0),
-            );
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ui.ctx(), error);
         }
         let add = ui
             .scope(|ui| {

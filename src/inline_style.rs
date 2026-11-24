@@ -14,6 +14,8 @@ pub struct Style {
     pub italic: Option<bool>,
     pub strike: Option<bool>,
     pub underline: Option<bool>,
+    /// Superscript (+1) or subscript (-1), with ordinary inherited text at None.
+    pub script: Option<i8>,
 }
 
 impl Style {
@@ -24,6 +26,7 @@ impl Style {
         self.italic = other.italic.or(self.italic);
         self.strike = other.strike.or(self.strike);
         self.underline = other.underline.or(self.underline);
+        self.script = other.script.or(self.script);
     }
 }
 

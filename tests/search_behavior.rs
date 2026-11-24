@@ -156,3 +156,96 @@ fn aliases_are_fuzzy_matched_without_duplicate_file_results() {
     assert_eq!(matcher.rank("", 10).len(), 2);
     assert_eq!(matcher.rank("Home", 10).len(), 1);
 }
+
+/// 10 Nov: Ctrl+O "agents.md" showed an unrelated note, because the file was
+/// AGENTS.md outside the vault. Files elsewhere are listed (hidden, dependency
+/// folders and the vault itself left out) and an exact name wins in any case.
+#[test]
+fn ctrl_o_finds_a_file_outside_the_vault_by_its_exact_name_in_any_case() {
+    let home = tempfile::tempdir().unwrap();
+    let vault = home.path().join("notes");
+    for (path, text) in [
+        ("notes/Steering agents with CLAUDE.md.md", "in the vault"),
+        ("p/AGENTS.md", "rules"),
+        ("p/app/node_modules/pkg/AGENTS.md", "dependency"),
+        ("p/.cache/AGENTS.md", "hidden"),
+        ("p/cover.png", "not text"),
+    ] {
+        let file = home.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, text).unwrap();
+    }
+    let found = rustidian::elsewhere::scan(home.path(), &vault);
+    assert_eq!(found, vec![home.path().join("p/AGENTS.md")], "{found:?}");
+
+    let mut matcher = FileMatcher::elsewhere(home.path(), found);
+    for query in ["agents.md", "AGENTS.MD", "Agents.md"] {
+        assert_eq!(
+            matcher.rank(query, 5)[0],
+            home.path().join("p/AGENTS.md"),
+            "{query}"
+        );
+    }
+    let mut vault_files = FileMatcher::new([PathBuf::from("Agents.md"), PathBuf::from("Other.md")]);
+    assert_eq!(
+        vault_files.rank("agents.md", 5)[0],
+        PathBuf::from("Agents.md")
+    );
+}
+
+#[test]
+fn ctrl_o_lists_the_least_nested_file_of_a_name_first() {
+    let home = tempfile::tempdir().unwrap();
+    let names = [
+        "p/app/docs/AGENTS.md",
+        "p/rustidian/AGENTS.md",
+        "p/AGENTS.md",
+    ];
+    for path in names {
+        let file = home.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "rules").unwrap();
+    }
+    let found = rustidian::elsewhere::scan(home.path(), &home.path().join("vault"));
+    let shallow_first: Vec<_> = names
+        .iter()
+        .rev()
+        .map(|path| home.path().join(path))
+        .collect();
+    assert_eq!(found, shallow_first, "nearest folders are read first");
+    let mut matcher = FileMatcher::elsewhere(home.path(), found.into_iter().rev().collect());
+    assert_eq!(matcher.rank("agents.md", 3), shallow_first);
+}
+
+#[test]
+fn ctrl_o_finds_folders_by_name_least_nested_first() {
+    let home = tempfile::tempdir().unwrap();
+    for folder in [
+        "p/skills",
+        "p/Matilda/skills",
+        "p/.hidden/skills",
+        "p/app/node_modules/skills",
+    ] {
+        std::fs::create_dir_all(home.path().join(folder)).unwrap();
+    }
+    std::fs::write(home.path().join("p/skills/README.md"), "skills").unwrap();
+    let (files, folders) = rustidian::elsewhere::scan_all(home.path(), &home.path().join("vault"));
+    assert_eq!(files, vec![home.path().join("p/skills/README.md")]);
+    assert!(
+        !folders
+            .iter()
+            .any(|folder| folder.to_string_lossy().contains("hidden")
+                || folder.to_string_lossy().contains("node_modules")),
+        "{folders:?}"
+    );
+    let mut paths = files;
+    paths.extend(folders);
+    let mut matcher = FileMatcher::elsewhere(home.path(), paths);
+    assert_eq!(
+        matcher.rank("skills", 2),
+        vec![
+            home.path().join("p/skills"),
+            home.path().join("p/Matilda/skills")
+        ]
+    );
+}

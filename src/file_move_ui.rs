@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Default)]
 pub struct Manager {
+    revision: u64,
     picker: Option<Picker>,
     trash: Option<Vec<PathBuf>>,
     trash_focus: bool,
@@ -36,6 +37,9 @@ pub enum Action {
 }
 
 impl Manager {
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
     pub fn active(&self) -> bool {
         self.picker.is_some() || self.updates.is_some() || self.trash.is_some()
     }
@@ -45,6 +49,7 @@ impl Manager {
     }
 
     pub fn open_many(&mut self, vault: &Vault, sources: Vec<PathBuf>) {
+        self.revision += 1;
         let current = sources
             .first()
             .and_then(|source| source.parent())
@@ -63,6 +68,7 @@ impl Manager {
     }
 
     pub fn moved(&mut self, updates: Option<LinkUpdates>) {
+        self.revision += 1;
         self.picker = None;
         self.error = None;
         self.updates = updates;
@@ -80,6 +86,10 @@ impl Manager {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> Option<Action> {
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ctx, error);
+        }
+
         if let Some(paths) = self.trash.clone() {
             let focus = std::mem::take(&mut self.trash_focus);
             let mut confirm = false;
@@ -249,6 +259,7 @@ impl Manager {
                         ctx.request_repaint();
                     }
                     if field.changed() {
+                        self.revision += 1;
                         picker.selected = 0;
                         picker.paths = picker.folders.rank_folders(picker.query.trim(), usize::MAX);
                         self.error = None;
@@ -344,9 +355,7 @@ impl Manager {
                         ui.weak("No existing folders found.");
                     });
                 }
-                if let Some(error) = &self.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                }
+
                 ui.add_space(crate::theme::space::S);
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space((ui.available_width() - 380.0).max(0.0) / 2.0);

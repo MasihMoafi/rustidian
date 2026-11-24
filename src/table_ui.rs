@@ -27,6 +27,27 @@ struct Draft {
     cell: CellDraft,
 }
 
+struct LinkCell {
+    key: CellKey,
+    target: String,
+    rect: egui::Rect,
+    layer: egui::LayerId,
+}
+
+struct LinkPress {
+    key: CellKey,
+    origin: egui::Pos2,
+    moved: bool,
+    double: bool,
+}
+
+struct PendingLink {
+    key: CellKey,
+    target: String,
+    position: egui::Pos2,
+    deadline: f64,
+}
+
 /// A rectangular cell range, chosen by dragging, Shift+click or a row/column handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Selection {
@@ -109,6 +130,8 @@ pub struct Tables {
     exit: Option<usize>,
     selection: Option<Selection>,
     drag: Option<CellKey>,
+    link_press: Option<LinkPress>,
+    pending_link: Option<PendingLink>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,7 +181,11 @@ fn take_action(
     Some(action)
 }
 
-fn defer_from(events: &mut Vec<egui::Event>, deferred: &mut Vec<egui::Event>, index: usize) {
+pub(crate) fn defer_from(
+    events: &mut Vec<egui::Event>,
+    deferred: &mut Vec<egui::Event>,
+    index: usize,
+) {
     for event in events.split_off(index) {
         if matches!(
             event,
@@ -489,12 +516,18 @@ impl Tables {
                 ..Default::default()
             };
         }
+        if self.tab != Some(tab.id()) {
+            self.link_press = None;
+            self.pending_link = None;
+        }
         self.tab = Some(tab.id());
         if !live {
             self.focus = None;
             self.selection = None;
             self.deferred.clear();
             self.draft = None;
+            self.link_press = None;
+            self.pending_link = None;
             return;
         }
         if let Some(key) = self.focus {
@@ -642,6 +675,19 @@ impl Tables {
         origins: &[egui::Pos2],
     ) -> Option<String> {
         let mut follow = None;
+        let events = ui.input(|input| input.raw.events.clone());
+        let link_positions: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+            .collect();
+        let mut link_cells = Vec::new();
         let mut edit = None;
         let mut insertion = None;
         let mut separate_edit = false;
@@ -770,16 +816,28 @@ impl Tables {
                                 let mut layouter =
                                     |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, _width: f32| {
                                         if focused {
-                                            ui.fonts_mut(|fonts| {
-                                                fonts.layout_no_wrap(
-                                                    buffer.as_str().into(),
-                                                    egui::FontId::new(
+                                            let mut job = egui::text::LayoutJob::default();
+                                            job.wrap.max_width = inner.width().max(1.0);
+                                            let line_height = crate::theme::document_size(ui, 23.4);
+                                            job.first_row_min_height = line_height;
+                                            job.append(
+                                                buffer.as_str(),
+                                                0.0,
+                                                egui::TextFormat {
+                                                    font_id: egui::FontId::new(
                                                         crate::theme::document_size(ui, 18.0),
-                                                        crate::theme::fonts::text("regular"),
+                                                        crate::theme::fonts::text(if row == 0 {
+                                                            "semibold"
+                                                        } else {
+                                                            "regular"
+                                                        }),
                                                     ),
-                                                    ui.visuals().text_color(),
-                                                )
-                                            })
+                                                    color: ui.visuals().text_color(),
+                                                    line_height: Some(line_height),
+                                                    ..Default::default()
+                                                },
+                                            );
+                                            ui.fonts_mut(|fonts| fonts.layout_job(job))
                                         } else {
                                             rendered.clone()
                                         }
@@ -791,12 +849,18 @@ impl Tables {
                                 };
                                 let response = ui.put(
                                     inner,
-                                    TextEdit::singleline(&mut cell.text)
+                                    TextEdit::multiline(&mut cell.text)
                                         .id(field_id)
+                                        .desired_rows(1)
+                                        .return_key(None)
                                         .auto_pair(true)
                                         .font(egui::FontId::new(
                                             crate::theme::document_size(ui, 18.0),
-                                            crate::theme::fonts::text("regular"),
+                                            crate::theme::fonts::text(if row == 0 {
+                                                "semibold"
+                                            } else {
+                                                "regular"
+                                            }),
                                         ))
                                         .frame(egui::Frame::NONE)
                                         .margin(0)
@@ -836,6 +900,12 @@ impl Tables {
                                     );
                                 }
                                 if response.changed() {
+                                    if cell.text.contains(['\n', '\r']) {
+                                        cell.text = cell
+                                            .text
+                                            .replace("\r\n", " ")
+                                            .replace(['\n', '\r'], " ");
+                                    }
                                     separate_edit = discrete;
                                     edit = Some((
                                         table,
@@ -854,6 +924,28 @@ impl Tables {
                                         .and_then(|state| state.cursor.char_range())
                                         .map_or(0, |range| range.primary.index.0);
                                     follow = rustidian::editor::link_at(&cell.text, caret);
+                                }
+                                if !link_positions.is_empty()
+                                    && response.enabled()
+                                    && ui.memory(|memory| {
+                                        memory.allows_interaction(response.layer_id)
+                                    })
+                                    && link_positions.iter().any(|pos| {
+                                        let local = ui
+                                            .ctx()
+                                            .layer_transform_from_global(response.layer_id)
+                                            .map_or(*pos, |transform| transform * *pos);
+                                        response.interact_rect.contains(local)
+                                            && ui.ctx().layer_id_at(*pos) == Some(response.layer_id)
+                                    })
+                                    && let Some(target) = rustidian::editor::sole_link(&cell.text)
+                                {
+                                    link_cells.push(LinkCell {
+                                        key,
+                                        target,
+                                        rect: response.interact_rect,
+                                        layer: response.layer_id,
+                                    });
                                 }
                                 if let Some(direction) = nav {
                                     navigation = Some((key, direction));
@@ -1379,6 +1471,12 @@ impl Tables {
                     });
             });
         }
+        if follow.is_none() && edit.is_none() && insertion.is_none() {
+            follow = self.link_click(ui, &link_cells, &events);
+        } else {
+            self.link_press = None;
+            self.pending_link = None;
+        }
         // A press outside every table ends the range; handles and menus keep it.
         let outside = ui.input(|input| {
             input.pointer.any_pressed()
@@ -1456,10 +1554,105 @@ impl Tables {
             self.focus = None;
             ui.ctx().request_repaint();
         }
-        if let Some(error) = &self.error {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+        if let Some(error) = self.error.take() {
+            crate::notices::report(ui.ctx(), error);
         }
         follow
+    }
+
+    fn link_click(
+        &mut self,
+        ui: &egui::Ui,
+        cells: &[LinkCell],
+        events: &[egui::Event],
+    ) -> Option<String> {
+        if self.link_press.is_none() && self.pending_link.is_none() && cells.is_empty() {
+            return None;
+        }
+        let options = ui.ctx().options(|options| options.input_options);
+        let now = ui.input(|input| input.time);
+        let hit = |pos: egui::Pos2| {
+            cells.iter().find(|cell| {
+                let local = ui
+                    .ctx()
+                    .layer_transform_from_global(cell.layer)
+                    .map_or(pos, |transform| transform * pos);
+                cell.rect.contains(local) && ui.ctx().layer_id_at(pos) == Some(cell.layer)
+            })
+        };
+        for event in events {
+            match event {
+                egui::Event::PointerMoved(pos) => {
+                    if let Some(press) = &mut self.link_press {
+                        press.moved |= press.origin.distance(*pos) > options.max_click_dist;
+                    }
+                }
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                } => {
+                    let pending = self.pending_link.take();
+                    self.link_press = hit(*pos)
+                        .filter(|_| modifiers.matches_exact(egui::Modifiers::NONE))
+                        .map(|cell| LinkPress {
+                            key: cell.key,
+                            origin: *pos,
+                            moved: false,
+                            double: pending.is_some_and(|previous| {
+                                previous.key == cell.key
+                                    && now <= previous.deadline
+                                    && previous.position.distance(*pos) <= options.max_click_dist
+                            }),
+                        });
+                }
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers,
+                } => {
+                    if let Some(press) = self.link_press.take()
+                        && !press.double
+                        && !press.moved
+                        && press.origin.distance(*pos) <= options.max_click_dist
+                        && modifiers.matches_exact(egui::Modifiers::NONE)
+                        && let Some(cell) = hit(*pos).filter(|cell| cell.key == press.key)
+                    {
+                        // A single click opens after the double-click interval; a second
+                        // press cancels navigation and leaves TextEdit to select the word.
+                        self.pending_link = Some(PendingLink {
+                            key: cell.key,
+                            target: cell.target.clone(),
+                            position: *pos,
+                            deadline: now + options.max_double_click_delay,
+                        });
+                    }
+                }
+                egui::Event::PointerGone => self.link_press = None,
+                egui::Event::PointerButton { .. }
+                | egui::Event::Key { pressed: true, .. }
+                | egui::Event::Text(_)
+                | egui::Event::Paste(_)
+                | egui::Event::Cut
+                | egui::Event::Copy
+                | egui::Event::Ime(_)
+                | egui::Event::WindowFocused(false) => {
+                    self.link_press = None;
+                    self.pending_link = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(pending) = &self.pending_link {
+            if now >= pending.deadline {
+                return self.pending_link.take().map(|link| link.target);
+            }
+            ui.ctx()
+                .request_repaint_after_secs((pending.deadline - now) as f32);
+        }
+        None
     }
 
     /// While a cell range is selected, copy, cut, Delete/Backspace and Escape act on the range.

@@ -70,10 +70,34 @@ pub mod space {
     pub const ROW: f32 = 28.0;
     /// Height of every button, text field and toggle in a row of controls.
     pub const CONTROL: f32 = 32.0;
+    /// A visible gutter beside every scrollable list, document and menu.
+    pub const SCROLL_GAP: f32 = S;
+    pub const SCROLL_WIDTH: f32 = 6.0;
+    pub const SETTINGS_CONTROL_WIDTH: f32 = 180.0;
+    pub const PLAYER_MIN_WIDTH: f32 = 240.0;
+    pub const PLAYER_MAX_WIDTH: f32 = 560.0;
 
     pub fn margin(horizontal: f32, vertical: f32) -> eframe::egui::Margin {
         eframe::egui::Margin::symmetric(horizontal as i8, vertical as i8)
     }
+}
+
+pub mod radius {
+    pub const ROW: u8 = 4;
+    pub const CONTROL: u8 = 6;
+    pub const CARD: u8 = 8;
+    pub const DIALOG: u8 = 10;
+}
+
+/// Mix opaque surface colors without tying them to a widget's hover/focus state.
+fn blend(surface: Color32, foreground: Color32, amount: f32) -> Color32 {
+    let channel =
+        |a: u8, b: u8| (f32::from(a) * (1.0 - amount) + f32::from(b) * amount).round() as u8;
+    Color32::from_rgb(
+        channel(surface.r(), foreground.r()),
+        channel(surface.g(), foreground.g()),
+        channel(surface.b(), foreground.b()),
+    )
 }
 
 /// A horizontal bar of controls: shared height, inset and gap, everything centred on one line.
@@ -212,12 +236,13 @@ pub fn hover_fill(ui: &egui::Ui) -> Color32 {
 /// Paint the current response without waiting for another layout pass.
 pub fn control_feedback(ui: &egui::Ui, response: &egui::Response) {
     if response.enabled() && (response.hovered() || response.is_pointer_button_down_on()) {
-        ui.painter().rect_filled(response.rect, 4, hover_fill(ui));
+        ui.painter()
+            .rect_filled(response.rect, radius::ROW, hover_fill(ui));
     }
     if response.has_focus() {
         ui.painter().rect_stroke(
             response.rect,
-            4,
+            radius::ROW,
             Stroke::new(1.0, interactive(ui)),
             egui::StrokeKind::Inside,
         );
@@ -262,6 +287,17 @@ pub fn interactive(ui: &egui::Ui) -> Color32 {
 }
 
 pub fn heading(ui: &egui::Ui, level: u8) -> Color32 {
+    if palette::current(ui.ctx()) != palette::Palette::Teal {
+        return blend(
+            ui.visuals().text_color(),
+            accent(ui),
+            match level {
+                2 => 0.5,
+                3 => 0.35,
+                _ => 0.0,
+            },
+        );
+    }
     match (ui.visuals().dark_mode, level) {
         (true, 1) => Color32::from_rgb(244, 240, 232),
         (true, 2) => Color32::from_rgb(217, 231, 228),
@@ -314,7 +350,6 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
     } else {
         Color32::from_rgb(34, 42, 43)
     });
-    visuals.weak_text_color = Some(if dark { DARK_MUTED } else { LIGHT_MUTED });
     visuals.code_bg_color = if dark {
         Color32::from_rgb(27, 32, 35)
     } else {
@@ -327,12 +362,6 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
     };
     visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 110);
     visuals.selection.stroke = Stroke::new(1.0, visuals.hyperlink_color);
-    let border = if dark {
-        Color32::from_rgb(44, 52, 55)
-    } else {
-        Color32::from_rgb(209, 215, 211)
-    };
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, border);
     visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     visuals.widgets.inactive.bg_fill = if dark {
         Color32::from_rgb(27, 32, 35)
@@ -346,7 +375,6 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
     };
     visuals.widgets.active.weak_bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 55);
     visuals.widgets.hovered.bg_fill = visuals.widgets.hovered.weak_bg_fill;
-    visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(7);
     visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
     let palette = palette::current(ctx);
@@ -367,6 +395,26 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
         visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.3);
         visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
     }
+    // Related surfaces keep the palette's temperature in both schemes.
+    let background = visuals.window_fill;
+    let foreground = visuals.text_color();
+    visuals.weak_text_color = Some(blend(background, foreground, 0.64));
+    visuals.faint_bg_color = blend(background, Color32::WHITE, if dark { 0.025 } else { 0.42 });
+    visuals.widgets.noninteractive.bg_stroke =
+        Stroke::new(1.0, blend(background, foreground, 0.15));
+    for widget in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        widget.corner_radius = egui::CornerRadius::same(radius::CONTROL);
+        widget.expansion = 0.0;
+    }
+    // The same track and thumb serve every ScrollArea. Keep text/focus colors
+    // independent; light handles darken on hover, dark handles brighten.
+    let handle_color = blend(background, foreground, 0.8);
+    let track_color = blend(background, foreground, 0.1);
     ctx.style_mut_of(egui::Theme::from_dark_mode(dark), |style| {
         style.visuals = visuals;
         style.animation_time = 0.12;
@@ -376,20 +424,22 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
         style.spacing.button_padding = egui::vec2(space::M, space::S);
         style.spacing.window_margin = space::margin(space::XL, space::XL);
         style.spacing.scroll = egui::style::ScrollStyle {
-            bar_width: 6.0,
-            floating_width: 6.0,
-            floating_allocated_width: 6.0,
+            bar_width: space::SCROLL_WIDTH,
+            floating_width: space::SCROLL_WIDTH,
+            floating_allocated_width: space::SCROLL_WIDTH + space::SCROLL_GAP,
+            bar_inner_margin: space::SCROLL_GAP,
             handle_min_length: 36.0,
-            foreground_color: true,
-            dormant_background_opacity: 0.04,
-            active_background_opacity: 0.07,
-            interact_background_opacity: 0.10,
-            dormant_handle_opacity: if dark { 0.42 } else { 0.62 },
-            active_handle_opacity: if dark { 0.44 } else { 0.66 },
-            interact_handle_opacity: if dark { 0.40 } else { 0.58 },
+            handle_color: Some(handle_color),
+            track_color: Some(track_color),
+            dormant_background_opacity: 0.08,
+            active_background_opacity: 0.12,
+            interact_background_opacity: 0.20,
+            dormant_handle_opacity: if dark { 0.50 } else { 0.26 },
+            active_handle_opacity: if dark { 0.52 } else { 0.28 },
+            interact_handle_opacity: if dark { 0.62 } else { 0.44 },
             ..egui::style::ScrollStyle::thin()
         };
-        style.visuals.window_corner_radius = egui::CornerRadius::same(10);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(radius::DIALOG);
     });
 }
 
@@ -499,6 +549,7 @@ pub enum Icon {
     NewFolder,
     Sort,
     CollapseAll,
+    ExpandAll,
     Disclosure,
     NewTab,
     Pin,
@@ -515,6 +566,7 @@ pub enum Icon {
     Settings,
     Appearance,
     Outline,
+    Agent,
     More,
     Close,
     Minimize,
@@ -546,7 +598,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 55] = [
+    pub const ALL: [Self; 57] = [
         Self::Files,
         Self::Search,
         Self::Graph,
@@ -558,6 +610,7 @@ impl Icon {
         Self::NewFolder,
         Self::Sort,
         Self::CollapseAll,
+        Self::ExpandAll,
         Self::Disclosure,
         Self::NewTab,
         Self::Pin,
@@ -574,6 +627,7 @@ impl Icon {
         Self::Settings,
         Self::Appearance,
         Self::Outline,
+        Self::Agent,
         Self::More,
         Self::Close,
         Self::Minimize,
@@ -673,6 +727,10 @@ impl Icon {
             Self::CollapseAll => (
                 "bytes://icons/collapse-all.svg",
                 include_bytes!("../assets/icons/collapse-all.svg"),
+            ),
+            Self::ExpandAll => (
+                "bytes://icons/expand-all.svg",
+                include_bytes!("../assets/icons/expand-all.svg"),
             ),
             Self::Disclosure => (
                 "bytes://icons/disclosure.svg",
@@ -826,6 +884,10 @@ impl Icon {
                 "bytes://icons/callout-quote.svg",
                 include_bytes!("../assets/icons/callout-quote.svg"),
             ),
+            Self::Agent => (
+                "bytes://icons/agent.svg",
+                include_bytes!("../assets/icons/agent.svg"),
+            ),
         }
     }
 }
@@ -959,14 +1021,14 @@ pub fn dialog_style(ui: &mut egui::Ui) {
 pub fn dialog_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::popup(&ctx.global_style())
         .inner_margin(space::margin(space::XL, space::XL))
-        .corner_radius(10)
+        .corner_radius(radius::DIALOG)
 }
 
 /// A small floating card, like Obsidian's notices.
 pub fn notice_frame(ctx: &egui::Context) -> egui::Frame {
     egui::Frame::popup(&ctx.global_style())
         .inner_margin(space::margin(space::M, space::M))
-        .corner_radius(8)
+        .corner_radius(radius::CARD)
 }
 
 pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui::Response {
@@ -982,38 +1044,67 @@ pub fn dialog_header(ui: &mut egui::Ui, title: &str, close_label: &str) -> egui:
     .inner
 }
 
+/// shadcn/ui button variants: one height, one radius, one padding.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// The one main action of a dialog or row (filled accent).
+    Primary,
+    /// A secondary action (bordered).
+    Outline,
+    /// A quiet action such as Back (no frame until hovered).
+    Ghost,
+    /// An action that deletes or discards.
+    Destructive,
+}
+
+pub fn button(ui: &mut egui::Ui, label: &str, kind: Kind) -> egui::Response {
+    let (fill, text, stroke) = match kind {
+        Kind::Primary => (
+            accent(ui),
+            if ui.visuals().dark_mode {
+                DARK_SIDE
+            } else {
+                Color32::WHITE
+            },
+            Stroke::NONE,
+        ),
+        Kind::Destructive => (Color32::from_rgb(180, 45, 55), Color32::WHITE, Stroke::NONE),
+        Kind::Outline => (
+            ui.visuals().window_fill,
+            ui.visuals().text_color(),
+            ui.visuals().widgets.noninteractive.bg_stroke,
+        ),
+        Kind::Ghost => (
+            Color32::TRANSPARENT,
+            ui.visuals().text_color(),
+            Stroke::NONE,
+        ),
+    };
+    ui.add(
+        egui::Button::new(egui::RichText::new(label).size(14.0).color(text))
+            .fill(fill)
+            .stroke(stroke)
+            .frame_when_inactive(kind != Kind::Ghost)
+            .corner_radius(radius::CONTROL)
+            .min_size(egui::vec2(space::XXL * 2.0, space::CONTROL)),
+    )
+}
+
 pub fn dialog_actions(
     ui: &mut egui::Ui,
     label: &str,
     destructive: bool,
 ) -> (egui::Response, egui::Response) {
-    ui.add_space(8.0);
+    ui.add_space(space::S);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let background = if destructive {
-                Color32::from_rgb(180, 45, 55)
+            let kind = if destructive {
+                Kind::Destructive
             } else {
-                accent(ui)
+                Kind::Primary
             };
-            let foreground = if destructive || !ui.visuals().dark_mode {
-                Color32::WHITE
-            } else {
-                Color32::from_rgb(17, 21, 23)
-            };
-            let submit = ui.add(
-                egui::Button::new(egui::RichText::new(label).color(foreground))
-                    .fill(background)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(6)
-                    .min_size(egui::vec2(0.0, space::CONTROL)),
-            );
-            let cancel = ui.add(
-                egui::Button::new("Cancel")
-                    .fill(ui.visuals().window_fill)
-                    .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
-                    .corner_radius(6)
-                    .min_size(egui::vec2(0.0, space::CONTROL)),
-            );
+            let submit = button(ui, label, kind);
+            let cancel = button(ui, "Cancel", Kind::Outline);
             crate::ui_probe::record(ui.ctx(), "dialog-submit", submit.rect);
             crate::ui_probe::record(ui.ctx(), "dialog-cancel", cancel.rect);
             (submit, cancel)
@@ -1023,14 +1114,19 @@ pub fn dialog_actions(
     .inner
 }
 
+/// Result lists share a compact rhythm without changing their surrounding dialog.
+pub fn list_style(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.spacing_mut().button_padding = egui::vec2(space::S, space::XS);
+}
+
 pub fn menu_style(ui: &mut egui::Ui) {
+    list_style(ui);
     for style in [egui::TextStyle::Body, egui::TextStyle::Button] {
         ui.style_mut()
             .text_styles
             .insert(style, egui::FontId::proportional(13.0));
     }
-    ui.spacing_mut().item_spacing.y = 0.0;
-    ui.spacing_mut().button_padding = egui::vec2(space::S, space::XS);
 }
 
 pub fn delete_menu_item(ui: &mut egui::Ui, label: &str) -> (egui::Response, bool) {
@@ -1061,9 +1157,30 @@ pub fn menu_item(ui: &mut egui::Ui, icon: Icon, label: &str) -> egui::Response {
         egui::Button::image_and_text(image, egui::RichText::new(label).size(13.0).color(color))
             .min_size(egui::vec2(210.0, space::ROW))
             .frame_when_inactive(false)
-            .corner_radius(4.0),
+            .corner_radius(radius::ROW),
     );
     crate::ui_probe::record(ui.ctx(), format!("menu:{label}"), response.rect);
+    response
+}
+
+/// Quiet text actions share toolbar hover and keyboard focus feedback.
+pub fn compact_text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let font = FontId::proportional(13.0);
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.into(), font, ui.visuals().text_color());
+    let size = egui::vec2(text.size().x + space::S * 2.0, space::ROW);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    control_feedback(ui, &response);
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - text.size().x / 2.0,
+            rect.center().y - text.size().y / 2.0,
+        ),
+        text,
+        ui.visuals().text_color(),
+    );
     response
 }
 
@@ -1076,20 +1193,6 @@ pub fn icon_toggle(ui: &mut egui::Ui, icon: Icon, tooltip: &str, selected: bool)
         icon_image(icon, color).paint_at(
             ui,
             egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
-        );
-    })
-}
-
-/// A toolbar button showing a symbol of the interface font, for an action
-/// that has no artwork of its own.
-pub fn glyph_button(ui: &mut egui::Ui, glyph: &str, tooltip: &str) -> egui::Response {
-    toolbar_button(ui, tooltip, false, |ui, rect, color| {
-        ui.painter().text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            glyph,
-            FontId::proportional(18.0),
-            color,
         );
     })
 }
@@ -1108,7 +1211,7 @@ fn toolbar_button(
     });
     if ui.is_rect_visible(rect) {
         if selected {
-            ui.painter().rect_filled(rect, 4, hover_fill(ui));
+            ui.painter().rect_filled(rect, radius::ROW, hover_fill(ui));
         }
         control_feedback(ui, &response);
         let color = if (selected || response.hovered()) && response.enabled() {

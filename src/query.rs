@@ -33,26 +33,197 @@ pub struct Query {
 #[derive(Default)]
 pub struct Cache {
     key: Option<String>,
+    root: Option<std::path::PathBuf>,
+    index: Option<std::sync::Arc<Vec<Note>>>,
+    guests: Vec<(std::path::PathBuf, u64)>,
+    worker: Option<SearchWorker>,
     pub paths: Vec<std::path::PathBuf>,
     pub error: Option<String>,
 }
+
+struct SearchJob {
+    version: u64,
+    query: String,
+    index: std::sync::Arc<Vec<Note>>,
+    wake: Box<dyn Fn() + Send>,
+}
+#[derive(Default)]
+struct SearchQueue {
+    latest: Option<SearchJob>,
+    done: Option<(u64, Result<Vec<std::path::PathBuf>, String>)>,
+    shutdown: bool,
+}
+#[derive(Default)]
+struct SearchState {
+    version: std::sync::atomic::AtomicU64,
+    queue: std::sync::Mutex<SearchQueue>,
+    wake: std::sync::Condvar,
+}
+struct SearchWorker(std::sync::Arc<SearchState>);
+
+impl SearchWorker {
+    fn start() -> Result<Self, String> {
+        let state = std::sync::Arc::new(SearchState::default());
+        let thread = state.clone();
+        std::thread::Builder::new()
+            .name("rustidian-search".into())
+            .spawn(move || {
+                loop {
+                    let job = {
+                        let mut queue = thread.queue.lock().unwrap_or_else(|e| e.into_inner());
+                        while queue.latest.is_none() && !queue.shutdown {
+                            queue = thread.wake.wait(queue).unwrap_or_else(|e| e.into_inner());
+                        }
+                        if queue.shutdown {
+                            return;
+                        }
+                        queue.latest.take()
+                    };
+                    let Some(job) = job else { continue };
+                    let current =
+                        || thread.version.load(std::sync::atomic::Ordering::Acquire) == job.version;
+                    let result = Query::parse(&job.query).map(|query| {
+                        let mut matches = Vec::new();
+                        for note in job.index.iter() {
+                            if !current() {
+                                break;
+                            }
+                            if query.matches(note) {
+                                matches.push(note);
+                            }
+                        }
+                        query.sort_matches(&mut matches);
+                        matches.into_iter().map(|note| note.path.clone()).collect()
+                    });
+                    let mut queue = thread.queue.lock().unwrap_or_else(|e| e.into_inner());
+                    if current() && !queue.shutdown {
+                        queue.done = Some((job.version, result));
+                        drop(queue);
+                        (job.wake)();
+                    }
+                }
+            })
+            .map_err(|error| format!("Cannot start search: {error}"))?;
+        Ok(Self(state))
+    }
+    fn invalidate(&self) {
+        self.0
+            .version
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let mut queue = self.0.queue.lock().unwrap_or_else(|e| e.into_inner());
+        queue.latest = None;
+        queue.done = None;
+    }
+}
+impl Drop for SearchWorker {
+    fn drop(&mut self) {
+        self.invalidate();
+        self.0
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .shutdown = true;
+        self.0.wake.notify_one();
+    }
+}
+
 impl Cache {
     pub fn invalidate(&mut self) {
         self.key = None;
-    }
-    pub fn update(&mut self, query: &str, vault: &crate::vault::Vault) {
-        if self.key.as_deref() == Some(query) {
-            return;
+        self.index = None;
+        self.paths.clear();
+        self.error = None;
+        if let Some(worker) = &self.worker {
+            worker.invalidate();
         }
-        self.key = Some(query.into());
-        match vault.query(query) {
-            Ok(notes) => {
-                self.paths = notes.iter().map(|note| note.path.clone()).collect();
-                self.error = None;
+    }
+    pub fn update(
+        &mut self,
+        query: &str,
+        vault: &crate::vault::Vault,
+        guests: &[&crate::vault::Document],
+        wake: impl Fn() + Send + 'static,
+    ) {
+        if self.root.as_ref() != Some(&vault.root) {
+            self.invalidate();
+            self.root = Some(vault.root.clone());
+        }
+        // Files open from outside the vault are searched beside its notes, with
+        // the text their tabs hold; opening, closing or typing in one starts
+        // the search again.
+        let seen: Vec<_> = guests
+            .iter()
+            .map(|guest| {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                guest.text.hash(&mut hasher);
+                (guest.path.clone(), hasher.finish())
+            })
+            .collect();
+        if self.guests != seen {
+            self.invalidate();
+            self.guests = seen;
+        }
+        if self.worker.is_none() {
+            match SearchWorker::start() {
+                Ok(worker) => self.worker = Some(worker),
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
             }
-            Err(error) => {
-                self.paths.clear();
-                self.error = Some(error);
+        }
+        let Some(worker) = &self.worker else { return };
+        if self.key.as_deref() != Some(query) {
+            self.key = Some(query.into());
+            self.paths.clear();
+            self.error = None;
+            let index = self
+                .index
+                .get_or_insert_with(|| {
+                    let mut notes = vault.notes.clone();
+                    notes.extend(
+                        guests
+                            .iter()
+                            .map(|guest| Note::new(guest.path.clone(), guest.text.clone())),
+                    );
+                    std::sync::Arc::new(notes)
+                })
+                .clone();
+            let version = worker
+                .0
+                .version
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                + 1;
+            let mut queue = worker.0.queue.lock().unwrap_or_else(|e| e.into_inner());
+            queue.done = None;
+            queue.latest = Some(SearchJob {
+                version,
+                query: query.into(),
+                index,
+                wake: Box::new(wake),
+            });
+            worker.0.wake.notify_one();
+        }
+        let done = worker
+            .0
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .done
+            .take();
+        if let Some((version, result)) = done
+            && version == worker.0.version.load(std::sync::atomic::Ordering::Acquire)
+        {
+            match result {
+                Ok(paths) => {
+                    self.paths = paths;
+                    self.error = None;
+                }
+                Err(error) => {
+                    self.paths.clear();
+                    self.error = Some(error);
+                }
             }
         }
     }
@@ -81,12 +252,46 @@ impl Query {
         self.expression
             .matches(note, &note.text, note.folded_text())
     }
+    pub(crate) fn sort_matches(&self, notes: &mut [&Note]) {
+        let mut terms = Vec::new();
+        self.expression.title_terms(&mut terms);
+        if terms.is_empty() {
+            return;
+        }
+        let phrase = terms.join(" ");
+        notes.sort_by_cached_key(|note| {
+            let title = note.title().to_lowercase();
+            let name = note
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_lowercase());
+            if title == phrase || name.as_deref() == Some(phrase.as_str()) {
+                0
+            } else if terms.iter().all(|term| title.contains(*term)) {
+                1
+            } else {
+                2
+            }
+        });
+    }
     pub fn count(&self, notes: &[Note]) -> usize {
         notes.iter().filter(|note| self.matches(note)).count()
     }
 }
 
 impl Expression {
+    fn title_terms<'a>(&'a self, terms: &mut Vec<&'a str>) {
+        match self {
+            Self::And(expressions) => {
+                for expression in expressions {
+                    expression.title_terms(terms);
+                }
+            }
+            Self::Term(Term::Text(value) | Term::File(value)) => terms.push(value),
+            _ => {}
+        }
+    }
+
     fn matches(&self, note: &Note, text: &str, folded: &str) -> bool {
         match self {
             Self::And(terms) => terms.iter().all(|term| term.matches(note, text, folded)),
@@ -353,4 +558,64 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
         }
     }
     Ok(tokens)
+}
+
+#[cfg(test)]
+mod worker_tests {
+    use super::*;
+    use std::{
+        path::PathBuf,
+        sync::{
+            Arc, Barrier,
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        time::Duration,
+    };
+
+    #[test]
+    fn latest_query_and_vault_generation_own_the_results_and_the_snapshot_stays_immutable() {
+        let first = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("Old.md"), "old content").unwrap();
+        let mut old_vault = crate::vault::Vault::open(first.path()).unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(second.path().join("New.md"), "new content").unwrap();
+        let new_vault = crate::vault::Vault::open(second.path()).unwrap();
+        let mut cache = Cache::default();
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let worker_entered = entered.clone();
+        let worker_release = release.clone();
+        cache.update("old", &old_vault, &[], move || {
+            worker_entered.wait();
+            worker_release.wait();
+        });
+        entered.wait(); // The older completion exists, and the worker cannot take another job yet.
+        let snapshot = cache.index.clone().unwrap();
+        let mut document = old_vault.read(std::path::Path::new("Old.md")).unwrap();
+        document.text = "changed".into();
+        old_vault.save(&mut document).unwrap();
+        assert_eq!(snapshot[0].text, "old content");
+        assert_eq!(old_vault.notes[0].text, "changed");
+        let obsolete_called = Arc::new(AtomicBool::new(false));
+        let obsolete = obsolete_called.clone();
+        cache.update("no match", &new_vault, &[], move || {
+            obsolete.store(true, Ordering::SeqCst);
+        });
+        let (wake, done) = mpsc::sync_channel(1);
+        cache.update("new", &new_vault, &[], move || {
+            let _ = wake.send(());
+        });
+        release.wait();
+        done.recv_timeout(Duration::from_secs(3)).unwrap();
+        cache.update("new", &new_vault, &[], || {});
+        assert_eq!(cache.paths, [PathBuf::from("New.md")]);
+        assert!(cache.error.is_none());
+        assert!(!obsolete_called.load(Ordering::SeqCst));
+        // A late, already-delivered result from an obsolete generation is also rejected.
+        let worker = cache.worker.as_ref().unwrap();
+        worker.0.queue.lock().unwrap().done = Some((0, Ok(vec![PathBuf::from("Old.md")])));
+        cache.update("new", &new_vault, &[], || {});
+        assert_eq!(cache.paths, [PathBuf::from("New.md")]);
+    }
 }

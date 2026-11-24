@@ -50,6 +50,11 @@ fn last_opened_file() -> Option<PathBuf> {
     location().map(|catalog| catalog.with_file_name("last-vault"))
 }
 
+/// Where the user-configured default vault is kept: beside the vault list.
+fn default_vault_file() -> Option<PathBuf> {
+    location().map(|catalog| catalog.with_file_name("default-vault"))
+}
+
 /// The vault Masih was last reading, and the page when it lies in another vault
 /// than the window's own. A launch without a file opens it again, with the tabs
 /// and scroll the vault's session file keeps (5 Nov: reopening forgot the vault).
@@ -95,10 +100,95 @@ fn write_last(file: &Path, root: &Path, document: Option<&Path>) {
     }
 }
 
-pub fn default_vault() -> Option<PathBuf> {
+/// Return the default vault configured via environment override (if valid).
+pub fn env_default_vault() -> Option<PathBuf> {
     std::env::var_os("RUSTIDIAN_DEFAULT_VAULT")
         .or_else(|| std::env::var_os("RUST_NOTES_DEFAULT_VAULT"))
-        .map(PathBuf::from)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| folder(Path::new(&value)).ok())
+}
+
+/// Return the persisted user-configured default vault (if present and valid).
+pub fn saved_default_vault() -> Option<PathBuf> {
+    read_default(&default_vault_file()?)
+}
+
+/// Return the active default vault: environment override takes precedence over saved setting.
+pub fn default_vault() -> Option<PathBuf> {
+    resolve_default_vault(
+        env_default_vault().as_deref(),
+        default_vault_file().as_deref(),
+    )
+}
+
+/// Persist `root` as the saved default vault after validating it is an existing folder.
+pub fn set_default_vault(root: &Path) -> Result<PathBuf, String> {
+    let root = folder(root)?;
+    let file = default_vault_file().ok_or("Cannot locate the default vault setting.")?;
+    write_default(&file, &root)?;
+    Ok(root)
+}
+
+/// Remove the saved default vault file, ignoring an already-absent file.
+pub fn clear_default_vault() -> Result<(), String> {
+    let file = default_vault_file().ok_or("Cannot locate the default vault setting.")?;
+    remove_default(&file)
+}
+
+/// Choose the startup vault when launching without CLI arguments:
+/// default vault (env > saved) > last-opened vault > writable demo vault.
+pub fn startup_vault(
+    default: Option<&Path>,
+    remembered: Option<&Path>,
+    demo: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    default
+        .and_then(|path| folder(path).ok())
+        .or_else(|| remembered.and_then(|path| folder(path).ok()))
+        .or_else(demo)
+}
+
+fn resolve_default_vault(env: Option<&Path>, saved_file: Option<&Path>) -> Option<PathBuf> {
+    env.and_then(|path| folder(path).ok())
+        .or_else(|| saved_file.and_then(read_default))
+}
+
+fn read_default(file: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let line = text
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())?;
+    folder(Path::new(line)).ok()
+}
+
+fn write_default(file: &Path, root: &Path) -> Result<(), String> {
+    let text = format!("{}\n", root.display());
+    if std::fs::read_to_string(file).is_ok_and(|current| current == text) {
+        return Ok(());
+    }
+    let parent = file
+        .parent()
+        .ok_or("Cannot locate the default vault setting.")?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| format!("Cannot save the default vault: {error}"))?;
+    let save = || -> std::io::Result<()> {
+        let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+        temp.write_all(text.as_bytes())?;
+        temp.as_file().sync_all()?;
+        temp.persist(file)?;
+        Ok(())
+    };
+    save().map_err(|error| format!("Cannot save the default vault: {error}"))
+}
+
+fn remove_default(file: &Path) -> Result<(), String> {
+    match std::fs::remove_file(file) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Cannot clear the default vault: {error}")),
+    }
 }
 
 /// Install a private, writable copy of the demo shipped alongside a Linux executable.
@@ -527,5 +617,102 @@ mod tests {
         // The default vault itself still loads in full.
         let vault = crate::vault::Vault::open_beside(&default, Some(&default), || false).unwrap();
         assert_eq!(vault.notes.len(), 1);
+    }
+
+    #[test]
+    fn saved_default_vault_persists_clears_and_falls_back_when_deleted() {
+        let base = tempfile::tempdir().unwrap();
+        let file = base.path().join("state/default-vault");
+        let first = create(base.path(), "Primary")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let second = create(base.path(), "Secondary")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        assert_eq!(read_default(&file), None);
+
+        write_default(&file, &first).unwrap();
+        assert_eq!(read_default(&file), Some(first.clone()));
+
+        write_default(&file, &second).unwrap();
+        assert_eq!(read_default(&file), Some(second.clone()));
+
+        remove_default(&file).unwrap();
+        assert_eq!(read_default(&file), None);
+        remove_default(&file).unwrap();
+
+        let ephemeral = tempfile::tempdir().unwrap();
+        let ephemeral_path = ephemeral.path().canonicalize().unwrap();
+        write_default(&file, &ephemeral_path).unwrap();
+        assert_eq!(read_default(&file), Some(ephemeral_path));
+        drop(ephemeral);
+        assert_eq!(
+            read_default(&file),
+            None,
+            "a deleted default vault falls back safely"
+        );
+    }
+
+    #[test]
+    fn startup_vault_precedence_respects_env_saved_last_and_demo_fallbacks() {
+        let base = tempfile::tempdir().unwrap();
+        let env_vault = create(base.path(), "EnvVault")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let saved_vault = create(base.path(), "SavedVault")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let last_vault = create(base.path(), "LastVault")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let demo_vault = create(base.path(), "DemoVault")
+            .unwrap()
+            .canonicalize()
+            .unwrap();
+        let missing = base.path().join("MissingVault");
+        let default_file = base.path().join("state/default-vault");
+        write_default(&default_file, &saved_vault).unwrap();
+
+        // 1. Environment override beats saved default, last-vault, and demo-vault.
+        let resolved = resolve_default_vault(Some(&env_vault), Some(&default_file));
+        assert_eq!(resolved, Some(env_vault.clone()));
+        assert_eq!(
+            startup_vault(resolved.as_deref(), Some(&last_vault), || Some(
+                demo_vault.clone()
+            )),
+            Some(env_vault)
+        );
+
+        // 2. Missing env falls back to saved default, which beats last-vault and demo-vault.
+        let resolved = resolve_default_vault(Some(&missing), Some(&default_file));
+        assert_eq!(resolved, Some(saved_vault.clone()));
+        assert_eq!(
+            startup_vault(resolved.as_deref(), Some(&last_vault), || Some(
+                demo_vault.clone()
+            )),
+            Some(saved_vault.clone())
+        );
+
+        // 3. Deleted saved default falls back to last-vault.
+        fs::remove_dir(&saved_vault).unwrap();
+        let resolved = resolve_default_vault(None, Some(&default_file));
+        assert_eq!(resolved, None);
+        assert_eq!(
+            startup_vault(resolved.as_deref(), Some(&last_vault), || Some(
+                demo_vault.clone()
+            )),
+            Some(last_vault)
+        );
+
+        // 4. Missing last-vault falls back to writable demo-vault.
+        assert_eq!(
+            startup_vault(None, Some(&missing), || Some(demo_vault.clone())),
+            Some(demo_vault)
+        );
     }
 }

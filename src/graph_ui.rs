@@ -6,7 +6,7 @@ use eframe::egui::{
     self, Align, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Stroke, Vec2,
 };
 use rustidian::{
-    graph::{Graph, Group, Kind, Options, View},
+    graph::{Facets, Focus, Graph, Group, Kind, Options, View},
     graph_layout::{Camera, Forces, Geometry},
     vault::Vault,
 };
@@ -263,11 +263,10 @@ impl Manager {
                 } else {
                     &mut self.global
                 };
-                if pane
-                    .ready
-                    .as_ref()
-                    .is_some_and(|old| old.key.root != ready.key.root)
-                {
+                if pane.ready.as_ref().is_some_and(|old| {
+                    old.key.root != ready.key.root
+                        || old.key.options.focus != ready.key.options.focus
+                }) {
                     pane.fit = true;
                 }
                 pane.positions.clear();
@@ -392,7 +391,14 @@ impl Manager {
                             egui::ScrollArea::vertical()
                                 .id_salt("graph-settings-scroll")
                                 .max_height(panel_height)
-                                .show(ui, |ui| settings(ui, &mut pane, local));
+                                .show(ui, |ui| {
+                                    settings(
+                                        ui,
+                                        &mut pane,
+                                        local,
+                                        self.graph.as_deref().map(|graph| &graph.facets),
+                                    )
+                                });
                         });
                 });
         }
@@ -510,8 +516,16 @@ impl Manager {
                         &pane,
                         !pending && !blocked,
                     );
-                    if open.is_some() {
-                        action = open;
+                    match open {
+                        Some(Action::Open {
+                            path,
+                            kind: Kind::Author,
+                        }) => {
+                            pane.preferences.options.focus.author = Some(path);
+                            ui.ctx().request_repaint();
+                        }
+                        Some(open) => action = Some(open),
+                        None => {}
                     }
                     ui_probe::metric(ui.ctx(), "node-count", view.nodes.len() as f32);
                     ui_probe::metric(ui.ctx(), "edge-count", view.edges.len() as f32);
@@ -663,7 +677,75 @@ fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
     });
 }
 
-fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
+fn focus_choice<T: Clone + PartialEq>(
+    ui: &mut egui::Ui,
+    label: &str,
+    selected: &mut Option<T>,
+    choices: impl Iterator<Item = (T, String)>,
+) {
+    let choices: Vec<_> = choices.collect();
+    let shown = selected
+        .as_ref()
+        .and_then(|selected| choices.iter().find(|(key, _)| key == selected))
+        .map_or_else(|| "All".to_owned(), |(_, label)| label.clone());
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let combo = egui::ComboBox::from_id_salt(label)
+            .selected_text(shown)
+            .width(ui.available_width())
+            .height(250.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(selected, None, "All");
+                for (key, value) in choices {
+                    let response = ui.selectable_value(selected, Some(key), &value);
+                    ui_probe::record(ui.ctx(), format!("focus:{label}:{value}"), response.rect);
+                }
+            });
+        ui_probe::record(ui.ctx(), format!("focus:{label}"), combo.response.rect);
+    });
+}
+
+fn relationship_filters(ui: &mut egui::Ui, focus: &mut Focus, facets: &Facets) {
+    focus_choice(
+        ui,
+        "Author",
+        &mut focus.author,
+        facets
+            .authors
+            .iter()
+            .map(|(key, label)| (key.clone(), label.clone())),
+    );
+    focus_choice(
+        ui,
+        "Type",
+        &mut focus.note_type,
+        facets
+            .types
+            .iter()
+            .map(|(key, label)| (key.clone(), label.clone())),
+    );
+    focus_choice(
+        ui,
+        "Folder",
+        &mut focus.folder,
+        facets
+            .folders
+            .iter()
+            .map(|path| (path.clone(), path.display().to_string())),
+    );
+    if focus.active() {
+        let clear = ui.button("Clear relationship filters");
+        ui_probe::record(ui.ctx(), "focus-clear", clear.rect);
+        if clear.clicked() {
+            *focus = Focus {
+                show_authors: focus.show_authors,
+                ..Focus::default()
+            };
+        }
+    }
+}
+
+fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool, facets: Option<&Facets>) {
     ui.spacing_mut().item_spacing = egui::vec2(crate::theme::space::S, crate::theme::space::S);
     ui.spacing_mut().slider_width = (ui.available_width() - 46.0).clamp(36.0, 170.0);
     ui.style_mut()
@@ -722,6 +804,15 @@ fn settings(ui: &mut egui::Ui, pane: &mut Pane, local: bool) {
                 "Orphans",
                 "orphans",
             );
+            if let Some(facets) = facets {
+                toggle(
+                    ui,
+                    &mut pane.preferences.options.focus.show_authors,
+                    "Author links",
+                    "author-links",
+                );
+                relationship_filters(ui, &mut pane.preferences.options.focus, facets);
+            }
         }
         ui.add_space(crate::theme::space::XS);
     }
@@ -920,8 +1011,10 @@ fn chronology(source: &Vault, graph: &Graph, view: &View) -> Timeline {
     // Virtual targets appear with their first real neighbor, never before it.
     for edge in &view.edges {
         for (from, to) in [(edge.from, edge.to), (edge.to, edge.from)] {
-            if matches!(graph.nodes[to].kind, Kind::Tag | Kind::Unresolved)
-                && let Some(date) = dates[from]
+            if matches!(
+                graph.nodes[to].kind,
+                Kind::Tag | Kind::Unresolved | Kind::Author
+            ) && let Some(date) = dates[from]
             {
                 let date = date.checked_add(Duration::from_nanos(1)).unwrap_or(date);
                 dates[to] = Some(dates[to].map_or(date, |before| before.min(date)));
@@ -1261,15 +1354,21 @@ fn paint(
             match node.kind {
                 Kind::Unresolved => ui.visuals().weak_text_color().gamma_multiply(0.45),
                 Kind::Tag => theme::accent(ui).gamma_multiply(0.8),
+                Kind::Author => theme::accent(ui),
                 Kind::Attachment => Color32::from_rgb(185, 152, 91),
                 Kind::Note => ui.visuals().weak_text_color(),
             }
         };
         painter.circle_filled(point, size * opacity.sqrt(), color.gamma_multiply(opacity));
         if ui_probe::enabled() {
+            let probe = if node.kind == Kind::Author {
+                format!("author:{}", node.label)
+            } else {
+                format!("node:{}", node.path.display())
+            };
             ui_probe::record(
                 ui.ctx(),
-                format!("node:{}", node.path.display()),
+                probe,
                 Rect::from_center_size(point, Vec2::splat(size.max(7.0) * 2.0)).intersect(rect),
             );
         }

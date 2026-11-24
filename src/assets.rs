@@ -149,9 +149,15 @@ pub fn prepare_images(markdown: &str, resolve: impl Fn(&str) -> Option<String>) 
                 attribute(&destination),
                 attribute(&image.alt)
             );
-            for (name, value) in [("width", image.width), ("height", image.height)] {
-                if let Some(value) = value {
-                    tag.push_str(&format!(" {name}=\"{value}\""));
+            let original = crate::html_layout::tokens(&markdown[image.range.clone()])
+                .into_iter()
+                .find_map(|token| match token {
+                    crate::html_layout::Token::Tag(tag) => Some(tag),
+                    _ => None,
+                });
+            for name in ["width", "height"] {
+                if let Some(value) = original.as_ref().and_then(|tag| tag.attribute(name)) {
+                    tag.push_str(&format!(" {name}=\"{}\"", attribute(value)));
                 }
             }
             tag.push('>');
@@ -179,6 +185,34 @@ pub fn is_image(path: &Path) -> bool {
         })
 }
 
+pub fn is_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "mp4" | "webm" | "mov"
+            )
+        })
+}
+
+pub fn is_media(path: &Path) -> bool {
+    is_image(path) || is_video(path)
+}
+
+pub fn video_uri(vault: Option<&Vault>, from: &Path, target: &str) -> Option<String> {
+    if target.starts_with("https://") || target.starts_with("http://") {
+        return Some(target.into());
+    }
+    let path = local_media(vault?, from, target)?;
+    is_video(&path).then(|| {
+        format!(
+            "file://{}",
+            paths::markdown_destination(Path::new(""), &path)
+        )
+    })
+}
+
 pub fn image_uri(vault: Option<&Vault>, from: &Path, target: &str) -> Option<String> {
     if target.starts_with("https://") || target.starts_with("http://") {
         return Some(target.into());
@@ -186,9 +220,37 @@ pub fn image_uri(vault: Option<&Vault>, from: &Path, target: &str) -> Option<Str
     if target.starts_with("data:") {
         return data_image_uri(target);
     }
-    vault?
-        .resolve_attachment(from, target)
-        .map(|path| format!("file://{}", path.display()))
+    if target.starts_with(DATA_IMAGE_SCHEME) {
+        return data_image(target).map(|_| target.into());
+    }
+    local_media(vault?, from, target)
+        .filter(|path| is_image(path))
+        .map(|path| {
+            format!(
+                "file://{}",
+                paths::markdown_destination(Path::new(""), &path)
+            )
+        })
+}
+
+fn local_media(vault: &Vault, from: &Path, target: &str) -> Option<PathBuf> {
+    if let Some(path) = target.strip_prefix("file://") {
+        let path = PathBuf::from(paths::decode(path)?).canonicalize().ok()?;
+        let guest = if from.is_absolute() && !from.starts_with(&vault.root) {
+            from.parent().and_then(|parent| parent.canonicalize().ok())
+        } else {
+            None
+        };
+        return (path.is_file()
+            && is_media(&path)
+            && (path
+                .strip_prefix(&vault.root)
+                .ok()
+                .is_some_and(|relative| vault.attachments.contains(&relative.to_owned()))
+                || guest.is_some_and(|parent| path.starts_with(parent))))
+        .then_some(path);
+    }
+    vault.resolve_attachment(from, target)
 }
 
 /// URI scheme under which decoded inline `data:` images are served.
@@ -266,9 +328,27 @@ impl Vault {
         let target = target.split('|').next()?.split('#').next()?.trim();
         let decoded = paths::decode(target)?;
         let target = Path::new(&decoded);
-        if target.is_absolute() || !is_image(target) {
+        if target.is_absolute() || !is_media(target) {
             return None;
         }
+        if from.is_absolute() && !from.starts_with(&self.root) {
+            let parent = from.parent()?.canonicalize().ok()?;
+            let root = parent
+                .ancestors()
+                .find(|path| path.join(".obsidian").is_dir())
+                .unwrap_or(&parent);
+            let absolute = parent.join(target).canonicalize().ok();
+            if let Some(absolute) = absolute.filter(|path| {
+                path.starts_with(root)
+                    && path.is_file()
+                    && path
+                        .strip_prefix(root)
+                        .is_ok_and(|relative| !crate::vault::is_ignored_path(relative))
+            }) {
+                return Some(absolute);
+            }
+        }
+        let from = from.strip_prefix(&self.root).unwrap_or(from);
         let sibling = paths::normalise(&from.parent().unwrap_or(Path::new("")).join(target));
         let root = paths::normalise(target);
         let indexed = sibling

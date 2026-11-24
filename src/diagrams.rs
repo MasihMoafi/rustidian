@@ -196,9 +196,7 @@ pub fn show(ui: &mut egui::Ui, source: &str, ordinal: usize) -> egui::Response {
             ui.weak("Rendering diagram…");
         }
         Err(error) => {
-            let response =
-                ui.colored_label(ui.visuals().error_fg_color, format!("Mermaid: {error}"));
-            crate::ui_probe::record(ui.ctx(), "mermaid-error", response.rect);
+            crate::notices::once(ui.ctx(), ("mermaid", source), format!("Mermaid: {error}"));
             crate::code_ui::reading(ui, source, "mermaid", ordinal);
         }
     })

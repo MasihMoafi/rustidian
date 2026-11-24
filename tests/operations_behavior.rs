@@ -453,3 +453,38 @@ fn text_attachments_change_extension_on_rename_but_images_and_hidden_targets_are
     assert!(error.contains("extension"), "{error}");
     assert!(!root.path().join("LICENSE 1").exists());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn cancelling_a_prepared_folder_copy_never_publishes_its_partial_tree() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("Source")).unwrap();
+    std::fs::write(temp.path().join("Source/A.md"), "A_EXACT\n").unwrap();
+    std::fs::write(temp.path().join("Source/B.md"), "B_EXACT\n").unwrap();
+    let mut vault = rustidian::vault::Vault::open(temp.path()).unwrap();
+    let checks = AtomicUsize::new(0);
+    let error = vault
+        .duplicate_folder_cancellable(std::path::Path::new("Source"), || {
+            checks.fetch_add(1, Ordering::Relaxed) >= 3
+        })
+        .unwrap_err();
+    assert!(error.contains("cancelled"), "{error}");
+    assert!(!temp.path().join("Source 1").exists());
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("Source/A.md")).unwrap(),
+        "A_EXACT\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("Source/B.md")).unwrap(),
+        "B_EXACT\n"
+    );
+    assert!(std::fs::read_dir(temp.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".rustidian-copy-")
+    }));
+    assert_eq!(vault.notes.len(), 2);
+}

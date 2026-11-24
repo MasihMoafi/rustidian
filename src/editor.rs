@@ -26,6 +26,27 @@ pub fn link_at(text: &str, caret: usize) -> Option<String> {
         })
 }
 
+/// The target when the text is nothing but one link, such as a table cell
+/// `[Sat · Nov 7](Journal/2026-11-07.md)`: a plain click there follows it.
+pub fn sole_link(text: &str) -> Option<String> {
+    let text = text.trim();
+    let whole = 0..text.len();
+    if text.is_empty() {
+        return None;
+    }
+    if let Some((range, target)) = crate::vault::wiki_spans(text).into_iter().next() {
+        return (range == whole).then_some(target);
+    }
+    Parser::new(text)
+        .into_offset_iter()
+        .find_map(|(event, range)| match event {
+            Event::Start(Tag::Link { dest_url, .. }) if range == whole => {
+                Some(dest_url.into_string())
+            }
+            _ => None,
+        })
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Style {
     pub heading: u8,
@@ -74,8 +95,10 @@ pub struct Markdown {
     pub maths: Vec<crate::math::Span>,
     /// Byte ranges inside `align="center"` HTML.
     pub html_centered: Vec<Range<usize>>,
+    pub html_right: Vec<Range<usize>>,
     /// Lines made only of HTML wrapper tags, each with its newline.
     pub html_tag_lines: Vec<Range<usize>>,
+    pub html_blocks: Vec<crate::html_layout::Element>,
 }
 
 #[derive(Clone, Debug)]
@@ -531,6 +554,10 @@ impl Markdown {
             }
         }
         let html = crate::html_layout::scan(text);
+        let html_blocks = crate::html_layout::live_blocks(text);
+        for block in &html_blocks {
+            styles.patch(block.range.clone(), |style| style.image = true);
+        }
         for range in &html.hidden {
             styles.patch(range.clone(), |style| {
                 style.hidden = true;
@@ -542,6 +569,16 @@ impl Markdown {
         }
         for range in &html.italic {
             styles.patch(range.clone(), |style| style.italic = true);
+        }
+        for (range, script) in &html.scripts {
+            styles.patch(range.clone(), |style| style.html.script = Some(*script));
+        }
+        for range in &html.breaks {
+            styles.patch(range.clone(), |style| {
+                style.hidden = true;
+                style.marker = true;
+                style.html_break = true;
+            });
         }
         let mut quotes = Vec::new();
         let mut offset = 0;
@@ -613,7 +650,9 @@ impl Markdown {
             highlights,
             maths,
             html_centered: html.centered,
+            html_right: html.right,
             html_tag_lines: html.tag_lines,
+            html_blocks,
         }
     }
 }

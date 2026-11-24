@@ -49,10 +49,11 @@ pub(super) enum Page {
     Templates,
     Unique,
     Recovery,
+    ReadAloud,
 }
 
 impl Page {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Appearance,
         Self::Interface,
         Self::Editor,
@@ -62,6 +63,7 @@ impl Page {
         Self::Templates,
         Self::Unique,
         Self::Recovery,
+        Self::ReadAloud,
     ];
 
     fn label(self) -> &'static str {
@@ -75,6 +77,7 @@ impl Page {
             Self::Templates => "Templates",
             Self::Unique => "Unique note creator",
             Self::Recovery => "File recovery",
+            Self::ReadAloud => "Read aloud",
         }
     }
 
@@ -87,12 +90,13 @@ impl Page {
             Self::Editor => {
                 "editor editing files save autosave default view source live preview inline title readable line length status mode"
             }
-            Self::Files => "files and links automatically update move folder",
+            Self::Files => "files and links automatically update move folder trash default vault",
             Self::Hotkeys => "hotkeys keyboard shortcuts commands",
             Self::Daily => "daily notes date format folder template new file location",
             Self::Templates => "templates date time format folder location",
             Self::Unique => "unique notes prefix format folder template new file location",
             Self::Recovery => "file recovery snapshots history interval length days",
+            Self::ReadAloud => "read aloud voice speech tts kokoro openrouter key account login",
         };
         query.split_whitespace().all(|word| terms.contains(word))
     }
@@ -172,11 +176,6 @@ impl NotesApp {
     ) {
         theme::dialog_style(ui);
         ui.style_mut().spacing.slider_width = 120.0;
-        ui.style_mut().visuals.faint_bg_color = if self.dark {
-            Color32::from_rgb(35, 35, 35)
-        } else {
-            Color32::from_rgb(249, 249, 249)
-        };
         let width = (ctx.content_rect().width() - 48.0).clamp(360.0, 900.0);
         let height = (ctx.content_rect().height() - 100.0).clamp(260.0, 672.0);
         ui.set_width(width);
@@ -197,22 +196,28 @@ impl NotesApp {
         let mut changed = false;
         ui.horizontal_top(|ui| {
             egui::Frame::new()
-                .fill(if self.dark {
-                    Color32::from_rgb(38, 38, 38)
-                } else {
-                    Color32::from_rgb(246, 246, 246)
-                })
+                .fill(ui.visuals().panel_fill)
                 .inner_margin(crate::theme::space::margin(crate::theme::space::M, crate::theme::space::M))
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.set_width(if width < 600.0 { 152.0 } else { 188.0 });
                         ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                         ui.set_min_height(height - 24.0);
-                        let input = ui.add(
-                            TextEdit::singleline(&mut self.dialog_input)
-                                .hint_text("Search settings…")
-                                .desired_width(f32::INFINITY),
-                        );
+                        let input = ui
+                            .scope(|ui| {
+                                let border = ui.visuals().widgets.noninteractive.bg_stroke.color;
+                                ui.visuals_mut().extreme_bg_color = ui.visuals().window_fill;
+                                ui.visuals_mut().widgets.inactive.bg_stroke =
+                                    Stroke::new(1.0, border);
+                                ui.add(
+                                    crate::theme::text_field(
+                                        TextEdit::singleline(&mut self.dialog_input)
+                                            .hint_text("Search settings…"),
+                                    )
+                                    .desired_width(f32::INFINITY),
+                                )
+                            })
+                            .inner;
                         crate::ui_probe::record(ctx, "dialog-input", input.rect);
                         if self.dialog_focus {
                             input.request_focus();
@@ -265,7 +270,7 @@ impl NotesApp {
                 ui.set_width((ui.available_width() - 24.0).max(140.0));
                 ui.set_min_height(height);
                 ui.add_space(crate::theme::space::XL);
-                let button = theme::dialog_header(ui, "Settings", "Close settings");
+                let button = theme::dialog_header(ui, self.settings_page.label(), "Close settings");
                 crate::ui_probe::record(ctx, "settings-close", button.rect);
                 *close |= button.clicked();
                 ui.add_space(crate::theme::space::M);
@@ -367,12 +372,10 @@ impl NotesApp {
                                 ] {
                                     ui.separator();
                                     let missing = self.missing_fonts.iter().any(|name| name == &*value);
-                                    let description = if missing {
-                                        format!("{value} is not installed; the default font is used.")
-                                    } else {
-                                        description.to_owned()
-                                    };
-                                    changed |= row(ui, title, &description, |ui| {
+                                    if missing {
+                                        crate::notices::once(ctx, ("missing-font", &*value), format!("{value} is not installed; the default font is used."));
+                                    }
+                                    changed |= row(ui, title, description, |ui| {
                                         font_choice(ui, id, value, mono)
                                     });
                                 }
@@ -414,6 +417,64 @@ impl NotesApp {
                                     "settings-confirm-trash",
                                     &mut self.confirm_trash,
                                 );
+                                ui.separator();
+                                let current_root = self.vault.as_ref().map(|vault| vault.root.clone());
+                                let mut set_default = None;
+                                let mut clear_default = false;
+                                let detail = match (&self.env_default_vault, &self.saved_default_vault) {
+                                    (Some(env), _) => format!("Environment override: {}", env.display()),
+                                    (None, Some(saved)) => saved.display().to_string(),
+                                    (None, None) => "Not set (reopens last opened vault)".to_string(),
+                                };
+                                row(ui, "Default vault", &detail, |ui| {
+                                    if self.saved_default_vault.is_some() {
+                                        let clear = ui.button("Clear");
+                                        crate::ui_probe::record(
+                                            ctx,
+                                            "settings-default-vault-clear",
+                                            clear.rect,
+                                        );
+                                        if clear.clicked() {
+                                            clear_default = true;
+                                        }
+                                    }
+                                    if let Some(root) = &current_root
+                                        && self.saved_default_vault.as_deref()
+                                            != Some(root.as_path())
+                                    {
+                                        let use_current = ui.button("Use current");
+                                        crate::ui_probe::record(
+                                            ctx,
+                                            "settings-default-vault-current",
+                                            use_current.rect,
+                                        );
+                                        if use_current.clicked() {
+                                            set_default = Some(root.clone());
+                                        }
+                                    }
+                                    false
+                                });
+                                if let Some(root) = set_default {
+                                    match rustidian::vaults::set_default_vault(&root) {
+                                        Ok(saved) => {
+                                            self.saved_default_vault = Some(saved);
+                                            self.vault_manager.refresh();
+                                            self.status = "Default vault saved".into();
+                                            self.error = None;
+                                        }
+                                        Err(error) => self.error = Some(error),
+                                    }
+                                } else if clear_default {
+                                    match rustidian::vaults::clear_default_vault() {
+                                        Ok(()) => {
+                                            self.saved_default_vault = None;
+                                            self.vault_manager.refresh();
+                                            self.status = "Default vault cleared".into();
+                                            self.error = None;
+                                        }
+                                        Err(error) => self.error = Some(error),
+                                    }
+                                }
                             }
                             Page::Hotkeys => {
                                 for command in rustidian::commands::ranked("", Scope::Editor) {
@@ -510,6 +571,7 @@ impl NotesApp {
                                     "YYYYMMDDHHmm",
                                 );
                             }
+                            Page::ReadAloud => self.voice_settings(ui),
                             Page::Recovery => {
                                 changed |= row(
                                     ui,
@@ -591,11 +653,6 @@ impl NotesApp {
                         }
                     });
                 crate::ui_probe::record(ctx, "settings-viewport", content.inner_rect);
-                if let Some(error) = &self.error {
-                    ui.add_space(crate::theme::space::M);
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                    crate::ui_probe::record(ctx, "dialog-error", ui.min_rect());
-                }
             });
         });
         if changed {
@@ -646,12 +703,17 @@ fn row(
     control: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
     ui.add_space(crate::theme::space::M);
-    let label_width = (ui.available_width() - 180.0).max(100.0);
+    // One label column and one control column, so every control starts on the same
+    // left edge whatever its label's length.
+    let label_width =
+        (ui.available_width() - theme::space::SETTINGS_CONTROL_WIDTH - ui.spacing().item_spacing.x)
+            .max(100.0);
     let changed = ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             egui::vec2(label_width, 0.0),
             Layout::top_down(Align::LEFT),
             |ui| {
+                ui.set_min_width(label_width);
                 ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                 ui.label(title);
                 if !description.is_empty() {
@@ -665,6 +727,16 @@ fn row(
     reveal_match(ui, title, changed.response.rect);
     ui.add_space(crate::theme::space::M);
     changed.inner
+}
+
+/// The settings row layout, for the Read aloud page (`voice_ui`).
+pub(super) fn voice_row(
+    ui: &mut egui::Ui,
+    title: &str,
+    description: &str,
+    control: impl FnOnce(&mut egui::Ui) -> bool,
+) -> bool {
+    row(ui, title, description, control)
 }
 
 /// Searching settings scrolls the first matching row into view, once per query.
@@ -694,7 +766,7 @@ fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> b
     let search_id = egui::Id::unique(id).with("search");
     let response = egui::ComboBox::from_id_salt(id)
         .icon(theme::combo_chevron)
-        .width(180.0)
+        .width(theme::space::SETTINGS_CONTROL_WIDTH)
         .height(320.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .selected_text(if value.is_empty() {
@@ -715,6 +787,7 @@ fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> b
             };
             let field = ui.add(
                 egui::TextEdit::singleline(&mut search)
+                    .align(egui::Align2::LEFT_CENTER)
                     .hint_text("Search fonts")
                     .desired_width(f32::INFINITY),
             );
@@ -764,34 +837,43 @@ fn text(
     hint: &str,
 ) -> bool {
     row(ui, title, description, |ui| {
-        let response = ui.add(
-            TextEdit::singleline(value)
-                .id_salt(id)
-                .hint_text(hint)
-                .desired_width(ui.available_width()),
-        );
+        let response = ui
+            .scope(|ui| {
+                let border = ui.visuals().widgets.noninteractive.bg_stroke.color;
+                ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+                ui.add(
+                    crate::theme::text_field(
+                        TextEdit::singleline(value).id_salt(id).hint_text(hint),
+                    )
+                    .desired_width(ui.available_width()),
+                )
+            })
+            .inner;
         crate::ui_probe::record(ui.ctx(), id, response.rect);
         response.changed()
     })
 }
 
 fn navigation_row(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Response {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 25.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), theme::space::ROW),
+        egui::Sense::click(),
+    );
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, page.label())
     });
     if selected || response.hovered() || response.has_focus() {
         ui.painter().rect_filled(
             rect,
-            6,
+            theme::radius::ROW,
             if selected {
-                Color32::from_gray(if ui.visuals().dark_mode { 45 } else { 216 })
+                ui.visuals().selection.bg_fill
             } else {
                 theme::hover_fill(ui)
             },
         );
     }
+    theme::control_feedback(ui, &response);
     let icon = match page {
         Page::Appearance => Icon::Appearance,
         Page::Interface => Icon::SidebarLeft,
@@ -802,6 +884,7 @@ fn navigation_row(ui: &mut egui::Ui, page: Page, selected: bool) -> egui::Respon
         Page::Templates => Icon::Templates,
         Page::Unique => Icon::NewNote,
         Page::Recovery => Icon::Recovery,
+        Page::ReadAloud => Icon::Reading,
     };
     theme::icon_image(icon, ui.visuals().weak_text_color()).paint_at(
         ui,
@@ -886,7 +969,7 @@ fn choice(
 fn group<R>(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Frame::new()
         .fill(ui.visuals().faint_bg_color)
-        .corner_radius(12)
+        .corner_radius(theme::radius::CARD)
         .inner_margin(crate::theme::space::margin(crate::theme::space::XL, 0.0))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;

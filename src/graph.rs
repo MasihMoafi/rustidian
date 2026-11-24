@@ -10,12 +10,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod relationships;
+pub use relationships::{Facets, Focus};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Note,
     Unresolved,
     Attachment,
     Tag,
+    Author,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +39,7 @@ pub struct Edge {
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    pub facets: Facets,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +52,7 @@ pub struct Group {
 #[serde(default)]
 pub struct Options {
     pub filter: String,
+    pub focus: Focus,
     pub groups: Vec<Group>,
     pub tags: bool,
     pub attachments: bool,
@@ -62,6 +68,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             filter: String::new(),
+            focus: Focus::default(),
             groups: Vec::new(),
             tags: false,
             attachments: false,
@@ -84,13 +91,14 @@ pub struct View {
     pub orphans: Vec<usize>,
 }
 
-// The tag namespace cannot collide with a real file that has the same path text.
-type Key = (bool, PathBuf);
+// Virtual entities have separate namespaces from files, even when their labels match.
+type Key = (u8, PathBuf);
 
 impl Graph {
     pub fn from_vault(vault: &Vault) -> Self {
         let mut nodes: BTreeMap<Key, Node> = BTreeMap::new();
         let mut edges = BTreeSet::new();
+        let mut facets = relationships::Index::new(vault);
         for note in &vault.notes {
             if !is_ignored_path(&note.path) {
                 insert(&mut nodes, note.path.clone(), Kind::Note);
@@ -105,8 +113,13 @@ impl Graph {
             if is_ignored_path(&note.path) {
                 continue;
             }
-            let from = (false, note.path.clone());
-            for target in links(&note.text) {
+            let from = (0, note.path.clone());
+            let properties = crate::metadata::frontmatter(&note.text).ok().flatten();
+            for target in links(
+                properties
+                    .as_ref()
+                    .map_or(note.text.as_str(), |meta| &note.text[meta.range.end..]),
+            ) {
                 if external(&target) {
                     continue;
                 }
@@ -135,12 +148,28 @@ impl Graph {
                 let to = insert(&mut nodes, path, Kind::Tag);
                 edges.insert((from.clone(), to));
             }
+            if let Some(properties) = properties {
+                facets.add(note, properties);
+            }
         }
+        let (mut facets, author_links) = facets.finish(&mut nodes);
         let indices: BTreeMap<_, _> = nodes
             .keys()
             .cloned()
             .enumerate()
             .map(|(i, key)| (key, i))
+            .collect();
+        facets.authored = author_links
+            .into_iter()
+            .map(|(from, to)| {
+                (
+                    Edge {
+                        from: indices[&from],
+                        to: indices[&to],
+                    },
+                    to.1,
+                )
+            })
             .collect();
         Self {
             nodes: nodes.into_values().collect(),
@@ -151,13 +180,14 @@ impl Graph {
                     to: indices[&to],
                 })
                 .collect(),
+            facets,
         }
     }
 
     pub fn node(&self, path: &Path) -> Option<usize> {
         self.nodes
             .iter()
-            .position(|node| node.kind != Kind::Tag && node.path == path)
+            .position(|node| !matches!(node.kind, Kind::Tag | Kind::Author) && node.path == path)
     }
 
     /// Use the same vault snapshot that produced this graph. Queries are evaluated
@@ -182,22 +212,30 @@ impl Graph {
             .iter()
             .map(|note| (note.path.as_path(), note))
             .collect();
-        let allowed: Vec<_> = self
+        let mut allowed: Vec<_> = self
             .nodes
             .iter()
             .map(|node| {
-                (options.tags || node.kind != Kind::Tag)
+                node.kind != Kind::Author
+                    && (options.tags || node.kind != Kind::Tag)
                     && (options.attachments || node.kind != Kind::Attachment)
                     && (!options.existing_only || node.kind != Kind::Unresolved)
                     && matches(&query, node, &notes)
+                    && self.facets.matches(node, &options.focus)
             })
             .collect();
-        let eligible: Vec<_> = self
+        let authored = self.facets.edges(&mut allowed, &options.focus);
+        let mut eligible: Vec<_> = self
             .edges
             .iter()
             .copied()
             .filter(|edge| allowed[edge.from] && allowed[edge.to])
             .collect();
+        if !authored.is_empty() {
+            eligible.extend(authored);
+            eligible.sort_unstable();
+            eligible.dedup();
+        }
         let (mut selected, edges) = if let Some(path) = root {
             let Some(root) = self.node(path).filter(|&i| allowed[i]) else {
                 return Ok(View::default());
@@ -270,7 +308,7 @@ impl Graph {
 }
 
 fn insert(nodes: &mut BTreeMap<Key, Node>, path: PathBuf, kind: Kind) -> Key {
-    let key = (kind == Kind::Tag, path.clone());
+    let key = (u8::from(kind == Kind::Tag), path.clone());
     nodes.entry(key.clone()).or_insert_with(|| Node {
         label: if kind == Kind::Tag {
             path.file_name()
@@ -286,12 +324,7 @@ fn insert(nodes: &mut BTreeMap<Key, Node>, path: PathBuf, kind: Kind) -> Key {
     key
 }
 
-fn links(text: &str) -> Vec<String> {
-    let offset = crate::metadata::frontmatter(text)
-        .ok()
-        .flatten()
-        .map_or(0, |properties| properties.range.end);
-    let body = &text[offset..];
+fn links(body: &str) -> Vec<String> {
     let mut links = Vec::new();
     let mut blocked = Vec::new();
     for (event, range) in Parser::new(body).into_offset_iter() {

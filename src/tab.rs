@@ -282,3 +282,59 @@ impl Tab {
         };
     }
 }
+
+/// Content-sized tab widths within `[68, 200]` when space permits, shrinking
+/// proportionally down to `32` before horizontal scrolling takes over.
+pub fn tab_widths(natural: &[f32], available: f32, gap: f32) -> Vec<f32> {
+    const MIN_W: f32 = 32.0;
+    const MIN_NATURAL: f32 = 68.0;
+    const MAX_W: f32 = 200.0;
+
+    if natural.is_empty() {
+        return Vec::new();
+    }
+    let clamped: Vec<f32> = natural
+        .iter()
+        .map(|width| width.clamp(MIN_NATURAL, MAX_W))
+        .collect();
+    let gaps = gap * natural.len().saturating_sub(1) as f32;
+    let budget = (available - gaps).max(0.0);
+    let total: f32 = clamped.iter().sum();
+    if total <= budget {
+        return clamped;
+    }
+    if budget <= MIN_W * natural.len() as f32 {
+        return vec![MIN_W; natural.len()];
+    }
+    // Guarantee `MIN_W` per tab, then share the remaining slack proportionally.
+    let extra_budget = budget - MIN_W * natural.len() as f32;
+    let extra_desired: f32 = clamped.iter().map(|width| width - MIN_W).sum();
+    if extra_desired <= f32::EPSILON {
+        return vec![MIN_W; natural.len()];
+    }
+    let scale = (extra_budget / extra_desired).clamp(0.0, 1.0);
+    clamped
+        .into_iter()
+        .map(|width| MIN_W + (width - MIN_W) * scale)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tab_widths;
+
+    #[test]
+    fn tab_widths_keep_short_tabs_compact_and_shrink_overflow_to_minimum() {
+        let fitted = tab_widths(&[72.0, 140.0, 260.0], 800.0, 4.0);
+        assert_eq!(fitted, vec![72.0, 140.0, 200.0]);
+
+        let shrunk = tab_widths(&[80.0, 160.0, 200.0], 260.0, 4.0);
+        assert_eq!(shrunk.len(), 3);
+        assert!(shrunk.iter().all(|w| *w >= 32.0 && *w <= 200.0));
+        let sum: f32 = shrunk.iter().sum();
+        assert!((sum - (260.0 - 8.0)).abs() < 0.05);
+
+        let scrolled = tab_widths(&[180.0; 10], 250.0, 4.0);
+        assert_eq!(scrolled, vec![32.0; 10]);
+    }
+}

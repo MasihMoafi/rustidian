@@ -173,7 +173,7 @@ def check_files_and_text():
 
 def clippy_command(path):
     text = (ROOT / path).read_text()
-    match = re.search(r"cargo(?: \+[\d.]+)? clippy ([^\n|]*?)(?: 2>&1)?(?:\s*\|.*)?$", text, re.M)
+    match = re.search(r"^[ \t]*run: cargo(?: \+[\d.]+)? clippy ([^\n|]*?)(?: 2>&1)?(?:[ \t]*\|.*)?$", text, re.M)
     return match.group(1).strip() if match else None
 
 

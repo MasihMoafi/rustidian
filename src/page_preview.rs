@@ -256,7 +256,11 @@ impl Manager {
                         });
                     }
                     if let Some(error) = &card.error {
-                        ui.label(error);
+                        crate::notices::once(
+                            ctx,
+                            ("page-preview", &card.request.from, &card.request.target),
+                            error.clone(),
+                        );
                     } else if let Some(tab) = &mut card.tab {
                         let before = tab.document.clone();
                         let anchor =

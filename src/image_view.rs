@@ -16,9 +16,11 @@ pub fn show(ui: &mut egui::Ui, absolute: &Path, id: egui::Id, scale: ImageScale)
             }
         },
         Err(error) => {
-            ui.centered_and_justified(|ui| {
-                ui.label(format!("Cannot open image: {error}"));
-            });
+            crate::notices::once(
+                ui.ctx(),
+                ("image-open", absolute),
+                format!("Cannot open image: {error}"),
+            );
             return;
         }
     };

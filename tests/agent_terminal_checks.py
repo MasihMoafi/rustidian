@@ -44,6 +44,7 @@ while :; do
     alt) printf '\033[?1049h\033[?1007h\033[HALT SCREEN\n' ;;
     main) printf '\033[?1007l\033[?1049lMAIN SCREEN\n' ;;
     colors) printf '\033[1mbold\033[0m \033[3mitalic\033[0m \033[4munderline\033[0m \033[7minverse\033[0m \033[31mred\033[0m \033[32mgreen\033[0m \033[34mblue\033[0m \033[38;5;208morange\033[0m \033[38;2;0;160;255mtruecolor\033[0m \033[30;47mblack-on-white\033[0m\n' ;;
+    title) printf '\033]0;\342\240\213 Fix the build\007TITLE SET\n' ;;
     glyphs) printf '┌──┐ ⠋⠙⠹⠸⠼⠴ 中文 سلام دنیا\n└──┘ ⎿ ✻ ⏺ │done│\n' ;;
     *) printf 'you said: %s\n' "$line" ;;
   esac
@@ -423,6 +424,58 @@ def run(scope):
     wait(lambda: before_restart not in stand_ins(), "The restarted agent's old process remained")
     h.results.append("Restart ended the old process and showed a fresh banner on a fresh screen")
 
+    # 14a. Several chats, as Elpis's chat tabs (Masih, 13 Nov: "switch between the two
+    #      chats ... seamless"): + opens one beside the first, each keeps its agent and
+    #      screen while the other is shown, and closing one ends only its agent.
+    def chats():
+        return sorted(name.split(":", 2)[1:] for name in controls() if name.startswith("agent-chat:"))
+
+    def show_chat(index):
+        click(next(name for name in controls() if name.startswith(f"agent-chat:{index}:")))
+        wait(lambda: metric("agent-chat-active") == index, f"Chat {index} was not shown")
+
+    focus_terminal()
+    enter("in chat one")
+    shows("you said: in chat one")
+    one = pid()
+    click("agent-new-chat")
+    wait(lambda: metric("agent-chat-count") == 2 and pid() != one and banner(), "+ did not open a second chat")
+    two = pid()
+    wait(lambda: len(stand_ins()) == 2, "The second chat did not start its own agent")
+    assert one in stand_ins() and not any("in chat one" in row for row in rows()), rows()
+    assert chats() == [["0", "Claude 1"], ["1", "Claude 2"]], chats()
+    wait(lambda: metric("terminal-focused") == 1, "A new chat takes keyboard focus")
+    enter("in chat two")
+    shows("you said: in chat two")
+    enter("title")
+    shows("TITLE SET")
+    wait(lambda: chats() == [["0", "Claude"], ["1", "Fix the build"]], f"The agent's title did not name its chat: {chats()}")
+    h.capture("native-agent-terminal-chats.png")
+    show_chat(0)
+    shows("you said: in chat one")
+    assert pid() == one and not any("in chat two" in row for row in rows()), rows()
+    # The keys work from the terminal: Ctrl+Tab cycles, Ctrl+Shift+T opens, Ctrl+Shift+W closes.
+    focus_terminal()
+    h.key("ctrl+Tab")
+    wait(lambda: metric("agent-chat-active") == 1 and pid() == two, "Ctrl+Tab did not show the next chat")
+    shows("you said: in chat two")
+    h.key("ctrl+shift+Tab")
+    wait(lambda: metric("agent-chat-active") == 0 and pid() == one, "Ctrl+Shift+Tab did not show the previous chat")
+    h.key("ctrl+shift+t")
+    wait(lambda: metric("agent-chat-count") == 3 and pid() not in (one, two) and banner(), "Ctrl+Shift+T did not open a chat")
+    three = pid()
+    wait(lambda: len(stand_ins()) == 3, "The third chat did not start its agent")
+    h.key("ctrl+shift+w")
+    wait(lambda: metric("agent-chat-count") == 2 and three not in stand_ins(), "Ctrl+Shift+W did not close the chat and end its agent")
+    assert metric("agent-chat-active") == 1 and pid() == two, (metric("agent-chat-active"), pid())
+    click("agent-chat-close:1")
+    wait(lambda: metric("agent-chat-count") == 1 and two not in stand_ins(), "x did not close the chat and end its agent")
+    assert pid() == one and stand_ins() == [one], (pid(), stand_ins())
+    shows("you said: in chat one")
+    assert "agent-chat-close:0" not in controls(), "The only chat shows no close button"
+    h.results.append("+ opened a second chat with its own agent; each kept its screen while the other was shown; the agent's title "
+                     "named its tab; Ctrl+Tab/Ctrl+Shift+Tab switched, Ctrl+Shift+T opened, Ctrl+Shift+W and x closed a chat and ended only its agent")
+
     # 15. An agent that exits leaves its last screen and "Exited (code 0)"; Restart works again.
     focus_terminal()
     enter("exit")
@@ -464,7 +517,7 @@ def run(scope):
             wait(lambda: metric("terminal-cols"), "The terminal did not draw after resizing")
             layout(h, controls, width, height)
             h.capture(f"native-agent-terminal-{'dark' if dark else 'light'}-{width}x{height}.png", (width, height))
-    h.results.append("Light and dark at 900×640 and 1440×960: tab, header, menu, Restart, status and terminal rows fit the sidebar without overlap")
+    h.results.append("Light and dark at 900×640 and 1440×960: tab, chat tabs and +, header, menu, Restart, status and terminal rows fit the sidebar without overlap")
 
     # 18. Ctrl+Q in the terminal goes to the agent; from the editor it asks, and Quit ends the agent.
     focus_terminal()
@@ -512,6 +565,10 @@ def layout(h, controls, width, height):
         inside(rect, header, name)
     assert backend[2] <= restart[0] + 1 and restart[2] <= status[0][0] + 1, (backend, restart, status)
     assert header[3] <= terminal[1] + 1, (header, terminal)
+    strip, plus = bounds("agent-chats"), bounds("agent-new-chat")
+    inside(strip, pane, "agent-chats")
+    inside(plus, strip, "agent-new-chat")
+    assert strip[3] <= header[1] + 1, (strip, header)
     for name, rect in current.items():
         if name.startswith("terminal-row:"):
             inside(rect, terminal, name)

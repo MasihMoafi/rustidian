@@ -248,7 +248,8 @@ pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
     egui::ScrollArea::horizontal()
         .id_salt("theme-cards")
         .show(ui, |ui| {
-            let width = ((ui.available_width() - 24.0) / 4.0).clamp(116.0, 210.0);
+            let width = ((ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 4.0)
+                .clamp(116.0, 210.0);
             ui.horizontal(|ui| {
                 for palette in [
                     Palette::Teal,
@@ -261,13 +262,18 @@ pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
                     let active = *selected == palette;
                     let accent = palette.accent(dark);
                     let background = palette.background(dark);
-                    ui.painter().rect_filled(rect, 7, background);
+                    ui.painter()
+                        .rect_filled(rect, super::radius::CARD, background);
                     ui.painter().rect_stroke(
                         rect,
-                        7,
+                        super::radius::CARD,
                         Stroke::new(
-                            if active { 2.0 } else { 1.0 },
-                            if active || response.hovered() {
+                            if active || response.has_focus() {
+                                2.0
+                            } else {
+                                1.0
+                            },
+                            if active || response.hovered() || response.has_focus() {
                                 accent
                             } else {
                                 ui.visuals().widgets.noninteractive.bg_stroke.color
@@ -309,11 +315,15 @@ pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
                             palette.side(dark),
                         ],
                     };
-                    let gap = 4.0;
-                    let swatch_width = (width - 24.0 - 3.0 * gap) / 4.0;
+                    let gap = super::space::XS;
+                    let swatch_width = (width - 2.0 * super::space::M - 3.0 * gap) / 4.0;
                     for (index, color) in swatches.into_iter().enumerate() {
                         let swatch = egui::Rect::from_min_size(
-                            rect.min + egui::vec2(12.0 + index as f32 * (swatch_width + gap), 91.0),
+                            rect.min
+                                + egui::vec2(
+                                    super::space::M + index as f32 * (swatch_width + gap),
+                                    91.0,
+                                ),
                             egui::vec2(swatch_width, 18.0),
                         );
                         ui.painter().rect_filled(swatch, 3, color);

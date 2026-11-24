@@ -538,6 +538,13 @@ pub struct ScrollStyle {
     /// If true, use colors with more contrast. Good for floating scroll bars.
     pub foreground_color: bool,
 
+    /// Optional theme color for the handle, independent of other widgets.
+    /// The handle opacity for the current interaction state still applies.
+    pub handle_color: Option<Color32>,
+
+    /// Optional theme color for the track, before its state opacity is applied.
+    pub track_color: Option<Color32>,
+
     /// The opaqueness of the background when the user is neither scrolling
     /// nor hovering the scroll area.
     ///
@@ -606,6 +613,8 @@ impl ScrollStyle {
             floating_allocated_width: 0.0,
 
             foreground_color: false,
+            handle_color: None,
+            track_color: None,
 
             dormant_background_opacity: 0.0,
             active_background_opacity: 0.4,
@@ -693,6 +702,8 @@ impl ScrollStyle {
             floating_allocated_width,
 
             foreground_color,
+            handle_color: _,
+            track_color: _,
 
             dormant_background_opacity,
             active_background_opacity,

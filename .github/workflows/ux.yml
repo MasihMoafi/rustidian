@@ -60,20 +60,24 @@ jobs:
       - name: Install native test tools
         run: |
           sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
-          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri xvfb xdotool xclip x11-utils x11-xserver-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libegl1-mesa-dev libgl1-mesa-dri libsonic0 xvfb xdotool xclip x11-utils x11-xserver-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
           mkdir -p reports
           for tool in Xvfb xdotool xclip xset xprop xwininfo; do command -v "$tool"; done
       - name: Install file manager for native Reveal verification
         if: ${{ contains(inputs.sections, 'reveal') }}
         run: sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends nautilus dbus-x11
+      - name: Install the system player for HTML media verification
+        if: ${{ contains(inputs.sections, 'html-media') || !inputs.gui_only }}
+        run: sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends ffmpeg
+      # Before the cache (see native.yml): a formatting failure must not save an empty cache.
+      - name: Formatting
+        run: cargo fmt --all -- --check
       - name: Restore the Rust build cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: gui-only-${{ inputs.gui_only }}-keep-binary-${{ inputs.keep_binary }}
           cache-on-failure: true
-      - name: Formatting
-        run: cargo fmt --all -- --check
       - name: Restore unchanged optimized candidate and native evidence
         if: ${{ inputs.reuse_run != '' }}
         env:
@@ -88,6 +92,13 @@ jobs:
           python3 scripts/reuse-actions-candidate.py --source-commit "$source_commit" --check-source
           gh run download "$REUSE_RUN" --repo "$GITHUB_REPOSITORY" --name "rustidian-candidate-$source_commit" --dir "$RUNNER_TEMP/reused-candidate"
           python3 scripts/reuse-actions-candidate.py --source-commit "$source_commit" --artifact-dir "$RUNNER_TEMP/reused-candidate" --run-metadata "$RUNNER_TEMP/reused-run.json"
+      - name: Read aloud worker checks
+        if: ${{ contains(inputs.sections, 'read-aloud') && inputs.reuse_run == '' }}
+        run: |
+          cargo clippy --locked --bin rustidian -- -D warnings
+          cargo test --locked --bin rustidian read_aloud::worker::tests
+          cargo test --locked --bin rustidian read_aloud::tempo::tests
+          cargo test --locked --test voice_account_behavior
       - name: Verify and obtain dependency notices
         if: ${{ !inputs.gui_only || inputs.package_after_checks || contains(inputs.sections, 'html-import') }}
         env:
@@ -137,6 +148,13 @@ jobs:
       - name: HTML import behavior checks
         if: ${{ contains(inputs.sections, 'html-import') }}
         run: cargo test --locked --test html_import_behavior 2>&1 | tee reports/html-import-tests.log
+      - name: HTML media parser and resolver checks
+        if: ${{ contains(inputs.sections, 'html-media') }}
+        run: |
+          cargo test --locked --test html_media_behavior --test attachment_behavior --test inline_style_behavior 2>&1 | tee reports/html-media-tests.log
+          cargo test --locked --lib html_layout::tests 2>&1 | tee reports/html-layout-tests.log
+          cargo test --locked --lib assets::tests 2>&1 | tee reports/html-asset-tests.log
+          cargo test --locked --bin rustidian preview::tests 2>&1 | tee reports/html-preview-tests.log
       - name: Narrow Markdown renderer checks
         if: ${{ contains(inputs.sections, 'narrow-html') }}
         run: |
@@ -274,6 +292,7 @@ jobs:
             reports/modal-order-baseline.log
             reports/gui-*-results.json
             reports/gui-failure.png
+            reports/native-quiet-warning.png
             reports/native-table-edge-*.png
             reports/native-table-edge-*.json
             reports/native-graph-state-*.png

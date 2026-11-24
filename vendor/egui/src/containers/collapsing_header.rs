@@ -550,13 +550,13 @@ impl CollapsingHeader {
 
         let available = ui.available_rect_before_wrap();
         let text_pos = available.min + vec2(ui.spacing().indent, 0.0);
-        let wrap_width = available.right() - text_pos.x;
-        let galley = text.into_galley(
-            ui,
-            Some(TextWrapMode::Extend),
-            wrap_width,
-            TextStyle::Button,
-        );
+        let wrap_mode = ui.style().wrap_mode.unwrap_or(TextWrapMode::Extend);
+        let wrap_width = if wrap_mode == TextWrapMode::Extend {
+            available.right() - text_pos.x
+        } else {
+            (available.right() - text_pos.x - button_padding.x).max(0.0)
+        };
+        let galley = text.into_galley(ui, Some(wrap_mode), wrap_width, TextStyle::Button);
         let text_max_x = text_pos.x + galley.size().x;
 
         let mut desired_width = text_max_x + button_padding.x - available.left();

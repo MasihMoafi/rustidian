@@ -2,6 +2,7 @@ mod app;
 mod callout_ui;
 mod code_ui;
 mod diagrams;
+mod dictation;
 mod editor_ui;
 mod explorer_selection;
 mod file_move_ui;
@@ -13,11 +14,14 @@ mod image_view;
 mod instance;
 mod math_inline;
 mod math_ui;
+mod media_ui;
 mod note_embed_ui;
+mod notices;
 mod page_pan;
 mod page_preview;
 mod preview;
 mod properties_ui;
+mod read_aloud;
 mod recovery_ui;
 mod session;
 mod svg_loader;
@@ -116,39 +120,40 @@ fn main() -> eframe::Result {
         }
     };
     let default_vault = rustidian::vaults::default_vault();
-    // A launch without a file or folder reopens the vault Masih last read, and
-    // its page; only when none is remembered does the default vault open.
+    // Without a CLI target: env/saved default vault > last-opened vault > writable demo vault.
     let remembered = first
         .is_none()
         .then(rustidian::vaults::last_opened)
         .flatten();
-    let input = first
-        .map(PathBuf::from)
-        .or_else(|| remembered.as_ref().map(|(root, _)| root.clone()))
-        .or_else(|| default_vault.clone())
-        .or_else(|| {
-            #[cfg(target_os = "linux")]
-            {
-                let executable = std::env::current_exe().ok()?;
-                let catalog = rustidian::vaults::location()?;
-                match rustidian::vaults::bundled_demo_vault(&executable, catalog.parent()?) {
-                    Ok(demo) => demo,
-                    Err(error) => {
-                        eprintln!("Cannot prepare the bundled demo vault: {error}");
-                        std::process::exit(2);
+    let input = first.map(PathBuf::from).unwrap_or_else(|| {
+        rustidian::vaults::startup_vault(
+            default_vault.as_deref(),
+            remembered.as_ref().map(|(root, _)| root.as_path()),
+            || {
+                #[cfg(target_os = "linux")]
+                {
+                    let executable = std::env::current_exe().ok()?;
+                    let catalog = rustidian::vaults::location()?;
+                    match rustidian::vaults::bundled_demo_vault(&executable, catalog.parent()?) {
+                        Ok(demo) => demo,
+                        Err(error) => {
+                            eprintln!("Cannot prepare the bundled demo vault: {error}");
+                            std::process::exit(2);
+                        }
                     }
                 }
-            }
-            #[cfg(not(target_os = "linux"))]
-            None
-        })
+                #[cfg(not(target_os = "linux"))]
+                None
+            },
+        )
         .unwrap_or_else(|| {
             std::env::current_exe()
                 .ok()
                 .and_then(|executable| executable.parent().map(|parent| parent.join("demo-vault")))
                 .filter(|vault| vault.is_dir())
                 .unwrap_or_else(|| PathBuf::from("demo-vault"))
-        });
+        })
+    });
     let registered = if input.is_file() {
         rustidian::vaults::Vaults::open().ok()
     } else {
@@ -198,6 +203,7 @@ fn main() -> eframe::Result {
     // The socket file stays: the next launch finds nobody listening on it and
     // replaces it. Removing it here could remove a newer window's socket.
     // The window is gone; an agent that ignores SIGTERM still gets its SIGKILL.
+    read_aloud::wait_for_closing();
     rustidian::terminal::wait_for_closing();
     result
 }

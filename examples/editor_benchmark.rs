@@ -25,8 +25,16 @@ mod math_inline;
 mod math_ui;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
+#[path = "../src/media_ui.rs"]
+mod media_ui;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/note_embed_ui.rs"]
 mod note_embed_ui;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
+#[path = "../src/notices.rs"]
+mod notices;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
 #[path = "../src/page_preview.rs"]
@@ -35,6 +43,10 @@ mod page_preview;
 #[allow(dead_code, unused_imports)]
 #[path = "../src/preview.rs"]
 mod preview;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
+#[path = "../src/read_aloud.rs"]
+mod read_aloud;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
 #[path = "../src/svg_loader.rs"]
