@@ -1026,7 +1026,7 @@ mod tests {
                                     reverse: false,
                                     order: None,
                                 },
-                                0,
+                                Default::default(),
                                 Some(Path::new(
                                     "Learning/8. Notebook (Function Arguments and Mutability)",
                                 )),

@@ -65,7 +65,7 @@ fn main() {
                                         reverse: false,
                                         order: None,
                                     },
-                                    0,
+                                    Default::default(),
                                     None,
                                     &mut None,
                                     &mut Default::default(),
