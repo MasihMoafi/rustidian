@@ -8646,7 +8646,7 @@ int rename(const char *source, const char *destination) {
                     key("ctrl+Home")
                     pause()
                     editor = control_bounds("editor")
-                    xdo("mousemove", "--sync", str(round(editor[0] + 100)), str(round(editor[1] + 10)))
+                    xdo("mousemove", "--sync", str(round(editor[2] - 20)), str(round(editor[1] + 10)))
                     pause()
                     block = control_bounds("editor-speech-block:1")
                     y = round((block[1] + block[3]) / 2)
@@ -8685,7 +8685,7 @@ int rename(const char *source, const char *destination) {
                     if view != "Reading view":
                         key("ctrl+Home")
                         editor = control_bounds("editor")
-                        xdo("mousemove", str(round(editor[0] + 25)), str(round(editor[1] + 10)))
+                        xdo("mousemove", str(round(editor[2] - 20)), str(round(editor[1] + 10)))
                     probe = "reading-block:1" if view == "Reading view" else "editor-speech-block:1"
                     left, top, right, bottom = control_bounds(probe)
                     xdo("mousemove", str(round(left + min(25, (right - left) / 2))), str(round((top + bottom) / 2)))
