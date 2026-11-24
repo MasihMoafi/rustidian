@@ -2021,6 +2021,7 @@ impl NotesApp {
             return;
         }
         if self.dialog.is_none() {
+            crate::read_aloud::space_shortcut(ctx);
             self.deletion_shortcut(ctx);
             if ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::R)

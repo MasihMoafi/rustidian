@@ -92,6 +92,8 @@ const IDLE: Duration = Duration::from_secs(30 * 60);
 #[derive(Clone, Default)]
 pub struct Status {
     pub active: bool,
+    paused_at: Option<Instant>,
+    paused_for: Duration,
     /// The sentence being heard (1-based) and how many there are.
     pub index: usize,
     pub total: usize,
@@ -105,6 +107,13 @@ pub struct Status {
     pub session: u64,
     /// The session of the read the user started; a restart for a new speed keeps it.
     pub origin: u64,
+}
+
+impl Status {
+    /// Audio writes and sentence highlights use the same clock, which stops while paused.
+    fn playback_time(&self) -> Instant {
+        self.paused_at.unwrap_or_else(Instant::now) - self.paused_for
+    }
 }
 
 struct Shared {
@@ -326,8 +335,9 @@ fn current(session: u64) -> bool {
 }
 
 fn update(ctx: &egui::Context, session: u64, change: impl FnOnce(&mut Status)) {
+    let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
     if current(session) {
-        change(&mut SHARED.status.lock().unwrap_or_else(|e| e.into_inner()));
+        change(&mut status);
         ctx.request_repaint();
     }
 }
@@ -435,6 +445,8 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
         let origin = if saved_speed { session } else { status.origin };
         *status = Status {
             active: true,
+            paused_at: (!saved_speed && status.paused_at.is_some()).then(Instant::now),
+            paused_for: Duration::ZERO,
             index: first + 1,
             total: chunks.len(),
             current: chunks[first].clone(),
@@ -511,17 +523,35 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
             let schedule = Arc::clone(&heard);
             let monitor_ctx = ctx.clone();
             let monitor = std::thread::spawn(move || {
+                let mut player_paused = false;
                 while !watching.load(Ordering::SeqCst) {
                     if !current(session) {
                         let _ = watcher.lock().unwrap_or_else(|e| e.into_inner()).kill();
                         break;
+                    }
+                    let (paused, now) = {
+                        let status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
+                        (status.paused_at.is_some(), status.playback_time())
+                    };
+                    if paused != player_paused {
+                        // The player owns buffered PCM even after the last sentence was written.
+                        let mut child = watcher.lock().unwrap_or_else(|e| e.into_inner());
+                        if matches!(child.try_wait(), Ok(None))
+                            && let Ok(pid) = i32::try_from(child.id())
+                            && let Some(pid) = rustix::process::Pid::from_raw(pid)
+                        {
+                            use rustix::process::Signal;
+                            let signal = if paused { Signal::STOP } else { Signal::CONT };
+                            let _ = rustix::process::kill_process(pid, signal);
+                        }
+                        player_paused = paused;
                     }
                     let due = {
                         let mut queue = schedule.lock().unwrap_or_else(|e| e.into_inner());
                         let mut due = None;
                         while queue
                             .front()
-                            .is_some_and(|(at, _, _)| *at <= Instant::now())
+                            .is_some_and(|(at, _, _)| !paused && *at <= now)
                         {
                             due = queue.pop_front();
                         }
@@ -569,7 +599,7 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
                 }
             });
             let played = (|| -> Result<(), String> {
-                let mut audio_end = Instant::now();
+                let mut audio_end = status().playback_time();
                 let mut tempo: Option<tempo::Tempo> = None;
                 let mut scheduled = None;
                 for (index, text, pcm) in receiver {
@@ -598,7 +628,24 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
                             continue;
                         }
                         // 24 kHz mono, two bytes a sample.
-                        let begins = audio_end.max(Instant::now());
+                        // Bound backend buffering to one short write ahead of the clock.
+                        let now = loop {
+                            if !current(session) {
+                                return Ok(());
+                            }
+                            {
+                                let status =
+                                    SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
+                                let now = status.playback_time();
+                                if status.paused_at.is_none()
+                                    && audio_end <= now + Duration::from_millis(85)
+                                {
+                                    break now;
+                                }
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        };
+                        let begins = audio_end.max(now);
                         audio_end = begins + Duration::from_secs_f64(pcm.len() as f64 / 48_000.0);
                         if scheduled != Some(index) {
                             heard.lock().unwrap_or_else(|e| e.into_inner()).push_back((
@@ -647,6 +694,64 @@ fn start(ctx: &egui::Context, chunks: Arc<Vec<String>>, first: usize, saved_spee
             status.preparing = false;
         });
     });
+}
+
+fn toggle_pause(ctx: &egui::Context) {
+    let mut status = SHARED.status.lock().unwrap_or_else(|e| e.into_inner());
+    if status.active {
+        if let Some(at) = status.paused_at.take() {
+            status.paused_for += at.elapsed();
+        } else {
+            status.paused_at = Some(Instant::now());
+        }
+        ctx.request_repaint();
+    }
+}
+
+/// Leave Space to text fields, open menus and the embedded terminal.
+pub fn space_shortcut(ctx: &egui::Context) {
+    if !SHARED
+        .status
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .active
+        || egui::Popup::is_any_open(ctx)
+        || ctx.memory(|m| m.focused()).is_some_and(|id| {
+            id == crate::terminal_ui::focus_id()
+                || egui::widgets::text_edit::TextEditState::load(ctx, id).is_some()
+        })
+    {
+        return;
+    }
+    let pressed = ctx.input_mut(|input| {
+        let mut pressed = false;
+        let mut handled = false;
+        input.events.retain(|event| {
+            if let egui::Event::Key {
+                key: egui::Key::Space,
+                pressed: true,
+                repeat,
+                modifiers,
+                ..
+            } = event
+                && modifiers.is_none()
+            {
+                pressed |= !repeat;
+                handled = true;
+                return false;
+            }
+            true
+        });
+        if handled {
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::Text(text) if text == " "));
+        }
+        pressed
+    });
+    if pressed {
+        toggle_pause(ctx);
+    }
 }
 
 /// Stop reading at once: the sentence playing and the ones being voiced.
@@ -906,6 +1011,59 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
                         crate::ui_probe::record(ui.ctx(), "read-aloud-stop", rect);
                         if stop.on_hover_text("Stop reading").clicked() {
                             self::stop(ui.ctx());
+                        }
+                        let paused = status.paused_at.is_some();
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::Vec2::splat(crate::theme::space::ROW),
+                            egui::Sense::click(),
+                        );
+                        let center = rect.center();
+                        let color = ui.style().interact(&response).fg_stroke.color;
+                        if paused {
+                            ui.painter().add(egui::Shape::convex_polygon(
+                                vec![
+                                    center + egui::vec2(-4.0, -6.0),
+                                    center + egui::vec2(6.0, 0.0),
+                                    center + egui::vec2(-4.0, 6.0),
+                                ],
+                                color,
+                                egui::Stroke::NONE,
+                            ));
+                        } else {
+                            for x in [-3.0, 3.0] {
+                                ui.painter().rect_filled(
+                                    egui::Rect::from_center_size(
+                                        center + egui::vec2(x, 0.0),
+                                        egui::vec2(3.0, 12.0),
+                                    ),
+                                    1.0,
+                                    color,
+                                );
+                            }
+                        }
+                        let action = if paused {
+                            "Resume reading (Space)"
+                        } else {
+                            "Pause reading (Space)"
+                        };
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, action)
+                        });
+                        crate::ui_probe::record(
+                            ui.ctx(),
+                            if paused {
+                                "read-aloud-resume"
+                            } else {
+                                "read-aloud-pause"
+                            },
+                            rect,
+                        );
+                        if response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text(action)
+                            .clicked()
+                        {
+                            toggle_pause(ui.ctx());
                         }
                         speed_menu(ui, speed, "read-aloud-speed");
                         let label = if status.preparing {

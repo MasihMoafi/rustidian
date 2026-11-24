@@ -8445,6 +8445,12 @@ int rename(const char *source, const char *destination) {
                     assert blocked.read_text() == "Second sentence follows."
                     assert lines(played) == ["First sentence here."], lines(played)
                     capture("native-read-aloud-before-section-ready.png")
+                    key("space")
+                    control_bounds("read-aloud-resume")
+                    hold.unlink()
+                    time.sleep(1)
+                    assert lines(played) == ["First sentence here."], "Paused speech advanced"
+                    key("space")
                 finally:
                     hold.unlink(missing_ok=True)
                 results.append("The first sentence reached playback while the second sentence was still blocked in synthesis")
@@ -8545,6 +8551,8 @@ int rename(const char *source, const char *destination) {
                 key("ctrl+a")
                 click_control("read-aloud-selection")
                 wait_played(1)
+                click_control("read-aloud-pause")
+                control_bounds("read-aloud-resume")
                 click_control("read-aloud-stop")
                 stopped = len(lines(played))
                 time.sleep(1.5)
