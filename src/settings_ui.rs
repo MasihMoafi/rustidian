@@ -87,7 +87,7 @@ impl Page {
             Self::Editor => {
                 "editor editing files save autosave default view source live preview inline title readable line length status mode"
             }
-            Self::Files => "files and links automatically update move folder",
+            Self::Files => "files and links automatically update move folder trash default vault",
             Self::Hotkeys => "hotkeys keyboard shortcuts commands",
             Self::Daily => "daily notes date format folder template new file location",
             Self::Templates => "templates date time format folder location",
@@ -414,6 +414,64 @@ impl NotesApp {
                                     "settings-confirm-trash",
                                     &mut self.confirm_trash,
                                 );
+                                ui.separator();
+                                let current_root = self.vault.as_ref().map(|vault| vault.root.clone());
+                                let mut set_default = None;
+                                let mut clear_default = false;
+                                let detail = match (&self.env_default_vault, &self.saved_default_vault) {
+                                    (Some(env), _) => format!("Environment override: {}", env.display()),
+                                    (None, Some(saved)) => saved.display().to_string(),
+                                    (None, None) => "Not set (reopens last opened vault)".to_string(),
+                                };
+                                row(ui, "Default vault", &detail, |ui| {
+                                    if self.saved_default_vault.is_some() {
+                                        let clear = ui.button("Clear");
+                                        crate::ui_probe::record(
+                                            ctx,
+                                            "settings-default-vault-clear",
+                                            clear.rect,
+                                        );
+                                        if clear.clicked() {
+                                            clear_default = true;
+                                        }
+                                    }
+                                    if let Some(root) = &current_root
+                                        && self.saved_default_vault.as_deref()
+                                            != Some(root.as_path())
+                                    {
+                                        let use_current = ui.button("Use current");
+                                        crate::ui_probe::record(
+                                            ctx,
+                                            "settings-default-vault-current",
+                                            use_current.rect,
+                                        );
+                                        if use_current.clicked() {
+                                            set_default = Some(root.clone());
+                                        }
+                                    }
+                                    false
+                                });
+                                if let Some(root) = set_default {
+                                    match rustidian::vaults::set_default_vault(&root) {
+                                        Ok(saved) => {
+                                            self.saved_default_vault = Some(saved);
+                                            self.vault_manager.refresh();
+                                            self.status = "Default vault saved".into();
+                                            self.error = None;
+                                        }
+                                        Err(error) => self.error = Some(error),
+                                    }
+                                } else if clear_default {
+                                    match rustidian::vaults::clear_default_vault() {
+                                        Ok(()) => {
+                                            self.saved_default_vault = None;
+                                            self.vault_manager.refresh();
+                                            self.status = "Default vault cleared".into();
+                                            self.error = None;
+                                        }
+                                        Err(error) => self.error = Some(error),
+                                    }
+                                }
                             }
                             Page::Hotkeys => {
                                 for command in rustidian::commands::ranked("", Scope::Editor) {

@@ -169,6 +169,8 @@ pub struct NotesApp {
     pub(crate) autosave_enabled: bool,
     autosave: rustidian::autosave::Writer,
     vault_manager: crate::vault_manager::Manager,
+    pub(crate) saved_default_vault: Option<PathBuf>,
+    pub(crate) env_default_vault: Option<PathBuf>,
     open_picker: rustidian::native_picker::Picker,
     reveal_result: Option<Receiver<Result<(), String>>>,
     pub(crate) note_aids: rustidian::note_aids::Config,
@@ -275,6 +277,8 @@ impl NotesApp {
             autosave_enabled: true,
             autosave: Default::default(),
             vault_manager: Default::default(),
+            saved_default_vault: rustidian::vaults::saved_default_vault(),
+            env_default_vault: rustidian::vaults::env_default_vault(),
             open_picker: Default::default(),
             reveal_result: None,
             note_aids: Default::default(),
@@ -1409,6 +1413,10 @@ impl NotesApp {
     }
 
     fn ask(&mut self, dialog: Dialog) {
+        if dialog == Dialog::Settings {
+            self.saved_default_vault = rustidian::vaults::saved_default_vault();
+            self.env_default_vault = rustidian::vaults::env_default_vault();
+        }
         self.dialog_skip_trash = false;
         self.template_source = (dialog == Dialog::InsertTemplate)
             .then(|| {
