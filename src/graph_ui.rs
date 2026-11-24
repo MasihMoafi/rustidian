@@ -12,7 +12,7 @@ use rustidian::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     path::PathBuf,
     sync::{
         Arc,
@@ -521,7 +521,7 @@ impl Manager {
                             path,
                             kind: Kind::Author,
                         }) => {
-                            pane.preferences.options.focus.author = Some(path);
+                            pane.preferences.options.focus.author = BTreeSet::from([path]);
                             ui.ctx().request_repaint();
                         }
                         Some(open) => action = Some(open),
@@ -677,32 +677,112 @@ fn slider(ui: &mut egui::Ui, slider: egui::Slider<'_>, probe: &str) {
     });
 }
 
-fn focus_choice<T: Clone + PartialEq>(
+fn focus_choice<T: Ord>(
     ui: &mut egui::Ui,
     label: &str,
-    selected: &mut Option<T>,
+    selected: &mut BTreeSet<T>,
     choices: impl Iterator<Item = (T, String)>,
 ) {
-    let choices: Vec<_> = choices.collect();
-    let shown = selected
-        .as_ref()
-        .and_then(|selected| choices.iter().find(|(key, _)| key == selected))
-        .map_or_else(|| "All".to_owned(), |(_, label)| label.clone());
-    ui.horizontal(|ui| {
-        ui.label(label);
-        let combo = egui::ComboBox::from_id_salt(label)
-            .selected_text(shown)
-            .width(ui.available_width())
-            .height(250.0)
-            .show_ui(ui, |ui| {
-                ui.selectable_value(selected, None, "All");
+    use crate::theme::space::{S, XS};
+
+    let width = ui.available_width();
+    let trigger_height = ui.spacing().interact_size.y;
+    let summary = match selected.len() {
+        0 => "All".to_owned(),
+        count => format!("{count} selected"),
+    };
+    let trigger = ui.add_sized(
+        [width, trigger_height],
+        egui::Button::new(format!("{label}: {summary}"))
+            .right_text("▾")
+            .truncate(),
+    );
+    ui_probe::record(ui.ctx(), format!("focus:{label}"), trigger.rect);
+    let popup = egui::Popup::from_toggle_button_response(&trigger)
+        .align(egui::RectAlign::BOTTOM_START)
+        .align_alternatives(&[egui::RectAlign::TOP_START])
+        .gap(XS)
+        .layout(Layout::top_down_justified(Align::Min))
+        .width(width)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .frame(egui::Frame::popup(ui.style()).inner_margin(XS))
+        .accessible_name(format!("Filter by {label}"));
+    if let Some(panel) = popup.show(|ui| {
+        ui.set_width((width - 2.0 * XS).max(0.0));
+        let search_id = ui.id().with("search");
+        let mut search = if trigger.clicked() {
+            String::new()
+        } else {
+            ui.data(|data| data.get_temp::<String>(search_id))
+                .unwrap_or_default()
+        };
+        let search_field = ui.add(
+            egui::TextEdit::singleline(&mut search)
+                .desired_width(ui.available_width())
+                .hint_text(format!("Search {label}…")),
+        );
+        if trigger.clicked() {
+            search_field.request_focus();
+        }
+        ui_probe::record(ui.ctx(), format!("focus:{label}:search"), search_field.rect);
+        let query = search.trim().to_lowercase();
+        ui.data_mut(|data| data.insert_temp(search_id, search));
+        let all = ui.button("Select all");
+        ui_probe::record(ui.ctx(), format!("focus:{label}:all"), all.rect);
+        if all.clicked() {
+            selected.clear();
+        }
+        ui.separator();
+        let mut choices = choices.collect::<Vec<_>>();
+        choices.sort_by(|left, right| left.1.cmp(&right.1));
+        let max_list_height =
+            (ui.ctx().content_rect().height() / 3.0).min(4.0 * (trigger_height + XS));
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .max_height(max_list_height)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = XS;
+                let mut matched = false;
                 for (key, value) in choices {
-                    let response = ui.selectable_value(selected, Some(key), &value);
-                    ui_probe::record(ui.ctx(), format!("focus:{label}:{value}"), response.rect);
+                    if !value.to_lowercase().contains(&query) {
+                        continue;
+                    }
+                    matched = true;
+                    let checked = selected.contains(&key);
+                    let mark = if checked { "✓" } else { "□" };
+                    let row = ui
+                        .add_sized(
+                            [ui.available_width(), trigger_height],
+                            egui::Button::new(value.as_str())
+                                .right_text(mark)
+                                .selected(checked)
+                                .truncate(),
+                        )
+                        .on_hover_text(&value);
+                    ui_probe::record(ui.ctx(), format!("focus:{label}:{value}"), row.rect);
+                    if row.clicked() && !selected.remove(&key) {
+                        selected.insert(key);
+                    }
+                }
+                if !matched {
+                    ui.add_space(S);
+                    ui.label(if query.is_empty() {
+                        "No options"
+                    } else {
+                        "No matches"
+                    });
                 }
             });
-        ui_probe::record(ui.ctx(), format!("focus:{label}"), combo.response.rect);
-    });
+    }) {
+        ui_probe::record(
+            ui.ctx(),
+            format!("focus:{label}:popup"),
+            panel.response.rect,
+        );
+        if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+            trigger.request_focus();
+        }
+    }
 }
 
 fn relationship_filters(ui: &mut egui::Ui, focus: &mut Focus, facets: &Facets) {

@@ -13558,6 +13558,13 @@ int rename(const char *source, const char *destination) {
                     "Library/Three.md": "---\nauthor: Robin Vale (@rvale)\ntype: interview\n---\n# Three\n",
                     "Workshop/Four.md": "---\nauthor: Casey\ntype: tutorial\n---\n# Four\n",
                 }
+                # Each case stays synthetic; long and numerous values caught the original overflow.
+                sources.update({
+                    f"Extras/Extra {index:02}.md": (
+                        f"---\nauthor: Zed Example {index:02} " + "unbroken" * 17 + "\n---\n# Extra\n"
+                    )
+                    for index in range(14)
+                })
                 for file, source in sources.items():
                     path = fixture / file
                     path.parent.mkdir(exist_ok=True)
@@ -13581,31 +13588,69 @@ int rename(const char *source, const char *destination) {
                 assert control_bounds(prefix + "author:Robin Vale (@rvale)", required=False) is None
                 open_graph_filters("global-graph")
 
-                def choose(facet, label):
+                def open_facet(facet):
                     click_control(prefix + f"focus:{facet}", hold=.15)
-                    click_control(prefix + f"focus:{facet}:{label}", hold=.15)
+                    trigger = control_bounds(prefix + f"focus:{facet}")
+                    popup = control_bounds(prefix + f"focus:{facet}:popup")
+                    canvas = control_bounds(prefix + "canvas")
+                    assert abs(popup[0] - trigger[0]) <= 2, (facet, trigger, popup)
+                    assert abs(popup[2] - trigger[2]) <= 2, (facet, trigger, popup)
+                    assert popup[3] - popup[1] <= 250, (facet, popup)
+                    assert popup[0] >= canvas[0] - 2 and popup[2] <= canvas[2] + 2, (canvas, popup)
+                    assert popup[1] >= 0 and popup[3] <= canvas[3] + 2, (canvas, popup)
+                    assert min(abs(popup[1] - trigger[3]), abs(trigger[1] - popup[3])) <= 8, (trigger, popup)
 
+                def choose(facet, label):
+                    click_control(prefix + f"focus:{facet}:{label}", hold=.15)
+                    assert control_bounds(prefix + f"focus:{facet}:popup"), "Choice closed a multi-select"
+
+                open_facet("Author")
+                capture("native-graph-facets-wide.png")
                 choose("Author", "Casey")
                 settled(4)
                 assert control_bounds(prefix + "node:People/Casey.md")
                 assert control_bounds(prefix + "node:Workshop/Four.md")
                 assert control_bounds(prefix + "edge-count")[0] == 4
-                capture("native-graph-author-existing.png")
                 choose("Author", "Robin Vale (@rvale)")
+                settled(6)
+                assert control_bounds(prefix + "node:Workshop/Four.md")
+                assert control_bounds(prefix + "node:Library/Three.md")
+                assert control_bounds(prefix + "edge-count")[0] == 6
+                choose("Author", "Casey")
                 settled(3)
                 assert control_bounds(prefix + "author:Robin Vale (@rvale)")
-                assert control_bounds(prefix + "node:Library/Three.md")
                 assert control_bounds(prefix + "edge-count")[0] == 2
-                capture("native-graph-author-virtual.png")
-                click_control(prefix + "focus-clear")
+                key("Escape")
+                assert control_bounds(prefix + "focus:Author:popup", required=False) is None
+                settled(3)
+                results.append("Author selection is additive, a second click removes only that choice, and Escape dismisses without clearing")
+
+                xdo("windowsize", window, "900", "700"); pause()
+                open_facet("Author")
+                click_control(prefix + "focus:Author:search", hold=.15)
+                type_text("ZED EXAMPLE 13")
+                assert control_bounds(prefix + "focus:Author:Casey", required=False) is None
+                choose("Author", sources["Extras/Extra 13.md"].splitlines()[1].removeprefix("author: "))
+                settled(5)
+                capture("native-graph-facets-narrow.png", size=(900, 700))
+                click_control(prefix + "focus:Author:all", hold=.15)
                 settled(original_count)
+                key("Escape")
+                results.append("Long lists stay anchored and bounded at two window sizes, search works without clearing choices, and Select all ignores search")
+
+                open_facet("Folder")
                 choose("Folder", "Library")
+                choose("Folder", "Workshop")
+                key("Escape")
+                open_facet("Type")
                 choose("Type", "article")
-                settled(4)
+                choose("Type", "tutorial")
+                key("Escape")
+                settled(5)
                 assert control_bounds(prefix + "node:Library/One.md")
+                assert control_bounds(prefix + "node:Workshop/Four.md")
                 assert control_bounds(prefix + "node:Library/Three.md", required=False) is None
-                assert control_bounds(prefix + "edge-count")[0] == 4
-                capture("native-graph-folder-and-type.png")
+                assert control_bounds(prefix + "edge-count")[0] == 5
                 click_control(prefix + "focus-clear")
                 settled(original_count)
                 assert all((fixture / file).read_text() == source for file, source in sources.items())
