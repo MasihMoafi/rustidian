@@ -13,16 +13,38 @@ use std::{
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Focus {
-    pub author: Option<PathBuf>,
-    pub note_type: Option<String>,
-    pub folder: Option<PathBuf>,
+    #[serde(deserialize_with = "selection")]
+    pub author: BTreeSet<PathBuf>,
+    #[serde(deserialize_with = "selection")]
+    pub note_type: BTreeSet<String>,
+    #[serde(deserialize_with = "selection")]
+    pub folder: BTreeSet<PathBuf>,
     pub show_authors: bool,
 }
 
 impl Focus {
     pub fn active(&self) -> bool {
-        self.author.is_some() || self.note_type.is_some() || self.folder.is_some()
+        !self.author.is_empty() || !self.note_type.is_empty() || !self.folder.is_empty()
     }
+}
+
+// Older graph preferences saved a single value (or null) per facet.
+fn selection<'de, D, T>(deserializer: D) -> Result<BTreeSet<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Ord,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Saved<T: Ord> {
+        Many(BTreeSet<T>),
+        One(T),
+    }
+    Ok(match Option::<Saved<T>>::deserialize(deserializer)? {
+        Some(Saved::Many(values)) => values,
+        Some(Saved::One(value)) => BTreeSet::from([value]),
+        None => BTreeSet::new(),
+    })
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -42,19 +64,19 @@ struct Properties {
 
 impl Facets {
     pub(super) fn matches(&self, node: &Node, focus: &Focus) -> bool {
-        if focus
-            .folder
-            .as_ref()
-            .is_some_and(|folder| !node.path.starts_with(folder))
+        if !focus.folder.is_empty()
+            && !focus
+                .folder
+                .iter()
+                .any(|folder| node.path.starts_with(folder))
         {
             return false;
         }
         let properties = self.notes.get(&node.path);
-        focus.author.as_ref().is_none_or(|author| {
-            properties.is_some_and(|properties| properties.authors.contains(author))
-        }) && focus.note_type.as_ref().is_none_or(|note_type| {
-            properties.is_some_and(|properties| properties.types.contains(note_type))
-        })
+        (focus.author.is_empty()
+            || properties.is_some_and(|props| !props.authors.is_disjoint(&focus.author)))
+            && (focus.note_type.is_empty()
+                || properties.is_some_and(|props| !props.types.is_disjoint(&focus.note_type)))
     }
 
     pub(super) fn edges(&self, allowed: &mut [bool], focus: &Focus) -> Vec<Edge> {
@@ -67,12 +89,8 @@ impl Facets {
             .authored
             .iter()
             .filter_map(|(edge, author)| {
-                (allowed[edge.from]
-                    && focus
-                        .author
-                        .as_ref()
-                        .is_none_or(|selected| selected == author))
-                .then_some(*edge)
+                (allowed[edge.from] && (focus.author.is_empty() || focus.author.contains(author)))
+                    .then_some(*edge)
             })
             .collect();
         for edge in &edges {

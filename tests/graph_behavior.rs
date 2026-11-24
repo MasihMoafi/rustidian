@@ -3,6 +3,7 @@ use rustidian::{
     vault::Vault,
 };
 use std::{
+    collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -48,7 +49,7 @@ fn author_identity_preserves_distinct_handles_and_prefers_existing_notes() {
     ));
     assert_eq!(baseline.nodes.len(), 7);
     assert_eq!(graph.facets.authors.len(), 5);
-    options.focus.author = Some("People/Casey.md".into());
+    options.focus.author = BTreeSet::from(["People/Casey.md".into()]);
     let view = graph.visible(&vault, &options, None).unwrap();
     assert_eq!(view.nodes.len(), 3);
     assert!(has_edge(&graph, &view, "Library/One.md", "People/Casey.md"));
@@ -61,7 +62,7 @@ fn author_identity_preserves_distinct_handles_and_prefers_existing_notes() {
         .find(|(_, label)| label.as_str() == "Robin Vale (@rvale)")
         .unwrap()
         .0;
-    options.focus.author = Some(robin.clone());
+    options.focus.author = BTreeSet::from([robin.clone()]);
     let view = graph.visible(&vault, &options, None).unwrap();
     assert_eq!(view.nodes.len(), 3);
     assert!(has_edge(
@@ -85,9 +86,36 @@ fn author_identity_preserves_distinct_handles_and_prefers_existing_notes() {
             .count(),
         3
     );
-    options.focus.author = None;
-    options.focus.note_type = Some("article".into());
-    options.focus.folder = Some("Library".into());
+    options.focus.author.insert("People/Casey.md".into());
+    let combined = graph.visible(&vault, &options, None).unwrap();
+    assert_eq!(combined.nodes.len(), 5);
+    assert!(has_edge(
+        &graph,
+        &combined,
+        "Library/One.md",
+        "People/Casey.md"
+    ));
+    assert!(has_edge(
+        &graph,
+        &combined,
+        "Library/Three.md",
+        robin.to_str().unwrap()
+    ));
+    assert!(!paths(&graph, &combined).contains(&PathBuf::from("Workshop/Four.md")));
+    options.focus.note_type = BTreeSet::from(["article".into(), "interview".into()]);
+    options.focus.folder = BTreeSet::from(["Library/Subfolder".into(), "Workshop".into()]);
+    assert!(
+        graph
+            .visible(&vault, &options, None)
+            .unwrap()
+            .nodes
+            .is_empty()
+    );
+    options.focus.folder.insert("Library".into());
+    assert_eq!(graph.visible(&vault, &options, None).unwrap(), combined);
+    options.focus.author.clear();
+    options.focus.note_type = BTreeSet::from(["article".into()]);
+    options.focus.folder = BTreeSet::from(["Library".into()]);
     let view = graph.visible(&vault, &options, None).unwrap();
     assert_eq!(view.nodes.len(), 4);
     assert!(has_edge(&graph, &view, "Library/One.md", "Library/Two.md"));
@@ -95,6 +123,26 @@ fn author_identity_preserves_distinct_handles_and_prefers_existing_notes() {
     assert_eq!(fs::read_dir(root.path().join("People")).unwrap().count(), 1);
     options.focus = Default::default();
     assert_eq!(graph.visible(&vault, &options, None).unwrap(), baseline);
+}
+
+#[test]
+fn saved_graph_facets_accept_single_values_null_and_multiple_selections() {
+    use rustidian::graph::Focus;
+    let mut focus: Focus = serde_json::from_value(serde_json::json!({
+        "author": "People/Casey.md", "note_type": null, "show_authors": true
+    }))
+    .unwrap();
+    assert_eq!(
+        focus.author,
+        BTreeSet::from([PathBuf::from("People/Casey.md")])
+    );
+    assert!(focus.note_type.is_empty() && focus.folder.is_empty());
+    focus.author.insert("People/Robin.md".into());
+    focus.folder = BTreeSet::from(["Library".into(), "Workshop".into()]);
+    assert_eq!(
+        serde_json::from_value::<Focus>(serde_json::to_value(&focus).unwrap()).unwrap(),
+        focus
+    );
 }
 
 fn fixture(files: &[(&str, &str)]) -> (TempDir, Vault) {
