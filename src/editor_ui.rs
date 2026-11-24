@@ -5491,8 +5491,8 @@ mod tests {
         assert_eq!(blocks[1].heading, 0);
         assert_eq!(blocks[1].index, 1);
         assert_eq!(&source[blocks[1].range.clone()], "First paragraph.");
-        assert_eq!(&source[blocks[2].range.clone()], "Tight one");
-        assert_eq!(&source[blocks[3].range.clone()], "Tight two");
+        assert_eq!(&source[blocks[2].range.clone()], "1. Tight one");
+        assert_eq!(&source[blocks[3].range.clone()], "2. Tight two");
         assert_eq!(blocks[4].heading, 2);
         assert_eq!(
             &source[blocks[4].range.start..blocks[4].section_end],
