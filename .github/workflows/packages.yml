@@ -74,7 +74,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev desktop-file-utils
+          sudo apt-get install -y --no-install-recommends libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libxkbcommon-dev libwayland-dev libegl1-mesa-dev desktop-file-utils fontconfig fonts-dejavu-core fonts-liberation libgl1-mesa-dri openbox python3-pil python3-xlib x11-utils x11-xserver-utils xclip xdotool xvfb
       - run: rustup toolchain install 1.95.0 --profile minimal
       - run: cargo +1.95.0 build --release --locked
       - name: Build the AppImage
@@ -89,6 +89,11 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 ./Rustidian-x86_64.AppImage --appimage-extract >/dev/null
           test -f squashfs-root/usr/share/doc/rustidian/THIRD_PARTY_NOTICES.txt
           test -f squashfs-root/usr/share/applications/io.github.masihmoafi.rustidian.desktop
+      - name: Verify font changes in the packaged app
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: python3 tests/gui_smoke.py --binary "$PWD/Rustidian-x86_64.AppImage" --section font-families
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rustidian-appimage

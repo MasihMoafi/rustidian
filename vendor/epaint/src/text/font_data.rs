@@ -51,6 +51,11 @@ impl FontData {
         (*self.font).as_ref()
     }
 
+    /// Whether the renderer can open this font file and collection face.
+    pub fn is_parseable(&self) -> bool {
+        skrifa::FontRef::from_index(self.bytes(), self.index).is_ok()
+    }
+
     pub fn tweak(self, tweak: FontTweak) -> Self {
         Self { tweak, ..self }
     }

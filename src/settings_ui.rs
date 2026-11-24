@@ -373,7 +373,7 @@ impl NotesApp {
                                     ui.separator();
                                     let missing = self.missing_fonts.iter().any(|name| name == &*value);
                                     if missing {
-                                        crate::notices::once(ctx, ("missing-font", &*value), format!("{value} is not installed; the default font is used."));
+                                        crate::notices::once(ctx, ("missing-font", &*value), format!("Could not load {value}. Using the default font."));
                                     }
                                     changed |= row(ui, title, description, |ui| {
                                         font_choice(ui, id, value, mono)

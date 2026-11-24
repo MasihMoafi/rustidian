@@ -73,7 +73,7 @@ pub fn installed(mono: bool) -> &'static [String] {
     }
 }
 
-/// The installed file for `family` in `face`, or `None` when no such family is installed.
+/// A loadable installed face, or `None` if Fontconfig cannot supply one.
 fn file(family: &str, face: &str) -> Option<egui::FontData> {
     let style = match face {
         "semibold" => ":weight=semibold",
@@ -89,6 +89,9 @@ fn file(family: &str, face: &str) -> Option<egui::FontData> {
         ])
         .output()
         .ok()?;
+    if !output.status.success() {
+        return None;
+    }
     let output = String::from_utf8_lossy(&output.stdout);
     let mut lines = output.lines();
     let (path, index, families) = (lines.next()?, lines.next()?, lines.next()?);
@@ -97,13 +100,19 @@ fn file(family: &str, face: &str) -> Option<egui::FontData> {
         .split(',')
         .any(|name| name.trim().eq_ignore_ascii_case(family.trim()))
         .then_some(())?;
-    let mut data = egui::FontData::from_owned(std::fs::read(path).ok()?);
-    data.index = index.parse().unwrap_or(0);
-    Some(data)
+    validated_font(std::fs::read(path).ok()?, index.parse().ok()?)
+}
+
+fn validated_font(bytes: Vec<u8>, index: u32) -> Option<egui::FontData> {
+    let mut data = egui::FontData::from_owned(bytes);
+    // Fontconfig puts a variable font's named instance in the high bits.
+    // The renderer takes only the collection face index.
+    data.index = index & 0xffff;
+    data.is_parseable().then_some(data)
 }
 
 /// Add the chosen families in front of Rustidian's own, and give note text
-/// its own families. Returns the names that are not installed.
+/// its own families. Returns the choices that could not be loaded.
 pub fn apply(definitions: &mut egui::FontDefinitions, fonts: &Fonts) -> Vec<String> {
     for face in FACES {
         let own = definitions
@@ -169,6 +178,15 @@ mod tests {
                 monospace: "JetBrains Mono".into(),
             }
         );
+    }
+
+    #[test]
+    fn fontconfig_match_must_open_at_the_reported_face_index() {
+        let valid = include_bytes!("../assets/fonts/Inter-Regular.otf");
+        assert!(validated_font(valid.to_vec(), 0).is_some());
+        assert!(validated_font(valid.to_vec(), 1).is_none());
+        assert!(validated_font(valid.to_vec(), 1 << 16).is_some());
+        assert!(validated_font(b"%!PS-AdobeFont-1.0".to_vec(), 0).is_none());
     }
 
     #[test]

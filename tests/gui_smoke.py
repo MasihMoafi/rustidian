@@ -315,6 +315,30 @@ def main():
             for number in range(4500):
                 (bulk / f"Bulk {number:04d}.md").write_text(f"# Bulk {number:04d}\n\n{body}")
             (fixture / "Idle image.md").write_text("# Idle image\n\n![[Assets/Attachment.png|180]]\n\nText after the image.\n")
+        unsupported_family = "Rustidian Test Unsupported"
+        if args.section in ("font-families", "all"):
+            # Reproduce a font that Fontconfig lists but the renderer cannot load,
+            # regardless of which legacy formats the test host has installed.
+            tools = base / "font-tools"
+            tools.mkdir()
+            invalid_font = base / "unsupported.t1"
+            invalid_font.write_bytes(b"%!PS-AdobeFont-1.0\n")
+            for name in ("fc-list", "fc-match"):
+                original = shutil.which(name)
+                assert original, f"{name} is required for font checks"
+                path = tools / name
+                path.write_text(f"#!{sys.executable}\n" + (
+                    f"import subprocess, sys\n"
+                    f"sys.stdout.buffer.write(subprocess.check_output([{original!r}, *sys.argv[1:]]))\n"
+                    f"sys.stdout.buffer.write({unsupported_family.encode() + bytes([10])!r})\n"
+                    if name == "fc-list" else
+                    f"import os, sys\n"
+                    f"if sys.argv[-1].split(':', 1)[0] == {unsupported_family!r}:\n"
+                    f"    print({str(invalid_font)!r}, 0, {unsupported_family!r}, sep='\\n')\n"
+                    f"else:\n    os.execv({original!r}, [{original!r}, *sys.argv[1:]])\n"
+                ))
+                path.chmod(0o700)
+            environment["PATH"] = str(tools) + os.pathsep + environment["PATH"]
         app = launch_app(launch_command)
         results = []
         (reports / "gui-results.json").write_text(json.dumps({"status": "running", "checks": []}, indent=2)+"\n")
@@ -11016,6 +11040,18 @@ int rename(const char *source, const char *destination) {
                 assert crop("reading-block:1")==paragraph and crop("reading-block:2")==code and crop("tab-full:Font families.md")==tab and crop("note-title")==title
                 assert note.read_text()==original
                 results.append("Choosing Default for each restored the original pixels; the note's bytes never changed")
+                pick("settings-text-font", unsupported_family)
+                assert saved()["text"] == unsupported_family
+                assert crop("reading-block:1") == paragraph
+                results.append("An unsupported Fontconfig selection kept the default pixels without closing the app")
+                confirm_quit(); app.wait(timeout=5)
+                app = launch_app(launch_command); window = ready_window()
+                title_contains("Font families"); command("Reading view")
+                assert saved()["text"] == unsupported_family
+                assert crop("reading-block:1") == paragraph and note.read_text() == original
+                pick("settings-text-font", "DejaVu Serif")
+                assert crop("reading-block:1") != paragraph and note.read_text() == original
+                results.append("A saved unsupported font did not crash on reopen, and a supported replacement rendered")
 
             def image_import_checks():
                 from Xlib import X, Xatom, display as xdisplay, protocol

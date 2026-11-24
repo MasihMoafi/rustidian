@@ -448,7 +448,7 @@ pub fn install_fonts(ctx: &egui::Context) {
 }
 
 /// Install Rustidian's fonts with the chosen families in front; returns the
-/// chosen names that are not installed.
+/// chosen names that could not be loaded.
 pub fn set_fonts(ctx: &egui::Context, chosen: &fonts::Fonts) -> Vec<String> {
     let mut fonts = egui::FontDefinitions::default();
     for (name, bytes) in [
