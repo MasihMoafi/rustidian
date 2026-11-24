@@ -1363,21 +1363,25 @@ impl NotesApp {
                 })
         });
         if uri {
-            if target.starts_with("file://")
-                && rustidian::paths::decode(target.trim_start_matches("file://"))
-                    .is_some_and(|path| rustidian::assets::is_video(Path::new(&path)))
-            {
+            let local = target
+                .strip_prefix("file://")
+                .and_then(rustidian::paths::decode)
+                .map(PathBuf::from);
+            if local.as_deref().is_some_and(rustidian::assets::is_video) {
                 if let Err(error) = crate::media_ui::open_video(target) {
                     self.error = Some(error);
                 }
                 return;
             }
-            let local = target
-                .strip_prefix("file://")
-                .and_then(rustidian::paths::decode)
-                .map(PathBuf::from)
-                .filter(|path| path.is_file() && rustidian::vault::is_text_document(path));
-            if let Some(file) = local {
+            let guest = local
+                .and_then(|path| path.canonicalize().ok())
+                .filter(|path| path.is_file() && rustidian::vault::is_text_document(path))
+                .filter(|path| {
+                    self.vault
+                        .as_ref()
+                        .is_some_and(|vault| !path.starts_with(&vault.root))
+                });
+            if let Some(file) = guest {
                 self.open_guest_tab(&file);
             } else {
                 self.ctx.open_url(egui::OpenUrl::new_tab(target));

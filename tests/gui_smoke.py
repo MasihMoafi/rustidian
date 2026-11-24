@@ -3170,9 +3170,12 @@ int rename(const char *source, const char *destination) {
                 evidence = base / "Outside evidence/record #1.json"
                 evidence.parent.mkdir()
                 evidence.write_text('{"proof":"original evidence"}\n')
+                binary_attachment = evidence.with_name("record.bin")
+                binary_attachment.write_bytes(b"\x00\x01")
                 attachment = fixture / "Notes/record.json"
                 attachment.write_text('{"attachment":"original evidence"}\n')
                 source = "# Navigation UI\n\n[[Notes/Linked target|Wiki target]]\n\n[Open target](Linked%20target.md#Section%20two)\n\n[Open file](" + file_uri + ")\n\n[Open relative evidence](../../Outside%20evidence/record%20%231.json)\n\n[Open attachment](record.json)\n\n[Open absolute evidence](" + evidence.as_uri().removeprefix("file://") + ")\n"
+                source += "\n[Open external binary](" + binary_attachment.as_uri() + ")\n"
                 note.write_text(source)
                 target_source = "# Linked target\n\n" + "Introduction paragraph.\n\n" * 45 + "## Section two\n\nDestination text.\n"
                 target.write_text(target_source)
@@ -3243,8 +3246,19 @@ int rename(const char *source, const char *destination) {
                     time.sleep(.4)
                     assert not control_bounds("page-preview-create", required=False), "An existing file must not offer to create a missing note"
 
+                def guest_link(block):
+                    before_requests = handler_requests()
+                    before = tab_count()
+                    click_link(block)
+                    title_contains(evidence.name)
+                    control_bounds(f"tab:{evidence}")
+                    assert tab_count() == before + 1, "An outside text document must open beside the source tab"
+                    assert handler_requests() == before_requests, "An outside text document must stay in Rustidian"
+                    key("ctrl+w")
+                    title_contains("Navigation UI")
+
                 external_link(3, file_uri)
-                external_link(4, evidence.as_uri())
+                guest_link(4)
                 # An in-vault text document such as .json opens in the app's source editor, in the same tab.
                 before_requests = handler_requests()
                 before = tab_count()
@@ -3264,7 +3278,8 @@ int rename(const char *source, const char *destination) {
                 title_contains("Navigation UI")
                 # Back from a text document returns to the note's Reading view, as Back does after the Markdown hops above.
                 control_bounds("reading-block:6")
-                external_link(6, evidence.as_uri())
+                guest_link(6)
+                external_link(7, binary_attachment.as_uri())
                 assert not fixture.joinpath("file:").exists(), "A URI must not create spurious notes"
                 assert evidence.read_text() == '{"proof":"original evidence"}\n'
                 assert attachment.read_text() == '{"attachment":"original evidence"}\n'
@@ -3272,7 +3287,7 @@ int rename(const char *source, const char *destination) {
                 assert note.read_text() == source
                 assert target.read_text() == target_source
                 capture("native-navigation.png")
-                results.append("Actual wiki/Markdown link clicks, encoded spaces, heading targets and Back/Forward work; Ctrl-click retains its source tab, plain Live links open, outside files reach the desktop handler while an in-vault .json opens in the app's source editor, and all source bytes stay intact")
+                results.append("Wiki and Markdown clicks, encoded spaces, heading targets and keyboard and mouse history work. Outside text opens as a guest tab, relative in-vault text opens in Source mode, and an in-vault file URI and outside binary reach the desktop handler. Source bytes stay intact")
 
                 plan = fixture / "Notes/Plan UI.md"
                 spec = fixture / "Notes/spec.md"
