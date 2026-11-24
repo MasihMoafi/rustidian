@@ -33,6 +33,7 @@ fn children(ui: &mut egui::Ui, source: &str, context: &mut Context<'_>) -> Optio
         None,
         context.cache,
         context.vault,
+        None,
     )
 }
 
