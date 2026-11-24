@@ -30,6 +30,20 @@ pub struct Find {
     restore_since: Option<f64>,
 }
 
+impl Find {
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn selected(&self) -> usize {
+        self.selected
+    }
+
+    pub fn take_scroll_to_match(&mut self) -> Option<usize> {
+        self.scroll_to_match.take()
+    }
+}
+
 struct LinkCandidate {
     label: String,
     target: String,
@@ -918,6 +932,9 @@ pub fn find_bar(ui: &mut egui::Ui, find: &mut Find, tab: &mut Tab, id: egui::Id)
         if find.focus {
             response.request_focus();
             find.focus = false;
+            if !find.query.is_empty() {
+                select = true;
+            }
         }
         if response.changed() {
             find.selected = 0;
@@ -5499,5 +5516,32 @@ mod tests {
             "## Next\n\nTail.\n"
         );
         assert_eq!(&source[blocks[5].range.clone()], "Tail.");
+    }
+
+    #[test]
+    fn find_bar_requests_match_scroll_without_stealing_input_focus() {
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        let mut document = rustidian::vault::Document::new("Note.md".into());
+        document.text = "first needle\nsecond needle\n".into();
+        let mut tab = Tab::new(document);
+        let mut find = Find {
+            open: true,
+            focus: true,
+            query: "needle".into(),
+            ..Default::default()
+        };
+        let mut editor = Editor::default();
+        let mut files = FileMatcher::new(Vec::new());
+        let id = egui::Id::unique("note-editor");
+
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            find_bar(ui, &mut find, &mut tab, id);
+            assert_eq!(find.scroll_to_match, Some(6));
+            editor.show(ui, &mut tab, id, &mut find, &mut files, None, &[]);
+            assert_eq!(find.scroll_to_match, None);
+        })
+        .drop_without_applying_deltas();
+        assert!(!ctx.memory(|memory| memory.has_focus(id)));
     }
 }

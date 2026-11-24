@@ -97,6 +97,10 @@ impl TableCell {
         }
     }
 
+    pub fn plain_text(&self) -> String {
+        self.parts.iter().map(|part| part.text.as_str()).collect()
+    }
+
     pub fn layout(&self, ui: &egui::Ui, header: bool, width: f32) -> Arc<egui::Galley> {
         self.layout_color(ui, header, width, None)
     }
@@ -108,10 +112,22 @@ impl TableCell {
         width: f32,
         color: Option<egui::Color32>,
     ) -> Arc<egui::Galley> {
+        self.layout_color_with_find(ui, header, width, color, &[])
+    }
+
+    pub fn layout_color_with_find(
+        &self,
+        ui: &egui::Ui,
+        header: bool,
+        width: f32,
+        color: Option<egui::Color32>,
+        matches: &[(std::ops::Range<usize>, bool)],
+    ) -> Arc<egui::Galley> {
         let mut job = egui::text::LayoutJob::default();
         job.wrap.max_width = width;
         job.first_row_min_height = crate::theme::document_size(ui, 23.4);
         let mut math = Vec::new();
+        let mut character = 0;
         for part in &self.parts {
             let mut format = inline_format(ui, part, 0, Some(header));
             if let Some(color) = color {
@@ -129,9 +145,12 @@ impl TableCell {
                 ) {
                     math.push(placement);
                 }
-            } else {
+            } else if matches.is_empty() {
                 job.append(&part.text, 0.0, format);
+            } else {
+                append_highlighted_text(&mut job, &part.text, character, 0.0, format, matches);
             }
+            character += part.text.chars().count();
         }
         if job.sections.is_empty() {
             job.append(
@@ -823,6 +842,147 @@ fn prepare_images(markdown: &str, resolve: impl Fn(&str) -> Option<String>) -> S
     prepared
 }
 
+#[derive(Clone, Copy)]
+pub struct FindState<'a> {
+    pub query: &'a str,
+    pub selected: usize,
+    pub scroll_to_selected: bool,
+}
+
+struct ActiveFind<'a> {
+    query: &'a str,
+    target: usize,
+    next_match: usize,
+    scroll_to_selected: bool,
+}
+
+impl<'a> ActiveFind<'a> {
+    fn next_matches(&mut self, text: &str) -> Vec<(std::ops::Range<usize>, bool)> {
+        let found = rustidian::editor::find_matches(text, self.query);
+        let mut tagged = Vec::with_capacity(found.len());
+        for range in found {
+            let active = self.next_match == self.target;
+            self.next_match += 1;
+            tagged.push((range, active));
+        }
+        tagged
+    }
+
+    fn skip(&mut self, count: usize) {
+        self.next_match += count;
+    }
+
+    fn record_active(&self, ui: &egui::Ui, rect: egui::Rect) {
+        if self.scroll_to_selected {
+            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+        }
+        if crate::ui_probe::enabled() {
+            crate::ui_probe::record(ui.ctx(), "find-match", rect);
+        }
+    }
+}
+
+pub(crate) fn find_match_bg(active: bool) -> egui::Color32 {
+    if active {
+        egui::Color32::from_rgba_unmultiplied(170, 135, 20, 115)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(170, 135, 20, 45)
+    }
+}
+
+fn parts_text(parts: &[Inline]) -> String {
+    parts.iter().map(|part| part.text.as_str()).collect()
+}
+
+fn count_matches_in_block(block: &Block, query: &str) -> usize {
+    if let Some(callout) = &block.callout {
+        let title = TableCell::new(&callout.model.title).plain_text();
+        rustidian::editor::find_matches(&title, query).len()
+            + count_matches_in_blocks(&callout.children, query)
+    } else if let Some(part) = &block.math {
+        rustidian::editor::find_matches(&part.text, query).len()
+    } else if let Some(table) = &block.table {
+        table
+            .rows
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|cell| rustidian::editor::find_matches(&parts_text(cell), query).len())
+            .sum()
+    } else if let Some(code) = &block.code {
+        if code.language.eq_ignore_ascii_case("mermaid") {
+            0
+        } else {
+            rustidian::editor::find_matches(&crate::code_ui::display_text(&code.body), query).len()
+        }
+    } else if block.image.is_some() || block.rule {
+        0
+    } else {
+        rustidian::editor::find_matches(&parts_text(&block.parts), query).len()
+    }
+}
+
+fn count_matches_in_blocks(blocks: &[Block], query: &str) -> usize {
+    blocks
+        .iter()
+        .map(|block| count_matches_in_block(block, query))
+        .sum()
+}
+
+fn append_highlighted_text(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    part_char_start: usize,
+    mut leading: f32,
+    format: egui::TextFormat,
+    matches: &[(std::ops::Range<usize>, bool)],
+) {
+    let char_count = text.chars().count();
+    let part_char_end = part_char_start + char_count;
+    if !matches
+        .iter()
+        .any(|(range, _)| range.start < part_char_end && range.end > part_char_start)
+    {
+        job.append(text, leading, format);
+        return;
+    }
+    let offsets: Vec<usize> = text
+        .char_indices()
+        .map(|(byte, _)| byte)
+        .chain([text.len()])
+        .collect();
+    let mut cursor = 0usize;
+    for (range, is_active) in matches {
+        let overlap_start = range
+            .start
+            .max(part_char_start)
+            .saturating_sub(part_char_start);
+        let overlap_end = range.end.min(part_char_end).saturating_sub(part_char_start);
+        if overlap_start >= overlap_end {
+            continue;
+        }
+        if cursor < overlap_start {
+            job.append(
+                &text[offsets[cursor]..offsets[overlap_start]],
+                leading,
+                format.clone(),
+            );
+            leading = 0.0;
+        }
+        let mut hit = format.clone();
+        hit.background = find_match_bg(*is_active);
+        job.append(
+            &text[offsets[overlap_start]..offsets[overlap_end]],
+            leading,
+            hit,
+        );
+        leading = 0.0;
+        cursor = overlap_end;
+    }
+    if cursor < char_count {
+        job.append(&text[offsets[cursor]..], leading, format);
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     cache: &mut CommonMarkCache,
@@ -830,8 +990,19 @@ pub fn show(
     anchor: Option<&str>,
     vault: Option<&rustidian::vault::Vault>,
 ) -> Option<String> {
+    show_with_find(ui, cache, tab, anchor, vault, None)
+}
+
+pub fn show_with_find(
+    ui: &mut egui::Ui,
+    cache: &mut CommonMarkCache,
+    tab: &mut rustidian::tab::Tab,
+    anchor: Option<&str>,
+    vault: Option<&rustidian::vault::Vault>,
+    find: Option<FindState<'_>>,
+) -> Option<String> {
     let id = egui::Id::unique((tab.id(), tab.editor_path()));
-    render(ui, cache, tab, anchor, vault, id, None)
+    render(ui, cache, tab, anchor, vault, id, None, find)
 }
 
 pub fn show_embedded(
@@ -846,7 +1017,16 @@ pub fn show_embedded(
     document.text.clone_from(text);
     let mut tab = rustidian::tab::Tab::new(document);
     let vault = context.vault;
-    let follow = render(ui, cache, &mut tab, None, Some(vault), id, Some(context));
+    let follow = render(
+        ui,
+        cache,
+        &mut tab,
+        None,
+        Some(vault),
+        id,
+        Some(context),
+        None,
+    );
     *text = tab.document.text;
     follow
 }
@@ -892,6 +1072,7 @@ pub(crate) fn show_fragment(
         None,
         cache,
         vault,
+        None,
     );
     let height = (ui.cursor().top() - top).max(24.0);
     let changed = ui.ctx().data_mut(|data| {
@@ -910,6 +1091,7 @@ pub(crate) fn fragment_height(ctx: &egui::Context, id: egui::Id) -> f32 {
         .unwrap_or(120.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render(
     ui: &mut egui::Ui,
     cache: &mut CommonMarkCache,
@@ -918,6 +1100,7 @@ fn render(
     vault: Option<&rustidian::vault::Vault>,
     document_id: egui::Id,
     embedding: Option<&mut crate::note_embed_ui::Context<'_>>,
+    find: Option<FindState<'_>>,
 ) -> Option<String> {
     let embedded = embedding.is_some();
     let text = &tab.document.text;
@@ -999,6 +1182,15 @@ fn render(
                 .input_mut(|input| input.events.push(egui::Event::Copy));
         }
         let top = ui.cursor().top();
+        let mut active_find = find.filter(|find| !find.query.is_empty()).and_then(|find| {
+            let total = count_matches_in_blocks(&parsed.blocks, find.query);
+            (total > 0).then(|| ActiveFind {
+                query: find.query,
+                target: find.selected.min(total - 1),
+                next_match: 0,
+                scroll_to_selected: find.scroll_to_selected,
+            })
+        });
         let follow = show_blocks(
             ui,
             &parsed.blocks,
@@ -1010,6 +1202,7 @@ fn render(
             embedding,
             cache,
             vault,
+            active_find.as_mut(),
         );
         let area = egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top());
         if !embedded {
@@ -1297,6 +1490,7 @@ fn show_blocks(
     mut embedding: Option<&mut crate::note_embed_ui::Context<'_>>,
     cache: &mut CommonMarkCache,
     vault: Option<&rustidian::vault::Vault>,
+    mut active_find: Option<&mut ActiveFind<'_>>,
 ) -> Option<String> {
     let mut clicked = None;
     ui.style_mut().spacing.item_spacing.y = 0.0;
@@ -1314,8 +1508,15 @@ fn show_blocks(
             Some(id)
         })
         .collect();
-    if let Some(anchor) = anchor {
+    let unfold_for_find = active_find
+        .as_deref()
+        .filter(|find| find.scroll_to_selected)
+        .map(|find| (find.query, find.target, find.next_match));
+    if anchor.is_some() || unfold_for_find.is_some() {
         let mut ancestors: Vec<(u8, usize)> = Vec::new();
+        let mut anchor_done = anchor.is_none();
+        let mut find_cursor = unfold_for_find.map_or(0, |(_, _, start)| start);
+        let mut find_done = unfold_for_find.is_none();
         for (index, block) in blocks.iter().enumerate() {
             if block.heading > 0 {
                 while ancestors
@@ -1326,12 +1527,29 @@ fn show_blocks(
                 }
                 ancestors.push((block.heading, index));
             }
-            if matches_anchor(block, anchor) {
+            if !anchor_done && anchor.is_some_and(|anchor| matches_anchor(block, anchor)) {
                 ui.ctx().data_mut(|data| {
                     for &(_, index) in &ancestors {
                         data.insert_temp(headings[index].unwrap(), false);
                     }
                 });
+                anchor_done = true;
+            }
+            if let Some((query, target, _)) = unfold_for_find
+                && !find_done
+            {
+                let count = count_matches_in_block(block, query);
+                if (find_cursor..find_cursor + count).contains(&target) {
+                    ui.ctx().data_mut(|data| {
+                        for &(_, index) in &ancestors {
+                            data.insert_temp(headings[index].unwrap(), false);
+                        }
+                    });
+                    find_done = true;
+                }
+                find_cursor += count;
+            }
+            if anchor_done && find_done {
                 break;
             }
         }
@@ -1351,6 +1569,9 @@ fn show_blocks(
         let table_index = block.ordinal;
         if let Some(level) = folded_level {
             if block.heading == 0 || block.heading > level {
+                if let Some(find) = active_find.as_deref_mut() {
+                    find.skip(count_matches_in_block(block, find.query));
+                }
                 continue;
             }
             folded_level = None;
@@ -1389,7 +1610,25 @@ fn show_blocks(
                 .ctx()
                 .data(|data| data.get_temp::<bool>(id))
                 .unwrap_or(callout.model.folded.unwrap_or(false));
-            if anchor.is_some_and(|anchor| matches_anchor(block, anchor)) {
+            let title_matches = active_find
+                .as_deref_mut()
+                .map(|find| {
+                    let title = TableCell::new(&callout.model.title).plain_text();
+                    find.next_matches(&title)
+                })
+                .unwrap_or_default();
+            let children_count = active_find.as_deref().map_or(0, |find| {
+                count_matches_in_blocks(&callout.children, find.query)
+            });
+            let target_in_children = active_find.as_deref().is_some_and(|find| {
+                (find.next_match..find.next_match + children_count).contains(&find.target)
+            });
+            if anchor.is_some_and(|anchor| matches_anchor(block, anchor))
+                || (active_find
+                    .as_deref()
+                    .is_some_and(|find| find.scroll_to_selected)
+                    && (title_matches.iter().any(|(_, active)| *active) || target_in_children))
+            {
                 folded = false;
             }
             ui.add_space(8.0);
@@ -1405,8 +1644,18 @@ fn show_blocks(
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.push_id(("callout", callout.ordinal), |ui| {
-                        let (header, link) =
-                            crate::callout_ui::header(ui, &callout.model, callout.ordinal, folded);
+                        let (header, link, header_match_rect) = crate::callout_ui::header_with_find(
+                            ui,
+                            &callout.model,
+                            callout.ordinal,
+                            folded,
+                            &title_matches,
+                        );
+                        if let Some(rect) = header_match_rect
+                            && let Some(find) = active_find.as_deref()
+                        {
+                            find.record_active(ui, rect);
+                        }
                         if let Some(link) = link {
                             clicked = follow_destination(&link, native_links);
                         } else if header.clicked() && callout.model.folded.is_some() {
@@ -1426,6 +1675,7 @@ fn show_blocks(
                                     embedding.as_deref_mut(),
                                     cache,
                                     vault,
+                                    active_find.as_deref_mut(),
                                 )
                             });
                             crate::ui_probe::record(
@@ -1436,6 +1686,8 @@ fn show_blocks(
                             if let Some(link) = content.inner {
                                 clicked = Some(link);
                             }
+                        } else if let Some(find) = active_find.as_deref_mut() {
+                            find.skip(children_count);
                         }
                     });
                 });
@@ -1445,6 +1697,10 @@ fn show_blocks(
         }
         if let Some(part) = &block.math {
             let formula = part.math.as_ref().unwrap();
+            let math_matches = active_find
+                .as_deref_mut()
+                .map(|find| find.next_matches(&part.text))
+                .unwrap_or_default();
             ui.add_space(12.0);
             let response = ui
                 .vertical(|ui| {
@@ -1495,13 +1751,25 @@ fn show_blocks(
                     }
                 })
                 .response;
+            if math_matches.iter().any(|(_, active)| *active)
+                && let Some(find) = active_find.as_deref()
+            {
+                find.record_active(ui, response.rect);
+            }
             crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);
             ui.add_space(12.0);
             continue;
         }
         if let Some(table) = &block.table {
             ui.add_space(16.0);
-            if let Some(link) = show_table(ui, table, native_links, table_index, from) {
+            if let Some(link) = show_table(
+                ui,
+                table,
+                native_links,
+                table_index,
+                from,
+                active_find.as_deref_mut(),
+            ) {
                 clicked = Some(link);
             }
             ui.add_space(16.0);
@@ -1511,6 +1779,16 @@ fn show_blocks(
             if index == 0 || blocks[index - 1].heading > 0 {
                 ui.add_space(2.0);
             }
+            let is_mermaid = code.language.eq_ignore_ascii_case("mermaid");
+            let code_matches = if is_mermaid {
+                Vec::new()
+            } else {
+                active_find
+                    .as_deref_mut()
+                    .map(|find| find.next_matches(&crate::code_ui::display_text(&code.body)))
+                    .unwrap_or_default()
+            };
+            let mut active_rect = None;
             let response = egui::Frame::NONE
                 .inner_margin(egui::Margin {
                     left: if block.quote { 26 } else { 0 }
@@ -1522,13 +1800,26 @@ fn show_blocks(
                     ..Default::default()
                 })
                 .show(ui, |ui| {
-                    if code.language.eq_ignore_ascii_case("mermaid") {
+                    if is_mermaid {
                         crate::diagrams::show(ui, &code.body, ordinal)
                     } else {
-                        crate::code_ui::reading(ui, &code.body, &code.language, ordinal)
+                        let (response, matched_rect) = crate::code_ui::reading_with_find(
+                            ui,
+                            &code.body,
+                            &code.language,
+                            ordinal,
+                            &code_matches,
+                        );
+                        active_rect = matched_rect;
+                        response
                     }
                 })
                 .inner;
+            if let Some(rect) = active_rect
+                && let Some(find) = active_find.as_deref()
+            {
+                find.record_active(ui, rect);
+            }
             crate::ui_probe::record(ui.ctx(), format!("reading-block:{index}"), response.rect);
             if block.quote {
                 ui.painter().line_segment(
@@ -1653,6 +1944,10 @@ fn show_blocks(
         let mut destinations = Vec::new();
         let mut math = Vec::new();
         let mut character = 0;
+        let block_matches = active_find
+            .as_deref_mut()
+            .map(|find| find.next_matches(&parts_text(&block.parts)))
+            .unwrap_or_default();
         for (part_index, part) in block.parts.iter().enumerate() {
             let mut format = inline_format(ui, part, block.heading, None);
             if block.task.is_some_and(|(_, checked)| checked) {
@@ -1676,8 +1971,17 @@ fn show_blocks(
                 ) {
                     math.push(placement);
                 }
-            } else {
+            } else if block_matches.is_empty() {
                 job.append(&part.text, leading, format);
+            } else {
+                append_highlighted_text(
+                    &mut job,
+                    &part.text,
+                    character,
+                    leading,
+                    format,
+                    &block_matches,
+                );
             }
             let end = character + part.text.chars().count();
             if let Some(link) = &part.link {
@@ -1882,6 +2186,22 @@ fn show_blocks(
         }
         if anchor.is_some_and(|anchor| matches_anchor(block, anchor)) {
             ui.scroll_to_rect(response.rect, Some(egui::Align::Min));
+        }
+        if let Some((range, _)) = block_matches.iter().find(|(_, active)| *active)
+            && let Some(find) = active_find.as_deref()
+        {
+            let first = galley.pos_from_cursor(egui::text::CCursor::new(range.start));
+            let last = galley.pos_from_cursor(egui::text::CCursor::new(range.end));
+            let rect = if (first.min.y - last.min.y).abs() < 1.0 {
+                first.union(last)
+            } else {
+                first
+            };
+            find.record_active(
+                ui,
+                rect.translate(response.rect.min.to_vec2())
+                    .expand2(egui::vec2(1.0, 0.0)),
+            );
         }
         if block.quote {
             ui.painter().line_segment(
@@ -2088,12 +2408,14 @@ fn table_job(
     parts: &[Inline],
     header: bool,
     width: f32,
+    matches: &[(std::ops::Range<usize>, bool)],
 ) -> (egui::text::LayoutJob, Vec<crate::math_inline::Placement>) {
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = width;
     job.first_row_min_height = 23.4;
     let mut math = Vec::new();
     let mut previous_code = false;
+    let mut character = 0;
     for part in parts {
         let leading = INLINE_PADDING * (usize::from(part.code) + usize::from(previous_code)) as f32;
         let format = inline_format(ui, part, 0, Some(header));
@@ -2109,9 +2431,12 @@ fn table_job(
             ) {
                 math.push(placement);
             }
-        } else {
+        } else if matches.is_empty() {
             job.append(&part.text, leading, format);
+        } else {
+            append_highlighted_text(&mut job, &part.text, character, leading, format, matches);
         }
+        character += part.text.chars().count();
         previous_code = part.code;
     }
     if parts.is_empty() {
@@ -2142,6 +2467,7 @@ fn show_table(
     native_links: &[(String, String)],
     ordinal: usize,
     from: &std::path::Path,
+    mut active_find: Option<&mut ActiveFind<'_>>,
 ) -> Option<String> {
     use egui::text::CCursor;
     let columns = table.alignments.len();
@@ -2152,7 +2478,11 @@ fn show_table(
         let mut shaped_row = Vec::new();
         let mut height = 23.4_f32;
         for (column, parts) in row.iter().enumerate() {
-            let (job, math) = table_job(ui, parts, row_index == 0, f32::INFINITY);
+            let cell_matches = active_find
+                .as_deref_mut()
+                .map(|find| find.next_matches(&parts_text(parts)))
+                .unwrap_or_default();
+            let (job, math) = table_job(ui, parts, row_index == 0, f32::INFINITY, &cell_matches);
             let mut character = 0;
             let mut links = Vec::new();
             let mut code_ranges = Vec::new();
@@ -2176,7 +2506,14 @@ fn show_table(
                 *width = width.max(content_width + 17.0);
             }
             height = height.max(galley.size().y);
-            shaped_row.push((galley, content_width, links, code_ranges, math));
+            shaped_row.push((
+                galley,
+                content_width,
+                links,
+                code_ranges,
+                math,
+                cell_matches,
+            ));
         }
         heights.push(height + 9.0);
         cells.push(shaped_row);
@@ -2187,7 +2524,7 @@ fn show_table(
         widths = resized;
         for (row, cells) in cells.iter_mut().enumerate() {
             let mut height = 23.4_f32;
-            for (column, (galley, content_width, _, code_ranges, math)) in
+            for (column, (galley, content_width, _, code_ranges, math, cell_matches)) in
                 cells.iter_mut().enumerate()
             {
                 let (job, placements) = table_job(
@@ -2195,6 +2532,7 @@ fn show_table(
                     &table.rows[row][column],
                     row == 0,
                     (widths[column] - 17.0).max(1.0),
+                    cell_matches,
                 );
                 *math = placements;
                 *galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
@@ -2209,6 +2547,7 @@ fn show_table(
     }
     let border = ui.visuals().widgets.noninteractive.bg_stroke;
     let mut follow = None;
+    let mut active_match_rect = None;
     egui::ScrollArea::horizontal()
         .id_salt(("reading-table", ordinal))
         .auto_shrink([true, true])
@@ -2227,7 +2566,9 @@ fn show_table(
             let mut y = start.y;
             for (row_index, row) in cells.iter().enumerate() {
                 let mut x = start.x;
-                for (column, (galley, width, links, codes, math)) in row.iter().enumerate() {
+                for (column, (galley, width, links, codes, math, cell_matches)) in
+                    row.iter().enumerate()
+                {
                     let Some(&cell_width) = widths.get(column) else {
                         continue;
                     };
@@ -2235,6 +2576,30 @@ fn show_table(
                         egui::pos2(x, y),
                         egui::vec2(cell_width, heights[row_index]),
                     );
+                    let text_x = match table.alignments[column] {
+                        pulldown_cmark::Alignment::Center => cell.center().x - width / 2.0,
+                        pulldown_cmark::Alignment::Right => cell.right() - 8.5 - width,
+                        _ => cell.left() + 8.5,
+                    };
+                    let position = egui::pos2(text_x, cell.top() + 4.5);
+                    if let Some((range, _)) = cell_matches.iter().find(|(_, active)| *active) {
+                        let first = galley.pos_from_cursor(CCursor::new(range.start));
+                        let last = galley.pos_from_cursor(CCursor::new(range.end));
+                        let rect = if (first.min.y - last.min.y).abs() < 1.0 {
+                            first.union(last)
+                        } else {
+                            first
+                        }
+                        .translate(position.to_vec2())
+                        .expand2(egui::vec2(1.0, 0.0));
+                        active_match_rect = Some(rect);
+                        if active_find
+                            .as_deref()
+                            .is_some_and(|find| find.scroll_to_selected)
+                        {
+                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                        }
+                    }
                     if !cell.intersects(ui.clip_rect()) {
                         x += cell_width;
                         continue;
@@ -2244,12 +2609,6 @@ fn show_table(
                         format!("table-cell:{ordinal}:{row_index}:{column}"),
                         cell.intersect(ui.clip_rect()),
                     );
-                    let text_x = match table.alignments[column] {
-                        pulldown_cmark::Alignment::Center => cell.center().x - width / 2.0,
-                        pulldown_cmark::Alignment::Right => cell.right() - 8.5 - width,
-                        _ => cell.left() + 8.5,
-                    };
-                    let position = egui::pos2(text_x, cell.top() + 4.5);
                     for range in codes {
                         let first = galley.pos_from_cursor(CCursor::new(range.start));
                         let last = galley.pos_from_cursor(CCursor::new(range.end));
@@ -2337,6 +2696,11 @@ fn show_table(
                 crate::table_layout::handles(ui, from, ordinal, outer, &widths, available);
             }
         });
+    if let Some(rect) = active_match_rect
+        && let Some(find) = active_find.as_deref()
+    {
+        find.record_active(ui, rect);
+    }
     follow
 }
 
@@ -2894,5 +3258,56 @@ mod tests {
         let (text, links) = prepare("Write `[[Home]]`, then open [[Home]].");
         assert_eq!(text, "Write `[[Home]]`, then open [Home](rust-note-0).");
         assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn reading_find_counts_matches_across_blocks_and_highlights_active_match() {
+        let parsed = Parsed::new(
+            "# Heading needle\n\nPlain **needle** text.\n\n> [!note] Callout needle\n> Body needle\n\n| Col |\n| --- |\n| needle |\n\n```rust\nlet needle = 1;\n```\n",
+        );
+        assert!(!parsed.fallback);
+        assert_eq!(count_matches_in_blocks(&parsed.blocks, "needle"), 6);
+
+        let ctx = egui::Context::default();
+        crate::theme::install_fonts(&ctx);
+        crate::theme::apply(&ctx, true);
+        ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut job = egui::text::LayoutJob::default();
+            let base = egui::TextFormat::simple(
+                egui::FontId::proportional(16.0),
+                ui.visuals().text_color(),
+            );
+            let matches = vec![(6..12, false), (17..23, true)];
+            append_highlighted_text(
+                &mut job,
+                "first needle and needle end",
+                0,
+                0.0,
+                base,
+                &matches,
+            );
+            assert_eq!(job.text, "first needle and needle end");
+            let backgrounds: Vec<_> = job
+                .sections
+                .iter()
+                .map(|section| {
+                    (
+                        &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                        section.format.background,
+                    )
+                })
+                .collect();
+            assert_eq!(
+                backgrounds,
+                vec![
+                    ("first ", egui::Color32::TRANSPARENT),
+                    ("needle", find_match_bg(false)),
+                    (" and ", egui::Color32::TRANSPARENT),
+                    ("needle", find_match_bg(true)),
+                    (" end", egui::Color32::TRANSPARENT),
+                ]
+            );
+        })
+        .drop_without_applying_deltas();
     }
 }
