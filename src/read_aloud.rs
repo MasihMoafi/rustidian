@@ -1047,7 +1047,7 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
                             "Pause reading (Space)"
                         };
                         response.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, action)
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, action)
                         });
                         crate::ui_probe::record(
                             ui.ctx(),
