@@ -65,6 +65,10 @@ mod table_layout;
 mod table_ui;
 #[cfg(not(test))]
 #[allow(dead_code, unused_imports)]
+#[path = "../src/terminal_ui.rs"]
+mod terminal_ui;
+#[cfg(not(test))]
+#[allow(dead_code, unused_imports)]
 #[path = "../src/theme.rs"]
 mod theme;
 #[cfg(not(test))]
