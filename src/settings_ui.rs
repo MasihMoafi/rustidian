@@ -203,13 +203,21 @@ impl NotesApp {
                         ui.set_width(if width < 600.0 { 152.0 } else { 188.0 });
                         ui.spacing_mut().item_spacing.y = crate::theme::space::XS;
                         ui.set_min_height(height - 24.0);
-                        let input = ui.add(
-                            crate::theme::text_field(
-                                TextEdit::singleline(&mut self.dialog_input)
-                                    .hint_text("Search settings…"),
-                            )
-                            .desired_width(f32::INFINITY),
-                        );
+                        let input = ui
+                            .scope(|ui| {
+                                let border = ui.visuals().widgets.noninteractive.bg_stroke.color;
+                                ui.visuals_mut().extreme_bg_color = ui.visuals().window_fill;
+                                ui.visuals_mut().widgets.inactive.bg_stroke =
+                                    Stroke::new(1.0, border);
+                                ui.add(
+                                    crate::theme::text_field(
+                                        TextEdit::singleline(&mut self.dialog_input)
+                                            .hint_text("Search settings…"),
+                                    )
+                                    .desired_width(f32::INFINITY),
+                                )
+                            })
+                            .inner;
                         crate::ui_probe::record(ctx, "dialog-input", input.rect);
                         if self.dialog_focus {
                             input.request_focus();
@@ -262,7 +270,7 @@ impl NotesApp {
                 ui.set_width((ui.available_width() - 24.0).max(140.0));
                 ui.set_min_height(height);
                 ui.add_space(crate::theme::space::XL);
-                let button = theme::dialog_header(ui, "Settings", "Close settings");
+                let button = theme::dialog_header(ui, self.settings_page.label(), "Close settings");
                 crate::ui_probe::record(ctx, "settings-close", button.rect);
                 *close |= button.clicked();
                 ui.add_space(crate::theme::space::M);
@@ -828,10 +836,18 @@ fn text(
     hint: &str,
 ) -> bool {
     row(ui, title, description, |ui| {
-        let response = ui.add(
-            crate::theme::text_field(TextEdit::singleline(value).id_salt(id).hint_text(hint))
-                .desired_width(ui.available_width()),
-        );
+        let response = ui
+            .scope(|ui| {
+                let border = ui.visuals().widgets.noninteractive.bg_stroke.color;
+                ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, border);
+                ui.add(
+                    crate::theme::text_field(
+                        TextEdit::singleline(value).id_salt(id).hint_text(hint),
+                    )
+                    .desired_width(ui.available_width()),
+                )
+            })
+            .inner;
         crate::ui_probe::record(ui.ctx(), id, response.rect);
         response.changed()
     })
