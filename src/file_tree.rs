@@ -612,6 +612,8 @@ impl Tree {
                     .data(|data| data.get_temp::<bool>(open_key))
                     .unwrap_or(false)
             });
+            let previous_wrap = ui.style().wrap_mode;
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
             let header = egui::CollapsingHeader::new(
                 RichText::new(name)
                     .size(13.0)
@@ -642,6 +644,7 @@ impl Tree {
                 }
                 revealed |= visible;
             });
+            ui.style_mut().wrap_mode = previous_wrap;
             // The header keeps its open state under its own id.
             let state_id = header.header_response.id;
             let selection_click = selection::row(ui, &header.header_response, entry);
@@ -970,5 +973,61 @@ mod tests {
         super::reveal(&ctx, note);
         super::cancel_reveal(&ctx);
         assert_eq!(super::pending_reveal(&ctx), None);
+    }
+
+    #[test]
+    fn long_folder_names_truncate_without_widening_sidebar() {
+        let ctx = egui::Context::default();
+        let mut tree = super::Tree::default();
+        let mut branch = tree.folders.entry("Learning".to_owned()).or_default();
+        branch = branch
+            .folders
+            .entry("8. Notebook (Function Arguments and Mutability)".to_owned())
+            .or_default();
+        branch.files.push(
+            Path::new(
+                "Learning/8. Notebook (Function Arguments and Mutability)/My Python Notes.md",
+            )
+            .to_path_buf(),
+        );
+
+        let mut panel_width = 0.0;
+        for _ in 0..2 {
+            ctx.run_ui(egui::RawInput::default(), |ui| {
+                let pane = egui::Panel::left("explorer")
+                    .default_size(180.0)
+                    .min_size(180.0)
+                    .max_size(450.0)
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
+                        crate::theme::sidebar_scroll().show(ui, |ui| {
+                            let mut visible = None;
+                            let mut drop_folder = None;
+                            tree.show(
+                                ui,
+                                "",
+                                None,
+                                super::Sort {
+                                    reverse: false,
+                                    order: None,
+                                },
+                                0,
+                                Some(Path::new(
+                                    "Learning/8. Notebook (Function Arguments and Mutability)",
+                                )),
+                                &mut visible,
+                                &mut drop_folder,
+                            );
+                        });
+                    });
+                panel_width = pane.response.rect.width();
+            })
+            .drop_without_applying_deltas();
+        }
+        assert!(
+            panel_width <= 185.0,
+            "sidebar expanded to {panel_width}px for a long folder name"
+        );
     }
 }

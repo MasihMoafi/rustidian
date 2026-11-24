@@ -2856,6 +2856,7 @@ impl NotesApp {
             )
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
+                ui.set_max_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.allocate_ui_with_layout(
                     egui::vec2(ui.available_width(), 40.0),
@@ -3143,16 +3144,19 @@ impl NotesApp {
                     // The vault name and the tree outside every folder take a drop into
                     // the vault root; its highlight is painted behind both.
                     let root_drop = ui.painter().add(egui::Shape::Noop);
-                    let root = ui.label(
-                        RichText::new(
-                            self.vault
-                                .as_ref()
-                                .map(Vault::name)
-                                .unwrap_or("No vault".into()),
+                    let root = ui.add(
+                        egui::Label::new(
+                            RichText::new(
+                                self.vault
+                                    .as_ref()
+                                    .map(Vault::name)
+                                    .unwrap_or("No vault".into()),
+                            )
+                            .size(12.0)
+                            .strong()
+                            .weak(),
                         )
-                        .size(12.0)
-                        .strong()
-                        .weak(),
+                        .truncate(),
                     );
                     crate::ui_probe::record(ui.ctx(), "file-tree-root", root.rect);
                     let root = root.interact(egui::Sense::click());
@@ -3405,6 +3409,7 @@ impl NotesApp {
             )
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
+                ui.set_max_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     for (tab, title, key) in [
                         (0, "Outline", "outline"),
