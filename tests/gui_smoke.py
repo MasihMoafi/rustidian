@@ -4241,14 +4241,24 @@ int rename(const char *source, const char *destination) {
                     released = control_bounds("table-resize:0:0")
                     assert abs((released[0] + released[2] - divider[0] - divider[2]) / 2 - 60) < 2, ("Release lost the final pointer move", mode, divider, released)
                     assert note.read_text() == source
-                    key("ctrl+z")
-                    restored = control_bounds("table-resize:0:0")
-                    assert abs(restored[0] - divider[0]) < 2 and note.read_text() == source
-                    key("ctrl+y")
-                    redone = control_bounds("table-resize:0:0")
-                    assert abs(redone[0] - released[0]) < 2 and note.read_text() == source, ("Redo lost the release position", mode, released, redone)
-                    key("ctrl+z")
-                    assert abs(control_bounds("table-resize:0:0")[0] - divider[0]) < 2 and note.read_text() == source
+                    # The control can exist in the probe before the frame that handles Undo.
+                    # Send each key once, then require its geometry and the original Markdown.
+                    for shortcut, expected, action in (
+                        ("ctrl+z", divider, "Undo"),
+                        ("ctrl+y", released, "Redo"),
+                        ("ctrl+z", divider, "second Undo"),
+                    ):
+                        previous_frame = frame_stamp()
+                        key(shortcut)
+                        deadline = time.monotonic() + 5
+                        while True:
+                            wait_for_frame(previous_frame)
+                            previous_frame = frame_stamp()
+                            actual = control_bounds("table-resize:0:0")
+                            if abs(actual[0] - expected[0]) < 2:
+                                break
+                            assert time.monotonic() < deadline, (action, mode, expected, actual)
+                        assert note.read_text() == source, (action, mode, "Markdown changed")
                     capture("native-table-resize-" + mode.split()[0].lower() + "-before.png")
                     for table in (0, 1):
                         name = f"table-resize:{table}:0"
