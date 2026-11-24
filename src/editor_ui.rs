@@ -4072,10 +4072,11 @@ fn editor_speakers(
             format!("editor-speech-block:{}", block.index),
             first,
         );
-        let x = if first.left() - 28.0 >= clip.left() {
-            first.left() - 20.0
-        } else if block.heading > 0 {
+        // The heading disclosure occupies the left gutter.
+        let x = if block.heading > 0 {
             (first.right() + 12.0).min(clip.right() - 12.0)
+        } else if first.left() - 28.0 >= clip.left() {
+            first.left() - 20.0
         } else {
             clip.left() + 10.0
         };

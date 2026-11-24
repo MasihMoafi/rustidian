@@ -8675,6 +8675,32 @@ int rename(const char *source, const char *destination) {
                     assert wait_played(1) == ["This is bold and code."], (view, lines(played))
                     results.append(f"In {view}, the paragraph and drag-selection speakers read the intended text")
 
+                sections = fixture / "Read aloud headings.md"
+                sections.write_text("# Plan\n\n## First section\n\nRead only this.\n\n## Next section\n\nLeave this silent.\n")
+                before = sections.read_bytes()
+                command("Refresh vault")
+                open_note(sections.stem)
+                for view in ("Reading view", "Live preview", "Source editing"):
+                    command(view)
+                    if view != "Reading view":
+                        key("ctrl+Home")
+                        editor = control_bounds("editor")
+                        xdo("mousemove", str(round(editor[0] + 25)), str(round(editor[1] + 10)))
+                    probe = "reading-block:1" if view == "Reading view" else "editor-speech-block:1"
+                    left, top, right, bottom = control_bounds(probe)
+                    xdo("mousemove", str(round(left + min(25, (right - left) / 2))), str(round((top + bottom) / 2)))
+                    pause()
+                    reset()
+                    click_control("read-aloud-block:1")
+                    assert wait_played(2, limit=5) == ["First section", "Read only this."], (view, lines(played))
+                    deadline = time.monotonic() + 3
+                    while control_bounds("read-aloud-player", required=False) and time.monotonic() < deadline:
+                        time.sleep(.1)
+                    assert not control_bounds("read-aloud-player", required=False)
+                    assert lines(played) == ["First section", "Read only this."], (view, lines(played))
+                    assert sections.read_bytes() == before
+                    results.append(f"In {view}, the heading speaker read that section and stopped at the next heading")
+
                 speech_failure_checks()
 
             def speech_failure_checks():
