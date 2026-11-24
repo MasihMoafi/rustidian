@@ -145,6 +145,9 @@ jobs:
           BASELINE
           cp "$RUNNER_TEMP/rustidian-fixed-app.rs" src/app.rs
           git diff --exit-code -- src/app.rs
+      - name: Graph filter behavior and saved preferences
+        if: ${{ inputs.gui_only && contains(inputs.sections, 'graph-relationships') && !inputs.package_after_checks }}
+        run: cargo test --locked --release --test graph_behavior
       - name: HTML import behavior checks
         if: ${{ contains(inputs.sections, 'html-import') }}
         run: cargo test --locked --test html_import_behavior 2>&1 | tee reports/html-import-tests.log
