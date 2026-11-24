@@ -787,6 +787,7 @@ fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> b
             };
             let field = ui.add(
                 egui::TextEdit::singleline(&mut search)
+                    .align(egui::Align2::LEFT_CENTER)
                     .hint_text("Search fonts")
                     .desired_width(f32::INFINITY),
             );

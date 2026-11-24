@@ -74,7 +74,7 @@ impl Manager {
                 ui.add_space(crate::theme::space::M);
             }
             ui.horizontal(|ui| {
-                let input = ui.add(
+                let input = ui.add(theme::text_field(
                     TextEdit::singleline(&mut self.input)
                         .hint_text(if self.load_only {
                             "Type to search..."
@@ -85,7 +85,7 @@ impl Manager {
                             (ui.available_width() - if self.load_only { 0.0 } else { 66.0 })
                                 .max(160.0),
                         ),
-                );
+                ));
                 ui_probe::record(ctx, "workspace-name", input.rect);
                 if self.focus {
                     input.request_focus();
