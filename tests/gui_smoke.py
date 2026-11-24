@@ -13525,6 +13525,13 @@ int rename(const char *source, const char *destination) {
                 assert all((root/name).read_bytes()==data for name,data in sources.items()),"Graph animation changed a note"
                 results.append("Transient animation does not restart itself on app restart, and every original note byte is unchanged")
 
+            def open_graph_filters(prefix):
+                if control_bounds(prefix+":section:filters", required=False) is None:
+                    click_control(prefix+":settings", hold=.15)
+                if control_bounds(prefix+":filter", required=False) is None:
+                    click_control(prefix+":section:filters", hold=.15)
+                control_bounds(prefix+":filter")
+
             def graph_relationship_checks():
                 sources = {
                     "People/Casey.md": "# Casey\n",
@@ -13554,12 +13561,11 @@ int rename(const char *source, const char *destination) {
 
                 original_count = settled()
                 assert control_bounds(prefix + "author:Robin Vale (@rvale)", required=False) is None
-                click_control(prefix + "settings")
-                click_control(prefix + "section:filters")
+                open_graph_filters("global-graph")
 
                 def choose(facet, label):
-                    click_control(prefix + f"focus:{facet}")
-                    click_control(prefix + f"focus:{facet}:{label}")
+                    click_control(prefix + f"focus:{facet}", hold=.15)
+                    click_control(prefix + f"focus:{facet}:{label}", hold=.15)
 
                 choose("Author", "Casey")
                 settled(4)
@@ -13627,13 +13633,6 @@ int rename(const char *source, const char *destination) {
                     capture("native-graph-not-ready.png")
                     raise AssertionError((prefix, nodes, edges, {key:value for key,value in controls.items() if key.startswith(prefix)}))
 
-                def filters(prefix):
-                    if control_bounds(prefix+":section:filters", required=False) is None:
-                        click_control(prefix+":settings", hold=.15)
-                    if control_bounds(prefix+":filter", required=False) is None:
-                        click_control(prefix+":section:filters", hold=.15)
-                    control_bounds(prefix+":filter")
-
                 def filter_text(prefix, value):
                     click_control(prefix+":filter", hold=.15);key("ctrl+a")
                     if value:type_text(value)
@@ -13642,7 +13641,7 @@ int rename(const char *source, const char *destination) {
                 click_control("button:Open graph view", hold=.15)
                 title_contains("Graph view")
                 ready("global-graph", 9, 9)
-                filters("global-graph")
+                open_graph_filters("global-graph")
                 capture("native-graph-global-dark.png")
                 filter_text("global-graph", "path:Projects");ready("global-graph", 1, 0)
                 filter_text("global-graph", "path:DOES_NOT_EXIST");ready("global-graph", 0, 0)
@@ -13679,7 +13678,7 @@ int rename(const char *source, const char *destination) {
 
                 open_note("Home")
                 command("Graph view: Open local graph")
-                ready("local-graph", 5, 4);filters("local-graph")
+                ready("local-graph", 5, 4);open_graph_filters("local-graph")
                 def depth(value, count):
                     left, top, right, bottom = control_bounds("local-graph:depth-slider")
                     xdo("mousemove", "--sync", str(round(left+7)), str(round((top+bottom)/2)), "click", "1");pause()
@@ -13731,7 +13730,7 @@ int rename(const char *source, const char *destination) {
                     text=f"# Label-{index:02}\n\n"
                     if index==0:text+="\n".join(f"[[StableLabels/Label-{other:02}]]" for other in range(1,64))+"\n"
                     (labels/f"Label-{index:02}.md").write_text(text)
-                command("Refresh vault");filters("global-graph")
+                command("Refresh vault");open_graph_filters("global-graph")
                 filter_text("global-graph","path:StableLabels");ready("global-graph",64,63)
                 click_control("global-graph:settings",hold=.15);click_control("global-graph:fit",hold=.15)
                 xdo("mousemove","--sync","100","80");pause()
@@ -13772,7 +13771,7 @@ int rename(const char *source, const char *destination) {
                 direction_sources={"Focus.md":"[[Child]]\n[[Peer]]\n","Parent.md":"[[Focus]]\n","Child.md":"# Child\n","Peer.md":"[[Focus]]\n"}
                 direction=graph_root/"Direction";direction.mkdir()
                 for name,text in direction_sources.items():(direction/name).write_text(text)
-                command("Refresh vault");filters("global-graph")
+                command("Refresh vault");open_graph_filters("global-graph")
                 filter_text("global-graph","path:Direction");ready("global-graph",4,4)
                 def direction_mode(prefix):
                     if control_bounds(prefix+":section:display",required=False) is None:click_control(prefix+":settings",hold=.15)
