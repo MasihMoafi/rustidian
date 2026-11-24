@@ -19,7 +19,8 @@ pub fn copy(
     );
     let response = ui
         .interact(rect, id.with("copy-code"), egui::Sense::click())
-        .on_hover_text("Copy code");
+        .on_hover_text("Copy code")
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     if always_visible || ui.rect_contains_pointer(panel) {
         crate::theme::icon_image(crate::theme::Icon::Copy, ui.visuals().weak_text_color())
             .paint_at(
