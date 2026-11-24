@@ -770,16 +770,28 @@ impl Tables {
                                 let mut layouter =
                                     |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, _width: f32| {
                                         if focused {
-                                            ui.fonts_mut(|fonts| {
-                                                fonts.layout_no_wrap(
-                                                    buffer.as_str().into(),
-                                                    egui::FontId::new(
+                                            let mut job = egui::text::LayoutJob::default();
+                                            job.wrap.max_width = inner.width().max(1.0);
+                                            let line_height = crate::theme::document_size(ui, 23.4);
+                                            job.first_row_min_height = line_height;
+                                            job.append(
+                                                buffer.as_str(),
+                                                0.0,
+                                                egui::TextFormat {
+                                                    font_id: egui::FontId::new(
                                                         crate::theme::document_size(ui, 18.0),
-                                                        crate::theme::fonts::text("regular"),
+                                                        crate::theme::fonts::text(if row == 0 {
+                                                            "semibold"
+                                                        } else {
+                                                            "regular"
+                                                        }),
                                                     ),
-                                                    ui.visuals().text_color(),
-                                                )
-                                            })
+                                                    color: ui.visuals().text_color(),
+                                                    line_height: Some(line_height),
+                                                    ..Default::default()
+                                                },
+                                            );
+                                            ui.fonts_mut(|fonts| fonts.layout_job(job))
                                         } else {
                                             rendered.clone()
                                         }
@@ -791,12 +803,18 @@ impl Tables {
                                 };
                                 let response = ui.put(
                                     inner,
-                                    TextEdit::singleline(&mut cell.text)
+                                    TextEdit::multiline(&mut cell.text)
                                         .id(field_id)
+                                        .desired_rows(1)
+                                        .return_key(None)
                                         .auto_pair(true)
                                         .font(egui::FontId::new(
                                             crate::theme::document_size(ui, 18.0),
-                                            crate::theme::fonts::text("regular"),
+                                            crate::theme::fonts::text(if row == 0 {
+                                                "semibold"
+                                            } else {
+                                                "regular"
+                                            }),
                                         ))
                                         .frame(egui::Frame::NONE)
                                         .margin(0)
@@ -836,6 +854,12 @@ impl Tables {
                                     );
                                 }
                                 if response.changed() {
+                                    if cell.text.contains(['\n', '\r']) {
+                                        cell.text = cell
+                                            .text
+                                            .replace("\r\n", " ")
+                                            .replace(['\n', '\r'], " ");
+                                    }
                                     separate_edit = discrete;
                                     edit = Some((
                                         table,
