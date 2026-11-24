@@ -7076,7 +7076,7 @@ impl eframe::App for NotesApp {
             .exact_size(28.0)
             .resizable(false)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_centered(|ui| {
                     ui.add_space(theme::space::S);
                     let message = ui
                         .add_sized(
