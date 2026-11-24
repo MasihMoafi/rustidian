@@ -3921,7 +3921,10 @@ fn collect_speech_blocks(source: &str) -> Vec<SpeechBlock> {
     let mut byte = 0;
     let mut chars = 0;
     let mut blocks: Vec<SpeechBlock> = Vec::with_capacity(raw.len());
-    for (index, (heading, range)) in raw.into_iter().enumerate() {
+    for (index, (heading, mut range)) in raw.into_iter().enumerate() {
+        while range.end > range.start && matches!(source.as_bytes()[range.end - 1], b'\n' | b'\r') {
+            range.end -= 1;
+        }
         chars += source[byte..range.start].chars().count();
         let start = chars;
         chars += source[range.start..range.end].chars().count();
@@ -5488,8 +5491,8 @@ mod tests {
         assert_eq!(blocks[1].heading, 0);
         assert_eq!(blocks[1].index, 1);
         assert_eq!(&source[blocks[1].range.clone()], "First paragraph.");
-        assert_eq!(&source[blocks[2].range.clone()], "Tight one\n");
-        assert_eq!(&source[blocks[3].range.clone()], "Tight two\n\n");
+        assert_eq!(&source[blocks[2].range.clone()], "Tight one");
+        assert_eq!(&source[blocks[3].range.clone()], "Tight two");
         assert_eq!(blocks[4].heading, 2);
         assert_eq!(
             &source[blocks[4].range.start..blocks[4].section_end],
