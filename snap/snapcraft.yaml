@@ -44,7 +44,7 @@ parts:
     plugin: nil
     source: .
     build-packages: [curl, gcc, pkg-config, python3, libx11-dev, libxkbcommon-dev, libwayland-dev, libgl1-mesa-dev]
-    stage-packages: [libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libwayland-client0, libwayland-egl1, libegl1, libgl1, fontconfig, libglib2.0-bin, dbus, zenity, libsonic0, pulseaudio-utils, python3]
+    stage-packages: [libxkbcommon0, libxkbcommon-x11-0, libx11-6, libxcursor1, libxi6, libxrandr2, libxinerama1, libwayland-client0, libwayland-egl1, libegl1, libgl1, fontconfig, libglib2.0-bin, dbus, zenity, libsonic0, pulseaudio-utils]
     override-pull: |
       craftctl default
       craftctl set version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"

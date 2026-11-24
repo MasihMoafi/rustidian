@@ -55,7 +55,7 @@ jobs:
           set -eu
           "$SNAP/usr/bin/paplay" --raw --rate 24000 --channels 1 --format s16le --help >/dev/null
           "$SNAP/usr/bin/parec" --file-format=wav --rate=16000 --channels=1 --format=s16le --help >/dev/null
-          "$SNAP/usr/bin/python3" -c 'import ctypes; ctypes.CDLL("libsonic.so.0")'
+          python3 -c 'import ctypes; ctypes.CDLL("libsonic.so.0")'
           SHELL
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
