@@ -282,13 +282,13 @@ impl Manager {
                             if self.focus {
                                 ui.memory_mut(|memory| memory.request_focus(input_id));
                             }
-                            let input = ui.add(
+                            let input = ui.add(crate::theme::text_field(
                                 TextEdit::singleline(&mut self.input)
                                     .id(input_id)
                                     .return_key(None)
                                     .hint_text("Choose a file...")
                                     .desired_width(ui.available_width()),
-                            );
+                            ));
                             if self.focus {
                                 input.request_focus();
                                 self.focus = ui.is_sizing_pass();

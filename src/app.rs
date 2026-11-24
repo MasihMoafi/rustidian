@@ -4610,10 +4610,12 @@ impl NotesApp {
                 crate::ui_probe::record(ctx, "trash-target", response.rect);
                 response
             } else {
-                ui.add(TextEdit::singleline(&mut self.dialog_input)
-                    .id(input_id)
-                    .desired_width(f32::INFINITY)
-                    .hint_text(hint))
+                ui.add(theme::text_field(
+                    TextEdit::singleline(&mut self.dialog_input)
+                        .id(input_id)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(hint),
+                ))
             };
             if self.dialog_focus && dialog != Dialog::TrashNote {
                 // A new Area/menu may still be completing its first layout pass.

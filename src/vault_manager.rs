@@ -685,12 +685,11 @@ fn text_field(ui: &mut egui::Ui, name: &str, text: &mut String, focus: bool) -> 
     if focus && !ui.memory(|memory| memory.has_focus(id)) {
         ui.memory_mut(|memory| memory.request_focus(id));
     }
-    let response = ui.add_sized(
-        [ui.available_width(), 32.0],
+    let response = ui.add(crate::theme::text_field(
         TextEdit::singleline(text)
             .id(id)
             .desired_width(f32::INFINITY),
-    );
+    ));
     ui_probe::record(ui.ctx(), name, response.rect);
     if focus {
         response.request_focus();

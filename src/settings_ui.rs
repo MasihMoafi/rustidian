@@ -214,11 +214,11 @@ impl NotesApp {
                                 ui.visuals_mut().extreme_bg_color = ui.visuals().window_fill;
                                 ui.visuals_mut().widgets.inactive.bg_stroke =
                                     Stroke::new(1.0, border);
-                                ui.add(
+                                ui.add(theme::text_field(
                                     TextEdit::singleline(&mut self.dialog_input)
                                         .hint_text("Search settings…")
                                         .desired_width(f32::INFINITY),
-                                )
+                                ))
                             })
                             .inner;
                         crate::ui_probe::record(ctx, "dialog-input", input.rect);
@@ -781,6 +781,7 @@ fn font_choice(ui: &mut egui::Ui, id: &str, value: &mut String, mono: bool) -> b
             };
             let field = ui.add(
                 egui::TextEdit::singleline(&mut search)
+                    .align(egui::Align2::LEFT_CENTER)
                     .hint_text("Search fonts")
                     .desired_width(f32::INFINITY),
             );
@@ -834,12 +835,12 @@ fn text(
             .scope(|ui| {
                 let border = ui.visuals().widgets.noninteractive.bg_stroke.color;
                 ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, border);
-                ui.add(
+                ui.add(theme::text_field(
                     TextEdit::singleline(value)
                         .id_salt(id)
                         .hint_text(hint)
                         .desired_width(ui.available_width()),
-                )
+                ))
             })
             .inner;
         crate::ui_probe::record(ui.ctx(), id, response.rect);
