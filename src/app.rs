@@ -219,7 +219,8 @@ pub struct NotesApp {
     /// The explorer shows the user's own order (rows dragged into place) instead of by name.
     pub(crate) custom_order: bool,
     pub(crate) explorer_order: rustidian::explorer_order::Order,
-    collapse_epoch: u64,
+    folder_toggle: crate::file_tree::FolderToggle,
+    any_folder_open: bool,
     reveal_folder: Option<PathBuf>,
     /// The active note the explorer last scrolled to; a new one is revealed once.
     revealed_note: Option<PathBuf>,
@@ -351,7 +352,8 @@ impl NotesApp {
             sort_descending: false,
             custom_order: false,
             explorer_order: Default::default(),
-            collapse_epoch: 0,
+            folder_toggle: Default::default(),
+            any_folder_open: false,
             reveal_folder: None,
             revealed_note: None,
             reset_tree_scroll: false,
@@ -890,7 +892,8 @@ impl NotesApp {
                         ctx.set_zoom_factor(1.0);
                         self.show_bookmarks = false;
                         self.sort_descending = false;
-                        self.collapse_epoch = 0;
+                        self.folder_toggle = Default::default();
+                        self.any_folder_open = false;
                         self.reveal_folder = None;
                         self.reset_tree_scroll = true;
                         let (note_aids, import_errors) =
@@ -2972,12 +2975,17 @@ impl NotesApp {
                                     ui.close();
                                 }
                             });
-                            let collapse =
-                                icon_button(ui, Icon::CollapseAll, "Collapse all folders");
-                            crate::ui_probe::record(ui.ctx(), "file-collapse", collapse.rect);
-                            if collapse.clicked() {
-                                self.collapse_epoch = self.collapse_epoch.wrapping_add(1);
+                            let (icon, tooltip) = if self.any_folder_open {
+                                (Icon::CollapseAll, "Collapse all folders")
+                            } else {
+                                (Icon::ExpandAll, "Expand all folders")
+                            };
+                            let toggle = icon_button(ui, icon, tooltip);
+                            crate::ui_probe::record(ui.ctx(), "file-collapse", toggle.rect);
+                            if toggle.clicked() {
+                                self.folder_toggle.set_open(!self.any_folder_open);
                                 self.reveal_folder = None;
+                                ui.ctx().request_repaint();
                             }
                         },
                     );
@@ -3219,7 +3227,7 @@ impl NotesApp {
                     }
                     let mut drop_folder = crate::file_tree::DropTarget::default();
                     let scroll = tree_scroll.show(ui, |ui| {
-                        let (action, revealed) = self.tree.show(
+                        let (action, revealed, any_open) = self.tree.show(
                             ui,
                             "",
                             self.tabs
@@ -3229,12 +3237,16 @@ impl NotesApp {
                                 reverse: self.sort_descending && !self.custom_order,
                                 order: self.custom_order.then_some(&self.explorer_order),
                             },
-                            self.collapse_epoch,
+                            self.folder_toggle,
                             self.reveal_folder.as_deref(),
                             &mut visible_files,
                             &mut drop_folder,
                         );
                         selected = action;
+                        if self.any_folder_open != any_open {
+                            self.any_folder_open = any_open;
+                            ui.ctx().request_repaint();
+                        }
                         if revealed {
                             self.reveal_folder = None;
                         }

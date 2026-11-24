@@ -456,6 +456,19 @@ fn paint_row(
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct FolderToggle {
+    revision: u64,
+    open: bool,
+}
+
+impl FolderToggle {
+    pub fn set_open(&mut self, open: bool) {
+        self.revision = self.revision.wrapping_add(1);
+        self.open = open;
+    }
+}
+
 impl Tree {
     pub fn from_vault(vault: &Vault) -> Self {
         let mut tree = Self::default();
@@ -495,11 +508,11 @@ impl Tree {
         prefix: &str,
         active: Option<&Path>,
         sort: Sort<'_>,
-        collapse_epoch: u64,
+        folder_toggle: FolderToggle,
         reveal_folder: Option<&Path>,
         visible_files: &mut Option<Vec<PathBuf>>,
         drop: &mut DropTarget,
-    ) -> (Option<FileAction>, bool) {
+    ) -> (Option<FileAction>, bool, bool) {
         let root = prefix.is_empty();
         if root {
             selection::begin(ui.ctx(), active);
@@ -507,6 +520,7 @@ impl Tree {
         let here = PathBuf::from(prefix.trim_start_matches('/'));
         let mut open = None;
         let mut revealed = false;
+        let mut any_open = false;
         // During a drag the deepest folder under the pointer is the drop target, and the
         // one the drag rested on last frame keeps its name lit and opens after a pause.
         let dragging = egui::DragAndDrop::payload::<Dragged>(ui.ctx());
@@ -552,17 +566,16 @@ impl Tree {
             let folder_index = rustidian::explorer_order::index_note(entry, &folder.files);
             let persistent = ui.make_persistent_id(&id);
             let selection_len = selection::record(ui.ctx(), [entry.to_owned()]);
-            let (selection_changed, collapse) = ui.ctx().data_mut(|data| {
-                let key = persistent.with("collapse");
-                let collapse = data
-                    .get_temp::<u64>(key)
-                    .is_some_and(|previous| previous != collapse_epoch);
-                data.insert_temp(key, collapse_epoch);
+            let (selection_changed, toggle_folder) = ui.ctx().data_mut(|data| {
+                let revision =
+                    data.get_temp_mut_or_default::<u64>(persistent.with("folder-toggle"));
+                let toggle = *revision != folder_toggle.revision;
+                *revision = folder_toggle.revision;
                 let previous =
                     data.get_temp_mut_or_default::<Option<PathBuf>>(persistent.with("active"));
                 let changed = previous.as_deref() != active;
                 *previous = active.map(Path::to_owned);
-                (changed, collapse)
+                (changed, toggle)
             });
             let resting_since = resting
                 .as_ref()
@@ -571,8 +584,8 @@ impl Tree {
             let reveal =
                 if reveal_folder.is_some_and(|path| path.starts_with(id.trim_start_matches('/'))) {
                     Some(true)
-                } else if collapse {
-                    Some(false)
+                } else if toggle_folder {
+                    Some(folder_toggle.open)
                 } else if resting_since.is_some_and(|since| now - since >= EXPAND_AFTER) {
                     Some(true)
                 } else {
@@ -629,12 +642,12 @@ impl Tree {
             .icon(theme::disclosure)
             .default_open(false)
             .show(ui, |ui| {
-                let (action, visible) = folder.show(
+                let (action, visible, _) = folder.show(
                     ui,
                     &id,
                     active,
                     sort,
-                    collapse_epoch,
+                    folder_toggle,
                     reveal_folder,
                     visible_files,
                     drop,
@@ -675,6 +688,7 @@ impl Tree {
             start_drag(&header.header_response, entry, name);
             let is_open = egui::collapsing_header::CollapsingState::load(ui.ctx(), state_id)
                 .is_some_and(|state| state.is_open());
+            any_open |= is_open;
             ui.ctx()
                 .data_mut(|data| data.insert_temp(open_key, is_open));
             find_slot(
@@ -801,7 +815,7 @@ impl Tree {
         if root && let Some(action) = selection::finish(ui) {
             open = Some(action);
         }
-        (open, revealed)
+        (open, revealed, any_open)
     }
 }
 

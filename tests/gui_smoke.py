@@ -406,6 +406,11 @@ def main():
                 raise AssertionError(f"No visible control: {name}; X focus={xdo('getwindowfocus')}; focus={focus}; visible={list(controls)}")
             return None
 
+        def collapse_folders():
+            if control_bounds("button:Collapse all folders", required=False):
+                click_control("file-collapse")
+                pause()
+
         def click_control(name, button="1", *, hold=0):
             if name.startswith("settings-") and not name.startswith("settings-page:") and not control_bounds(name, required=False):
                 page = ("Editor" if name == "settings-autosave" else
@@ -2104,7 +2109,7 @@ int rename(const char *source, const char *destination) {
                 command("Reading view")
                 # Earlier full-suite groups expand many nested fixture folders.
                 # Collapse them once so the root Home row is actually onscreen.
-                click_control("file-collapse")
+                collapse_folders()
                 originals = {str(p.relative_to(fixture)): p.read_bytes() for p in fixture.rglob("*.md")}
                 original_folders = {str(p.relative_to(fixture)) for p in fixture.rglob("*") if p.is_dir()}
                 timings = []
@@ -3199,6 +3204,10 @@ int rename(const char *source, const char *destination) {
                 key("alt+Left")
                 title_contains("Navigation UI")
                 key("alt+Right")
+                title_contains("Linked target")
+                xdo("mousemove", "800", "450", "click", "8")
+                title_contains("Navigation UI")
+                xdo("click", "9")
                 title_contains("Linked target")
                 key("alt+Left")
                 title_contains("Navigation UI")
@@ -5337,9 +5346,20 @@ int rename(const char *source, const char *destination) {
                 assert control_bounds("file:Notes/Nested/Toolbar child.md")
                 child = fixture / "Notes/Nested/Toolbar child.md"
                 original = child.read_text()
+                first_bounds = control_bounds("button:Collapse all folders")
                 click_control("file-collapse")
+                assert control_bounds("button:Expand all folders") == first_bounds
                 pause()
-                assert control_bounds("file:Notes/Nested/Toolbar child.md", required=False) is None
+                assert control_bounds("folder:Notes/Nested", required=False) is None
+                capture("native-file-toolbar-collapsed.png")
+                click_control("file-collapse")
+                assert control_bounds("button:Collapse all folders") == first_bounds
+                assert control_bounds("file:Notes/Nested/Toolbar child.md")
+                assert control_bounds("file:Assets/Attachment.png")
+                capture("native-file-toolbar-expanded.png")
+                click_control("file-collapse")
+                assert control_bounds("button:Expand all folders") == first_bounds
+                pause()
                 click_control("folder:Notes")
                 pause()
                 assert control_bounds("folder:Notes/Nested")
@@ -5349,7 +5369,7 @@ int rename(const char *source, const char *destination) {
                 assert control_bounds("file:Notes/Nested/Toolbar child.md")
                 assert child.read_text() == original
                 capture("native-file-toolbar.png")
-                results.append("The generated Collapse All icon collapsed nested folders, which could be reopened without changing the note")
+                results.append("The same explorer icon collapsed and expanded nested and sibling folders, then manual disclosure opened only the requested folder without changing the note")
             # Dedicated section: list-order fixtures must not leak into the accumulated all-suite vault.
             def sidebar_keys_checks():
                 sources = {}
@@ -5440,8 +5460,10 @@ int rename(const char *source, const char *destination) {
                 assert control_bounds("file:Keyboard folder/Hidden/Hidden child.md", required=False) is None
                 results.append("Files follow current reverse sort and expanded-folder order, skipping collapsed children")
                 key("ctrl+shift+f"); key("ctrl+a"); type_text("Keyboard nav")
+                control_bounds("search:Keyboard nav 01.md")
                 before_title = xdo("getwindowname", window)
                 key("Down"); assert xdo("getwindowname", window) == before_title
+                key("Return"); title_contains("Keyboard nav 01")
                 click_control("search:Keyboard nav 00.md")
                 key("Down"); title_contains("Keyboard nav 01")
                 key("Up"); title_contains("Keyboard nav 00")
@@ -5455,7 +5477,7 @@ int rename(const char *source, const char *destination) {
                 assert bounds[1] >= viewport[1] and bounds[3] <= viewport[3], (bounds, viewport)
                 key("Home"); title_contains("Keyboard nav 00")
                 capture("native-search-arrows.png")
-                results.append("Search text keeps its arrows; selecting a result enables filtered navigation, clamped boundaries and offscreen Home/End")
+                results.append("Search arrows move the highlighted result from the query field and Enter opens it. After opening a result, the arrows and Home/End navigate and scroll the filtered list")
                 long_group = fixture / "Long search"
                 long_group.mkdir()
                 long_name = "A " + "Long title " * 12
@@ -6276,7 +6298,7 @@ int rename(const char *source, const char *destination) {
                 settle(lambda: watches() == watch_folders, "The vault must hold one watch per included folder")
                 click_control("button:File explorer")
                 pause()
-                click_control("file-collapse")
+                collapse_folders()
                 later = fixture / "Watched later"
                 later.mkdir()
                 assert control_bounds("folder:Watched later")
@@ -7040,7 +7062,7 @@ int rename(const char *source, const char *destination) {
             def folder_checks():
                 click_control("button:File explorer")
                 pause()
-                click_control("file-collapse")
+                collapse_folders()
                 original_notes = sorted(str(path.relative_to(fixture)) for path in fixture.rglob("*.md"))
                 command("New folder")
                 key("ctrl+a")
@@ -7307,7 +7329,7 @@ int rename(const char *source, const char *destination) {
                 # Explorer context menu follows the same bookmark operation for images.
                 click_control("button:File explorer")
                 pause()
-                click_control("file-collapse")
+                collapse_folders()
                 click_control("folder:Assets")
                 click_control("file:Assets/Attachment.png", "3")
                 click_control("file-bookmark:Assets/Attachment.png")
@@ -7371,7 +7393,7 @@ int rename(const char *source, const char *destination) {
                 assert state_with(relative)[1]["bookmarks"]["items"][0]["title"] == "Writing فارسی", repr(state_with(relative)[1]["bookmarks"]["items"][0])
                 click_control("button:File explorer")
                 pause()
-                click_control("file-collapse")
+                collapse_folders()
                 click_control("folder:Bookmark folder", "3")
                 click_control("folder-rename:Bookmark folder")
                 assert control_bounds("dialog-input-focused")
@@ -7718,7 +7740,7 @@ int rename(const char *source, const char *destination) {
                     return result
 
                 def copy_folder(folder):
-                    click_control("file-collapse")
+                    collapse_folders()
                     relative = str(folder.relative_to(fixture))
                     click_control("folder:" + relative, button="3")
                     control_bounds("copy:" + relative)
@@ -9486,7 +9508,7 @@ int rename(const char *source, const char *destination) {
                     results.append("A move waited for its exact saved bytes, its picker cancelled during the wait, and a later move preserved the saved content in both directions")
 
                     click_control("button:File explorer")
-                    click_control("file-collapse")
+                    collapse_folders()
                     block("copy")
                     click_control("folder:Slow folder", button="3")
                     click_control("copy:Slow folder")
@@ -9776,7 +9798,7 @@ int rename(const char *source, const char *destination) {
                 before = files()
                 command("Refresh vault")
                 pause()
-                click_control("file-collapse")
+                collapse_folders()
                 pause()
                 header = control_bounds("folder:Order test")
                 y = round((header[1] + header[3]) / 2)
@@ -9876,7 +9898,7 @@ int rename(const char *source, const char *destination) {
                     (filler / f"Filler {number:02}.md").write_bytes(f"# Filler {number:02}\n".encode())
                 command("Refresh vault")
                 pause()
-                click_control("file-collapse")
+                collapse_folders()
                 open_note("Drag source")
                 dragged = "file:Notes/Drag source.md"
                 control_bounds(dragged)

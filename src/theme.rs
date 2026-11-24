@@ -549,6 +549,7 @@ pub enum Icon {
     NewFolder,
     Sort,
     CollapseAll,
+    ExpandAll,
     Disclosure,
     NewTab,
     Pin,
@@ -597,7 +598,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 57] = [
         Self::Files,
         Self::Search,
         Self::Graph,
@@ -609,6 +610,7 @@ impl Icon {
         Self::NewFolder,
         Self::Sort,
         Self::CollapseAll,
+        Self::ExpandAll,
         Self::Disclosure,
         Self::NewTab,
         Self::Pin,
@@ -725,6 +727,10 @@ impl Icon {
             Self::CollapseAll => (
                 "bytes://icons/collapse-all.svg",
                 include_bytes!("../assets/icons/collapse-all.svg"),
+            ),
+            Self::ExpandAll => (
+                "bytes://icons/expand-all.svg",
+                include_bytes!("../assets/icons/expand-all.svg"),
             ),
             Self::Disclosure => (
                 "bytes://icons/disclosure.svg",
