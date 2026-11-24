@@ -2041,10 +2041,14 @@ impl NotesApp {
                 self.ask_file(Dialog::RenameNote, path);
             }
 
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, Key::ArrowLeft)) {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, Key::ArrowLeft))
+                || ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Extra1))
+            {
                 self.navigate(true);
             }
-            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, Key::ArrowRight)) {
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::ALT, Key::ArrowRight))
+                || ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Extra2))
+            {
                 self.navigate(false);
             }
             if ctx.input_mut(|i| {
