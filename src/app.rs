@@ -3566,12 +3566,18 @@ impl NotesApp {
                         self.vault.as_mut(),
                         &open_notes,
                     );
-                    let preview_link = preview::show(
+                    let preview_find = self.find.open.then(|| preview::FindState {
+                        query: self.find.query(),
+                        selected: self.find.selected(),
+                        scroll_to_selected: false,
+                    });
+                    let preview_link = preview::show_with_find(
                         &mut columns[1],
                         &mut self.cache,
                         tab,
                         anchor.as_deref(),
                         self.vault.as_ref(),
+                        preview_find,
                     );
                     follow = follow.take().or(preview_link);
                 });
@@ -3603,12 +3609,19 @@ impl NotesApp {
                                 );
                             }
                             if view == View::Read {
-                                follow = preview::show(
+                                let scroll_to_selected = self.find.take_scroll_to_match().is_some();
+                                let find_state = self.find.open.then(|| preview::FindState {
+                                    query: self.find.query(),
+                                    selected: self.find.selected(),
+                                    scroll_to_selected,
+                                });
+                                follow = preview::show_with_find(
                                     ui,
                                     &mut self.cache,
                                     tab,
                                     anchor.as_deref(),
                                     self.vault.as_ref(),
+                                    find_state,
                                 );
                             } else {
                                 let bytes = tab.document.text.len();

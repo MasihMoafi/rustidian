@@ -40,6 +40,17 @@ pub fn header(
     ordinal: usize,
     folded: bool,
 ) -> (egui::Response, Option<String>) {
+    let (response, link, _) = header_with_find(ui, model, ordinal, folded, &[]);
+    (response, link)
+}
+
+pub fn header_with_find(
+    ui: &mut egui::Ui,
+    model: &Callout,
+    ordinal: usize,
+    folded: bool,
+    matches: &[(std::ops::Range<usize>, bool)],
+) -> (egui::Response, Option<String>, Option<egui::Rect>) {
     use crate::theme::Icon;
     let icon = match model.kind {
         Kind::Note => Icon::CalloutNote,
@@ -59,14 +70,28 @@ pub fn header(
     let ink = color(ui, model.kind);
     let title = crate::preview::TableCell::new(&model.title);
     let mut hovered_link = None;
+    let mut active_rect = None;
     let response = ui
         .horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = TITLE_GAP;
             let width = title_width(ui.available_width());
             ui.add(crate::theme::icon_image(icon, ink));
-            let galley = title.layout_color(ui, true, width, Some(ink));
+            let galley = title.layout_color_with_find(ui, true, width, Some(ink), matches);
             let response = ui.add(egui::Label::new(galley.clone()).sense(egui::Sense::hover()));
             title.paint(ui, &galley, response.rect.min);
+            if let Some((range, _)) = matches.iter().find(|(_, active)| *active) {
+                let first = galley.pos_from_cursor(egui::text::CCursor::new(range.start));
+                let last = galley.pos_from_cursor(egui::text::CCursor::new(range.end));
+                let rect = if (first.min.y - last.min.y).abs() < 1.0 {
+                    first.union(last)
+                } else {
+                    first
+                };
+                active_rect = Some(
+                    rect.translate(response.rect.min.to_vec2())
+                        .expand2(egui::vec2(1.0, 0.0)),
+                );
+            }
             if let Some(pointer) = ui
                 .ctx()
                 .pointer_hover_pos()
@@ -102,5 +127,5 @@ pub fn header(
     let link = crate::theme::link_clicked(&response)
         .then_some(hovered_link)
         .flatten();
-    (response, link)
+    (response, link, active_rect)
 }

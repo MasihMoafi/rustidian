@@ -33,14 +33,27 @@ pub fn copy(
     }
 }
 
-pub fn reading(ui: &mut egui::Ui, body: &str, language: &str, ordinal: usize) -> egui::Response {
+pub fn display_text(body: &str) -> String {
     // The final line ending terminates the last code line rather than adding a blank row.
     // Normalize only the displayed string; clipboard bytes retain the original endings.
-    let display = body
-        .strip_suffix("\r\n")
+    body.strip_suffix("\r\n")
         .or_else(|| body.strip_suffix('\n'))
         .unwrap_or(body)
-        .replace("\r\n", "\n");
+        .replace("\r\n", "\n")
+}
+
+pub fn reading(ui: &mut egui::Ui, body: &str, language: &str, ordinal: usize) -> egui::Response {
+    reading_with_find(ui, body, language, ordinal, &[]).0
+}
+
+pub fn reading_with_find(
+    ui: &mut egui::Ui,
+    body: &str,
+    language: &str,
+    ordinal: usize,
+    matches: &[(std::ops::Range<usize>, bool)],
+) -> (egui::Response, Option<egui::Rect>) {
+    let display = display_text(body);
     let mut job = LayoutJob::default();
     job.wrap.max_width = (ui.available_width() - 2.0 * HORIZONTAL_INSET).max(1.0);
     let colors = crate::syntax::code_tokens(ui, &display, language, true);
@@ -52,25 +65,98 @@ pub fn reading(ui: &mut egui::Ui, body: &str, language: &str, ordinal: usize) ->
     };
     if display.is_empty() {
         job.append(" ", 0.0, format);
-    } else {
+    } else if matches.is_empty() {
         append_colored(&mut job, &display, 0, 0.0, format, &colors);
+    } else {
+        append_colored_with_find(&mut job, &display, 0, 0.0, format, &colors, matches);
     }
     let mut galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
     crate::theme::set_line_height(&mut galley, crate::theme::document_size(ui, LINE_HEIGHT));
+    let mut label_rect = None;
     let frame = egui::Frame::NONE
         .fill(ui.visuals().code_bg_color)
         .corner_radius(7)
         .inner_margin(egui::Margin::symmetric(HORIZONTAL_INSET as i8, 12))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.add(egui::Label::new(galley).selectable(true))
+            let response = ui.add(egui::Label::new(galley.clone()).selectable(true));
+            label_rect = Some(response.rect);
+            response
         });
     let panel = frame.response.rect;
     if panel.intersects(ui.clip_rect()) {
         crate::ui_probe::record(ui.ctx(), format!("code-block:{ordinal}"), panel);
         copy(ui, frame.response.id, panel, body, ordinal, true);
     }
-    frame.response
+    let active_rect = matches
+        .iter()
+        .find(|(_, active)| *active)
+        .and_then(|(range, _)| {
+            let origin = label_rect?.min.to_vec2();
+            let first = galley.pos_from_cursor(egui::text::CCursor::new(range.start));
+            let last = galley.pos_from_cursor(egui::text::CCursor::new(range.end));
+            let rect = if (first.min.y - last.min.y).abs() < 1.0 {
+                first.union(last)
+            } else {
+                first
+            };
+            Some(rect.translate(origin).expand2(egui::vec2(1.0, 0.0)))
+        });
+    (frame.response, active_rect)
+}
+
+fn append_colored_with_find(
+    job: &mut LayoutJob,
+    text: &str,
+    start: usize,
+    mut leading: f32,
+    format: egui::TextFormat,
+    colors: &[crate::syntax::Token],
+    matches: &[(std::ops::Range<usize>, bool)],
+) {
+    let offsets: Vec<usize> = text
+        .char_indices()
+        .map(|(byte, _)| byte)
+        .chain([text.len()])
+        .collect();
+    let byte_of = |character: usize| offsets.get(character).copied().unwrap_or(text.len());
+    let byte_matches: Vec<(std::ops::Range<usize>, bool)> = matches
+        .iter()
+        .map(|(range, active)| (byte_of(range.start)..byte_of(range.end), *active))
+        .collect();
+    let mut boundaries = vec![0, text.len()];
+    for token in colors {
+        let from = token.range.start.saturating_sub(start).min(text.len());
+        let to = token.range.end.saturating_sub(start).min(text.len());
+        if from < to {
+            boundaries.extend([from, to]);
+        }
+    }
+    for (range, _) in &byte_matches {
+        boundaries.extend([range.start, range.end]);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let mut token = 0;
+    for pair in boundaries.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        while token < colors.len() && colors[token].range.end <= start + from {
+            token += 1;
+        }
+        let mut piece = format.clone();
+        if let Some(color) = colors
+            .get(token)
+            .filter(|token| token.range.contains(&(start + from)))
+            .map(|token| token.color)
+        {
+            piece.color = color;
+        }
+        if let Some((_, active)) = byte_matches.iter().find(|(range, _)| range.contains(&from)) {
+            piece.background = crate::preview::find_match_bg(*active);
+        }
+        job.append(&text[from..to], leading, piece);
+        leading = 0.0;
+    }
 }
 
 pub fn append_colored(
