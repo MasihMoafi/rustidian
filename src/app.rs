@@ -2747,6 +2747,7 @@ impl NotesApp {
                                             Icon::Disclosure,
                                             ui.visuals().weak_text_color(),
                                         )
+                                        .fit_to_exact_size(egui::vec2(12.0, 12.0))
                                         .rotate(
                                             std::f32::consts::FRAC_PI_2,
                                             egui::Vec2::splat(0.5),
