@@ -77,7 +77,7 @@ fn write_properties(text: &mut String, range: Range<usize>, values: Mapping) -> 
     Ok(())
 }
 
-fn strings(value: Option<&Value>) -> Vec<String> {
+pub(crate) fn strings(value: Option<&Value>) -> Vec<String> {
     match value {
         Some(Value::String(value)) => vec![value.clone()],
         Some(Value::Sequence(values)) => values

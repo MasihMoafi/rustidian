@@ -62,7 +62,7 @@ def main():
     parser.add_argument("--default-vault", action="store_true", help="Test an extracted executable beside its sample vault, without a vault argument")
     parser.add_argument("--open-file", choices=["md", "txt", "rs", "py", "html", "json", "toml"], help="Check opening and saving an individual document")
     parser.add_argument("--scroll-document", type=Path, help="Read-only source copied into the private scrolling fixture")
-    parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
+    parser.add_argument("--section", choices=["all", "html-media", "view-modes", "narrow-html", "html-import", "system-open", "system-theme", "graph", "graph-relationships", "graph-state", "graph-animation", "sidebar-boundary", "toolbar-fill", "middle-pan", "agent-terminal", "lifecycle", "quit", "idle-cpu", "emoji", "properties", "images", "tasks", "large-search", "folders", "folder-create", "watch-limit", "instance", "speed", "explorer", "explorer-multi", "reveal", "vault-switch", "vaults", "desktop-vault", "tab-state", "file-toolbar", "folding", "typography", "font-controls", "font-families", "visual-controls", "settings", "code", "tab-overflow", "tab-drag", "list-indent", "list-enter", "external-rename", "delimiter-pairs", "image-import", "note-dialogs", "syntax", "sidebar-keys", "tree-scroll", "context-menu", "keyboard-focus", "reading-code", "tables", "inline-styles", "table-edit", "table-links", "table-input", "table-resize", "table-edges", "table-select", "chrome-spacing", "find-navigation", "trash-options", "palettes", "callouts", "persian", "attachments", "bookmarks", "essential", "colors", "native-highlights", "page-preview", "quick-ranking", "quick-create", "navigation", "hover", "title", "scrolling", "diagrams", "math", "chrome", "note-aids", "note-creators", "tab-actions", "tab-restore", "tab-close-menu", "link-fragments", "block-completion", "note-embeds", "backlink-context", "file-copy", "folder-copy", "file-move", "drag-move", "explorer-order", "read-aloud", "dictation", "voice-account", "workspaces", "recovery", "palette-queued", "unicode-queued", "undo"], default="all")
     parser.add_argument("--report-dir", type=Path, help="Retain this run in a separate evidence directory")
     parser._option_string_actions["--section"].choices += ["background-io", "quiet-warning", "html-standalone", "deletion-undo", "deletion-storage", "quiet-errors"]
     args = parser.parse_args()
@@ -13525,6 +13525,69 @@ int rename(const char *source, const char *destination) {
                 assert all((root/name).read_bytes()==data for name,data in sources.items()),"Graph animation changed a note"
                 results.append("Transient animation does not restart itself on app restart, and every original note byte is unchanged")
 
+            def graph_relationship_checks():
+                sources = {
+                    "People/Casey.md": "# Casey\n",
+                    "Library/One.md": "---\nauthor: '[[People/Casey]]'\ntype: article\n---\n[[Library/Two]]\n",
+                    "Library/Two.md": "---\nauthor: [Casey, Robin Vale]\ntype: article\n---\n# Two\n",
+                    "Library/Three.md": "---\nauthor: Robin Vale (@rvale)\ntype: interview\n---\n# Three\n",
+                    "Workshop/Four.md": "---\nauthor: Casey\ntype: tutorial\n---\n# Four\n",
+                }
+                for file, source in sources.items():
+                    path = fixture / file
+                    path.parent.mkdir(exist_ok=True)
+                    path.write_text(source)
+                command("Refresh vault")
+                before_paths = set(fixture.rglob("*.md"))
+                command("Graph view: Open graph view")
+                prefix = "global-graph:"
+
+                def settled(count=None):
+                    deadline = time.monotonic() + 12
+                    while time.monotonic() < deadline:
+                        busy = control_bounds(prefix + "busy")
+                        nodes = control_bounds(prefix + "node-count", required=False)
+                        if nodes is not None and busy[0] == 0 and (count is None or nodes[0] == count):
+                            return nodes[0]
+                        time.sleep(.1)
+                    raise AssertionError((count, busy, nodes))
+
+                original_count = settled()
+                assert control_bounds(prefix + "author:Robin Vale (@rvale)", required=False) is None
+                click_control(prefix + "settings")
+                click_control(prefix + "section:filters")
+
+                def choose(facet, label):
+                    click_control(prefix + f"focus:{facet}")
+                    click_control(prefix + f"focus:{facet}:{label}")
+
+                choose("Author", "Casey")
+                settled(4)
+                assert control_bounds(prefix + "node:People/Casey.md")
+                assert control_bounds(prefix + "node:Workshop/Four.md")
+                assert control_bounds(prefix + "edge-count")[0] == 4
+                capture("native-graph-author-existing.png")
+                choose("Author", "Robin Vale (@rvale)")
+                settled(3)
+                assert control_bounds(prefix + "author:Robin Vale (@rvale)")
+                assert control_bounds(prefix + "node:Library/Three.md")
+                assert control_bounds(prefix + "edge-count")[0] == 2
+                capture("native-graph-author-virtual.png")
+                click_control(prefix + "focus-clear")
+                settled(original_count)
+                choose("Folder", "Library")
+                choose("Type", "article")
+                settled(4)
+                assert control_bounds(prefix + "node:Library/One.md")
+                assert control_bounds(prefix + "node:Library/Three.md", required=False) is None
+                assert control_bounds(prefix + "edge-count")[0] == 4
+                capture("native-graph-folder-and-type.png")
+                click_control(prefix + "focus-clear")
+                settled(original_count)
+                assert all((fixture / file).read_text() == source for file, source in sources.items())
+                assert set(fixture.rglob("*.md")) == before_paths
+                results.append("Author, type and folder focus preserved ordinary links and cleared back to the original graph without editing its notes")
+
             def graph_checks():
                 nonlocal app, window
                 graph_root = base / "Graph native vault"
@@ -14201,6 +14264,12 @@ int rename(const char *source, const char *destination) {
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
                 print(json.dumps({"status": "passed", "checks": len(results), "section": args.section}))
                 return
+            if args.section == "graph-relationships":
+                graph_relationship_checks()
+                (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")
+                print(json.dumps({"status": "passed", "checks": len(results), "section": "graph-relationships"}))
+                return
+
             if args.section == "graph":
                 graph_checks()
                 (reports / "gui-results.json").write_text(json.dumps({"checks": results, "status": "passed"}, indent=2)+"\n")

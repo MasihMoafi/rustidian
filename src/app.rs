@@ -3773,6 +3773,7 @@ impl NotesApp {
                     self.search_focus = true;
                     self.editor.focus = false;
                 }
+                rustidian::graph::Kind::Author => {}
             },
             None => {}
         }

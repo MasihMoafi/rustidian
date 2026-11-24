@@ -65,6 +65,7 @@ fn empty_single_node_and_nonfinite_forces_are_bounded() {
             kind: rustidian::graph::Kind::Note,
         }],
         edges: vec![],
+        ..Graph::default()
     };
     let view = rustidian::graph::View {
         nodes: vec![0],
