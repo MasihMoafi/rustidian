@@ -63,7 +63,8 @@ def main():
     version = info["version"].removeprefix("Rustidian ")
     assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version), version
     checks = info["gui_checks"]
-    assert len(checks) >= 16 and {"table-resize", "undo", "palette-queued", "recovery"} <= checks.keys()
+    required = {"table-resize", "undo", "palette-queued", "recovery", "graph-relationships"}
+    assert len(checks) >= 16 and required <= checks.keys(), f"Missing required GUI checks: {sorted(required - checks.keys())}"
     assert all(check["status"] == "passed" for check in checks.values())
     package = info["debian_verification"]
     assert package["status"] == "passed" and package["system_install_upgrade_remove_purge"]
