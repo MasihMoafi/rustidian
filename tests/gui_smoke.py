@@ -4294,9 +4294,6 @@ int rename(const char *source, const char *destination) {
                 note.write_text(source)
                 time.sleep(.6)
                 open_note("Find navigation")
-                command("Live preview")
-                key("ctrl+f")
-                type_text("needle")
 
                 def match_is_visible():
                     time.sleep(.8)  # Wait for the scroll animation to finish.
@@ -4307,19 +4304,24 @@ int rename(const char *source, const char *destination) {
                     assert viewport[1] <= match[1] and match[3] <= viewport[3], (match, viewport)
                     return offset
 
-                first = match_is_visible()
-                click_control("find-next")
-                second = match_is_visible()
-                assert second > first + 500, (first, second)
-                click_control("find-previous")
-                previous = match_is_visible()
-                assert abs(previous - first) < 10, (first, previous)
-                key("Escape")
-                time.sleep(.8)
-                closed = control_bounds("document-scroll-y")[0]
-                assert abs(closed - previous) < 10, (previous, closed)
-                assert note.read_text() == source
-                results.append("Find scrolls to each match, stays there, and preserves the note when closed")
+                for mode in ("Live preview", "Reading view"):
+                    command(mode)
+                    key("ctrl+f")
+                    key("ctrl+a")
+                    type_text("needle")
+                    first = match_is_visible()
+                    click_control("find-next")
+                    second = match_is_visible()
+                    assert second > first + 500, (mode, first, second)
+                    click_control("find-previous")
+                    previous = match_is_visible()
+                    assert abs(previous - first) < 10, (mode, first, previous)
+                    key("Escape")
+                    time.sleep(.8)
+                    closed = control_bounds("document-scroll-y")[0]
+                    assert abs(closed - previous) < 10, (mode, previous, closed)
+                    assert note.read_text() == source
+                    results.append(f"{mode} Find scrolls to each match, stays there, and preserves the note when closed")
 
             def chrome_spacing_checks():
                 # One spacing scale: bars share inset and control height; rows share a text edge.
