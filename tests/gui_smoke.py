@@ -3674,18 +3674,26 @@ int rename(const char *source, const char *destination) {
                     pause()
                     assert path.read_bytes() == original, (path.name, "Save/Undo changed original bytes")
 
+                def open_language_fixture(path):
+                    # TS and TSX both match a fuzzy query. Select the exact file row;
+                    # these checks measure the renderer, not quick-open ranking.
+                    key("ctrl+o")
+                    type_text(path.name)
+                    click_control("quick-open:" + path.name)
+                    title_contains((path.stem if path.suffix == ".md" else path.name) + " —")
+
                 for dark, palette in [(True, dark_palette), (False, light_palette)]:
                     set_theme(dark)
                     appearance = "dark" if dark else "light"
                     # Only keyword, string and comment colors belong to this contract.
                     required = [palette[index] for index in (0, 1, 5)]
                     for language, path, original, markdown, fenced in language_files:
-                        open_note(path.name, title=path.name + " —")
+                        open_language_fixture(path)
                         command("Source editing")
                         colored_pixels(required, control="editor")
                         capture(f"native-syntax-{language}-file-source-{appearance}.png")
                         save_round_trip(path, original)
-                        open_note(markdown.stem)
+                        open_language_fixture(markdown)
                         for mode, name in [("Source editing", "source"), ("Live preview", "live"), ("Reading view", "reading")]:
                             command(mode)
                             colored_pixels(required)
