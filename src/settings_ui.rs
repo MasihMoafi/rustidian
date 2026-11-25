@@ -500,7 +500,7 @@ impl NotesApp {
                                 if self.voice != before_voice
                                     && let Some(base) = rustidian::voice_account::state_base()
                                     && let Err(error) = self.voice.save(&base)
-                                    && !crate::voice_ui::reload_voice_settings_on_conflict(
+                                    && !super::voice_ui::reload_voice_settings_on_conflict(
                                         &mut self.voice,
                                         &error,
                                     )

@@ -22,8 +22,10 @@ mod tempo;
 mod worker;
 use std::time::{Duration, Instant};
 
-pub const SPEEDS: [(f32, &str, &str); 7] = [
+pub const SPEEDS: [(f32, &str, &str); 9] = [
     (1.0, "Normal", "1.0×"),
+    (1.1, "1.1×", "1.1×"),
+    (1.15, "1.15×", "1.15×"),
     (1.25, "1.25×", "1.25×"),
     (1.3, "1.3×", "1.3×"),
     (1.4, "1.4×", "1.4×"),

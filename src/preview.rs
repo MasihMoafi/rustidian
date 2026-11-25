@@ -1380,7 +1380,7 @@ fn read_selection(
                 area.right() - 40.0,
                 ui.clip_rect().top().max(area.top()) + 8.0,
             )),
-            all,
+            all.clone(),
         ),
         Some(selected) => (
             ui.ctx()

@@ -682,7 +682,7 @@ impl NotesApp {
             self.voice.floating_button_pos = cfg.pos;
             if let Some(base) = rustidian::voice_account::state_base()
                 && let Err(error) = self.voice.save(&base)
-                && !crate::voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error)
+                && !voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error)
             {
                 self.voice = before;
             }
@@ -7264,7 +7264,7 @@ impl NotesApp {
         self.voice.floating_button_hidden = !self.voice.floating_button_hidden;
         if let Some(base) = rustidian::voice_account::state_base()
             && let Err(error) = self.voice.save(&base)
-            && !crate::voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error)
+            && !voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error)
         {
             self.voice = before;
             return;
@@ -7360,7 +7360,7 @@ fn consume_configured_shortcut(ctx: &egui::Context, spec: &str) -> bool {
     let Some(key) = shortcut_key(&key_name) else {
         return false;
     };
-    if !ctrl && !alt && !super_key && ctx.wants_keyboard_input() {
+    if !ctrl && !alt && !super_key && ctx.egui_wants_keyboard_input() {
         return false;
     }
     let mut modifiers = egui::Modifiers::NONE;
