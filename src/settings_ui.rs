@@ -477,14 +477,35 @@ impl NotesApp {
                                 }
                             }
                             Page::Hotkeys => {
+                                let before_voice = self.voice.clone();
                                 for command in rustidian::commands::ranked("", Scope::Editor) {
-                                    if !command.shortcut.is_empty() {
+                                    if command.name == "Read aloud: toggle floating button" {
+                                        voice_shortcut_text(
+                                            ui,
+                                            command.name,
+                                            "Hide or show the floating read aloud button.",
+                                            "settings-hotkey-floating-read-aloud",
+                                            &mut self.voice.toggle_floating_button_shortcut,
+                                            "Ctrl+R",
+                                        );
+                                        ui.separator();
+                                    } else if !command.shortcut.is_empty() {
                                         row(ui, command.name, "", |ui| {
                                             ui.weak(command.shortcut);
                                             false
                                         });
                                         ui.separator();
                                     }
+                                }
+                                if self.voice != before_voice
+                                    && let Some(base) = rustidian::voice_account::state_base()
+                                    && let Err(error) = self.voice.save(&base)
+                                    && !crate::voice_ui::reload_voice_settings_on_conflict(
+                                        &mut self.voice,
+                                        &error,
+                                    )
+                                {
+                                    self.voice = before_voice;
                                 }
                             }
                             Page::Daily => {
@@ -649,7 +670,7 @@ impl NotesApp {
                         });
                         if self.settings_page == Page::Hotkeys {
                             ui.add_space(crate::theme::space::M);
-                            ui.weak("Shortcut customization is not available yet.");
+                            ui.weak("Additional shortcut customization is coming soon.");
                         }
                     });
                 crate::ui_probe::record(ctx, "settings-viewport", content.inner_rect);
@@ -737,6 +758,27 @@ pub(super) fn voice_row(
     control: impl FnOnce(&mut egui::Ui) -> bool,
 ) -> bool {
     row(ui, title, description, control)
+}
+
+pub(super) fn voice_toggle(
+    ui: &mut egui::Ui,
+    title: &str,
+    description: &str,
+    id: &str,
+    value: &mut bool,
+) -> bool {
+    toggle(ui, title, description, id, value)
+}
+
+pub(super) fn voice_shortcut_text(
+    ui: &mut egui::Ui,
+    title: &str,
+    description: &str,
+    id: &str,
+    value: &mut String,
+    hint: &str,
+) -> bool {
+    text(ui, title, description, id, value, hint)
 }
 
 /// Searching settings scrolls the first matching row into view, once per query.

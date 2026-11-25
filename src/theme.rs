@@ -68,14 +68,20 @@ pub mod space {
     pub const INSET: f32 = M;
     /// Height of a navigation or list item in a sidebar.
     pub const ROW: f32 = 28.0;
+    /// Height of a compact button, chip or icon control.
+    pub const CONTROL_SM: f32 = 28.0;
     /// Height of every button, text field and toggle in a row of controls.
     pub const CONTROL: f32 = 32.0;
+    /// Small inline icon size (e.g. margin indicators, chip close icons).
+    pub const ICON_SM: f32 = 14.0;
+    /// Standard toolbar and button icon size.
+    pub const ICON: f32 = 16.0;
     /// A visible gutter beside every scrollable list, document and menu.
     pub const SCROLL_GAP: f32 = S;
     pub const SCROLL_WIDTH: f32 = 6.0;
     pub const SETTINGS_CONTROL_WIDTH: f32 = 180.0;
-    pub const PLAYER_MIN_WIDTH: f32 = 240.0;
-    pub const PLAYER_MAX_WIDTH: f32 = 560.0;
+    pub const PLAYER_MIN_WIDTH: f32 = 220.0;
+    pub const PLAYER_MAX_WIDTH: f32 = 400.0;
 
     pub fn margin(horizontal: f32, vertical: f32) -> eframe::egui::Margin {
         eframe::egui::Margin::symmetric(horizontal as i8, vertical as i8)
@@ -360,7 +366,7 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
     } else {
         Color32::from_rgb(14, 117, 124)
     };
-    visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 110);
+    visuals.selection.bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 82);
     visuals.selection.stroke = Stroke::new(1.0, visuals.hyperlink_color);
     visuals.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
     visuals.widgets.inactive.bg_fill = if dark {
@@ -373,7 +379,7 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
     } else {
         Color32::from_rgb(220, 230, 225)
     };
-    visuals.widgets.active.weak_bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 55);
+    visuals.widgets.active.weak_bg_fill = Color32::from_rgba_unmultiplied(23, 127, 131, 40);
     visuals.widgets.hovered.bg_fill = visuals.widgets.hovered.weak_bg_fill;
     visuals.widgets.hovered.bg_stroke = Stroke::NONE;
     visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
@@ -385,14 +391,14 @@ fn apply_style(ctx: &egui::Context, dark: bool) {
         visuals.window_fill = palette.background(dark);
         visuals.code_bg_color = visuals.panel_fill;
         visuals.hyperlink_color = accent;
-        visuals.selection.bg_fill = accent.gamma_multiply(0.3);
+        visuals.selection.bg_fill = accent.gamma_multiply(0.20);
         visuals.selection.stroke = Stroke::new(1.0, accent);
         visuals.widgets.inactive.bg_fill = visuals.panel_fill;
-        let strength = if dark { 0.2 } else { 0.1 };
+        let strength = if dark { 0.12 } else { 0.06 };
         visuals.widgets.hovered.weak_bg_fill =
             accent.gamma_multiply(strength) + visuals.window_fill.gamma_multiply(1.0 - strength);
         visuals.widgets.hovered.bg_fill = visuals.widgets.hovered.weak_bg_fill;
-        visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.3);
+        visuals.widgets.active.weak_bg_fill = accent.gamma_multiply(0.18);
         visuals.widgets.active.bg_fill = visuals.widgets.active.weak_bg_fill;
     }
     // Related surfaces keep the palette's temperature in both schemes.
@@ -524,6 +530,7 @@ pub fn set_fonts(ctx: &egui::Context, chosen: &fonts::Fonts) -> Vec<String> {
         .into(),
     );
     let missing = fonts::apply(&mut fonts, chosen);
+    fonts::set_text_has_true_italic(ctx, fonts::text_uses_true_italic(chosen));
     for family in fonts.families.values_mut() {
         family.push("emoji".into());
     }

@@ -63,6 +63,11 @@ pub const ALL: &[Command] = &[
         scope: Scope::Document,
     },
     Command {
+        name: "Read aloud: toggle floating button",
+        shortcut: "Ctrl+R",
+        scope: Scope::Document,
+    },
+    Command {
         name: OPEN_FILE,
         shortcut: OPEN_FILE_SHORTCUT,
         scope: Scope::Global,

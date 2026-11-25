@@ -173,24 +173,29 @@ impl Properties {
         ui.add_space(14.0);
         let mut changed = None;
         let mut removed = None;
+        const ROW_H: f32 = crate::theme::space::CONTROL;
         let value_width = (ui.available_width() - 166.0).max(120.0);
         egui::Grid::new(ui.scope_id().with(("properties", &tab.document.path)))
             .num_columns(3)
             .min_col_width(0.0)
-            .spacing(egui::vec2(4.0, 2.0))
-            .min_row_height(33.5)
+            .spacing(egui::vec2(
+                crate::theme::space::XS,
+                crate::theme::space::XS / 2.0,
+            ))
+            .min_row_height(ROW_H)
             .show(ui, |ui| {
                 for field in &mut self.fields {
                     let mut kind = field.kind;
                     // The grid centres each cell in its row; a tall row (wrapped tags) would
                     // leave a free-height icon cell at the top, so the icon takes the same
-                    // fixed, centred 33.5 px cell as the name beside it.
+                    // fixed, centred `space::CONTROL` cell as the name beside it.
                     let type_button = ui
                         .allocate_ui_with_layout(
-                            egui::vec2(24.0, 33.5),
+                            egui::vec2(crate::theme::space::CONTROL_SM, ROW_H),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
-                                ui.spacing_mut().button_padding = egui::vec2(2.0, 6.75);
+                                ui.spacing_mut().button_padding =
+                                    egui::vec2(crate::theme::space::XS, crate::theme::space::XS);
                                 ui.spacing_mut().interact_size.x = 0.0;
                                 ui.visuals_mut().widgets.inactive.weak_bg_fill =
                                     egui::Color32::TRANSPARENT;
@@ -220,7 +225,7 @@ impl Properties {
                         .response
                         .on_hover_text(format!("{} property", kind.name()));
                     let label = ui.allocate_ui_with_layout(
-                        egui::vec2(136.0, 33.5),
+                        egui::vec2(136.0, ROW_H),
                         egui::Layout::left_to_right(egui::Align::Center),
                         |ui| {
                             ui.set_min_width(136.0);
@@ -262,7 +267,7 @@ impl Properties {
                             // The same fixed, centred cell as the name, so both share one line.
                             let input = ui
                                 .allocate_ui_with_layout(
-                                    egui::vec2(value_width, 33.5),
+                                    egui::vec2(value_width, ROW_H),
                                     egui::Layout::left_to_right(egui::Align::Center),
                                     |ui| {
                                         ui.add(
@@ -333,15 +338,18 @@ impl Properties {
                                 let mut remove = None;
                                 for (index, value) in field.items.iter_mut().enumerate() {
                                     let fill = if tags {
-                                        crate::theme::accent(ui).gamma_multiply(0.15)
+                                        crate::theme::accent(ui).gamma_multiply(0.09)
                                     } else {
                                         egui::Color32::TRANSPARENT
                                     };
                                     let chip = egui::Frame::NONE
                                         .fill(fill)
-                                        .corner_radius(8)
+                                        .corner_radius(crate::theme::radius::CONTROL)
                                         .inner_margin(if tags {
-                                            egui::Margin::symmetric(6, 2)
+                                            crate::theme::space::margin(
+                                                crate::theme::space::S,
+                                                crate::theme::space::XS / 2.0,
+                                            )
                                         } else {
                                             egui::Margin::ZERO
                                         })
@@ -388,7 +396,9 @@ impl Properties {
                                                         egui::vec2(2.0, 0.0);
                                                     let cross = ui.add(
                                                         egui::Button::new(
-                                                            RichText::new("×").size(14.0).weak(),
+                                                            RichText::new("×")
+                                                                .size(crate::theme::space::ICON_SM)
+                                                                .weak(),
                                                         )
                                                         .frame_when_inactive(false),
                                                     );
@@ -459,7 +469,7 @@ impl Properties {
                             };
                             if fits {
                                 ui.allocate_ui_with_layout(
-                                    egui::vec2(value_width, 33.5),
+                                    egui::vec2(value_width, ROW_H),
                                     egui::Layout::left_to_right(egui::Align::Center),
                                     |ui| row(ui),
                                 );
@@ -513,18 +523,19 @@ impl Properties {
         }
         let add = ui
             .scope(|ui| {
-                ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
+                ui.spacing_mut().button_padding =
+                    egui::vec2(crate::theme::space::S, crate::theme::space::XS);
                 let fill = crate::theme::hover_fill(ui);
                 ui.add(
                     egui::Button::new("+ Add property")
                         .fill(fill)
-                        .corner_radius(6)
-                        .min_size(egui::vec2(0.0, 31.5)),
+                        .corner_radius(crate::theme::radius::CONTROL)
+                        .min_size(egui::vec2(0.0, crate::theme::space::CONTROL_SM)),
                 )
             })
             .inner
             .clicked();
-        ui.add_space(29.0);
+        ui.add_space(crate::theme::space::XL);
         add
     }
 }

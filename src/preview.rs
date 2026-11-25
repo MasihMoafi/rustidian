@@ -1390,23 +1390,19 @@ fn read_selection(
         ),
         None => (None, String::new()),
     };
-    let Some(anchor) = anchor else {
+    let clip = ui.clip_rect();
+    let rect = crate::read_aloud::floating_button_rect(clip, anchor);
+    let Some(rect) = rect else {
         ui.ctx()
             .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
         return;
     };
-    let clip = ui.clip_rect();
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(
-            anchor.x.clamp(clip.left(), clip.right() - 26.0),
-            anchor.y.clamp(clip.top(), clip.bottom() - 26.0),
-        ),
-        egui::vec2(24.0, 24.0),
-    );
+    let text = if anchor.is_none() { all } else { text };
     crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
     crate::read_aloud::floating_speaker_button(
         ui,
         rect,
+        clip,
         document_id.with("read-aloud-selection"),
         "Read aloud",
     );
@@ -2319,21 +2315,23 @@ fn inline_format(
     if part.html.script.is_some() {
         size *= 0.75;
     }
+    let want_bold = part
+        .html
+        .bold
+        .unwrap_or(part.bold || heading > 0 || table_header == Some(true));
+    let want_italic = part.html.italic.unwrap_or(part.italic);
     let family = if part.code {
         egui::FontFamily::Monospace
     } else if heading == 1 || part.html.bold == Some(true) {
         crate::theme::fonts::text("bold")
-    } else if part
-        .html
-        .bold
-        .unwrap_or(part.bold || heading > 0 || table_header == Some(true))
-    {
+    } else if want_bold {
         crate::theme::fonts::text("semibold")
-    } else if part.html.italic.unwrap_or(part.italic) {
+    } else if want_italic {
         crate::theme::fonts::text("italic")
     } else {
         crate::theme::fonts::text("regular")
     };
+    let uses_italic_family = !part.code && heading != 1 && !want_bold && want_italic;
     let color = if let Some([red, green, blue, alpha]) = part.html.color {
         egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha)
     } else if part.link.is_some() {
@@ -2353,7 +2351,8 @@ fn inline_format(
             Some(-1) => egui::Align::Max,
             _ => egui::Align::Center,
         },
-        italics: part.html.italic.unwrap_or(part.italic),
+        italics: want_italic
+            && (!uses_italic_family || !crate::theme::fonts::text_has_true_italic(ui.ctx())),
         extra_letter_spacing: if heading > 0 { -0.025 * size } else { 0.0 },
         line_height: Some(
             size * if table_header.is_some() {

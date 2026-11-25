@@ -122,6 +122,83 @@ impl DictationBackend {
     }
 }
 
+fn default_toggle_floating_shortcut() -> String {
+    "Ctrl+R".into()
+}
+
+/// Normalise a shortcut string like `"ctrl+alt+r"` into `(ctrl, shift, alt, super_key, key)`
+/// so UI inputs and event matching agree.
+pub fn parse_shortcut(spec: &str) -> Option<(bool, bool, bool, bool, String)> {
+    let trimmed = spec.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (mut ctrl, mut shift, mut alt, mut super_key) = (false, false, false, false);
+    let mut key: Option<String> = None;
+    for raw in trimmed.split('+') {
+        let token = raw.trim();
+        if token.is_empty() {
+            return None;
+        }
+        match token.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" | "cmd" | "command" => ctrl = true,
+            "shift" => shift = true,
+            "alt" | "option" => alt = true,
+            "super" | "win" | "windows" | "meta" => super_key = true,
+            _ => {
+                if key.is_some() {
+                    return None;
+                }
+                let upper = token.to_ascii_uppercase();
+                let valid = (upper.len() == 1 && upper.bytes().all(|b| b.is_ascii_alphanumeric()))
+                    || matches!(
+                        upper.as_str(),
+                        "F1" | "F2"
+                            | "F3"
+                            | "F4"
+                            | "F5"
+                            | "F6"
+                            | "F7"
+                            | "F8"
+                            | "F9"
+                            | "F10"
+                            | "F11"
+                            | "F12"
+                    );
+                if !valid {
+                    return None;
+                }
+                key = Some(upper);
+            }
+        }
+    }
+    let key = key?;
+    if !(ctrl || shift || alt || super_key) {
+        return None;
+    }
+    Some((ctrl, shift, alt, super_key, key))
+}
+
+/// Format a shortcut canonically (`"Ctrl+Shift+R"`), or `None` if invalid.
+pub fn format_shortcut(spec: &str) -> Option<String> {
+    let (ctrl, shift, alt, super_key, key) = parse_shortcut(spec)?;
+    let mut parts = Vec::new();
+    if ctrl {
+        parts.push("Ctrl");
+    }
+    if alt {
+        parts.push("Alt");
+    }
+    if shift {
+        parts.push("Shift");
+    }
+    if super_key {
+        parts.push("Super");
+    }
+    parts.push(&key);
+    Some(parts.join("+"))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -140,6 +217,14 @@ pub struct Settings {
     pub selected: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_secret_removal: Vec<PendingSecret>,
+    #[serde(default)]
+    pub floating_button_hidden: bool,
+    #[serde(default)]
+    pub floating_button_pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating_button_pos: Option<[f32; 2]>,
+    #[serde(default = "default_toggle_floating_shortcut")]
+    pub toggle_floating_button_shortcut: String,
 }
 
 impl Default for Settings {
@@ -158,6 +243,10 @@ impl Default for Settings {
             accounts: Vec::new(),
             selected: None,
             pending_secret_removal: Vec::new(),
+            floating_button_hidden: false,
+            floating_button_pinned: false,
+            floating_button_pos: None,
+            toggle_floating_button_shortcut: default_toggle_floating_shortcut(),
         }
     }
 }
@@ -908,15 +997,34 @@ pub fn wav(pcm: &[u8], rate: u32) -> Vec<u8> {
 
 #[cfg(test)]
 mod speed_tests {
-    use super::Settings;
+    use super::{Settings, format_shortcut, parse_shortcut};
     #[test]
     fn read_aloud_speed_survives_a_settings_restart() {
         let state = tempfile::tempdir().unwrap();
         let mut settings = Settings::default();
         assert_eq!(settings.speed, None);
         settings.speed = Some(1.3);
+        settings.floating_button_pinned = true;
+        settings.floating_button_pos = Some([0.85, 0.2]);
+        settings.toggle_floating_button_shortcut = "Alt+R".into();
         settings.save(state.path()).unwrap();
-        assert_eq!(Settings::load(state.path()).speed, Some(1.3));
+        let loaded = Settings::load(state.path());
+        assert_eq!(loaded.speed, Some(1.3));
+        assert!(loaded.floating_button_pinned);
+        assert_eq!(loaded.floating_button_pos, Some([0.85, 0.2]));
+        assert_eq!(loaded.toggle_floating_button_shortcut, "Alt+R");
+    }
+
+    #[test]
+    fn shortcuts_normalize_and_reject_invalid_specs() {
+        assert_eq!(
+            parse_shortcut("ctrl + r"),
+            Some((true, false, false, false, "R".into()))
+        );
+        assert_eq!(format_shortcut("win+alt+f8"), Some("Alt+Super+F8".into()));
+        assert_eq!(parse_shortcut("R"), None);
+        assert_eq!(parse_shortcut(""), None);
+        assert_eq!(parse_shortcut("Ctrl+"), None);
     }
 }
 

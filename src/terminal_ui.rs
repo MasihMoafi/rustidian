@@ -1628,6 +1628,9 @@ mod tests {
                 Palette::LoveSpace.side(dark),
                 Palette::ElpisGold.side(dark),
                 Palette::Signature.side(dark),
+                Palette::Kanagawa.side(dark),
+                Palette::MidnightIce.side(dark),
+                Palette::Forest.side(dark),
             ];
             for panel in panels {
                 for (index, color) in colors.ansi.iter().enumerate() {

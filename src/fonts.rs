@@ -73,8 +73,8 @@ pub fn installed(mono: bool) -> &'static [String] {
     }
 }
 
-/// A loadable installed face, or `None` if Fontconfig cannot supply one.
-fn file(family: &str, face: &str) -> Option<egui::FontData> {
+/// Installed face path and index returned by Fontconfig when `family` exists.
+fn match_face(family: &str, face: &str) -> Option<(String, u32)> {
     let style = match face {
         "semibold" => ":weight=semibold",
         "bold" => ":weight=bold",
@@ -100,7 +100,38 @@ fn file(family: &str, face: &str) -> Option<egui::FontData> {
         .split(',')
         .any(|name| name.trim().eq_ignore_ascii_case(family.trim()))
         .then_some(())?;
-    validated_font(std::fs::read(path).ok()?, index.parse().ok()?)
+    Some((path.to_owned(), index.parse().ok()?))
+}
+
+/// A loadable installed face, or `None` if Fontconfig cannot supply one.
+fn file(family: &str, face: &str) -> Option<egui::FontData> {
+    let (path, index) = match_face(family, face)?;
+    validated_font(std::fs::read(path).ok()?, index)
+}
+
+/// True when the note-text italic family resolves to a genuine italic font file rather than
+/// falling back to the upright regular face (so egui must not apply extra synthetic shear).
+pub fn text_uses_true_italic(fonts: &Fonts) -> bool {
+    let name = fonts.text.trim();
+    if name.is_empty() {
+        return true;
+    }
+    match (match_face(name, "italic"), match_face(name, "regular")) {
+        (Some(italic), Some(regular)) => italic != regular && file(name, "italic").is_some(),
+        _ => false,
+    }
+}
+
+fn true_italic_id() -> egui::Id {
+    egui::Id::unique("rustidian-text-true-italic")
+}
+
+pub fn set_text_has_true_italic(ctx: &egui::Context, has: bool) {
+    ctx.data_mut(|data| data.insert_temp(true_italic_id(), has));
+}
+
+pub fn text_has_true_italic(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(true_italic_id()).unwrap_or(true))
 }
 
 fn validated_font(bytes: Vec<u8>, index: u32) -> Option<egui::FontData> {
@@ -208,5 +239,14 @@ mod tests {
             definitions.families[&text("regular")],
             definitions.families[&FontFamily::Proportional]
         );
+    }
+
+    #[test]
+    fn default_note_font_uses_bundled_true_italic() {
+        assert!(text_uses_true_italic(&Fonts::default()));
+        assert!(!text_uses_true_italic(&Fonts {
+            text: "No Such Font 4096".into(),
+            ..Default::default()
+        }));
     }
 }

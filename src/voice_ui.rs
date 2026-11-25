@@ -173,6 +173,34 @@ impl NotesApp {
         if self.voice.speed != before.speed {
             crate::read_aloud::set_speed(self.voice.speed);
         }
+        ui.separator();
+        let mut visible = !self.voice.floating_button_hidden;
+        if settings_ui::voice_toggle(
+            ui,
+            "Floating read aloud button",
+            "Show the floating speaker on text selections or pinned in the note.",
+            "settings-voice-floating-visible",
+            &mut visible,
+        ) {
+            self.voice.floating_button_hidden = !visible;
+        }
+        ui.separator();
+        settings_ui::voice_toggle(
+            ui,
+            "Pin floating button",
+            "Keep the floating speaker fixed where you drag it.",
+            "settings-voice-floating-pin",
+            &mut self.voice.floating_button_pinned,
+        );
+        ui.separator();
+        settings_ui::voice_shortcut_text(
+            ui,
+            "Toggle floating button hotkey",
+            "Shortcut to hide or show the floating button (e.g. Ctrl+R, Alt+R, Shift+Alt+R).",
+            "settings-voice-floating-hotkey",
+            &mut self.voice.toggle_floating_button_shortcut,
+            "Ctrl+R",
+        );
         if self.voice.engine == Engine::OpenRouter {
             ui.separator();
             self.voice_text(

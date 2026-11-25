@@ -3991,7 +3991,8 @@ fn editor_speakers(
         crate::read_aloud::speak(ui.ctx(), rustidian::speech_text::chunks(&text));
         return;
     }
-    if output.response.has_focus()
+    let clip = ui.clip_rect();
+    let (anchor, text) = if output.response.has_focus()
         && let Some(range) = output.cursor_range
         && !range.is_empty()
         && !ui.input(|input| input.pointer.any_down())
@@ -4007,19 +4008,21 @@ fn editor_speakers(
             .galley
             .pos_from_cursor(range.primary)
             .translate(output.galley_pos.to_vec2());
-        let clip = ui.clip_rect();
-        let anchor = caret.right_bottom() + egui::vec2(10.0, 6.0);
-        let rect = egui::Rect::from_min_size(
-            egui::pos2(
-                anchor.x.clamp(clip.left(), clip.right() - 26.0),
-                anchor.y.clamp(clip.top(), clip.bottom() - 26.0),
-            ),
-            egui::vec2(24.0, 24.0),
-        );
+        (Some(caret.right_bottom() + egui::vec2(10.0, 6.0)), text)
+    } else {
+        (None, String::new())
+    };
+    if let Some(rect) = crate::read_aloud::floating_button_rect(clip, anchor) {
+        let text = if anchor.is_none() {
+            source.to_owned()
+        } else {
+            text
+        };
         crate::ui_probe::record(ui.ctx(), "read-aloud-selection", rect);
         crate::read_aloud::floating_speaker_button(
             ui,
             rect,
+            clip,
             id.with("read-aloud-selection"),
             "Read aloud",
         );
@@ -4377,17 +4380,21 @@ fn layout(
                 } else {
                     1.0
                 };
+            let want_bold = style.html.bold.unwrap_or(style.strong);
+            let want_italic = style.html.italic.unwrap_or(style.italic);
             let family = if style.code || style.math {
                 FontFamily::Monospace
             } else if style.heading == 1 || style.html.bold == Some(true) {
                 bold.clone()
-            } else if style.html.bold.unwrap_or(style.strong) {
+            } else if want_bold {
                 semibold.clone()
-            } else if style.html.italic.unwrap_or(style.italic) {
+            } else if want_italic {
                 italic.clone()
             } else {
                 crate::theme::fonts::text("regular")
             };
+            let uses_italic_family =
+                !style.code && !style.math && style.heading != 1 && !want_bold && want_italic;
             let color = if hidden {
                 Color32::TRANSPARENT
             } else if style.marker {
@@ -4485,7 +4492,9 @@ fn layout(
                 } else {
                     egui::Align::Center
                 },
-                italics: style.html.italic.unwrap_or(style.italic),
+                italics: want_italic
+                    && (!uses_italic_family
+                        || !crate::theme::fonts::text_has_true_italic(ui.ctx())),
                 extra_letter_spacing: if style.heading > 0 {
                     -0.025 * size
                 } else {

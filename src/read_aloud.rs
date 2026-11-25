@@ -116,6 +116,13 @@ impl Status {
     }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FloatingConfig {
+    pub hidden: bool,
+    pub pinned: bool,
+    pub pos: Option<[f32; 2]>,
+}
+
 struct Shared {
     session: AtomicU64,
     status: Mutex<Status>,
@@ -123,6 +130,8 @@ struct Shared {
     chunks: Mutex<Arc<Vec<String>>>,
     /// Set by a click on the player: the editor scrolls to the sentence being heard.
     jump: AtomicBool,
+    floating: Mutex<FloatingConfig>,
+    floating_dirty: AtomicBool,
 }
 
 static SHARED: LazyLock<Shared> = LazyLock::new(|| Shared {
@@ -130,6 +139,8 @@ static SHARED: LazyLock<Shared> = LazyLock::new(|| Shared {
     status: Mutex::new(Status::default()),
     chunks: Mutex::new(Arc::default()),
     jump: AtomicBool::new(false),
+    floating: Mutex::new(FloatingConfig::default()),
+    floating_dirty: AtomicBool::new(false),
 });
 static SERVICE: OnceLock<Result<worker::Service, String>> = OnceLock::new();
 
@@ -866,22 +877,121 @@ fn speaker_pressed(ui: &egui::Ui, response: &egui::Response, rect: egui::Rect) -
         })
 }
 
-/// Take a selection saved when its speaker was drawn, only if that speaker received the press.
+pub fn sync_floating_config(settings: &voice_account::Settings) {
+    if SHARED.floating_dirty.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut cfg = SHARED.floating.lock().unwrap_or_else(|e| e.into_inner());
+    cfg.hidden = settings.floating_button_hidden;
+    cfg.pinned = settings.floating_button_pinned;
+    cfg.pos = settings.floating_button_pos;
+}
+
+pub fn take_floating_config_changed() -> Option<FloatingConfig> {
+    if !SHARED.floating_dirty.swap(false, Ordering::SeqCst) {
+        return None;
+    }
+    Some(
+        SHARED
+            .floating
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone(),
+    )
+}
+
+pub fn floating_button_rect(
+    clip: egui::Rect,
+    default_anchor: Option<egui::Pos2>,
+) -> Option<egui::Rect> {
+    let cfg = SHARED
+        .floating
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    if cfg.hidden {
+        return None;
+    }
+    let size = crate::theme::space::CONTROL_SM;
+    let margin = crate::theme::space::XS;
+    let min_x = clip.left() + margin;
+    let min_y = clip.top() + margin;
+    let max_x = (clip.right() - size - margin).max(min_x);
+    let max_y = (clip.bottom() - size - margin).max(min_y);
+    if cfg.pinned {
+        let [fx, fy] = cfg.pos.unwrap_or([0.96, 0.08]);
+        let x = min_x + fx.clamp(0.0, 1.0) * (max_x - min_x);
+        let y = min_y + fy.clamp(0.0, 1.0) * (max_y - min_y);
+        Some(egui::Rect::from_min_size(
+            egui::pos2(x, y),
+            egui::Vec2::splat(size),
+        ))
+    } else {
+        let anchor = default_anchor?;
+        Some(egui::Rect::from_min_size(
+            egui::pos2(anchor.x.clamp(min_x, max_x), anchor.y.clamp(min_y, max_y)),
+            egui::Vec2::splat(size),
+        ))
+    }
+}
+
+/// Take a selection saved when its speaker was drawn, only if that speaker was clicked
+/// (ignoring drags to reposition/pin the button and right-click context actions).
 pub fn selection_speaker_pressed(
     ui: &egui::Ui,
     shown: egui::Id,
     speaker: egui::Id,
 ) -> Option<String> {
+    let armed_id = speaker.with("armed");
+    let drag_id = speaker.with("drag-dist");
+    if !ui.is_enabled() || !ui.is_visible() {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(armed_id));
+        return None;
+    }
+    let armed = ui
+        .ctx()
+        .data(|data| data.get_temp::<(egui::Rect, String)>(armed_id));
+    let response = ui.ctx().read_response(speaker);
+    if let Some((_, text)) = armed {
+        let dragged_far = ui
+            .ctx()
+            .data(|data| data.get_temp::<f32>(drag_id).unwrap_or(0.0))
+            > 3.0;
+        if dragged_far {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Rect, String)>(armed_id));
+            return None;
+        }
+        let released = response.as_ref().is_some_and(egui::Response::clicked)
+            || ui.input(|input| input.pointer.primary_released());
+        if released {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Rect, String)>(armed_id));
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+            return Some(text);
+        }
+        return None;
+    }
     let (rect, text) = ui
         .ctx()
         .data(|data| data.get_temp::<(egui::Rect, String)>(shown))?;
-    let response = ui.ctx().read_response(speaker)?;
+    let response = response?;
     if !speaker_pressed(ui, &response, rect) {
         return None;
     }
-    ui.ctx()
-        .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
-    Some(text)
+    // Same-frame press + release (no drag possible): fire immediately.
+    if ui.input(|input| input.pointer.primary_released()) {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(egui::Rect, String)>(shown));
+        return Some(text);
+    }
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(armed_id, (rect, text));
+        data.insert_temp(drag_id, 0.0f32);
+    });
+    None
 }
 
 /// A quiet margin speaker that stays unobtrusive until hovered.
@@ -895,53 +1005,136 @@ pub fn speaker_button(ui: &mut egui::Ui, rect: egui::Rect, id: egui::Id, hint: &
     }
     let painter = ui.painter();
     if hovered {
-        painter.rect_filled(rect, 4.0, crate::theme::hover_fill(ui));
+        painter.rect_filled(
+            rect,
+            crate::theme::radius::ROW,
+            crate::theme::hover_fill(ui),
+        );
     }
     let ink = if hovered {
         crate::theme::accent(ui)
     } else {
         ui.visuals().weak_text_color().gamma_multiply(0.62)
     };
-    paint_speaker(painter, rect.shrink(rect.width() * 0.18), ink);
+    let icon_rect = egui::Rect::from_center_size(
+        rect.center(),
+        egui::Vec2::splat(crate::theme::space::ICON_SM),
+    );
+    paint_speaker(painter, icon_rect, ink);
     let pressed = speaker_pressed(ui, &response, rect);
     response.on_hover_text(hint);
     pressed
 }
 
-/// A compact pill speaker for drag selections floating above note text.
+/// A compact draggable and pinnable speaker button for read aloud.
 pub fn floating_speaker_button(
     ui: &mut egui::Ui,
     rect: egui::Rect,
+    clip: egui::Rect,
     id: egui::Id,
     hint: &str,
 ) -> bool {
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let response = ui.interact(rect, id, egui::Sense::click_and_drag());
+    let drag_id = id.with("drag-dist");
+    if response.drag_started() {
+        ui.ctx().data_mut(|data| data.insert_temp(drag_id, 0.0f32));
+    }
+    if response.dragged() {
+        let step = response.drag_delta().length();
+        let total = ui.ctx().data_mut(|data| {
+            let entry = data.get_temp_mut_or_default::<f32>(drag_id);
+            *entry += step;
+            *entry
+        });
+        if total > 3.0 {
+            ui.ctx()
+                .data_mut(|data| data.remove::<(egui::Rect, String)>(id.with("armed")));
+            let size = crate::theme::space::CONTROL_SM;
+            let margin = crate::theme::space::XS;
+            let avail_w = (clip.width() - size - margin * 2.0).max(1.0);
+            let avail_h = (clip.height() - size - margin * 2.0).max(1.0);
+            let next = rect.min + response.drag_delta();
+            let fx = ((next.x - (clip.left() + margin)) / avail_w).clamp(0.0, 1.0);
+            let fy = ((next.y - (clip.top() + margin)) / avail_h).clamp(0.0, 1.0);
+            let mut cfg = SHARED.floating.lock().unwrap_or_else(|e| e.into_inner());
+            cfg.pinned = true;
+            cfg.pos = Some([fx, fy]);
+            SHARED.floating_dirty.store(true, Ordering::SeqCst);
+        }
+    }
     let hovered = response.hovered();
     if hovered {
         warm_up();
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.ctx().set_cursor_icon(if response.dragged() {
+            egui::CursorIcon::Grabbing
+        } else {
+            egui::CursorIcon::PointingHand
+        });
     }
-    let fill = if hovered {
-        crate::theme::interactive(ui)
+    let pinned = SHARED
+        .floating
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pinned;
+    let fill = if hovered || response.dragged() {
+        crate::theme::hover_fill(ui)
     } else {
         ui.visuals().window_fill()
     };
     let painter = ui.painter();
     painter.rect(
         rect,
-        6.0,
+        crate::theme::radius::CONTROL,
         fill,
         ui.visuals().window_stroke(),
         egui::StrokeKind::Inside,
     );
-    let ink = if hovered {
-        ui.visuals().window_fill()
+    let ink = if hovered || response.dragged() || pinned {
+        ui.visuals().text_color()
     } else {
-        crate::theme::interactive(ui)
+        ui.visuals().weak_text_color()
     };
-    paint_speaker(painter, rect.shrink(rect.width() * 0.22), ink);
+    let icon_rect =
+        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(crate::theme::space::ICON));
+    paint_speaker(painter, icon_rect, ink);
+    response.context_menu(|ui| {
+        crate::theme::menu_style(ui);
+        if ui
+            .button(if pinned {
+                "Unpin (follow selection)"
+            } else {
+                "Pin position"
+            })
+            .clicked()
+        {
+            let mut cfg = SHARED.floating.lock().unwrap_or_else(|e| e.into_inner());
+            cfg.pinned = !cfg.pinned;
+            if cfg.pinned && cfg.pos.is_none() {
+                let size = crate::theme::space::CONTROL_SM;
+                let margin = crate::theme::space::XS;
+                let avail_w = (clip.width() - size - margin * 2.0).max(1.0);
+                let avail_h = (clip.height() - size - margin * 2.0).max(1.0);
+                let fx = ((rect.left() - (clip.left() + margin)) / avail_w).clamp(0.0, 1.0);
+                let fy = ((rect.top() - (clip.top() + margin)) / avail_h).clamp(0.0, 1.0);
+                cfg.pos = Some([fx, fy]);
+            }
+            SHARED.floating_dirty.store(true, Ordering::SeqCst);
+            ui.close();
+        }
+        if ui.button("Hide floating button").clicked() {
+            let mut cfg = SHARED.floating.lock().unwrap_or_else(|e| e.into_inner());
+            cfg.hidden = true;
+            SHARED.floating_dirty.store(true, Ordering::SeqCst);
+            ui.close();
+        }
+    });
     let pressed = speaker_pressed(ui, &response, rect);
-    response.on_hover_text(hint);
+    let tooltip = if pinned {
+        "Read aloud · Drag to move · Right-click to unpin or hide"
+    } else {
+        hint
+    };
+    response.on_hover_text(tooltip);
     pressed
 }
 
@@ -990,32 +1183,40 @@ pub fn player_bar(ctx: &egui::Context, area: egui::Rect, speed: &mut Option<f32>
                 ui.horizontal(|ui| {
                     if status.active {
                         let (rect, stop) = ui.allocate_exact_size(
-                            egui::Vec2::splat(crate::theme::space::ROW),
+                            egui::Vec2::splat(crate::theme::space::CONTROL_SM),
                             egui::Sense::click(),
                         );
-                        let fill = if stop.hovered() {
-                            crate::theme::interactive(ui)
-                        } else {
-                            crate::theme::interactive(ui).gamma_multiply(0.8)
-                        };
-                        ui.painter().circle_filled(
-                            rect.center(),
-                            crate::theme::space::ROW / 2.0,
-                            fill,
+                        crate::theme::control_feedback(ui, &stop);
+                        ui.painter().rect_stroke(
+                            rect,
+                            crate::theme::radius::CONTROL,
+                            ui.visuals().window_stroke(),
+                            egui::StrokeKind::Inside,
                         );
                         ui.painter().rect_filled(
                             egui::Rect::from_center_size(rect.center(), egui::vec2(10.0, 10.0)),
                             2,
-                            ui.visuals().window_fill(),
+                            ui.style().interact(&stop).fg_stroke.color,
                         );
                         crate::ui_probe::record(ui.ctx(), "read-aloud-stop", rect);
-                        if stop.on_hover_text("Stop reading").clicked() {
+                        if stop
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .on_hover_text("Stop reading")
+                            .clicked()
+                        {
                             self::stop(ui.ctx());
                         }
                         let paused = status.paused_at.is_some();
                         let (rect, response) = ui.allocate_exact_size(
-                            egui::Vec2::splat(crate::theme::space::ROW),
+                            egui::Vec2::splat(crate::theme::space::CONTROL_SM),
                             egui::Sense::click(),
+                        );
+                        crate::theme::control_feedback(ui, &response);
+                        ui.painter().rect_stroke(
+                            rect,
+                            crate::theme::radius::CONTROL,
+                            ui.visuals().window_stroke(),
+                            egui::StrokeKind::Inside,
                         );
                         let center = rect.center();
                         let color = ui.style().interact(&response).fg_stroke.color;
@@ -1250,20 +1451,30 @@ fn paint_heard(
             origin + row.pos.to_vec2() + egui::vec2(from.min(to), 0.0),
             origin + row.pos.to_vec2() + egui::vec2(from.max(to), row.size.y),
         );
+        let underline_y = if row.visuals.mesh_bounds.is_positive() {
+            (origin.y + row.pos.y + row.visuals.mesh_bounds.max.y + 2.0)
+                .clamp(rect.top() + 4.0, rect.bottom() - 2.0)
+        } else {
+            rect.bottom() - (rect.height() * 0.18).clamp(3.0, 5.0)
+        };
         if rect.width() > 0.5 {
-            rows.push(rect);
+            rows.push((rect, underline_y));
         }
     }
     let painter = ui.painter();
-    for rect in &rows {
-        painter.rect_filled(*rect, 2.0, accent.gamma_multiply(0.12));
+    for (rect, underline_y) in &rows {
+        let highlight = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, *underline_y));
+        painter.rect_filled(highlight, 2.0, accent.gamma_multiply(0.08));
         painter.line_segment(
-            [rect.left_bottom(), rect.right_bottom()],
-            egui::Stroke::new(2.0, accent),
+            [
+                egui::pos2(rect.left(), *underline_y),
+                egui::pos2(rect.right(), *underline_y),
+            ],
+            egui::Stroke::new(1.75, accent),
         );
     }
-    if let Some(first) = rows.first().copied() {
-        let whole = rows.iter().fold(first, |all, rect| all.union(*rect));
+    if let Some((first, _)) = rows.first().copied() {
+        let whole = rows.iter().fold(first, |all, (rect, _)| all.union(*rect));
         crate::ui_probe::record(ui.ctx(), "read-aloud-heard", whole);
         if take_jump() {
             ui.scroll_to_rect(whole, Some(egui::Align::Center));

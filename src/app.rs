@@ -675,6 +675,19 @@ impl NotesApp {
 
     fn background(&mut self, ctx: &egui::Context) {
         self.poll_html_browser();
+        if let Some(cfg) = crate::read_aloud::take_floating_config_changed() {
+            let before = self.voice.clone();
+            self.voice.floating_button_hidden = cfg.hidden;
+            self.voice.floating_button_pinned = cfg.pinned;
+            self.voice.floating_button_pos = cfg.pos;
+            if let Some(base) = rustidian::voice_account::state_base()
+                && let Err(error) = self.voice.save(&base)
+                && !crate::voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error)
+            {
+                self.voice = before;
+            }
+        }
+        crate::read_aloud::sync_floating_config(&self.voice);
         if let Some(error) = crate::read_aloud::take_error() {
             crate::notices::report(ctx, error);
         }
@@ -2027,6 +2040,9 @@ impl NotesApp {
                 input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::R)
             }) {
                 self.read_aloud(ctx, true);
+            }
+            if consume_configured_shortcut(ctx, &self.voice.toggle_floating_button_shortcut) {
+                self.toggle_floating_button(ctx);
             }
             if ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::A)
@@ -3966,16 +3982,25 @@ impl NotesApp {
                                     return;
                                 }
                                 let (speaker_rect, speaker) = ui.allocate_exact_size(
-                                    egui::vec2(theme::space::CONTROL, theme::space::CONTROL),
+                                    egui::Vec2::splat(theme::space::CONTROL),
                                     egui::Sense::click(),
                                 );
                                 if speaker.hovered() {
                                     crate::read_aloud::warm_up();
                                 }
+                                theme::control_feedback(ui, &speaker);
+                                let speaker_color = if speaker.hovered() {
+                                    ui.visuals().text_color()
+                                } else {
+                                    ui.visuals().weak_text_color()
+                                };
                                 crate::read_aloud::paint_speaker(
                                     ui.painter(),
-                                    speaker_rect.shrink(7.0),
-                                    ui.visuals().text_color(),
+                                    egui::Rect::from_center_size(
+                                        speaker_rect.center(),
+                                        egui::Vec2::splat(theme::space::ICON),
+                                    ),
+                                    speaker_color,
                                 );
                                 crate::ui_probe::record(
                                     ui.ctx(),
@@ -3989,20 +4014,23 @@ impl NotesApp {
                                     self.read_aloud(ui.ctx(), true);
                                 }
                                 let (mic_rect, mic) = ui.allocate_exact_size(
-                                    egui::vec2(theme::space::CONTROL, theme::space::CONTROL),
+                                    egui::Vec2::splat(theme::space::CONTROL),
                                     egui::Sense::click(),
                                 );
+                                theme::control_feedback(ui, &mic);
                                 let color = if self.recording.is_some() {
-                                    ui.visuals().selection.bg_fill
-                                } else {
+                                    theme::accent(ui)
+                                } else if mic.hovered() {
                                     ui.visuals().text_color()
+                                } else {
+                                    ui.visuals().weak_text_color()
                                 };
                                 let center = mic_rect.center();
                                 let painter = ui.painter();
                                 painter.rect_stroke(
                                     egui::Rect::from_center_size(
                                         center + egui::vec2(0.0, -3.0),
-                                        egui::vec2(7.0, 11.0),
+                                        egui::vec2(7.0, 10.0),
                                     ),
                                     3.0,
                                     Stroke::new(1.5, color),
@@ -4010,28 +4038,28 @@ impl NotesApp {
                                 );
                                 painter.line_segment(
                                     [
-                                        center + egui::vec2(-6.0, 0.0),
-                                        center + egui::vec2(-6.0, 2.0),
+                                        center + egui::vec2(-5.5, 0.0),
+                                        center + egui::vec2(-5.5, 2.0),
                                     ],
                                     Stroke::new(1.5, color),
                                 );
                                 painter.line_segment(
-                                    [center + egui::vec2(6.0, 0.0), center + egui::vec2(6.0, 2.0)],
+                                    [center + egui::vec2(5.5, 0.0), center + egui::vec2(5.5, 2.0)],
                                     Stroke::new(1.5, color),
                                 );
                                 painter.line_segment(
                                     [
-                                        center + egui::vec2(-6.0, 2.0),
-                                        center + egui::vec2(0.0, 6.0),
+                                        center + egui::vec2(-5.5, 2.0),
+                                        center + egui::vec2(0.0, 5.5),
                                     ],
                                     Stroke::new(1.5, color),
                                 );
                                 painter.line_segment(
-                                    [center + egui::vec2(0.0, 6.0), center + egui::vec2(6.0, 2.0)],
+                                    [center + egui::vec2(0.0, 5.5), center + egui::vec2(5.5, 2.0)],
                                     Stroke::new(1.5, color),
                                 );
                                 painter.line_segment(
-                                    [center + egui::vec2(0.0, 6.0), center + egui::vec2(0.0, 9.0)],
+                                    [center + egui::vec2(0.0, 5.5), center + egui::vec2(0.0, 8.0)],
                                     Stroke::new(1.5, color),
                                 );
                                 crate::ui_probe::record(ui.ctx(), "dictation-toolbar", mic_rect);
@@ -6404,6 +6432,7 @@ impl NotesApp {
             "Read aloud: read selection" => self.read_aloud(ctx, true),
             "Read aloud: read note" => self.read_aloud(ctx, false),
             "Read aloud: stop" => crate::read_aloud::stop(ctx),
+            "Read aloud: toggle floating button" => self.toggle_floating_button(ctx),
             rustidian::commands::OPEN_AGENT => self.open_agent(),
             rustidian::commands::OPEN_GRAPH => self.open_global_graph(),
             rustidian::commands::OPEN_LOCAL_GRAPH if self.local_graph_available() => {
@@ -7230,6 +7259,25 @@ impl eframe::App for NotesApp {
 }
 
 impl NotesApp {
+    fn toggle_floating_button(&mut self, ctx: &egui::Context) {
+        let before = self.voice.clone();
+        self.voice.floating_button_hidden = !self.voice.floating_button_hidden;
+        if let Some(base) = rustidian::voice_account::state_base()
+            && let Err(error) = self.voice.save(&base)
+            && !crate::voice_ui::reload_voice_settings_on_conflict(&mut self.voice, &error)
+        {
+            self.voice = before;
+            return;
+        }
+        crate::read_aloud::sync_floating_config(&self.voice);
+        self.status = if self.voice.floating_button_hidden {
+            "Floating read aloud button hidden".into()
+        } else {
+            "Floating read aloud button shown".into()
+        };
+        ctx.request_repaint();
+    }
+
     /// The Agent terminal lives in the right sidebar beside the open note.
     fn open_agent(&mut self) {
         if self.vault.is_none() {
@@ -7247,4 +7295,79 @@ impl NotesApp {
         self.page_preview.close();
         self.ctx.request_repaint();
     }
+}
+
+fn shortcut_key(key: &str) -> Option<Key> {
+    Some(match key {
+        "A" => Key::A,
+        "B" => Key::B,
+        "C" => Key::C,
+        "D" => Key::D,
+        "E" => Key::E,
+        "F" => Key::F,
+        "G" => Key::G,
+        "H" => Key::H,
+        "I" => Key::I,
+        "J" => Key::J,
+        "K" => Key::K,
+        "L" => Key::L,
+        "M" => Key::M,
+        "N" => Key::N,
+        "O" => Key::O,
+        "P" => Key::P,
+        "Q" => Key::Q,
+        "R" => Key::R,
+        "S" => Key::S,
+        "T" => Key::T,
+        "U" => Key::U,
+        "V" => Key::V,
+        "W" => Key::W,
+        "X" => Key::X,
+        "Y" => Key::Y,
+        "Z" => Key::Z,
+        "0" => Key::Num0,
+        "1" => Key::Num1,
+        "2" => Key::Num2,
+        "3" => Key::Num3,
+        "4" => Key::Num4,
+        "5" => Key::Num5,
+        "6" => Key::Num6,
+        "7" => Key::Num7,
+        "8" => Key::Num8,
+        "9" => Key::Num9,
+        "F1" => Key::F1,
+        "F2" => Key::F2,
+        "F3" => Key::F3,
+        "F4" => Key::F4,
+        "F5" => Key::F5,
+        "F6" => Key::F6,
+        "F7" => Key::F7,
+        "F8" => Key::F8,
+        "F9" => Key::F9,
+        "F10" => Key::F10,
+        "F11" => Key::F11,
+        "F12" => Key::F12,
+        _ => return None,
+    })
+}
+
+fn consume_configured_shortcut(ctx: &egui::Context, spec: &str) -> bool {
+    let Some((ctrl, shift, alt, super_key, key_name)) =
+        rustidian::voice_account::parse_shortcut(spec)
+    else {
+        return false;
+    };
+    let Some(key) = shortcut_key(&key_name) else {
+        return false;
+    };
+    if !ctrl && !alt && !super_key && ctx.wants_keyboard_input() {
+        return false;
+    }
+    let mut modifiers = egui::Modifiers::NONE;
+    modifiers.ctrl = ctrl;
+    modifiers.command = ctrl;
+    modifiers.shift = shift;
+    modifiers.alt = alt;
+    modifiers.mac_cmd = super_key;
+    ctx.input_mut(|input| input.consume_key(modifiers, key))
 }

@@ -7,6 +7,9 @@ pub enum Palette {
     LoveSpace,
     ElpisGold,
     Signature,
+    Kanagawa,
+    MidnightIce,
+    Forest,
     #[default]
     #[serde(other)]
     Teal,
@@ -19,6 +22,9 @@ impl Palette {
             Self::LoveSpace => "Love Space",
             Self::ElpisGold => "Elpis Gold",
             Self::Signature => "Signature",
+            Self::Kanagawa => "Kanagawa",
+            Self::MidnightIce => "Midnight Ice",
+            Self::Forest => "Forest",
         }
     }
 
@@ -32,6 +38,12 @@ impl Palette {
             (Self::ElpisGold, false) => [126, 76, 0],
             (Self::Signature, true) => [250, 118, 107],
             (Self::Signature, false) => [177, 15, 75],
+            (Self::Kanagawa, true) => [240, 192, 109],
+            (Self::Kanagawa, false) => [144, 93, 20],
+            (Self::MidnightIce, true) => [111, 140, 255],
+            (Self::MidnightIce, false) => [52, 87, 213],
+            (Self::Forest, true) => [116, 184, 141],
+            (Self::Forest, false) => [35, 107, 67],
         };
         Color32::from_rgb(rgb[0], rgb[1], rgb[2])
     }
@@ -46,6 +58,12 @@ impl Palette {
             (Self::ElpisGold, false) => [251, 248, 239],
             (Self::Signature, true) => [31, 31, 40],
             (Self::Signature, false) => [252, 245, 242],
+            (Self::Kanagawa, true) => [31, 31, 40],
+            (Self::Kanagawa, false) => [253, 249, 243],
+            (Self::MidnightIce, true) => [17, 19, 24],
+            (Self::MidnightIce, false) => [244, 247, 251],
+            (Self::Forest, true) => [22, 29, 25],
+            (Self::Forest, false) => [244, 248, 245],
         };
         Color32::from_rgb(rgb[0], rgb[1], rgb[2])
     }
@@ -62,7 +80,7 @@ impl Palette {
 
     pub fn logo(self) -> (&'static str, &'static [u8]) {
         match self {
-            Self::Teal => (
+            Self::Teal | Self::MidnightIce | Self::Forest => (
                 "bytes://rustidian/original.png",
                 include_bytes!("../docs/brand/rustidian.png"),
             ),
@@ -70,7 +88,7 @@ impl Palette {
                 "bytes://rustidian/love-space.png",
                 include_bytes!("../docs/brand/themes/love-space.png"),
             ),
-            Self::ElpisGold => (
+            Self::ElpisGold | Self::Kanagawa => (
                 "bytes://rustidian/elpis-gold.png",
                 include_bytes!("../docs/brand/themes/elpis-gold.png"),
             ),
@@ -256,6 +274,9 @@ pub fn picker(ui: &mut egui::Ui, selected: &mut Palette, dark: bool) -> bool {
                     Palette::LoveSpace,
                     Palette::ElpisGold,
                     Palette::Signature,
+                    Palette::Kanagawa,
+                    Palette::MidnightIce,
+                    Palette::Forest,
                 ] {
                     let (rect, response) =
                         ui.allocate_exact_size(egui::vec2(width, 154.0), egui::Sense::click());
