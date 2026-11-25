@@ -113,7 +113,7 @@ fn file(family: &str, face: &str) -> Option<egui::FontData> {
 /// falling back to the upright regular face (so egui must not apply extra synthetic shear).
 pub fn text_uses_true_italic(fonts: &Fonts) -> bool {
     let name = fonts.text.trim();
-    if name.is_empty() {
+    if name.is_empty() || file(name, "regular").is_none() {
         return true;
     }
     match (match_face(name, "italic"), match_face(name, "regular")) {
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn default_note_font_uses_bundled_true_italic() {
         assert!(text_uses_true_italic(&Fonts::default()));
-        assert!(!text_uses_true_italic(&Fonts {
+        assert!(text_uses_true_italic(&Fonts {
             text: "No Such Font 4096".into(),
             ..Default::default()
         }));
