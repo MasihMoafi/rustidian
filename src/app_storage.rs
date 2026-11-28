@@ -28,6 +28,14 @@ struct AfterSave {
     save_dirty: bool,
 }
 
+struct ConflictSave {
+    tab: u64,
+    document: rustidian::vault::Document,
+    root: PathBuf,
+    receiver: Receiver<Result<rustidian::vault::Document, String>>,
+    continue_pending: bool,
+}
+
 pub(super) struct Copying {
     pub receiver: Receiver<Result<(PathBuf, rustidian::vault::Vault), String>>,
     pub root: PathBuf,
@@ -50,6 +58,8 @@ pub(super) struct State {
     pub generation: u64,
     detached: std::collections::HashMap<u64, DetachedSave>,
     creating: Option<Creating>,
+    pub errors: std::collections::HashMap<u64, String>,
+    conflict: Option<ConflictSave>,
 }
 
 impl State {
@@ -58,13 +68,102 @@ impl State {
             || self.creating.is_some()
             || !self.detached.is_empty()
             || !self.after.is_empty()
+            || self.conflict.is_some()
     }
     pub fn creating(&self) -> bool {
         self.creating.is_some()
     }
+    pub fn conflict_writing(&self, id: u64) -> bool {
+        self.conflict.as_ref().is_some_and(|job| job.tab == id)
+    }
 }
 
 impl NotesApp {
+    pub(super) fn resolve_pending_conflict(&mut self, id: u64, copy: bool) {
+        if self.storage.conflict.is_some() || self.autosave.busy(id) {
+            return;
+        }
+        let (Some(vault), Some(tab)) = (&self.vault, self.tabs.iter().find(|tab| tab.id() == id))
+        else {
+            return;
+        };
+        let mut vault = vault.clone();
+        let root = vault.root.clone();
+        let document = tab.document.clone();
+        let draft = document.clone();
+        let wake = self.ctx.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        match std::thread::Builder::new()
+            .name("rustidian-conflict-save".into())
+            .spawn(move || {
+                let _ = sender.send(vault.resolve_save_conflict(&draft, copy));
+                wake.request_repaint();
+            }) {
+            Ok(_) => {
+                self.storage.conflict = Some(ConflictSave {
+                    tab: id,
+                    document,
+                    root,
+                    receiver,
+                    continue_pending: true,
+                })
+            }
+            Err(error) => {
+                self.storage
+                    .errors
+                    .insert(id, format!("Cannot start save: {error}"));
+            }
+        }
+    }
+
+    fn poll_conflict_save(&mut self, ctx: &egui::Context) {
+        let Some(job) = &self.storage.conflict else {
+            return;
+        };
+        let result = match job.receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("Save was interrupted. Try again.".into())
+            }
+        };
+        let Some(job) = self.storage.conflict.take() else {
+            return;
+        };
+        if self
+            .vault
+            .as_ref()
+            .is_none_or(|vault| vault.root != job.root)
+        {
+            return;
+        }
+        let Some(index) = self.tabs.iter().position(|tab| {
+            tab.id() == job.tab
+                && tab.document.path == job.document.path
+                && tab.document.text == job.document.text
+        }) else {
+            return;
+        };
+        match result {
+            Ok(mut document) => {
+                if let Some(vault) = &mut self.vault {
+                    let text = document.text.clone();
+                    vault.commit_save(&mut document, text);
+                }
+                self.tabs[index].replace(document);
+                self.storage.errors.remove(&job.tab);
+                self.saved(index);
+                if job.continue_pending
+                    && let Some(pending) = self.pending.clone()
+                {
+                    self.save_pending(pending, ctx);
+                }
+            }
+            Err(error) => {
+                self.storage.errors.insert(job.tab, error);
+            }
+        }
+    }
     pub(super) fn create_untitled(&mut self, folder: &std::path::Path) {
         if self.storage.creating.is_some() {
             self.error =
@@ -387,9 +486,13 @@ impl NotesApp {
 
     pub(super) fn cancel_save_actions(&mut self) {
         self.storage.after.clear();
+        if let Some(job) = &mut self.storage.conflict {
+            job.continue_pending = false;
+        }
     }
 
     pub(super) fn poll_save_actions(&mut self, ctx: &egui::Context) {
+        self.poll_conflict_save(ctx);
         if self.pending.is_none()
             && self.dialog.is_none()
             && !self.storage.after.is_empty()

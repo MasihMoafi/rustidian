@@ -510,6 +510,56 @@ impl Vault {
         Ok(())
     }
 
+    /// Resolve a conflicting save using an exclusive copy or a checked overwrite.
+    pub fn resolve_save_conflict(&mut self, document: &Document, copy: bool) -> Result<Document> {
+        let mut resolved = document.clone();
+        if copy {
+            let parent = if document.path.is_absolute() {
+                Path::new("")
+            } else {
+                document.path.parent().unwrap_or(Path::new(""))
+            };
+            let stem = document
+                .path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let extension = document
+                .path
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy();
+            for number in 0..u64::MAX {
+                let suffix = if number == 0 {
+                    String::new()
+                } else {
+                    format!(" {number}")
+                };
+                let name = if extension.is_empty() {
+                    format!("{stem} conflict copy{suffix}")
+                } else {
+                    format!("{stem} conflict copy{suffix}.{extension}")
+                };
+                let path = parent.join(name);
+                if self.root.join(&path).exists() {
+                    continue;
+                }
+                resolved = Document::new(path.clone());
+                resolved.text.clone_from(&document.text);
+                match self.save(&mut resolved) {
+                    Ok(()) => return Ok(resolved),
+                    Err(_) if self.root.join(path).exists() => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+            return Err("Cannot find an available conflict copy name.".into());
+        }
+        let absolute = self.document_path(&document.path, false)?;
+        resolved.original = Some(fs::read_to_string(absolute).map_err(|error| error.to_string())?);
+        self.save(&mut resolved)?;
+        Ok(resolved)
+    }
+
     /// Capture save bytes without disk work. The writer validates paths and performs
     /// an atomic create or conflict-checked replacement before the UI commits it.
     pub fn prepare_save(&self, document: &Document) -> Result<PendingSave> {
@@ -1352,5 +1402,34 @@ pub fn wiki_links(text: &str) -> Vec<String> {
     wiki_spans(text)
         .into_iter()
         .map(|(_, target)| target)
+        .collect()
+}
+
+/// Note links in document order, with the text shown to the reader.
+pub fn outgoing_links(text: &str) -> Vec<(String, String)> {
+    reference_spans(text)
+        .into_iter()
+        .filter_map(|(range, target)| {
+            let source = &text[range];
+            if source.starts_with('!')
+                || target.split_once(':').is_some_and(|(scheme, _)| {
+                    let mut chars = scheme.chars();
+                    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+                })
+            {
+                return None;
+            }
+            let label = LinkedMention {
+                path: PathBuf::new(),
+                range: 0..0,
+                line: 0,
+                before: String::new(),
+                link: source.to_owned(),
+                after: String::new(),
+            }
+            .label();
+            Some((target, label))
+        })
         .collect()
 }

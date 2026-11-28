@@ -6,6 +6,81 @@ use std::{
 use tempfile::tempdir;
 
 #[test]
+fn outgoing_links_include_markdown_and_wiki_notes_but_not_code_or_urls() {
+    let text = "[Home](Home.md) [Study Plan](../Study%20Plan.md) [[Other|Alias]]\n`[hidden](Hidden.md)`\n```md\n[hidden](Hidden.md)\n```\n[web](https://example.com) [mail](mailto:a@example.com)";
+    assert_eq!(
+        rustidian::vault::outgoing_links(text),
+        [
+            ("Home.md".into(), "Home".into()),
+            ("../Study%20Plan.md".into(), "Study Plan".into()),
+            ("Other|Alias".into(), "Alias".into()),
+        ]
+    );
+    let folder = tempdir().unwrap();
+    fs::create_dir(folder.path().join("nested")).unwrap();
+    fs::write(folder.path().join("Study Plan.md"), "").unwrap();
+    let vault = Vault::open(folder.path()).unwrap();
+    assert_eq!(
+        vault.resolve(Path::new("nested/current.md"), "../Study%20Plan.md"),
+        Some(PathBuf::from("Study Plan.md"))
+    );
+}
+
+#[test]
+fn conflict_copy_preserves_disk_and_never_replaces_an_existing_copy() {
+    let folder = tempdir().unwrap();
+    fs::write(folder.path().join("Note.md"), "original").unwrap();
+    fs::write(folder.path().join("Note conflict copy.md"), "existing copy").unwrap();
+    let mut vault = Vault::open(folder.path()).unwrap();
+    let mut document = vault.open_document(Path::new("Note.md")).unwrap();
+    document.text = "my edits".into();
+    fs::write(folder.path().join("Note.md"), "external").unwrap();
+    assert!(
+        vault
+            .save(&mut document)
+            .unwrap_err()
+            .contains("changed outside")
+    );
+    let copy = vault.resolve_save_conflict(&document, true).unwrap();
+    assert_eq!(copy.path, Path::new("Note conflict copy 1.md"));
+    assert_eq!(
+        fs::read_to_string(folder.path().join(&copy.path)).unwrap(),
+        "my edits"
+    );
+    assert_eq!(
+        fs::read_to_string(folder.path().join("Note.md")).unwrap(),
+        "external"
+    );
+    assert_eq!(
+        fs::read_to_string(folder.path().join("Note conflict copy.md")).unwrap(),
+        "existing copy"
+    );
+    assert!(!copy.dirty());
+}
+
+#[test]
+fn conflict_overwrite_explicitly_saves_edits_and_clears_dirty_state() {
+    let folder = tempdir().unwrap();
+    fs::write(folder.path().join("Note.md"), "original").unwrap();
+    let mut vault = Vault::open(folder.path()).unwrap();
+    let mut document = vault.open_document(Path::new("Note.md")).unwrap();
+    document.text = "my edits".into();
+    fs::write(folder.path().join("Note.md"), "external").unwrap();
+    assert!(
+        vault
+            .save(&mut document)
+            .unwrap_err()
+            .contains("changed outside")
+    );
+    let saved = vault.resolve_save_conflict(&document, false).unwrap();
+    assert_eq!(
+        fs::read_to_string(folder.path().join("Note.md")).unwrap(),
+        "my edits"
+    );
+    assert!(!saved.dirty());
+}
+
+#[test]
 fn immediate_notes_are_empty_indexed_and_never_replace_existing_files_or_directories() {
     let folder = tempdir().unwrap();
     fs::write(folder.path().join("Untitled.md"), "Keep original bytes\n").unwrap();

@@ -20,7 +20,7 @@ use eframe::egui::{
 use egui_commonmark::CommonMarkCache;
 use rustidian::commands::Scope;
 use rustidian::tab::{ClosedTab, Tab, View};
-use rustidian::vault::{Document, Vault, wiki_links};
+use rustidian::vault::{Document, Vault, outgoing_links};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -1543,6 +1543,9 @@ impl NotesApp {
         let Some(tab) = self.tabs.get(index) else {
             return;
         };
+        if self.storage.conflict_writing(tab.id()) {
+            return;
+        }
         if tab.document.is_blank() {
             self.save(index);
             return;
@@ -1558,6 +1561,9 @@ impl NotesApp {
             }
             Err(error) => {
                 self.tabs[index].autosave_failed = true;
+                self.storage
+                    .errors
+                    .insert(self.tabs[index].id(), error.clone());
                 self.error = Some(error);
             }
         }
@@ -1591,6 +1597,9 @@ impl NotesApp {
                 (Ok(()), None) => {}
                 (Err(error), _) => {
                     self.tabs[index].autosave_failed = true;
+                    self.storage
+                        .errors
+                        .insert(self.tabs[index].id(), error.clone());
                     self.error = Some(error);
                 }
             }
@@ -1601,6 +1610,7 @@ impl NotesApp {
     fn saved(&mut self, index: usize) {
         self.storage.generation += 1;
         let tab = &mut self.tabs[index];
+        self.storage.errors.remove(&tab.id());
         self.status = format!("Saved {}", tab.document.path.display());
         // Text typed while an autosave was writing still needs its own save.
         if !tab.document.dirty() {
@@ -3473,7 +3483,7 @@ impl NotesApp {
             .unwrap_or_default();
         let outgoing = document
             .filter(|_| self.right_tab == 2)
-            .map(|document| wiki_links(&document.text))
+            .map(|document| outgoing_links(&document.text))
             .unwrap_or_default();
         let backlinks = document
             .filter(|_| self.right_tab == 1)
@@ -3662,16 +3672,12 @@ impl NotesApp {
                         ui.add_space(theme::space::S);
                         if outgoing.is_empty() {
                             ui.label(
-                                RichText::new("Connect a note with [[links]]")
+                                RichText::new("Connect a note with a link")
                                     .size(12.0)
                                     .weak(),
                             );
                         }
-                        for target in outgoing {
-                            let label = target
-                                .split_once('|')
-                                .map(|(_, label)| label)
-                                .unwrap_or(&target);
+                        for (target, label) in outgoing {
                             let row = ui.add(
                                 egui::Button::new(
                                     RichText::new(label).size(13.0).color(theme::accent(ui)),
@@ -5217,6 +5223,41 @@ impl NotesApp {
         }
     }
 
+    fn pending_save_ids(&self, pending: &Pending) -> Vec<u64> {
+        let indices: Vec<usize> = match pending {
+            Pending::CloseTab(id) => self
+                .tabs
+                .iter()
+                .position(|tab| tab.id() == *id)
+                .into_iter()
+                .collect(),
+            Pending::CloseOtherTabs(keep) => rustidian::tab::other_tab_indices(&self.tabs, *keep),
+            Pending::CloseTabsToRight(keep) => rustidian::tab::right_tab_indices(&self.tabs, *keep),
+            _ => (0..self.tabs.len()).collect(),
+        };
+        indices
+            .into_iter()
+            .filter(|&index| {
+                self.tabs[index].document.dirty() || self.autosave.busy(self.tabs[index].id())
+            })
+            .map(|index| self.tabs[index].id())
+            .collect()
+    }
+
+    fn save_pending(&mut self, pending: Pending, ctx: &egui::Context) {
+        let ids = self.pending_save_ids(&pending);
+        for id in &ids {
+            self.storage.errors.remove(id);
+        }
+        let next = pending.clone();
+        let wake = ctx.clone();
+        if !self.defer_saves(ids, true, None, true, move |app| {
+            app.finish_pending_save(next, &wake)
+        }) {
+            self.finish_pending_save(pending, ctx);
+        }
+    }
+
     fn dialogs(&mut self, ctx: &egui::Context) {
         if self.open_picker.active() {
             let kind = self.open_picker.kind();
@@ -5267,31 +5308,40 @@ impl NotesApp {
             return;
         }
         if let Some(pending) = self.pending.clone() {
+            let failure = self.pending_save_ids(&pending).into_iter().find_map(|id| {
+                self.storage
+                    .errors
+                    .get(&id)
+                    .map(|error| (id, error.clone()))
+            });
             let response = egui::Modal::new(egui::Id::unique("unsaved-changes"))
             .frame(theme::dialog_frame(ctx)).show(ctx, |ui| {
                 theme::dialog_style(ui);
                 ui.set_width(440.0);
                 ui.heading("Keep your changes?");
-                ui.label("You have unsaved edits. Save them before continuing, or discard them explicitly.");
+                let conflict = failure.as_ref().is_some_and(|(_, error)| error.contains("changed outside Rustidian"));
+                if conflict {
+                    ui.label("This note changed on disk. Save your edits to a copy or explicitly overwrite the disk version before continuing.");
+                } else {
+                    ui.label("You have unsaved edits. Save them before continuing, or discard them explicitly.");
+                    if let Some((_, error)) = &failure { ui.colored_label(ui.visuals().error_fg_color, error); }
+                }
                 ui.add_space(theme::space::L);
+                if conflict && let Some((id, _)) = &failure {
+                        ui.horizontal(|ui| {
+                            let copy = ui.button("Save copy & continue");
+                            crate::ui_probe::record(ctx, "pending-save-copy", copy.rect);
+                            if copy.clicked() { self.resolve_pending_conflict(*id, true); }
+                            let overwrite = ui.button("Overwrite & continue");
+                            crate::ui_probe::record(ctx, "pending-overwrite", overwrite.rect);
+                            if overwrite.clicked() { self.resolve_pending_conflict(*id, false); }
+                        });
+                }
                 ui.horizontal(|ui| {
-                    let save = ui.button("Save & continue");
-                    crate::ui_probe::record(ctx, "pending-save", save.rect);
-                    if save.clicked() {
-                        let indices: Vec<usize> = match &pending {
-                            Pending::CloseTab(id) => self.tabs.iter().position(|tab|tab.id() == *id).into_iter().collect(),
-                            Pending::CloseOtherTabs(keep) => rustidian::tab::other_tab_indices(&self.tabs, *keep)
-                                .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
-                            Pending::CloseTabsToRight(keep) => rustidian::tab::right_tab_indices(&self.tabs, *keep)
-                                .into_iter().filter(|&index| self.tabs[index].document.dirty()).collect(),
-                            _ => self.tabs.iter().enumerate().filter(|(_, tab)| tab.document.dirty()).map(|(i, _)| i).collect(),
-                        };
-                        let ids = indices.into_iter().map(|index| self.tabs[index].id()).collect();
-                        let next = pending.clone();
-                        let wake = ctx.clone();
-                        if !self.defer_saves(ids, true, None, true, move |app| app.finish_pending_save(next, &wake)) {
-                            self.finish_pending_save(pending.clone(), ctx);
-                        }
+                    if !conflict {
+                        let save = ui.button("Save & continue");
+                        crate::ui_probe::record(ctx, "pending-save", save.rect);
+                        if save.clicked() { self.save_pending(pending.clone(), ctx); }
                     }
                     let discard = ui.button("Discard");
                     crate::ui_probe::record(ctx, "pending-discard", discard.rect);
