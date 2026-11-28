@@ -1561,6 +1561,9 @@ impl NotesApp {
             }
             Err(error) => {
                 self.tabs[index].autosave_failed = true;
+                if error.contains("changed outside Rustidian") {
+                    self.storage.conflicts.insert(self.tabs[index].id());
+                }
                 self.storage
                     .errors
                     .insert(self.tabs[index].id(), error.clone());
@@ -1597,6 +1600,9 @@ impl NotesApp {
                 (Ok(()), None) => {}
                 (Err(error), _) => {
                     self.tabs[index].autosave_failed = true;
+                    if error.contains("changed outside Rustidian") {
+                        self.storage.conflicts.insert(self.tabs[index].id());
+                    }
                     self.storage
                         .errors
                         .insert(self.tabs[index].id(), error.clone());
@@ -1611,6 +1617,7 @@ impl NotesApp {
         self.storage.generation += 1;
         let tab = &mut self.tabs[index];
         self.storage.errors.remove(&tab.id());
+        self.storage.conflicts.remove(&tab.id());
         self.status = format!("Saved {}", tab.document.path.display());
         // Text typed while an autosave was writing still needs its own save.
         if !tab.document.dirty() {
@@ -5319,9 +5326,12 @@ impl NotesApp {
                 theme::dialog_style(ui);
                 ui.set_width(440.0);
                 ui.heading("Keep your changes?");
-                let conflict = failure.as_ref().is_some_and(|(_, error)| error.contains("changed outside Rustidian"));
+                let conflict = failure.as_ref().is_some_and(|(id, _)| self.storage.conflicts.contains(id));
                 if conflict {
                     ui.label("This note changed on disk. Save your edits to a copy or explicitly overwrite the disk version before continuing.");
+                    if let Some((_, error)) = &failure && !error.contains("changed outside Rustidian") {
+                        ui.colored_label(ui.visuals().error_fg_color, error);
+                    }
                 } else {
                     ui.label("You have unsaved edits. Save them before continuing, or discard them explicitly.");
                     if let Some((_, error)) = &failure { ui.colored_label(ui.visuals().error_fg_color, error); }
@@ -5329,13 +5339,15 @@ impl NotesApp {
                 ui.add_space(theme::space::L);
                 if conflict && let Some((id, _)) = &failure {
                         ui.horizontal(|ui| {
-                            let copy = ui.button("Save copy & continue");
+                            let busy = self.storage.conflict_writing(*id);
+                            let copy = ui.add_enabled(!busy, egui::Button::new("Save copy & continue"));
                             crate::ui_probe::record(ctx, "pending-save-copy", copy.rect);
                             if copy.clicked() { self.resolve_pending_conflict(*id, true); }
-                            let overwrite = ui.button("Overwrite & continue");
+                            let overwrite = ui.add_enabled(!busy, egui::Button::new("Overwrite & continue"));
                             crate::ui_probe::record(ctx, "pending-overwrite", overwrite.rect);
                             if overwrite.clicked() { self.resolve_pending_conflict(*id, false); }
                         });
+                        if self.storage.conflict_writing(*id) { ui.label("Saving…"); }
                 }
                 ui.horizontal(|ui| {
                     if !conflict {

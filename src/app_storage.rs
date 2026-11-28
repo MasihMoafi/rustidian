@@ -59,6 +59,7 @@ pub(super) struct State {
     detached: std::collections::HashMap<u64, DetachedSave>,
     creating: Option<Creating>,
     pub errors: std::collections::HashMap<u64, String>,
+    pub conflicts: HashSet<u64>,
     conflict: Option<ConflictSave>,
 }
 
