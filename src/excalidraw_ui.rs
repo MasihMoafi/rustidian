@@ -1008,7 +1008,9 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         }
     }
     for element in &elements {
-        paint(ui, rect, state, element);
+        if state.text_id.as_deref() != element["id"].as_str() || state.text_id.is_none() {
+            paint(ui, rect, state, element);
+        }
     }
     if let Some(r) = selection_bounds(&elements, &state.selected) {
         let screen = Rect::from_two_pos(
@@ -1107,8 +1109,10 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                     .unwrap_or_else(|| new_element("text", p, colors[state.color], state.width));
                 e["text"] = json!(state.text);
                 e["originalText"] = json!(state.text);
-                e["fontSize"] = json!(20);
-                e["fontFamily"] = json!(1);
+                if existing.is_none() {
+                    e["fontSize"] = json!(20);
+                    e["fontFamily"] = json!(1);
+                }
                 e["width"] = json!(state.text.chars().count() as f32 * 11.0);
                 e["height"] = json!(25);
                 if let Some(index) = existing {
@@ -1128,7 +1132,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
             state.tool = Tool::Select;
         }
     }
-    egui::Area::new(ui.id().with("drawing-controls"))
+    egui::Area::new(ui.scope_id().with("drawing-controls"))
         .order(egui::Order::Foreground)
         .fixed_pos(rect.left_bottom() + egui::vec2(12.0, -48.0))
         .show(ui.ctx(), |ui| {

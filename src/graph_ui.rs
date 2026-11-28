@@ -610,8 +610,9 @@ impl Manager {
 fn toggle(ui: &mut egui::Ui, value: &mut bool, label: &str, probe: &str) {
     let response = ui
         .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
             let checkbox = crate::theme::checkbox(ui, value);
-            let text = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+            let text = ui.add(egui::Label::new(format!(" {label}")).sense(egui::Sense::click()));
             if text.clicked() {
                 *value = !*value;
             }
