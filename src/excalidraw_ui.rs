@@ -1,4 +1,5 @@
 //! An editable vector canvas for Excalidraw documents.
+use crate::theme::{self, space};
 use eframe::egui::{self, Color32, Key, Pos2, Rect, Sense, Stroke, Vec2};
 use rustidian::{excalidraw::Drawing, vault::Document};
 use serde_json::{Value, json};
@@ -339,26 +340,26 @@ fn paint(ui: &egui::Ui, rect: Rect, state: &ExcalidrawViewState, element: &Value
 }
 
 fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool, hint: &str, tip: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(space::CONTROL), Sense::click());
     let painter = ui.painter();
     if active || response.hovered() {
         painter.rect_filled(
             rect,
-            5,
+            theme::radius::ROW,
             if active {
-                Color32::from_rgb(224, 223, 255)
+                ui.visuals().widgets.active.weak_bg_fill
             } else {
                 ui.visuals().widgets.hovered.bg_fill
             },
         );
     }
     let color = if active {
-        Color32::from_rgb(71, 66, 166)
+        theme::interactive(ui)
     } else {
         ui.visuals().text_color()
     };
-    let stroke = Stroke::new(1.6, color);
-    let p = |x: f32, y: f32| rect.min + egui::vec2(x, y);
+    let stroke = Stroke::new(1.5, color);
+    let p = |x: f32, y: f32| rect.center() + egui::vec2(x - 15.0, y - 15.0) * (space::ICON / 20.0);
     match tool {
         Tool::Select => {
             painter.add(egui::Shape::closed_line(
@@ -415,7 +416,7 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool, hint: &str, tip: &st
             ));
         }
         Tool::Ellipse => {
-            painter.circle_stroke(p(15., 15.), 8.5, stroke);
+            painter.circle_stroke(p(15., 15.), 8.5 * space::ICON / 20.0, stroke);
         }
         Tool::Arrow => {
             painter.line_segment([p(7., 22.), p(22., 7.)], stroke);
@@ -454,7 +455,7 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool, hint: &str, tip: &st
     }
     if !hint.is_empty() {
         painter.text(
-            rect.right_bottom() - egui::vec2(3., 1.),
+            rect.right_bottom() - egui::vec2(space::XS - space::HAIRLINE, space::XS / 2.0),
             egui::Align2::RIGHT_BOTTOM,
             hint,
             egui::FontId::proportional(8.),
@@ -468,14 +469,53 @@ fn zoom_around_point(pan: Vec2, old_zoom: f32, new_zoom: f32, anchor: Vec2) -> V
     anchor - (anchor - pan) * (new_zoom / old_zoom)
 }
 
+fn separator(ui: &mut egui::Ui) {
+    let (r, _) = ui.allocate_exact_size(
+        egui::vec2(space::HAIRLINE, space::ICON + space::XS / 2.0),
+        Sense::hover(),
+    );
+    ui.painter().line_segment(
+        [r.center_top(), r.center_bottom()],
+        ui.visuals().widgets.noninteractive.bg_stroke,
+    );
+}
+
+fn zoom_button(ui: &mut egui::Ui, plus: bool) -> egui::Response {
+    let (r, response) = ui.allocate_exact_size(Vec2::splat(space::CONTROL_SM), Sense::click());
+    theme::control_feedback(ui, &response);
+    let stroke = Stroke::new(1.5, ui.visuals().text_color());
+    let half = space::ICON / 2.0;
+    ui.painter().line_segment(
+        [
+            r.center() - egui::vec2(half, 0.0),
+            r.center() + egui::vec2(half, 0.0),
+        ],
+        stroke,
+    );
+    if plus {
+        ui.painter().line_segment(
+            [
+                r.center() - egui::vec2(0.0, half),
+                r.center() + egui::vec2(0.0, half),
+            ],
+            stroke,
+        );
+    }
+    response.on_hover_text(if plus { "Zoom in" } else { "Zoom out" })
+}
+
 fn lock_button(ui: &mut egui::Ui, active: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(space::CONTROL), Sense::click());
     let painter = ui.painter();
     if active || response.hovered() {
-        painter.rect_filled(rect, 5, ui.visuals().widgets.hovered.bg_fill);
+        painter.rect_filled(
+            rect,
+            theme::radius::ROW,
+            ui.visuals().widgets.hovered.bg_fill,
+        );
     }
-    let p = |x: f32, y: f32| rect.min + egui::vec2(x, y);
-    let stroke = Stroke::new(1.6, ui.visuals().text_color());
+    let p = |x: f32, y: f32| rect.center() + egui::vec2(x - 15.0, y - 15.0) * (space::ICON / 20.0);
+    let stroke = Stroke::new(1.5, ui.visuals().text_color());
     painter.rect_stroke(
         Rect::from_min_max(p(8., 14.), p(22., 24.)),
         2,
@@ -497,13 +537,13 @@ fn lock_button(ui: &mut egui::Ui, active: bool) -> bool {
 }
 
 fn history_button(ui: &mut egui::Ui, redo: bool) -> bool {
-    let (r, response) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::click());
+    let (r, response) = ui.allocate_exact_size(Vec2::splat(space::CONTROL_SM), Sense::click());
     if response.hovered() {
         ui.painter()
-            .rect_filled(r, 4, ui.visuals().widgets.hovered.bg_fill);
+            .rect_filled(r, theme::radius::ROW, ui.visuals().widgets.hovered.bg_fill);
     }
     let p = |x: f32, y: f32| r.min + egui::vec2(if redo { 28.0 - x } else { x }, y);
-    let stroke = Stroke::new(1.6, ui.visuals().text_color());
+    let stroke = Stroke::new(1.5, ui.visuals().text_color());
     ui.painter().add(egui::Shape::line(
         vec![p(7., 11.), p(11., 7.), p(7., 11.), p(11., 15.)],
         stroke,
@@ -568,56 +608,123 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         Color32::from_rgb(190, 75, 170),
     ];
     let mut changed = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.add_space((ui.available_width() - 740.0).max(0.0) / 2.0);
-        if lock_button(ui, state.tool_locked) {
-            state.tool_locked = !state.tool_locked;
-        }
-        for (tool, hint, tip) in [
-            (Tool::Hand, "", "Hand — H"),
-            (Tool::Select, "1", "Select — V or 1"),
-            (Tool::Rect, "2", "Rectangle — R or 2"),
-            (Tool::Diamond, "3", "Diamond — D or 3"),
-            (Tool::Ellipse, "4", "Ellipse — O or 4"),
-            (Tool::Arrow, "5", "Arrow — A or 5"),
-            (Tool::Line, "6", "Line — L or 6"),
-            (Tool::Freedraw, "7", "Draw — P or 7"),
-            (Tool::Text, "8", "Text — T or 8"),
-            (Tool::Eraser, "0", "Eraser — E or 0"),
-        ] {
-            if tool_button(ui, tool, state.tool == tool, hint, tip) {
-                state.tool = tool;
-            }
-        }
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);
-        for (i, color) in colors.iter().enumerate() {
-            if ui
-                .add(
-                    egui::Button::new(egui::RichText::new("●").color(*color))
-                        .selected(state.color == i),
-                )
-                .on_hover_text("Stroke color")
-                .clicked()
-            {
-                state.color = i;
-            }
-        }
-        for width in [1.0, 2.0, 4.0] {
-            if ui
-                .selectable_label(state.width == width, format!("{width:.0}"))
-                .on_hover_text("Stroke width")
-                .clicked()
-            {
-                state.width = width;
-            }
-        }
-        if ui.button("Markdown").clicked() {
-            state.show_markdown = true;
-        }
-    });
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+    egui::Area::new(ui.scope_id().with("drawing-tools"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::CENTER_TOP)
+        .fixed_pos(rect.center_top() + egui::vec2(0.0, space::M))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(space::margin(space::XS, space::XS))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = space::XS / 2.0;
+                    ui.horizontal_centered(|ui| {
+                        if lock_button(ui, state.tool_locked) {
+                            state.tool_locked = !state.tool_locked;
+                        }
+                        separator(ui);
+                        for (tool, hint, tip) in [
+                            (Tool::Hand, "", "Hand — H"),
+                            (Tool::Select, "1", "Select — V or 1"),
+                            (Tool::Rect, "2", "Rectangle — R or 2"),
+                            (Tool::Diamond, "3", "Diamond — D or 3"),
+                            (Tool::Ellipse, "4", "Ellipse — O or 4"),
+                            (Tool::Arrow, "5", "Arrow — A or 5"),
+                            (Tool::Line, "6", "Line — L or 6"),
+                            (Tool::Freedraw, "7", "Draw — P or 7"),
+                            (Tool::Text, "8", "Text — T or 8"),
+                            (Tool::Eraser, "0", "Eraser — E or 0"),
+                        ] {
+                            if tool_button(ui, tool, state.tool == tool, hint, tip) {
+                                state.tool = tool;
+                            }
+                        }
+                    });
+                });
+        });
+    egui::Area::new(ui.scope_id().with("drawing-style"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::CENTER_TOP)
+        .fixed_pos(
+            rect.center_top()
+                + egui::vec2(
+                    0.0,
+                    space::M + space::CONTROL + space::XS * 3.0 + space::XS / 2.0,
+                ),
+        )
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(space::margin(space::XS, space::XS))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = space::XS / 2.0;
+                    ui.horizontal_centered(|ui| {
+                        ui.set_min_height(space::CONTROL);
+                        for (i, color) in colors.iter().enumerate() {
+                            let (r, response) = ui.allocate_exact_size(
+                                Vec2::splat(space::CONTROL_SM),
+                                Sense::click(),
+                            );
+                            theme::control_feedback(ui, &response);
+                            if state.color == i {
+                                ui.painter().circle_stroke(
+                                    r.center(),
+                                    space::ICON / 2.0 + space::XS / 2.0,
+                                    Stroke::new(space::HAIRLINE, theme::interactive(ui)),
+                                );
+                            }
+                            ui.painter()
+                                .circle_filled(r.center(), space::ICON_SM / 2.0, *color);
+                            if response.on_hover_text("Stroke color").clicked() {
+                                state.color = i;
+                            }
+                        }
+                        separator(ui);
+                        for (width, thickness) in [(1.0, 1.2), (2.0, 2.2), (4.0, 3.4)] {
+                            let (r, response) = ui.allocate_exact_size(
+                                Vec2::splat(space::CONTROL_SM),
+                                Sense::click(),
+                            );
+                            if state.width == width {
+                                ui.painter().rect_filled(
+                                    r,
+                                    theme::radius::ROW,
+                                    ui.visuals().widgets.active.weak_bg_fill,
+                                );
+                            }
+                            theme::control_feedback(ui, &response);
+                            ui.painter().line_segment(
+                                [
+                                    r.center() - egui::vec2(space::ICON / 2.0, 0.0),
+                                    r.center() + egui::vec2(space::ICON / 2.0, 0.0),
+                                ],
+                                Stroke::new(thickness, ui.visuals().text_color()),
+                            );
+                            if response.on_hover_text("Stroke width").clicked() {
+                                state.width = width;
+                            }
+                        }
+                    });
+                });
+        });
+    egui::Area::new(ui.scope_id().with("drawing-markdown"))
+        .order(egui::Order::Foreground)
+        .pivot(egui::Align2::RIGHT_TOP)
+        .fixed_pos(rect.right_top() + egui::vec2(-space::M, space::M))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style())
+                .inner_margin(space::margin(space::XS, 0.0))
+                .show(ui, |ui| {
+                    if ui
+                        .add_sized(
+                            [space::CONTROL * 2.0, space::CONTROL],
+                            egui::Button::new("Markdown").frame_when_inactive(false),
+                        )
+                        .clicked()
+                    {
+                        state.show_markdown = true;
+                    }
+                });
+        });
     let painter = ui.painter_at(rect);
     let step = 24.0 * state.zoom;
     if step >= 6.0 {
@@ -1131,17 +1238,20 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
     }
     egui::Area::new(ui.scope_id().with("drawing-controls"))
         .order(egui::Order::Foreground)
-        .fixed_pos(rect.left_bottom() + egui::vec2(12.0, -48.0))
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .fixed_pos(rect.left_bottom() + egui::vec2(space::M, -space::M))
         .show(ui.ctx(), |ui| {
-            ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = space::S;
+            ui.horizontal_centered(|ui| {
                 egui::Frame::popup(ui.style())
                     .inner_margin(crate::theme::space::margin(
                         crate::theme::space::XS,
                         crate::theme::space::XS,
                     ))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.button("−").clicked() {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.horizontal_centered(|ui| {
+                            if zoom_button(ui, false).clicked() {
                                 let old = state.zoom;
                                 state.zoom = (old / 1.2).max(0.1);
                                 state.pan = zoom_around_point(
@@ -1152,14 +1262,18 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                                 );
                             }
                             if ui
-                                .button(format!("{:.0}%", state.zoom * 100.0))
+                                .add_sized(
+                                    [space::CONTROL_SM + space::XL, space::CONTROL_SM],
+                                    egui::Button::new(format!("{:.0}%", state.zoom * 100.0))
+                                        .frame_when_inactive(false),
+                                )
                                 .on_hover_text("Reset zoom")
                                 .clicked()
                             {
                                 state.zoom = 1.0;
                                 state.pan = rect.size() / 2.0;
                             }
-                            if ui.button("+").clicked() {
+                            if zoom_button(ui, true).clicked() {
                                 let old = state.zoom;
                                 state.zoom = (old * 1.2).min(10.0);
                                 state.pan = zoom_around_point(
@@ -1177,7 +1291,8 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                         crate::theme::space::XS,
                     ))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.horizontal_centered(|ui| {
                             if history_button(ui, false)
                                 && let Some(previous) = state.undo.pop()
                             {
