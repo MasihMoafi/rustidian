@@ -267,16 +267,16 @@ jobs:
     needs: linux
     if: ${{ inputs.publish_run == '' && inputs.gui_only && inputs.package_after_checks }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       LIBGL_ALWAYS_SOFTWARE: '1'
       GUI_SECTIONS: ${{ inputs.sections }}
       SHARD_INDEX: ${{ matrix.shard }}
-      SHARD_TOTAL: '4'
+      SHARD_TOTAL: '8'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install native GUI tools
