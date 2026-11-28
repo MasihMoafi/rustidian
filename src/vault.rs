@@ -1111,6 +1111,7 @@ pub fn is_text_document(path: &Path) -> bool {
             matches!(
                 extension.to_ascii_lowercase().as_str(),
                 "md" | "txt"
+                    | "excalidraw"
                     | "rs"
                     | "py"
                     | "pyw"

@@ -41,6 +41,7 @@ fn plain_text_documents_open_and_save_without_bulk_indexing_or_overwriting_exter
         "app.ts",
         "page.html",
         "config.json",
+        "drawing.excalidraw",
         "project.toml",
         "Makefile",
     ];
