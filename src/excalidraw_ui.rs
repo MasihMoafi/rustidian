@@ -363,7 +363,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
             ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
         }
     }
-    if !ui.ctx().egui_wants_keyboard_input() {
+    if ui.is_enabled() && !ui.ctx().text_edit_focused() {
         for (key, tool) in [
             (Key::Num1, Tool::Select),
             (Key::H, Tool::Hand),
@@ -381,20 +381,19 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                 state.tool = tool;
             }
         }
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Z))
+        let redo = ui.input_mut(|i| {
+            i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::Z)
+        }) || ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Y));
+        if redo && let Some(next) = state.redo.pop() {
+            state.undo.push(elements.clone());
+            elements = next;
+            changed = true;
+        } else if !redo
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Z))
             && let Some(previous) = state.undo.pop()
         {
             state.redo.push(elements.clone());
             elements = previous;
-            changed = true;
-        }
-        if (ui.input_mut(|i| {
-            i.consume_key(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, Key::Z)
-        }) || ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Y)))
-            && let Some(next) = state.redo.pop()
-        {
-            state.undo.push(elements.clone());
-            elements = next;
             changed = true;
         }
         if ui.input(|i| i.key_pressed(Key::Delete) || i.key_pressed(Key::Backspace))
