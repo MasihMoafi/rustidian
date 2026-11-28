@@ -261,16 +261,16 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
     ];
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
-        ui.add_space((ui.available_width() - 850.0).max(0.0) / 2.0);
+        ui.add_space((ui.available_width() - 740.0).max(0.0) / 2.0);
         for (tool, label, tip) in [
             (Tool::Select, "↖", "Select · 1"),
-            (Tool::Hand, "✋", "Hand · H"),
+            (Tool::Hand, "H", "Hand · H"),
             (Tool::Rect, "□", "Rectangle · 2"),
             (Tool::Diamond, "◇", "Diamond · 3"),
             (Tool::Ellipse, "○", "Ellipse · 4"),
             (Tool::Arrow, "→", "Arrow · 5"),
-            (Tool::Line, "╱", "Line · 6"),
-            (Tool::Freedraw, "✎", "Draw · 7"),
+            (Tool::Line, "/", "Line · 6"),
+            (Tool::Freedraw, "F", "Draw · 7"),
             (Tool::Text, "T", "Text · 8"),
             (Tool::Eraser, "⌫", "Eraser · 0"),
         ] {
@@ -310,6 +310,9 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         if ui.button("+").clicked() {
             state.zoom = (state.zoom * 1.2).min(8.0);
         }
+    });
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space((ui.available_width() - 400.0).max(0.0) / 2.0);
         for (i, color) in colors.iter().enumerate() {
             if ui
                 .add(
