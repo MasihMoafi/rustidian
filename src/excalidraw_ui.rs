@@ -775,20 +775,17 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                 changed = true;
             }
         }
-        let command = ui.input(|i| i.modifiers.command);
-        if command && ui.input(|i| i.key_pressed(Key::Num0)) {
+        let reset_zoom = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Num0));
+        let zoom_in = ui.input_mut(|i| {
+            i.consume_key(egui::Modifiers::COMMAND, Key::Plus)
+                || i.consume_key(egui::Modifiers::COMMAND, Key::Equals)
+        });
+        let zoom_out = ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, Key::Minus));
+        if reset_zoom {
             state.zoom = 1.0;
             state.pan = rect.size() / 2.0;
-        } else if command
-            && ui.input(|i| {
-                i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals) || i.key_pressed(Key::Minus)
-            })
-        {
-            let factor = if ui.input(|i| i.key_pressed(Key::Minus)) {
-                1.0 / 1.2
-            } else {
-                1.2
-            };
+        } else if zoom_in || zoom_out {
+            let factor = if zoom_out { 1.0 / 1.2 } else { 1.2 };
             let old = state.zoom;
             state.zoom = (old * factor).clamp(0.1, 10.0);
             state.pan = zoom_around_point(state.pan, old, state.zoom, rect.size() / 2.0);
