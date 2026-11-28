@@ -3493,19 +3493,28 @@ int rename(const char *source, const char *destination) {
                 click_control("outgoing:Home")
                 title_contains("Home")
                 outgoing_note = fixture / "Notes/Outgoing proof.md"
-                outgoing_source = "# Outgoing proof\n\n[[Home|Start]]\n\n`[[Ignored]]`\n"
+                outgoing_source = "# Outgoing proof\n\n[[Home|Start]]\n\n[Study Plan](../Study%20Plan.md)\n\n[External](https://example.com) `[[Ignored]]` `[Hidden](Hidden.md)`\n\n```md\n[Fenced](Fenced.md)\n```\n"
+                (fixture / "Study Plan.md").write_text("# Study Plan\n")
                 outgoing_note.write_text(outgoing_source)
                 time.sleep(.6)
                 open_note("Outgoing proof")
                 assert control_bounds("outgoing:Home|Start")
+                assert control_bounds("outgoing:../Study%20Plan.md")
                 assert control_bounds("outgoing:Ignored", required=False) is None
+                assert control_bounds("outgoing:Hidden.md", required=False) is None
+                assert control_bounds("outgoing:Fenced.md", required=False) is None
+                assert control_bounds("outgoing:https://example.com", required=False) is None
+                capture("native-outgoing-markdown.png")
+                click_control("outgoing:../Study%20Plan.md")
+                title_contains("Study Plan")
+                open_note("Outgoing proof")
                 click_control("outgoing:Home|Start")
                 title_contains("Home")
                 assert outgoing_note.read_text() == outgoing_source
                 open_note("Referrer")
                 assert control_bounds("outgoing:Home|Start", required=False) is None
                 assert control_bounds("outgoing:Notes/Essential UI")
-                results.append("Outgoing links follow aliased wiki links, ignore inline code and update when the current note changes")
+                results.append("Outgoing links follow aliased wiki and relative Markdown links, exclude code and external URLs, and update with the current note")
                 open_note("Essential UI")
                 click_control("panel:outline")
                 assert note.read_text() == expected
@@ -12889,11 +12898,33 @@ int rename(const char *source, const char *destination) {
                 assert "CONFLICTED_WORKSPACE" in (fixture/"Workspace recovered.md").read_text()
                 click_control("pending-discard",hold=.15)
                 assert_layout(writing)
+                command("Source editing");editor_end();paste_text("CONFLICTED_WORKSPACE",held=True)
+                first.write_text("# External workspace version\n");time.sleep(.7)
+                manager();click_control("workspace-load:Reading",hold=.15)
+                click_control("pending-save",hold=.15)
+                assert control_bounds("pending-save-copy")
+                capture("native-save-conflict.png")
+                assert first.read_text()=="# External workspace version\n"
+                click_control("pending-save-copy",hold=.15)
+                assert_layout(updated)
+                assert "CONFLICTED_WORKSPACE" in (fixture/"Workspace A conflict copy.md").read_text()
+                assert first.read_text()=="# External workspace version\n"
+                command("Source editing");editor_end();paste_text("OVERWRITE_WORKSPACE",held=True)
+                first.write_text("# Second external version\n");time.sleep(.7)
+                manager();click_control("workspace-load:Writing",hold=.15)
+                click_control("pending-save",hold=.15)
+                assert control_bounds("pending-overwrite")
+                pause()
+                click_control("pending-overwrite",hold=.15)
+                assert_layout(writing)
+                assert first.read_text()=="# External workspace version\nOVERWRITE_WORKSPACE"
+                first.write_text(first_source);time.sleep(.6)
+                load("Writing");assert_layout(writing)
                 command("Open settings");type_text("autosave")
                 click_control("settings-autosave",hold=.15)
                 wait_autosave(base/"state",True,session_path=session_path)
                 key("Escape")
-                results.append("Cancelled dirty load kept unsaved editing; Save & continue retained edits, while a conflict refused overwrite and allowed separate recovery")
+                results.append("Save & continue handles a normal save, a conflict copy and an explicit overwrite before loading the workspace; Cancel keeps unsaved edits")
 
                 manager()
                 click_control("workspace-delete:Writing",hold=.15)

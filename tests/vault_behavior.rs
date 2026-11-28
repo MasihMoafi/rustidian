@@ -7,7 +7,7 @@ use tempfile::tempdir;
 
 #[test]
 fn outgoing_links_include_markdown_and_wiki_notes_but_not_code_or_urls() {
-    let text = "[Home](Home.md) [Study Plan](../Study%20Plan.md) [[Other|Alias]]\n`[hidden](Hidden.md)`\n```md\n[hidden](Hidden.md)\n```\n[web](https://example.com) [mail](mailto:a@example.com)";
+    let text = "[Home](Home.md) [Study Plan](../Study%20Plan.md) [[Other|Alias]]\n`[hidden](Hidden.md)`\n```md\n[hidden](Hidden.md)\n```\n[web](https://example.com) [http](http://example.com) [mail](mailto:a@example.com)";
     assert_eq!(
         rustidian::vault::outgoing_links(text),
         [
