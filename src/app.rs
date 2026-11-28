@@ -1561,12 +1561,7 @@ impl NotesApp {
             }
             Err(error) => {
                 self.tabs[index].autosave_failed = true;
-                if error.contains("changed outside Rustidian") {
-                    self.storage.conflicts.insert(self.tabs[index].id());
-                }
-                self.storage
-                    .errors
-                    .insert(self.tabs[index].id(), error.clone());
+                self.record_save_error(index, error.clone());
                 self.error = Some(error);
             }
         }
@@ -1600,12 +1595,7 @@ impl NotesApp {
                 (Ok(()), None) => {}
                 (Err(error), _) => {
                     self.tabs[index].autosave_failed = true;
-                    if error.contains("changed outside Rustidian") {
-                        self.storage.conflicts.insert(self.tabs[index].id());
-                    }
-                    self.storage
-                        .errors
-                        .insert(self.tabs[index].id(), error.clone());
+                    self.record_save_error(index, error.clone());
                     self.error = Some(error);
                 }
             }
@@ -5319,14 +5309,19 @@ impl NotesApp {
                 self.storage
                     .errors
                     .get(&id)
-                    .map(|error| (id, error.clone()))
+                    .filter(|(path, _)| {
+                        self.tabs
+                            .iter()
+                            .any(|tab| tab.id() == id && tab.document.path == *path)
+                    })
+                    .map(|(_, error)| (id, error.clone()))
             });
             let response = egui::Modal::new(egui::Id::unique("unsaved-changes"))
             .frame(theme::dialog_frame(ctx)).show(ctx, |ui| {
                 theme::dialog_style(ui);
                 ui.set_width(440.0);
                 ui.heading("Keep your changes?");
-                let conflict = failure.as_ref().is_some_and(|(id, _)| self.storage.conflicts.contains(id));
+                let conflict = failure.as_ref().is_some_and(|(id, _)| self.storage.conflicts.get(id).is_some_and(|path| self.tabs.iter().any(|tab| tab.id() == *id && tab.document.path == *path)));
                 if conflict {
                     ui.label("This note changed on disk. Save your edits to a copy or explicitly overwrite the disk version before continuing.");
                     if let Some((_, error)) = &failure && !error.contains("changed outside Rustidian") {

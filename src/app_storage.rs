@@ -58,8 +58,8 @@ pub(super) struct State {
     pub generation: u64,
     detached: std::collections::HashMap<u64, DetachedSave>,
     creating: Option<Creating>,
-    pub errors: std::collections::HashMap<u64, String>,
-    pub conflicts: HashSet<u64>,
+    pub errors: std::collections::HashMap<u64, (PathBuf, String)>,
+    pub conflicts: std::collections::HashMap<u64, PathBuf>,
     conflict: Option<ConflictSave>,
 }
 
@@ -80,6 +80,23 @@ impl State {
 }
 
 impl NotesApp {
+    pub(super) fn record_save_error(&mut self, index: usize, error: String) {
+        let tab = &self.tabs[index];
+        let id = tab.id();
+        let path = tab.document.path.clone();
+        if self
+            .storage
+            .conflicts
+            .get(&id)
+            .is_some_and(|old| *old != path)
+        {
+            self.storage.conflicts.remove(&id);
+        }
+        if error.contains("changed outside Rustidian") {
+            self.storage.conflicts.insert(id, path.clone());
+        }
+        self.storage.errors.insert(id, (path, error));
+    }
     pub(super) fn resolve_pending_conflict(&mut self, id: u64, copy: bool) {
         if self.storage.conflict.is_some() || self.autosave.busy(id) {
             return;
@@ -110,9 +127,9 @@ impl NotesApp {
                 })
             }
             Err(error) => {
-                self.storage
-                    .errors
-                    .insert(id, format!("Cannot start save: {error}"));
+                if let Some(index) = self.tabs.iter().position(|tab| tab.id() == id) {
+                    self.record_save_error(index, format!("Cannot start save: {error}"));
+                }
             }
         }
     }
@@ -161,7 +178,7 @@ impl NotesApp {
                 }
             }
             Err(error) => {
-                self.storage.errors.insert(job.tab, error);
+                self.record_save_error(index, error);
             }
         }
     }
