@@ -504,6 +504,22 @@ fn zoom_button(ui: &mut egui::Ui, plus: bool) -> egui::Response {
     response.on_hover_text(if plus { "Zoom in" } else { "Zoom out" })
 }
 
+fn zoom_percentage(ui: &mut egui::Ui, zoom: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(space::CONTROL_SM + space::XL, space::CONTROL_SM),
+        Sense::click(),
+    );
+    theme::control_feedback(ui, &response);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("{:.0}%", zoom * 100.0),
+        egui::TextStyle::Button.resolve(ui.style()),
+        ui.visuals().text_color(),
+    );
+    response.on_hover_text("Reset zoom")
+}
+
 fn lock_button(ui: &mut egui::Ui, active: bool) -> bool {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(space::CONTROL), Sense::click());
     let painter = ui.painter();
@@ -1263,15 +1279,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                                     rect.size() / 2.0,
                                 );
                             }
-                            if ui
-                                .add_sized(
-                                    [space::CONTROL_SM + space::XL, space::CONTROL_SM],
-                                    egui::Button::new(format!("{:.0}%", state.zoom * 100.0))
-                                        .frame_when_inactive(false),
-                                )
-                                .on_hover_text("Reset zoom")
-                                .clicked()
-                            {
+                            if zoom_percentage(ui, state.zoom).clicked() {
                                 state.zoom = 1.0;
                                 state.pan = rect.size() / 2.0;
                             }
