@@ -3492,6 +3492,20 @@ int rename(const char *source, const char *destination) {
                 click_control("panel:outgoing")
                 click_control("outgoing:Home")
                 title_contains("Home")
+                outgoing_note = fixture / "Notes/Outgoing proof.md"
+                outgoing_source = "# Outgoing proof\n\n[[Home|Start]]\n\n`[[Ignored]]`\n"
+                outgoing_note.write_text(outgoing_source)
+                time.sleep(.6)
+                open_note("Outgoing proof")
+                assert control_bounds("outgoing:Home|Start")
+                assert control_bounds("outgoing:Ignored", required=False) is None
+                click_control("outgoing:Home|Start")
+                title_contains("Home")
+                assert outgoing_note.read_text() == outgoing_source
+                open_note("Referrer")
+                assert control_bounds("outgoing:Home|Start", required=False) is None
+                assert control_bounds("outgoing:Notes/Essential UI")
+                results.append("Outgoing links follow aliased wiki links, ignore inline code and update when the current note changes")
                 open_note("Essential UI")
                 click_control("panel:outline")
                 assert note.read_text() == expected
