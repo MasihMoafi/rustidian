@@ -43,8 +43,8 @@ fn cell_edit_preserves_unicode_markup_escapes_crlf_and_every_other_byte() {
         },
         Action::Cell {
             row: 1,
-            column: 0,
-            text: "line\nbreak".into(),
+            column: 8,
+            text: "lost".into(),
         },
         Action::RemoveRow(0),
         Action::MoveRow { from: 0, to: 1 },
