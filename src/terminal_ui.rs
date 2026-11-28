@@ -432,7 +432,8 @@ impl Panel {
                     if std::mem::take(&mut self.rename_focus) {
                         response.request_focus();
                     }
-                    accept = response.has_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    accept = (response.has_focus() || response.lost_focus())
+                        && ui.input(|i| i.key_pressed(Key::Enter));
                     cancel = ui.input(|i| i.key_pressed(Key::Escape));
                     ui.horizontal(|ui| {
                         accept |= ui.button("Rename").clicked();
