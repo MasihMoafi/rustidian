@@ -1242,6 +1242,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         .fixed_pos(rect.left_bottom() + egui::vec2(space::M, -space::M))
         .show(ui.ctx(), |ui| {
             ui.spacing_mut().item_spacing.x = space::S;
+            ui.spacing_mut().interact_size.y = space::CONTROL_SM;
             ui.horizontal_centered(|ui| {
                 egui::Frame::popup(ui.style())
                     .inner_margin(crate::theme::space::margin(
