@@ -28,6 +28,7 @@ struct Drag {
 
 pub struct ExcalidrawViewState {
     tool: Tool,
+    tool_locked: bool,
     color: usize,
     width: f32,
     pan: Vec2,
@@ -46,6 +47,7 @@ impl Default for ExcalidrawViewState {
     fn default() -> Self {
         Self {
             tool: Tool::Select,
+            tool_locked: false,
             color: 0,
             width: 2.0,
             pan: Vec2::ZERO,
@@ -218,6 +220,164 @@ fn paint(ui: &egui::Ui, rect: Rect, state: &ExcalidrawViewState, element: &Value
     }
 }
 
+fn tool_button(ui: &mut egui::Ui, tool: Tool, active: bool, hint: &str, tip: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), Sense::click());
+    let painter = ui.painter();
+    if active || response.hovered() {
+        painter.rect_filled(
+            rect,
+            5,
+            if active {
+                Color32::from_rgb(224, 223, 255)
+            } else {
+                ui.visuals().widgets.hovered.bg_fill
+            },
+        );
+    }
+    let color = if active {
+        Color32::from_rgb(71, 66, 166)
+    } else {
+        ui.visuals().text_color()
+    };
+    let stroke = Stroke::new(1.6, color);
+    let p = |x: f32, y: f32| rect.min + egui::vec2(x, y);
+    match tool {
+        Tool::Select => {
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    p(8., 5.),
+                    p(8., 22.),
+                    p(12., 18.),
+                    p(15., 24.),
+                    p(18., 22.),
+                    p(15., 16.),
+                    p(21., 16.),
+                ],
+                stroke,
+            ));
+        }
+        Tool::Hand => {
+            painter.add(egui::Shape::line(
+                vec![
+                    p(8., 17.),
+                    p(7., 13.),
+                    p(9., 12.),
+                    p(11., 16.),
+                    p(11., 7.),
+                    p(13., 6.),
+                    p(14., 13.),
+                    p(14., 5.),
+                    p(16., 5.),
+                    p(17., 13.),
+                    p(17., 7.),
+                    p(19., 7.),
+                    p(20., 14.),
+                    p(20., 10.),
+                    p(22., 10.),
+                    p(22., 18.),
+                    p(20., 23.),
+                    p(12., 23.),
+                    p(8., 17.),
+                ],
+                stroke,
+            ));
+        }
+        Tool::Rect => {
+            painter.rect_stroke(
+                Rect::from_min_max(p(6., 7.), p(23., 22.)),
+                2,
+                stroke,
+                egui::StrokeKind::Middle,
+            );
+        }
+        Tool::Diamond => {
+            painter.add(egui::Shape::closed_line(
+                vec![p(15., 5.), p(24., 15.), p(15., 24.), p(6., 15.)],
+                stroke,
+            ));
+        }
+        Tool::Ellipse => {
+            painter.circle_stroke(p(15., 15.), 8.5, stroke);
+        }
+        Tool::Arrow => {
+            painter.line_segment([p(7., 22.), p(22., 7.)], stroke);
+            painter.line_segment([p(15., 7.), p(22., 7.)], stroke);
+            painter.line_segment([p(22., 7.), p(22., 14.)], stroke);
+        }
+        Tool::Line => {
+            painter.line_segment([p(7., 22.), p(22., 7.)], stroke);
+        }
+        Tool::Freedraw => {
+            painter.add(egui::Shape::closed_line(
+                vec![p(7., 22.), p(9., 17.), p(20., 6.), p(23., 9.), p(12., 20.)],
+                stroke,
+            ));
+            painter.line_segment([p(9., 17.), p(12., 20.)], stroke);
+        }
+        Tool::Text => {
+            painter.line_segment([p(7., 23.), p(14., 6.)], stroke);
+            painter.line_segment([p(14., 6.), p(21., 23.)], stroke);
+            painter.line_segment([p(10., 17.), p(18., 17.)], stroke);
+        }
+        Tool::Eraser => {
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    p(6., 17.),
+                    p(16., 6.),
+                    p(23., 12.),
+                    p(13., 23.),
+                    p(10., 23.),
+                ],
+                stroke,
+            ));
+            painter.line_segment([p(10., 13.), p(17., 19.)], stroke);
+            painter.line_segment([p(13., 23.), p(23., 23.)], stroke);
+        }
+    }
+    if !hint.is_empty() {
+        painter.text(
+            rect.right_bottom() - egui::vec2(3., 1.),
+            egui::Align2::RIGHT_BOTTOM,
+            hint,
+            egui::FontId::proportional(8.),
+            ui.visuals().weak_text_color(),
+        );
+    }
+    response.on_hover_text(tip).clicked()
+}
+
+fn zoom_around_point(pan: Vec2, old_zoom: f32, new_zoom: f32, anchor: Vec2) -> Vec2 {
+    anchor - (anchor - pan) * (new_zoom / old_zoom)
+}
+
+fn lock_button(ui: &mut egui::Ui, active: bool) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), Sense::click());
+    let painter = ui.painter();
+    if active || response.hovered() {
+        painter.rect_filled(rect, 5, ui.visuals().widgets.hovered.bg_fill);
+    }
+    let p = |x: f32, y: f32| rect.min + egui::vec2(x, y);
+    let stroke = Stroke::new(1.6, ui.visuals().text_color());
+    painter.rect_stroke(
+        Rect::from_min_max(p(8., 14.), p(22., 24.)),
+        2,
+        stroke,
+        egui::StrokeKind::Middle,
+    );
+    painter.add(egui::Shape::line(
+        vec![
+            p(11., 14.),
+            p(11., 9.),
+            p(13., 6.),
+            p(17., 6.),
+            p(19., 9.),
+            p(19., if active { 14. } else { 10. }),
+        ],
+        stroke,
+    ));
+    response.on_hover_text("Keep tool active").clicked()
+}
+
 /// Returns true when the document's serialized drawing changed.
 pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawViewState) -> bool {
     if state
@@ -262,23 +422,22 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
     let mut changed = false;
     ui.horizontal_wrapped(|ui| {
         ui.add_space((ui.available_width() - 740.0).max(0.0) / 2.0);
-        for (tool, label, tip) in [
-            (Tool::Select, "↖", "Select · 1"),
-            (Tool::Hand, "H", "Hand · H"),
-            (Tool::Rect, "□", "Rectangle · 2"),
-            (Tool::Diamond, "◇", "Diamond · 3"),
-            (Tool::Ellipse, "○", "Ellipse · 4"),
-            (Tool::Arrow, "→", "Arrow · 5"),
-            (Tool::Line, "/", "Line · 6"),
-            (Tool::Freedraw, "F", "Draw · 7"),
-            (Tool::Text, "T", "Text · 8"),
-            (Tool::Eraser, "⌫", "Eraser · 0"),
+        if lock_button(ui, state.tool_locked) {
+            state.tool_locked = !state.tool_locked;
+        }
+        for (tool, hint, tip) in [
+            (Tool::Hand, "", "Hand — H"),
+            (Tool::Select, "1", "Select — V or 1"),
+            (Tool::Rect, "2", "Rectangle — R or 2"),
+            (Tool::Diamond, "3", "Diamond — D or 3"),
+            (Tool::Ellipse, "4", "Ellipse — O or 4"),
+            (Tool::Arrow, "5", "Arrow — A or 5"),
+            (Tool::Line, "6", "Line — L or 6"),
+            (Tool::Freedraw, "7", "Draw — P or 7"),
+            (Tool::Text, "8", "Text — T or 8"),
+            (Tool::Eraser, "0", "Eraser — E or 0"),
         ] {
-            if ui
-                .selectable_label(state.tool == tool, label)
-                .on_hover_text(tip)
-                .clicked()
-            {
+            if tool_button(ui, tool, state.tool == tool, hint, tip) {
                 state.tool = tool;
             }
         }
@@ -308,7 +467,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
             state.pan = Vec2::ZERO;
         }
         if ui.button("+").clicked() {
-            state.zoom = (state.zoom * 1.2).min(8.0);
+            state.zoom = (state.zoom * 1.2).min(10.0);
         }
     });
     ui.horizontal_wrapped(|ui| {
@@ -361,23 +520,32 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         if scroll != 0.0 {
             let anchor = ui.input(|i| i.pointer.hover_pos()).unwrap_or(rect.center());
             let old = state.zoom;
-            state.zoom = (old * (scroll * 0.002).exp()).clamp(0.1, 8.0);
-            state.pan = anchor - rect.min - (anchor - rect.min - state.pan) * (state.zoom / old);
+            state.zoom = (old * (scroll * 0.002).exp()).clamp(0.1, 10.0);
+            state.pan = zoom_around_point(state.pan, old, state.zoom, anchor - rect.min);
             ui.input_mut(|i| i.smooth_scroll_delta = Vec2::ZERO);
         }
     }
     if ui.is_enabled() && !ui.ctx().text_edit_focused() {
         for (key, tool) in [
             (Key::Num1, Tool::Select),
+            (Key::V, Tool::Select),
             (Key::H, Tool::Hand),
             (Key::Num2, Tool::Rect),
+            (Key::R, Tool::Rect),
             (Key::Num3, Tool::Diamond),
+            (Key::D, Tool::Diamond),
             (Key::Num4, Tool::Ellipse),
+            (Key::O, Tool::Ellipse),
             (Key::Num5, Tool::Arrow),
+            (Key::A, Tool::Arrow),
             (Key::Num6, Tool::Line),
+            (Key::L, Tool::Line),
             (Key::Num7, Tool::Freedraw),
+            (Key::P, Tool::Freedraw),
             (Key::Num8, Tool::Text),
+            (Key::T, Tool::Text),
             (Key::Num0, Tool::Eraser),
+            (Key::E, Tool::Eraser),
             (Key::Escape, Tool::Select),
         ] {
             if ui.input(|i| i.key_pressed(key) && !i.modifiers.command) {
@@ -518,6 +686,9 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
     {
         remember(state, drag.original);
         changed = true;
+        if !state.tool_locked && state.tool != Tool::Select {
+            state.tool = Tool::Select;
+        }
     }
     if response.clicked()
         && let Some(p) = pointer
@@ -582,4 +753,22 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         state.last_text = Some(document.text.clone());
     }
     saved
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zoom_preserves_canvas_position_under_anchor() {
+        for (pan, old, new, anchor) in [
+            (Vec2::ZERO, 1.0, 2.0, egui::vec2(150.0, 75.0)),
+            (egui::vec2(-30.0, 40.0), 0.1, 10.0, egui::vec2(1.0, 2.0)),
+            (egui::vec2(90.0, -60.0), 4.0, 0.5, Vec2::ZERO),
+        ] {
+            let before = (anchor - pan) / old;
+            let after = (anchor - zoom_around_point(pan, old, new, anchor)) / new;
+            assert!((before - after).length() < 0.001);
+        }
+    }
 }
