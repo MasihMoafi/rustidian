@@ -38,6 +38,7 @@ pub struct ExcalidrawViewState {
     text_position: Option<Pos2>,
     undo: Vec<Vec<Value>>,
     redo: Vec<Vec<Value>>,
+    last_text: Option<String>,
     pub show_markdown: bool,
 }
 
@@ -55,6 +56,7 @@ impl Default for ExcalidrawViewState {
             text_position: None,
             undo: Vec::new(),
             redo: Vec::new(),
+            last_text: None,
             show_markdown: false,
         }
     }
@@ -218,6 +220,18 @@ fn paint(ui: &egui::Ui, rect: Rect, state: &ExcalidrawViewState, element: &Value
 
 /// Returns true when the document's serialized drawing changed.
 pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawViewState) -> bool {
+    if state
+        .last_text
+        .as_deref()
+        .is_some_and(|text| text != document.text)
+    {
+        state.undo.clear();
+        state.redo.clear();
+        state.drag = None;
+        state.selected = None;
+        state.text_position = None;
+    }
+    state.last_text = Some(document.text.clone());
     let mut drawing = match Drawing::parse(&document.text) {
         Ok(drawing) => drawing,
         Err(error) => {
@@ -541,7 +555,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         if state.text.is_empty() {
             response.request_focus();
         }
-        if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+        if response.lost_focus() && !ui.input(|i| i.key_pressed(Key::Escape)) {
             if !state.text.is_empty() {
                 let before = elements.clone();
                 let mut e = new_element("text", p, colors[state.color], state.width);
@@ -561,5 +575,9 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
             state.text_position = None;
         }
     }
-    changed && save(document, &mut drawing, &elements)
+    let saved = changed && save(document, &mut drawing, &elements);
+    if saved {
+        state.last_text = Some(document.text.clone());
+    }
+    saved
 }

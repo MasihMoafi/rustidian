@@ -211,7 +211,7 @@ pub struct NotesApp {
     vault_for_file: bool,
     find: crate::editor_ui::Find,
     editor: crate::editor_ui::Editor,
-    drawings: std::collections::HashMap<u64, crate::excalidraw_ui::ExcalidrawViewState>,
+    drawings: std::collections::HashMap<(u64, PathBuf), crate::excalidraw_ui::ExcalidrawViewState>,
     title: crate::title_ui::Title,
     pending_anchor: Option<String>,
     new_tab_gesture: bool,
@@ -4307,7 +4307,10 @@ impl NotesApp {
             return;
         }
         if rustidian::excalidraw::is_drawing(&tab.document.path, &tab.document.text) {
-            let state = self.drawings.entry(tab.id()).or_default();
+            let state = self
+                .drawings
+                .entry((tab.id(), tab.document.path.clone()))
+                .or_default();
             if !state.show_markdown {
                 if crate::excalidraw_ui::show(ui, &mut tab.document, state) {
                     tab.edited();
