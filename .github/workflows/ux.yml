@@ -208,7 +208,7 @@ jobs:
           done
           exit "$gui_status"
       - name: Selected native GUI workflows
-        if: ${{ inputs.gui_only }}
+        if: ${{ inputs.gui_only && !inputs.package_after_checks }}
         env:
           GUI_SECTIONS: ${{ inputs.sections }}
         run: |
@@ -243,12 +243,118 @@ jobs:
       - name: Check core behavior for the package candidate
         if: ${{ inputs.gui_only && inputs.package_after_checks }}
         run: CARGO_PROFILE_RELEASE_LTO=false cargo test --locked --release --no-default-features --lib --tests --no-fail-fast 2>&1 | tee reports/package-core-tests.log
-      - name: Create and verify the Debian package
+      - name: Share candidate binary for parallel GUI shards
         if: ${{ inputs.gui_only && inputs.package_after_checks }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GUI_SECTIONS: ${{ inputs.sections }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-shard-bin-${{ github.run_id }}
+          path: |
+            target/release/rustidian
+            reports/
+          retention-days: 1
+          compression-level: 1
+      - name: Retain exact candidate and evidence
+        if: ${{ always() && !inputs.gui_only }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-ux-${{ github.sha }}
+          path: reports/
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
+
+  gui-shards:
+    needs: linux
+    if: ${{ inputs.publish_run == '' && inputs.gui_only && inputs.package_after_checks }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      GUI_SECTIONS: ${{ inputs.sections }}
+      SHARD_INDEX: ${{ matrix.shard }}
+      SHARD_TOTAL: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install native GUI tools
         run: |
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libxkbcommon-x11-0 libgl1-mesa-dri libsonic0 xvfb xdotool xclip x11-utils x11-xserver-utils openbox zenity python3-pil python3-xlib fontconfig fonts-dejavu-core fonts-liberation
+      - name: Download candidate binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: rustidian-shard-bin-${{ github.run_id }}
+      - name: Run GUI shard ${{ matrix.shard }}
+        run: |
+          chmod +x target/release/rustidian
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          read -ra all_sections <<< "$GUI_SECTIONS"
+          gui_status=0
+          for i in "${!all_sections[@]}"; do
+            if [ $((i % SHARD_TOTAL)) -ne "$SHARD_INDEX" ]; then continue; fi
+            section="${all_sections[$i]}"
+            [[ "$section" =~ ^[a-z]+(-[a-z]+)*$ ]] || exit 2
+            if python3 tests/gui_smoke.py --binary target/release/rustidian --section "$section" > "reports/selected-$section.log" 2>&1; then
+              echo "PASSED: $section"
+            else
+              gui_status=1
+              echo "FAILED: $section"
+              tail -n 80 "reports/selected-$section.log"
+              if test -f "reports/gui-$section-failure-app.log"; then tail -n 80 "reports/gui-$section-failure-app.log"; fi
+              if test -f reports/gui-results.json; then python3 -m json.tool reports/gui-results.json; fi
+            fi
+          done
+          exit "$gui_status"
+      - name: Upload shard evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rustidian-shard-${{ github.run_id }}-${{ matrix.shard }}
+          path: |
+            reports/selected-*.log
+            reports/gui-*-results.json
+            reports/gui-failure.png
+            reports/native-*.png
+            reports/native-*.json
+            reports/graph-proportions-*.json
+            reports/slider-*.json
+            reports/scrollbar-*.json
+            reports/visual-controls-results.json
+          retention-days: 1
+          compression-level: 1
+
+  package-verified:
+    needs: [linux, gui-shards]
+    if: ${{ inputs.publish_run == '' && inputs.gui_only && inputs.package_after_checks }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LIBGL_ALWAYS_SOFTWARE: '1'
+      GUI_SECTIONS: ${{ inputs.sections }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install packaging and verification tools
+        run: |
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT update -qq
+          sudo apt-get -o Acquire::http::Proxy=DIRECT -o Acquire::https::Proxy=DIRECT install -y --no-install-recommends libxkbcommon-x11-0 libgl1-mesa-dri libsonic0 xvfb xdotool xclip x11-utils x11-xserver-utils openbox zenity python3-pil python3-xlib desktop-file-utils xdg-utils fontconfig fonts-dejavu-core fonts-liberation
+      - name: Download candidate binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: rustidian-shard-bin-${{ github.run_id }}
+      - name: Download all GUI shard evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: rustidian-shard-${{ github.run_id }}-*
+          merge-multiple: true
+          path: reports
+      - name: Create and verify the Debian package
+        run: |
+          if [ -d reports/reports ]; then cp -a reports/reports/. reports/; fi
+          chmod +x target/release/rustidian
           python3 scripts/package-deb.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-amd64.deb
           python3 tests/debian_package.py --binary target/release/rustidian --package reports/rustidian-linux-amd64.deb --notices reports/THIRD_PARTY_NOTICES.txt --system | tee reports/debian-verification.json
           python3 scripts/package-linux.py --binary target/release/rustidian --notices reports/THIRD_PARTY_NOTICES.txt --output reports/rustidian-linux-x86_64.tar.gz
@@ -276,7 +382,7 @@ jobs:
           INFO
           (cd reports && sha256sum rustidian-linux-amd64.deb rustidian-linux-x86_64.tar.gz BUILDINFO.json > SHA256SUMS)
       - name: Retain requested package and selected evidence
-        if: ${{ always() && inputs.gui_only && inputs.package_after_checks }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: rustidian-verified-${{ github.sha }}
@@ -295,34 +401,12 @@ jobs:
             reports/modal-order-baseline.log
             reports/gui-*-results.json
             reports/gui-failure.png
-            reports/native-quiet-warning.png
-            reports/native-table-edge-*.png
-            reports/native-table-edge-*.json
-            reports/native-graph-facets-*.png
-            reports/native-graph-facets-*-controls.json
-            reports/native-graph-state-*.png
-            reports/native-graph-state-*.json
-            reports/native-form-add-property.png
-            reports/native-graph-global-dark.png
-            reports/native-graph-proportions-*.png
+            reports/native-*.png
+            reports/native-*.json
             reports/graph-proportions-*.json
-            reports/native-slider-*.png
             reports/slider-*.json
-            reports/native-scrollbar-*.png
-            reports/scrollbar-*-states.json
+            reports/scrollbar-*.json
             reports/visual-controls-results.json
-            reports/native-syntax-*.png
-            reports/native-syntax-*-controls.json
-            reports/native-reading-code-*.png
-          retention-days: 1
-          compression-level: 1
-          if-no-files-found: error
-      - name: Retain exact candidate and evidence
-        if: ${{ always() && !inputs.gui_only }}
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: rustidian-ux-${{ github.sha }}
-          path: reports/
           retention-days: 1
           compression-level: 1
           if-no-files-found: error
