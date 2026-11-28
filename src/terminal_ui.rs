@@ -454,7 +454,9 @@ impl Panel {
         }
         if let Some(index) = show {
             self.active = index;
-            self.focus = true;
+            if self.rename.is_none() {
+                self.focus = true;
+            }
         }
         if let Some(index) = close {
             self.close_chat(index);
@@ -499,6 +501,7 @@ impl Panel {
         let mut picked = current;
         let mut restart = false;
         let header = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = theme::space::XS;
             ui.set_min_height(28.0);
             ui.add_enabled_ui(!self.installed.is_empty(), |ui| {
                 let combo = egui::ComboBox::from_id_salt("agent-backend")
