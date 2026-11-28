@@ -414,7 +414,7 @@ impl Tables {
                                             |draft| draft.cell.text.clone(),
                                         ),
                                     presentation: crate::preview::TableCell::new(
-                                        &model.cell_text(source, row, column),
+                                        &model.cell_text(source, row, column).replace('\n', "<br>"),
                                     ),
                                 })
                                 .collect()
@@ -795,7 +795,12 @@ impl Tables {
                                             matches!(
                                                 event,
                                                 egui::Event::Paste(_) | egui::Event::Cut
-                                            )
+                                            ) || matches!(event, egui::Event::Key {
+                                                key: Key::Enter,
+                                                pressed: true,
+                                                modifiers,
+                                                ..
+                                            } if modifiers.matches_exact(egui::Modifiers::SHIFT))
                                         })
                                     });
                                 let replacing = focused
@@ -852,7 +857,10 @@ impl Tables {
                                     TextEdit::multiline(&mut cell.text)
                                         .id(field_id)
                                         .desired_rows(1)
-                                        .return_key(None)
+                                        .return_key(Some(egui::KeyboardShortcut::new(
+                                            egui::Modifiers::SHIFT,
+                                            Key::Enter,
+                                        )))
                                         .auto_pair(true)
                                         .font(egui::FontId::new(
                                             crate::theme::document_size(ui, 18.0),
@@ -900,12 +908,6 @@ impl Tables {
                                     );
                                 }
                                 if response.changed() {
-                                    if cell.text.contains(['\n', '\r']) {
-                                        cell.text = cell
-                                            .text
-                                            .replace("\r\n", " ")
-                                            .replace(['\n', '\r'], " ");
-                                    }
                                     separate_edit = discrete;
                                     edit = Some((
                                         table,
@@ -1835,6 +1837,16 @@ mod tests {
                 key(Key::S, egui::Modifiers::COMMAND)
             ]
         );
+    }
+
+    #[test]
+    fn shift_enter_stays_in_the_cell_input() {
+        let mut events = vec![key(Key::Enter, egui::Modifiers::SHIFT)];
+        let original = events.clone();
+        let mut deferred = Vec::new();
+        assert_eq!(take_action(&mut events, &mut deferred), None);
+        assert_eq!(events, original);
+        assert!(deferred.is_empty());
     }
 
     #[test]

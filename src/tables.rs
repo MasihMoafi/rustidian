@@ -142,9 +142,9 @@ impl Table {
             .unwrap_or("")
     }
 
-    /// A field edits literal pipes; only the table's delimiter escape is decoded.
+    /// Decode table delimiter escapes and HTML line breaks for editing.
     pub fn cell_text(&self, source: &str, row: usize, column: usize) -> String {
-        decode_pipes(self.cell(source, row, column))
+        decode_breaks(&decode_pipes(self.cell(source, row, column)))
     }
 
     pub fn edit_cell(
@@ -158,11 +158,15 @@ impl Table {
         if !self.is_current(source) {
             return Err("The table changed. Reopen the cell before editing it.");
         }
-        if column >= self.alignments.len() || row >= self.rows.len() || text.contains(['\n', '\r'])
-        {
-            return Err("A table cell must be one Markdown line in an existing column.");
+        if column >= self.alignments.len() || row >= self.rows.len() {
+            return Err("A table cell must be in an existing row and column.");
         }
-        let encoded = encode_pipes(&text);
+        let encoded = encode_pipes(
+            &text
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .replace('\n', "<br>"),
+        );
         let target = &self.rows[row];
         let tracked = draft.filter(|draft| {
             draft.row == row
@@ -471,6 +475,26 @@ fn decode_pipes(text: &str) -> String {
         result.push(character);
         if character == '\\' && chars.peek() == Some(&'\\') {
             result.push(chars.next().unwrap());
+        }
+    }
+    result
+}
+
+fn decode_breaks(text: &str) -> String {
+    let mut result = String::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if let Some(tag) = ["<br>", "<br/>", "<br />"].iter().find(|tag| {
+            remaining
+                .get(..tag.len())
+                .is_some_and(|s| s.eq_ignore_ascii_case(tag))
+        }) {
+            result.push('\n');
+            remaining = &remaining[tag.len()..];
+        } else {
+            let character = remaining.chars().next().unwrap();
+            result.push(character);
+            remaining = &remaining[character.len_utf8()..];
         }
     }
     result

@@ -189,18 +189,35 @@ fn focused_drafts_preserve_typed_padding_and_do_not_reuse_another_cells_range() 
     assert!(source.contains("| short |  new \\| cell  |\r\n"));
     assert!(source.starts_with("Outside\r\n\r\n"));
     assert!(source.ends_with("\r\n\r\nEnd\r\n"));
-    let before = source.clone();
-    assert!(
-        table(&source)
-            .edit_cell(&mut source, 1, 1, "bad\nvalue".into(), Some(&other))
-            .is_err()
-    );
-    assert_eq!(source, before);
+    table(&source)
+        .edit_cell(&mut source, 1, 1, "new\nline".into(), Some(&other))
+        .unwrap();
+    assert!(source.contains("|  A π \\| B  | new<br>line |"));
     let mut empty = "| A | B |\r\n| --- | --- |\r\n|  |  |\r\n".to_owned();
     table(&empty)
         .edit_cell(&mut empty, 1, 1, "4".into(), None)
         .unwrap();
     assert!(empty.ends_with("|  | 4 |\r\n"), "{empty:?}");
+}
+
+#[test]
+fn multiline_cells_round_trip_without_splitting_markdown_rows() {
+    for tag in ["<br>", "<br/>", "<br />", "<BR>", "<Br />"] {
+        let mut source = format!("| Head | Other |\n| --- | --- |\n| α{tag}β | intact |\n");
+        let model = table(&source);
+        assert_eq!(model.cell_text(&source, 1, 0), "α\nβ");
+        model
+            .edit_cell(&mut source, 1, 0, "α\r\nβ\rγ\nδ | end".into(), None)
+            .unwrap();
+        assert_eq!(
+            source,
+            "| Head | Other |\n| --- | --- |\n| α<br>β<br>γ<br>δ \\| end | intact |\n"
+        );
+        let parsed = table(&source);
+        assert_eq!(parsed.rows.len(), 2);
+        assert_eq!(parsed.cell_text(&source, 1, 0), "α\nβ\nγ\nδ | end");
+        assert_eq!(parsed.cell_text(&source, 1, 1), "intact");
+    }
 }
 
 #[test]
