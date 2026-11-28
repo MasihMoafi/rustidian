@@ -476,6 +476,29 @@ def run(scope):
     h.results.append("+ opened a second chat with its own agent; each kept its screen while the other was shown; the agent's title "
                      "named its tab; Ctrl+Tab/Ctrl+Shift+Tab switched, Ctrl+Shift+T opened, Ctrl+Shift+W and x closed a chat and ended only its agent")
 
+    # Rename and expand the same running chat without losing its process or screen.
+    click("agent-rename")
+    wait(lambda: "agent-rename-input" in controls(), "Rename input did not open")
+    h.key("ctrl+a")
+    enter("Research notes")
+    wait(lambda: chats() == [["0", "Research notes"]], "The chat was not renamed")
+    click("agent-rename")
+    wait(lambda: "agent-rename-input" in controls(), "Rename input did not reopen")
+    h.key("ctrl+a")
+    h.xdo("type", "--clearmodifiers", "--", "Discarded")
+    h.key("Escape")
+    wait(lambda: "agent-rename-input" not in controls(), "Escape did not cancel rename")
+    assert chats() == [["0", "Research notes"]], chats()
+    narrow_cols = metric("terminal-cols")
+    click("agent-fullscreen")
+    wait(lambda: metric("terminal-cols") > narrow_cols, "Full screen did not expand the chat")
+    assert pid() == one, "Full screen restarted the agent"
+    shows("you said: in chat one")
+    click("agent-fullscreen")
+    wait(lambda: metric("terminal-cols") == narrow_cols, "Chat did not return to its original width")
+    assert pid() == one and chats() == [["0", "Research notes"]]
+    h.results.append("Rename, cancel and full screen preserve the running chat")
+
     # 15. An agent that exits leaves its last screen and "Exited (code 0)"; Restart works again.
     focus_terminal()
     enter("exit")

@@ -66,6 +66,7 @@ impl Selection {
 struct Chat {
     /// Its place in opening order, which names it until the agent gives a title.
     number: usize,
+    name: Option<String>,
     /// The agent picked for this chat; `None` follows the vault's choice.
     backend: Option<Backend>,
     session: Option<Session>,
@@ -79,6 +80,7 @@ impl Chat {
     fn new(number: usize, backend: Option<Backend>) -> Self {
         Self {
             number,
+            name: None,
             backend,
             session: None,
             start: true,
@@ -177,6 +179,9 @@ pub struct Panel {
     chats: Vec<Chat>,
     /// The chat on screen.
     active: usize,
+    pub fullscreen: bool,
+    rename: Option<(usize, String)>,
+    rename_focus: bool,
     /// Chats opened in this vault, which numbers the next one.
     opened: usize,
     /// Chat keys pressed in the terminal, applied at the next show.
@@ -352,7 +357,9 @@ impl Panel {
                 .iter()
                 .map(|chat| {
                     let title = chat.agent_title();
-                    let name = if title.is_empty() {
+                    let name = if let Some(name) = &chat.name {
+                        name.clone()
+                    } else if title.is_empty() {
                         self.backend(chat.backend)
                             .map_or("Chat", |(backend, _)| backend.label())
                             .to_owned()
@@ -365,6 +372,7 @@ impl Panel {
         );
         let several = self.chats.len() > 1;
         let (mut show, mut close, mut new) = (None, None, false);
+        let mut begin_rename = None;
         let strip = ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = crate::theme::space::XS;
             for (index, name) in names.iter().enumerate() {
@@ -375,6 +383,15 @@ impl Panel {
                 if tab.clicked() {
                     show = Some(index);
                 }
+                if tab.double_clicked() {
+                    begin_rename = Some(index);
+                }
+                tab.context_menu(|ui| {
+                    if ui.button("Rename").clicked() {
+                        begin_rename = Some(index);
+                        ui.close();
+                    }
+                });
                 if tab.middle_clicked() {
                     close = Some(index);
                 }
@@ -397,6 +414,43 @@ impl Panel {
             new = plus.clicked();
         });
         ui_probe::record(ui.ctx(), "agent-chats", strip.response.rect);
+        if let Some(index) = begin_rename {
+            self.rename = Some((index, names[index].clone()));
+            self.rename_focus = true;
+        }
+        if let Some((index, mut value)) = self.rename.take() {
+            let mut accept = false;
+            let mut cancel = false;
+            egui::Window::new("Rename chat")
+                .id(egui::Id::new("agent-rename-dialog"))
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    let response = ui
+                        .add(egui::TextEdit::singleline(&mut value).id_salt("agent-rename-input"));
+                    ui_probe::record(ui.ctx(), "agent-rename-input", response.rect);
+                    if std::mem::take(&mut self.rename_focus) {
+                        response.request_focus();
+                    }
+                    accept = response.has_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    cancel = ui.input(|i| i.key_pressed(Key::Escape));
+                    ui.horizontal(|ui| {
+                        accept |= ui.button("Rename").clicked();
+                        cancel |= ui.button("Cancel").clicked();
+                    });
+                });
+            if accept {
+                if let Some(chat) = self.chats.get_mut(index) {
+                    let name = value.trim();
+                    chat.name = (!name.is_empty()).then(|| name.to_owned());
+                }
+                self.focus = true;
+            } else if cancel {
+                self.focus = true;
+            } else {
+                self.rename = Some((index, value));
+            }
+        }
         if let Some(index) = show {
             self.active = index;
             self.focus = true;
@@ -463,6 +517,29 @@ impl Panel {
                     });
                 ui_probe::record(ui.ctx(), "agent-backend", combo.response.rect);
             });
+            let rename = theme::icon_button(ui, theme::Icon::Edit, "Rename chat");
+            ui_probe::record(ui.ctx(), "agent-rename", rename.rect);
+            if rename.clicked() {
+                self.rename_focus = true;
+                self.rename = Some((
+                    active,
+                    self.chats[active]
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| self.chats[active].agent_title()),
+                ));
+            }
+            let (icon, tip) = if self.fullscreen {
+                (theme::Icon::Restore, "Exit full screen")
+            } else {
+                (theme::Icon::Maximize, "Full screen")
+            };
+            let expand = theme::icon_button(ui, icon, tip);
+            ui_probe::record(ui.ctx(), "agent-fullscreen", expand.rect);
+            if expand.clicked() {
+                self.fullscreen = !self.fullscreen;
+                self.focus = true;
+            }
             let button = theme::icon_button(ui, theme::Icon::Recovery, "Restart");
             ui_probe::record(ui.ctx(), "agent-restart", button.rect);
             restart = button.clicked();

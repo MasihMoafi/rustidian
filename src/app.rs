@@ -7173,10 +7173,25 @@ impl eframe::App for NotesApp {
             self.active = index;
             self.ask(Dialog::SaveCopy);
         }
-        self.ribbon(ui);
-        self.sidebar(ui);
-        self.details(ui);
-        self.content(ui);
+        if self.agent.fullscreen && self.show_right && self.right_tab == 3 {
+            let root = self.vault.as_ref().map(|vault| vault.root.clone());
+            egui::CentralPanel::default().show(ui, |ui| {
+                if let Some(root) = root {
+                    let font = ui
+                        .scope(|ui| {
+                            theme::document_style(ui, self.document_font_size);
+                            egui::TextStyle::Monospace.resolve(ui.style())
+                        })
+                        .inner;
+                    self.agent.show(ui, &root, &font);
+                }
+            });
+        } else {
+            self.ribbon(ui);
+            self.sidebar(ui);
+            self.details(ui);
+            self.content(ui);
+        }
         if let Some(query) = self.editor.search_request.take() {
             self.search = query;
             self.show_left = true;
