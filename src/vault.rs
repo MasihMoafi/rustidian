@@ -443,6 +443,31 @@ impl Vault {
         self.create_untitled_in(Path::new(""))
     }
 
+    /// Create a drawing without replacing an existing file, even across windows.
+    pub fn create_drawing(
+        &mut self,
+        now: chrono::DateTime<chrono::FixedOffset>,
+    ) -> Result<Document> {
+        let stem = format!("Drawing {}", now.format("%Y-%m-%d %H.%M.%S"));
+        for number in 0..u64::MAX {
+            let name = if number == 0 {
+                format!("{stem}.excalidraw.md")
+            } else {
+                format!("{stem} {number}.excalidraw.md")
+            };
+            let path = PathBuf::from(name);
+            let absolute = self.root.join(&path);
+            let mut document = Document::new(path);
+            document.text = "---\nexcalidraw-plugin: parsed\n---\n\n# Drawing\n```json\n{\"type\":\"excalidraw\",\"version\":2,\"source\":\"rustidian\",\"elements\":[],\"appState\":{},\"files\":{}}\n```\n".into();
+            match self.save(&mut document) {
+                Ok(()) => return Ok(document),
+                Err(_) if fs::symlink_metadata(&absolute).is_ok() => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err("Cannot find an unused drawing name.".into())
+    }
+
     pub fn create_untitled_in(&mut self, folder: &Path) -> Result<Document> {
         let absolute = if folder.as_os_str().is_empty() {
             self.root.clone()

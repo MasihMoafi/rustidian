@@ -203,6 +203,11 @@ pub const ALL: &[Command] = &[
         scope: Scope::Global,
     },
     Command {
+        name: "Excalidraw: Create new drawing",
+        shortcut: "",
+        scope: Scope::Global,
+    },
+    Command {
         name: "Templates: Insert template",
         shortcut: "",
         scope: Scope::Document,

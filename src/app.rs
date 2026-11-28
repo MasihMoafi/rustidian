@@ -211,6 +211,7 @@ pub struct NotesApp {
     vault_for_file: bool,
     find: crate::editor_ui::Find,
     editor: crate::editor_ui::Editor,
+    drawings: std::collections::HashMap<u64, crate::excalidraw_ui::ExcalidrawViewState>,
     title: crate::title_ui::Title,
     pending_anchor: Option<String>,
     new_tab_gesture: bool,
@@ -347,6 +348,7 @@ impl NotesApp {
             startup_document,
             find: Default::default(),
             editor: Default::default(),
+            drawings: Default::default(),
             title: Default::default(),
             pending_anchor: None,
             new_tab_gesture: false,
@@ -2215,6 +2217,9 @@ impl NotesApp {
                     } else {
                         self.error = Some("Open a note to insert a template.".into());
                     }
+                }
+                if icon_button(ui, Icon::Edit, "New Excalidraw drawing").clicked() {
+                    self.create_drawing();
                 }
                 ui.allocate_ui_with_layout(
                     ui.available_size(),
@@ -4300,6 +4305,18 @@ impl NotesApp {
                 );
             }
             return;
+        }
+        if rustidian::excalidraw::is_drawing(&tab.document.path, &tab.document.text) {
+            let state = self.drawings.entry(tab.id()).or_default();
+            if !state.show_markdown {
+                if crate::excalidraw_ui::show(ui, &mut tab.document, state) {
+                    tab.edited();
+                }
+                return;
+            }
+            if ui.button("Drawing").clicked() {
+                state.show_markdown = false;
+            }
         }
         let id = ui
             .scope_id()
@@ -6537,6 +6554,7 @@ impl NotesApp {
                 self.editor.insert_text(tab, text);
             }
             "Open settings" => self.ask(Dialog::Settings),
+            "Excalidraw: Create new drawing" => self.create_drawing(),
             "New note" => self.create_note(),
             "New folder" => self.ask(Dialog::NewFolder),
             "Add property" => self.ask(Dialog::AddProperty),
@@ -6719,6 +6737,16 @@ impl NotesApp {
             },
         );
         false
+    }
+
+    fn create_drawing(&mut self) {
+        let Some(vault) = &mut self.vault else {
+            return;
+        };
+        match vault.create_drawing(chrono::Local::now().fixed_offset()) {
+            Ok(document) => self.show_created_note(document),
+            Err(error) => self.error = Some(error),
+        }
     }
 
     fn create_note(&mut self) {
