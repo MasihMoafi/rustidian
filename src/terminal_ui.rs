@@ -422,7 +422,7 @@ impl Panel {
             let mut accept = false;
             let mut cancel = false;
             egui::Window::new("Rename chat")
-                .id(egui::Id::new("agent-rename-dialog"))
+                .id(egui::Id::unique("agent-rename-dialog"))
                 .collapsible(false)
                 .resizable(false)
                 .show(ui.ctx(), |ui| {
