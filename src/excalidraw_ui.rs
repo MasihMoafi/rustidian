@@ -1135,7 +1135,10 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         .show(ui.ctx(), |ui| {
             ui.horizontal(|ui| {
                 egui::Frame::popup(ui.style())
-                    .inner_margin(egui::Margin::same(3))
+                    .inner_margin(crate::theme::space::margin(
+                        crate::theme::space::XS,
+                        crate::theme::space::XS,
+                    ))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if ui.button("−").clicked() {
@@ -1169,7 +1172,10 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                         });
                     });
                 egui::Frame::popup(ui.style())
-                    .inner_margin(egui::Margin::same(3))
+                    .inner_margin(crate::theme::space::margin(
+                        crate::theme::space::XS,
+                        crate::theme::space::XS,
+                    ))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if history_button(ui, false)
