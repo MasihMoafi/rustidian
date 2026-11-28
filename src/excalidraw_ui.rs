@@ -716,7 +716,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                 .show(ui, |ui| {
                     if ui
                         .add_sized(
-                            [space::CONTROL * 2.0, space::CONTROL],
+                            [space::CONTROL * 3.0, space::CONTROL],
                             egui::Button::new("Markdown").frame_when_inactive(false),
                         )
                         .clicked()
@@ -1250,6 +1250,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                     ))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.spacing_mut().interact_size.y = space::CONTROL_SM;
                         ui.horizontal_centered(|ui| {
                             if zoom_button(ui, false).clicked() {
                                 let old = state.zoom;
@@ -1292,6 +1293,7 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                     ))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.spacing_mut().interact_size.y = space::CONTROL_SM;
                         ui.horizontal_centered(|ui| {
                             if history_button(ui, false)
                                 && let Some(previous) = state.undo.pop()
