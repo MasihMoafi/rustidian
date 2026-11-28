@@ -1243,16 +1243,16 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
         .show(ui.ctx(), |ui| {
             ui.spacing_mut().item_spacing.x = space::S;
             ui.spacing_mut().interact_size.y = space::CONTROL_SM;
-            ui.horizontal_centered(|ui| {
+            ui.horizontal(|ui| {
                 egui::Frame::popup(ui.style())
                     .inner_margin(crate::theme::space::margin(
                         crate::theme::space::XS,
-                        crate::theme::space::XS,
+                        crate::theme::space::XS - crate::theme::space::HAIRLINE,
                     ))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.spacing_mut().interact_size.y = space::CONTROL_SM;
-                        ui.horizontal_centered(|ui| {
+                        ui.horizontal(|ui| {
                             if zoom_button(ui, false).clicked() {
                                 let old = state.zoom;
                                 state.zoom = (old / 1.2).max(0.1);
@@ -1290,12 +1290,12 @@ pub fn show(ui: &mut egui::Ui, document: &mut Document, state: &mut ExcalidrawVi
                 egui::Frame::popup(ui.style())
                     .inner_margin(crate::theme::space::margin(
                         crate::theme::space::XS,
-                        crate::theme::space::XS,
+                        crate::theme::space::XS - crate::theme::space::HAIRLINE,
                     ))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
                         ui.spacing_mut().interact_size.y = space::CONTROL_SM;
-                        ui.horizontal_centered(|ui| {
+                        ui.horizontal(|ui| {
                             if history_button(ui, false)
                                 && let Some(previous) = state.undo.pop()
                             {
