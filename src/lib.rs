@@ -5,6 +5,7 @@ pub mod callouts;
 pub mod commands;
 pub mod editor;
 pub mod elsewhere;
+pub mod excalidraw;
 pub mod explorer_order;
 pub mod folding;
 pub mod frecency;
